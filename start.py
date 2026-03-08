@@ -1,0 +1,281 @@
+"""Einziger Einstiegspunkt fuer Aether."""
+
+from __future__ import annotations
+
+import importlib
+import multiprocessing as mp
+import os
+import subprocess
+import sys
+import traceback
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+if getattr(sys, "frozen", False):
+    PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    PROJECT_ROOT = Path(__file__).resolve().parent
+
+REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
+MIN_PYTHON = (3, 10)
+REQUIRED_IMPORTS = {
+    "numpy": "numpy",
+    "scipy": "scipy",
+    "matplotlib": "matplotlib",
+    "sounddevice": "sounddevice",
+    "SpeechRecognition": "speech_recognition",
+    "pyinstaller": "PyInstaller",
+    "tkinterdnd2": "tkinterdnd2",
+    "opencv-python": "cv2",
+    "pillow": "PIL",
+    "pywebview": "webview",
+    "cryptography": "cryptography",
+}
+
+
+def check_python_version() -> None:
+    """Prueft, ob mindestens Python 3.10 verwendet wird."""
+    if sys.version_info < MIN_PYTHON:
+        major, minor = MIN_PYTHON
+        raise RuntimeError(
+            f"Python {major}.{minor} oder neuer wird benoetigt. "
+            f"Gefunden: {sys.version_info.major}.{sys.version_info.minor}."
+        )
+
+
+def _python_version_tuple(executable: Path) -> tuple[int, int] | None:
+    """Liest die Major-/Minor-Version eines Kandidaten robust aus."""
+    try:
+        output = subprocess.check_output(
+            [str(executable), "-c", "import sys; print(f'{sys.version_info[0]}.{sys.version_info[1]}')"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        major_text, minor_text = output.split(".", 1)
+        return int(major_text), int(minor_text)
+    except Exception:
+        return None
+
+
+def find_supported_python() -> Path | None:
+    """Sucht lokal nach einer installierten Python-Version >= Mindestversion."""
+    current = Path(sys.executable).resolve()
+    roots = [
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Python",
+        Path(os.environ.get("ProgramFiles", "")),
+        Path(os.environ.get("ProgramFiles(x86)", "")),
+    ]
+    candidates: list[Path] = []
+    for root in roots:
+        if not str(root).strip() or not root.exists():
+            continue
+        try:
+            for candidate in root.rglob("python.exe"):
+                resolved = candidate.resolve()
+                if resolved == current:
+                    continue
+                candidates.append(resolved)
+        except Exception:
+            continue
+    seen: set[str] = set()
+    for candidate in sorted(candidates, reverse=True):
+        key = str(candidate).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        version = _python_version_tuple(candidate)
+        if version is not None and version >= MIN_PYTHON:
+            return candidate
+    return None
+
+
+def ensure_supported_python() -> None:
+    """Wechselt nach Moeglichkeit automatisch auf eine passende Python-Installation."""
+    if sys.version_info >= MIN_PYTHON:
+        return
+    candidate = find_supported_python()
+    if candidate is None:
+        check_python_version()
+        return
+    print(f"Wechsle automatisch auf {candidate} ...")
+    os.execv(str(candidate), [str(candidate), str(PROJECT_ROOT / "start.py")])
+
+
+def find_missing_dependencies() -> list[str]:
+    """Ermittelt fehlende Abhaengigkeiten ueber direkte Importtests."""
+    missing: list[str] = []
+    for package_name, import_name in REQUIRED_IMPORTS.items():
+        try:
+            importlib.import_module(import_name)
+        except Exception:
+            missing.append(package_name)
+    return missing
+
+
+def install_requirements() -> None:
+    """Installiert alle Abhaengigkeiten aus requirements.txt."""
+    if not REQUIREMENTS_FILE.exists():
+        raise RuntimeError("requirements.txt wurde nicht gefunden.")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(REQUIREMENTS_FILE)])
+
+
+def restart_application() -> None:
+    """Startet das Programm nach erfolgreicher Installation neu."""
+    os.execv(sys.executable, [sys.executable, str(PROJECT_ROOT / "start.py")])
+
+
+def append_startup_trace(message: str) -> None:
+    """Schreibt einen knappen Frozen-Startverlauf fuer spaetere Diagnose mit."""
+    try:
+        data_dir = PROJECT_ROOT / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        with (data_dir / "startup_trace.log").open("a", encoding="utf-8") as handle:
+            handle.write(f"{timestamp} {message}\n")
+    except Exception:
+        pass
+
+
+def report_startup_error(exc: Exception) -> None:
+    """Macht Frozen-Startfehler sichtbar und schreibt sie lokal weg."""
+    error_text = (
+        f"[{Path(sys.executable if getattr(sys, 'frozen', False) else __file__).name}] {type(exc).__name__}: {exc}\n\n"
+        f"{traceback.format_exc()}"
+    )
+    append_startup_trace(f"startup_error {type(exc).__name__}: {exc}")
+    try:
+        data_dir = PROJECT_ROOT / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+        (data_dir / "startup_error.log").write_text(error_text, encoding="utf-8")
+    except Exception:
+        pass
+    if getattr(sys, "frozen", False):
+        try:
+            import ctypes
+
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "Aether konnte nicht gestartet werden.\n\n"
+                f"{type(exc).__name__}: {exc}\n\n"
+                f"Details: {str(PROJECT_ROOT / 'data' / 'startup_error.log')}",
+                "Aether Startfehler",
+                0x10,
+            )
+        except Exception:
+            pass
+
+
+def report_security_lock(summary: str) -> None:
+    """Zeigt einen klaren Sperrdialog bei Manipulation des Sicherheitskerns."""
+    message = (
+        "Aether Sicherheits-Lock\n\n"
+        "Manipulation an Kernschutz oder Integritaetsbasis erkannt.\n"
+        "Der Hauptstart wird im PROD-Modus blockiert.\n\n"
+        f"{summary}\n\n"
+        f"Pruefe: {PROJECT_ROOT / 'data' / 'registry.db'}\n"
+        f"Audit: {PROJECT_ROOT / 'data' / 'startup_trace.log'}"
+    )
+    append_startup_trace("security_lock " + summary)
+    try:
+        import ctypes
+
+        ctypes.windll.user32.MessageBoxW(0, message, "Aether Sicherheits-Lock", 0x10)
+    except Exception:
+        pass
+
+
+def bootstrap() -> None:
+    """Initialisiert alle Kernmodule in der vorgegebenen Reihenfolge und startet die GUI."""
+    os.chdir(PROJECT_ROOT)
+    append_startup_trace("bootstrap_begin")
+
+    from modules.registry import AetherRegistry
+    from modules.security_engine import SecurityManager
+
+    registry = AetherRegistry(str(PROJECT_ROOT / "data" / "registry.db"))
+    append_startup_trace("registry_ready")
+    security_manager = SecurityManager(registry)
+    append_startup_trace("login_prompt_open")
+    security_session = security_manager.prompt_login()
+    append_startup_trace(f"login_ok user={security_session.username}")
+
+    from modules.analysis_engine import AnalysisEngine
+    from modules.audio_engine import AudioEngine
+    from modules.blockchain_interface import AetherChain
+    from modules.gui import VeiraGUI
+    from modules.log_system import LogSystem
+    from modules.security_monitor import AetherSecurityMonitor
+    from modules.session_engine import SessionContext
+    from modules.spacetime_renderer import SpacetimeRenderer
+    from modules.ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
+
+    session_context = SessionContext(security_session=security_session)
+    security_monitor = AetherSecurityMonitor(PROJECT_ROOT, registry)
+    security_snapshot = security_monitor.run_integrity_check(
+        session_context=session_context,
+        mode=str(getattr(session_context, "security_mode", "PROD")),
+    )
+    if bool(dict(getattr(security_snapshot, "policy", {}) or {}).get("fail_closed_lock", False)):
+        report_security_lock(str(getattr(security_snapshot, "summary", "Security lock active.")))
+        return
+    log_system = LogSystem(str(PROJECT_ROOT / "data" / "logs"), str(PROJECT_ROOT / "data" / "screenshots"))
+    renderer = SpacetimeRenderer()
+    audio_engine = AudioEngine()
+    chain = AetherChain(
+        endpoint="local://aether-fingerprint-chain",
+        ledger_path=PROJECT_ROOT / "data" / "fingerprint_chain.jsonl",
+        registry=registry,
+    )
+    analysis_engine = AnalysisEngine(session_context=session_context, chain=chain, registry=registry)
+    ae_vault = AEAlgorithmVault(export_dir=PROJECT_ROOT / "data" / "aelab_vault")
+    ae_state = registry.load_ae_vault_state(user_id=int(getattr(session_context, "user_id", 0) or 0))
+    if ae_state.get("main") or ae_state.get("sub"):
+        ae_vault.load_serialized_state(ae_state, clear_existing=True)
+    ae_interpreter = AetherAnchorInterpreter(ae_vault)
+    gui = VeiraGUI(
+        session_context=session_context,
+        registry=registry,
+        log_system=log_system,
+        renderer=renderer,
+        audio_engine=audio_engine,
+        analysis_engine=analysis_engine,
+        security_monitor=security_monitor,
+        ae_vault=ae_vault,
+        ae_interpreter=ae_interpreter,
+    )
+    append_startup_trace("gui_run_begin")
+    gui.run()
+
+
+def main() -> None:
+    """Fuehrt Vorpruefungen aus und startet anschliessend Aether."""
+    try:
+        append_startup_trace("main_begin")
+        mp.freeze_support()
+        ensure_supported_python()
+        check_python_version()
+        if not getattr(sys, "frozen", False):
+            missing = find_missing_dependencies()
+            if missing:
+                names = ", ".join(missing)
+                print(f"Fehlende Abhaengigkeiten erkannt: {names}")
+                print("Installation startet automatisch ...")
+                install_requirements()
+                print("Installation erfolgreich. Anwendung wird neu gestartet ...")
+                restart_application()
+                return
+        append_startup_trace("main_bootstrap")
+        bootstrap()
+    except KeyboardInterrupt:
+        print("\nProgramm beendet. Auf Wiedersehen.")
+    except subprocess.CalledProcessError:
+        print("Fehler: Abhaengigkeiten konnten nicht automatisch installiert werden.")
+    except Exception as exc:
+        report_startup_error(exc)
+        print(f"Fehler: {exc}")
+        print("Die Anwendung konnte nicht gestartet werden. Bitte Konfiguration und Berechtigungen pruefen.")
+
+
+if __name__ == "__main__":
+    main()
