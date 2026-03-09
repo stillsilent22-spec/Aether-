@@ -2617,7 +2617,7 @@ class AetherRegistry:
     ) -> int:
         """Haengt einen GP-Regelstand append-only an."""
         payload_json = json.dumps(payload, ensure_ascii=False)
-        rule_hash = hashlib.sha256(payload_json.encode("utf-8")).hexdigest()
+        rule_hash = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
         cursor = self.connection.execute(
             """
             INSERT INTO gp_rule_snapshots (

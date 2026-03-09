@@ -142,6 +142,15 @@ class AetherSecurityMonitor:
         key = hashlib.sha256(f"{key_material}|AETHER_SECURITY".encode("utf-8")).digest()
         return hmac.new(key, canonical_json(payload).encode("utf-8"), hashlib.sha256).hexdigest()
 
+    @staticmethod
+    def _gp_rule_hash_candidates(payload: dict[str, Any]) -> set[str]:
+        """Akzeptiert kanonische und fruehere legacy-Hashes fuer bestehende GP-Snapshots."""
+        legacy_json = json.dumps(payload, ensure_ascii=False)
+        return {
+            hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest(),
+            hashlib.sha256(legacy_json.encode("utf-8")).hexdigest(),
+        }
+
     def _finding(
         self,
         event_type: str,
@@ -330,25 +339,25 @@ class AetherSecurityMonitor:
         findings: list[dict[str, Any]] = []
         snapshots = self.registry.get_gp_rule_snapshots(limit=64, scope="security", include_honeypots=True)
         existing_honeypots = [item for item in snapshots if bool(item.get("is_honeypot", False))]
-        existing_hashes = {str(item.get("rule_hash", "")) for item in existing_honeypots}
-        expected_hashes = {
-            hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-            for payload in self.HONEYPOT_RULES
+        existing_payloads = {
+            canonical_json(dict(item.get("payload_json", {})))
+            for item in existing_honeypots
+            if isinstance(item.get("payload_json", {}), dict)
         }
-        missing_hashes = expected_hashes - existing_hashes
-        if missing_hashes and existing_node:
+        expected_payloads = {canonical_json(payload) for payload in self.HONEYPOT_RULES}
+        missing_payloads = expected_payloads - existing_payloads
+        if missing_payloads and existing_node:
             findings.append(
                 self._finding(
                     "HONEYPOT_TRIGGERED",
                     "critical",
                     "Mindestens ein GP-Honeypot fehlt oder wurde ueberschrieben.",
-                    missing=len(missing_hashes),
+                    missing=len(missing_payloads),
                 )
             )
         for snapshot in existing_honeypots:
             payload = dict(snapshot.get("payload_json", {}))
-            expected_hash = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-            if expected_hash != str(snapshot.get("rule_hash", "")):
+            if str(snapshot.get("rule_hash", "")) not in self._gp_rule_hash_candidates(payload):
                 findings.append(
                     self._finding(
                         "HONEYPOT_TRIGGERED",
@@ -368,8 +377,8 @@ class AetherSecurityMonitor:
                     )
                 )
         for payload in self.HONEYPOT_RULES:
-            payload_hash = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-            if payload_hash in existing_hashes:
+            payload_key = canonical_json(payload)
+            if payload_key in existing_payloads:
                 continue
             self.registry.save_gp_rule_snapshot(
                 session_id="SYSTEM",
@@ -399,8 +408,7 @@ class AetherSecurityMonitor:
                     )
                 )
                 continue
-            payload_hash = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-            if payload_hash != str(snapshot.get("rule_hash", "")):
+            if str(snapshot.get("rule_hash", "")) not in self._gp_rule_hash_candidates(payload):
                 findings.append(
                     self._finding(
                         "GP_RULE_TAMPERED",

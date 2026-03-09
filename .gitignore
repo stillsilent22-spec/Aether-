@@ -1,5 +1,6 @@
 build/
 build_repack/
+build_repack2/
 dist/
 __pycache__/
 *.pyc
