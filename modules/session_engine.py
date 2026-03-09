@@ -300,6 +300,46 @@ class SessionContext:
             master_key + b"|" + str(seed_value).encode("ascii") + b"|dual-mode-storage"
         ).digest()
 
+    def file_delta_key_bytes(
+        self,
+        file_hash: str,
+        record_id: int,
+        session_id: str | None = None,
+    ) -> bytes:
+        """Leitet einen eindeutigen lokalen Datei-Key fuer Delta-/Raw-Schutz ab."""
+        key_hex = str(self.raw_storage_key_hex).strip()
+        if len(key_hex) != 64:
+            return b""
+        try:
+            master_key = bytes.fromhex(key_hex)
+        except ValueError:
+            return b""
+        scoped_session_id = str(session_id or self.session_id or "")
+        scoped_file_hash = str(file_hash or "")
+        scoped_record_id = int(record_id)
+        return hashlib.sha256(
+            master_key
+            + b"|"
+            + scoped_session_id.encode("utf-8", errors="replace")
+            + b"|"
+            + scoped_file_hash.encode("ascii", errors="replace")
+            + b"|"
+            + str(scoped_record_id).encode("ascii")
+            + b"|session-file-delta-key"
+        ).digest()
+
+    def file_delta_key_fingerprint(
+        self,
+        file_hash: str,
+        record_id: int,
+        session_id: str | None = None,
+    ) -> str:
+        """Liefert nur den nicht-sensitiven Fingerprint eines lokalen Datei-Keys."""
+        key = self.file_delta_key_bytes(file_hash=file_hash, record_id=record_id, session_id=session_id)
+        if len(key) != 32:
+            return ""
+        return hashlib.sha256(key).hexdigest()[:24].upper()
+
     @staticmethod
     def noise_from_seed(seed: int, length: int) -> bytes:
         """

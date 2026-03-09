@@ -169,6 +169,7 @@ class VeiraGUI:
         self.header_vault_var = tk.StringVar(value="VAULT 0")
         self.header_chain_var = tk.StringVar(value="F-CHAIN 0")
         self.header_anchor_var = tk.StringVar(value="ANCHOR Q0")
+        self.ae_vault_status_var = tk.StringVar(value="AELAB Vault: --")
         self.header_alarm_var = tk.StringVar(value="ALARMS 0")
         self.header_named_var = tk.StringVar(value="NAMED 0 / TOTAL 0")
         self.header_ontology_var = tk.StringVar(value="")
@@ -220,6 +221,9 @@ class VeiraGUI:
         self.chat_reply_var = tk.StringVar(value="Shanway: --")
         self.chat_semantic_var = tk.StringVar(value="Semantik: -- | Schoenheit: --")
         self.chat_channel_note_var = tk.StringVar(value="Kanal: global | oeffentlich")
+        self.chat_analysis_mode_var = tk.StringVar(value="shared")
+        self.chat_delta_share_var = tk.BooleanVar(value=False)
+        self.chat_attachment_var = tk.StringVar(value="Analyse: lokal | kein aktiver Dateibeitrag")
         self.shanway_corpus_var = tk.StringVar(value="Corpus: 0 de | 0 en")
         self.shanway_enabled_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_enabled", False))
@@ -261,6 +265,7 @@ class VeiraGUI:
         self.current_figure = None
         self.current_fingerprint: AetherFingerprint | None = None
         self.ae_anchor_text: tk.Text | None = None
+        self.ae_vault_text: tk.Text | None = None
         self.ae_stop_button: tk.Button | None = None
         self.animation_scene: RenderScene | None = None
         self.animation_job: str | None = None
@@ -467,6 +472,51 @@ class VeiraGUI:
                 self.ae_anchor_text.tag_add("constant", start, end)
         self.ae_anchor_text.configure(state="disabled")
 
+    def _refresh_ae_vault_panel(self) -> None:
+        """Macht den aktuellen AELAB Main-/Sub-Vault fuer Menschen sichtbar."""
+        if self.ae_vault_text is None:
+            return
+        state = dict(self.ae_vault.export_state() or {})
+        main_entries = list(state.get("main", []) or [])
+        sub_entries = list(state.get("sub", []) or [])
+        dna_files = sorted(self.ae_vault.export_dir.glob("*.dna"))
+        self.ae_vault_status_var.set(
+            f"AELAB Vault | Main {len(main_entries)} | Sub {len(sub_entries)} | DNA {len(dna_files)}"
+        )
+        self.ae_vault_text.configure(state="normal")
+        self.ae_vault_text.delete("1.0", tk.END)
+        if not main_entries and not sub_entries:
+            self.ae_vault_text.insert("1.0", "Kein persistenter AE-Vault geladen.\n")
+            self.ae_vault_text.configure(state="disabled")
+            return
+        self.ae_vault_text.insert(tk.END, "MAIN\n")
+        for entry in main_entries[:8]:
+            self.ae_vault_text.insert(
+                tk.END,
+                (
+                    f"{str(entry.get('origin', 'runtime'))} | "
+                    f"fit {float(entry.get('fitness', 0.0) or 0.0):.2f} | "
+                    f"{str(entry.get('source_kind', 'runtime'))} | "
+                    f"stable {1 if bool(entry.get('stable', False)) else 0} | "
+                    f"repr {1 if bool(entry.get('reproducible', False)) else 0}\n"
+                ),
+            )
+        self.ae_vault_text.insert(tk.END, "\nSUB\n")
+        for entry in sub_entries[:12]:
+            self.ae_vault_text.insert(
+                tk.END,
+                (
+                    f"{str(entry.get('origin', 'runtime'))} | "
+                    f"fit {float(entry.get('fitness', 0.0) or 0.0):.2f} | "
+                    f"{str(entry.get('source_kind', 'runtime'))}\n"
+                ),
+            )
+        if dna_files:
+            self.ae_vault_text.insert(tk.END, "\nDNA\n")
+            for file_path in dna_files[:12]:
+                self.ae_vault_text.insert(tk.END, f"{file_path.name}\n")
+        self.ae_vault_text.configure(state="disabled")
+
     def _set_ae_stop_button_state(self, button_text: str, enabled: bool) -> None:
         """Setzt den sichtbaren Zustand des AE-Stop-Buttons robust."""
         self.ae_stop_button_var.set(str(button_text))
@@ -577,7 +627,9 @@ class VeiraGUI:
                 ae_state=self.ae_vault.export_state(),
             )
         except Exception:
+            self._refresh_ae_vault_panel()
             return
+        self._refresh_ae_vault_panel()
 
     def _attest_fingerprint_with_anchors(self, fingerprint: AetherFingerprint, record_id: int | None = None) -> None:
         """Attestiert den Fingerprint erst nach AE-Anker-Anreicherung lokal auf der Fingerprint-Chain."""
@@ -926,6 +978,11 @@ class VeiraGUI:
         self.ae_anchor_text = tk.Text(anchor_card, height=7, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 8))
         self.ae_anchor_text.pack(fill="x", padx=10, pady=(0, 10))
         self.ae_anchor_text.configure(state="disabled")
+        tk.Label(anchor_card, textvariable=self.ae_vault_status_var, bg="#0D1930", fg="#9FD6FF", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        self.ae_vault_text = tk.Text(anchor_card, height=8, bg="#07111F", fg="#C7D7FF", relief="flat", wrap="word", font=("Consolas", 8))
+        self.ae_vault_text.pack(fill="x", padx=10, pady=(0, 10))
+        self.ae_vault_text.configure(state="disabled")
+        self._refresh_ae_vault_panel()
 
         body = tk.Frame(self.right_frame, bg="#111A4A")
         body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
@@ -1173,6 +1230,7 @@ class VeiraGUI:
         ttk.Button(chat_action_row, text="Mitglied+", command=self._chat_add_group_member).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Mitglied-", command=self._chat_remove_group_member).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Shanway", command=self._chat_toggle_group_shanway).pack(side="left", padx=(0, 4))
+        ttk.Button(chat_action_row, text="Modus", command=self._chat_toggle_analysis_mode).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Verlassen", command=self._chat_leave_group).pack(side="left")
         chat_mode_row = tk.Frame(chat_header, bg="#081120")
         chat_mode_row.pack(fill="x", padx=8, pady=(0, 4))
@@ -1189,6 +1247,11 @@ class VeiraGUI:
             command=self._on_shanway_browser_toggle,
             state="disabled",
         ).pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(
+            chat_mode_row,
+            text="Delta-Anker freigeben",
+            variable=self.chat_delta_share_var,
+        ).pack(side="left", padx=(0, 8))
         tk.Label(
             chat_mode_row,
             textvariable=self.shanway_sensitive_var,
@@ -1196,6 +1259,15 @@ class VeiraGUI:
             fg="#F2C14E",
             font=("Segoe UI", 9),
         ).pack(side="left")
+        tk.Label(
+            chat_header,
+            textvariable=self.chat_attachment_var,
+            bg="#081120",
+            fg="#9CB0CC",
+            wraplength=340,
+            justify="left",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=8, pady=(0, 4))
         chat_sync_row = tk.Frame(chat_header, bg="#081120")
         chat_sync_row.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Entry(chat_sync_row, textvariable=self.chat_sync_url_var, width=26).pack(side="left", padx=(0, 4))
@@ -1861,22 +1933,46 @@ class VeiraGUI:
         if not descriptor:
             return "Kanal: nicht verfuegbar"
         kind = str(descriptor.get("kind", "public"))
+        mode = str(descriptor.get("analysis_mode", self.chat_analysis_mode_var.get() or "shared") or "shared")
         if kind == "public":
-            return "Kanal: global | oeffentlich | Shanway antwortet direkt"
+            return f"Kanal: global | oeffentlich | Modus {mode} | Shanway antwortet direkt"
         if kind == "private_shanway":
-            return "Kanal: privat | lokal verschluesselt | nur du und Shanway"
+            return f"Kanal: privat | lokal verschluesselt | Modus {mode} | nur du und Shanway"
         if kind == "private":
             return (
                 f"Kanal: direkt mit {descriptor.get('recipient_username', '')} | "
-                "lokal verschluesselt | ohne Gruppen-Shanway"
+                f"lokal verschluesselt | Modus {mode} | ohne Gruppen-Shanway"
             )
         if kind == "group":
             shanway_text = "an" if bool(descriptor.get("shanway_enabled", False)) else "aus"
             return (
                 f"Gruppe: {descriptor.get('title', '')} | lokal verschluesselt | "
-                f"Shanway {shanway_text} | Rolle {descriptor.get('current_role', '')}"
+                f"Shanway {shanway_text} | Modus {mode} | Rolle {descriptor.get('current_role', '')}"
             )
         return "Kanal: lokal"
+
+    def _chat_active_analysis_mode(self, descriptor: dict[str, object] | None = None) -> str:
+        """Liefert den aktiven shared/individual-Modus fuer den aktuellen Kanal."""
+        active = descriptor if descriptor is not None else self._chat_current_descriptor()
+        if active is None:
+            return str(self.chat_analysis_mode_var.get() or "shared")
+        return str(active.get("analysis_mode", self.chat_analysis_mode_var.get() or "shared") or "shared")
+
+    def _sync_chat_analysis_state(self) -> None:
+        """Aktualisiert die sichtbare Analyse-Zeile fuer den aktuellen Kanal."""
+        descriptor = self._chat_current_descriptor()
+        mode = self._chat_active_analysis_mode(descriptor)
+        self.chat_analysis_mode_var.set(mode)
+        active = self.current_fingerprint
+        if active is None:
+            self.chat_attachment_var.set(f"Analyse: lokal | Modus {mode} | kein aktiver Dateibeitrag")
+            return
+        source_type = str(getattr(active, "source_type", "memory") or "memory")
+        source_label = Path(str(getattr(active, "source_label", "") or "aktueller_datensatz")).name
+        self.chat_attachment_var.set(
+            f"Analyse: {source_type} | Modus {mode} | Quelle {source_label} | "
+            f"Delta {float(getattr(active, 'delta_ratio', 0.0) or 0.0):.3f}"
+        )
 
     def _chat_current_descriptor(self) -> dict[str, object] | None:
         """Liefert den aktuell ausgewaehlten Chat-Kanal."""
@@ -1936,10 +2032,12 @@ class VeiraGUI:
         else:
             self.chat_channel_var.set("")
             self.chat_channel_note_var.set("Kanal: nicht verfuegbar")
+        self._sync_chat_analysis_state()
 
     def _on_chat_channel_changed(self, _event=None) -> None:
         """Reagiert auf sichtbare Kanalwechsel im Chat-Panel."""
         self.chat_channel_note_var.set(self._chat_note_for_descriptor(self._chat_current_descriptor()))
+        self._sync_chat_analysis_state()
         self._refresh_chat_view()
 
     def _chat_open_private_dialog(self) -> None:
@@ -1982,6 +2080,7 @@ class VeiraGUI:
                 "encrypted": True,
                 "shanway_enabled": False,
                 "recipient_username": normalized,
+                "analysis_mode": "individual",
             },
         )
         self._refresh_chat_view()
@@ -2085,6 +2184,29 @@ class VeiraGUI:
         self._chat_sync_publish_group_snapshot(str(descriptor.get("group_id", "")))
         self._refresh_chat_channels(selected_channel=str(descriptor.get("channel", "")))
         self._refresh_chat_view()
+
+    def _chat_toggle_analysis_mode(self) -> None:
+        """Schaltet shared/individual fuer Gruppen oder lokal fuer direkte Kanaele um."""
+        descriptor = self._chat_current_descriptor()
+        if descriptor and str(descriptor.get("kind", "")) == "group":
+            try:
+                new_mode = self.registry.toggle_group_analysis_mode(
+                    str(descriptor.get("group_id", "")),
+                    str(getattr(self.session_context, "username", "")),
+                )
+            except Exception as exc:
+                messagebox.showerror("Gruppenmodus", str(exc), parent=self.root)
+                return
+            self._chat_sync_publish_group_snapshot(str(descriptor.get("group_id", "")))
+            self._refresh_chat_channels(selected_channel=str(descriptor.get("channel", "")))
+            self.chat_status_var.set(f"Gruppenmodus: {new_mode}")
+        else:
+            current = str(self.chat_analysis_mode_var.get() or "shared").lower()
+            new_mode = "individual" if current == "shared" else "shared"
+            self.chat_analysis_mode_var.set(new_mode)
+            self.chat_status_var.set(f"Lokaler Chatmodus: {new_mode}")
+        self.chat_channel_note_var.set(self._chat_note_for_descriptor(self._chat_current_descriptor()))
+        self._sync_chat_analysis_state()
 
     def _chat_leave_group(self) -> None:
         """Verlaesst den aktuell gewaehlten Gruppenkanal."""
@@ -2497,10 +2619,91 @@ class VeiraGUI:
                         f"Lernen {payload.get('delta_learning_label', '--')} | "
                         f"{payload.get('integrity_text', '--')}\n",
                     )
+                    analysis_box = dict(payload.get("chat_analysis", {}) or {})
+                    if analysis_box:
+                        self.chat_text.insert(
+                            tk.END,
+                            "  "
+                            f"Analyse {analysis_box.get('analysis_mode', '--')} | "
+                            f"{analysis_box.get('source_type', '--')} | "
+                            f"{analysis_box.get('source_label', '--')} | "
+                            f"Anker {int(analysis_box.get('anchor_count', 0) or 0)} | "
+                            f"Delta {float(analysis_box.get('delta_ratio', 0.0) or 0.0):.3f}\n",
+                        )
+                    delta_share = dict(payload.get("delta_share", {}) or {})
+                    if delta_share:
+                        share_state = "geteilt" if bool(delta_share.get("accepted", False)) else "lokal"
+                        self.chat_text.insert(
+                            tk.END,
+                            "  "
+                            f"Delta-Anker {share_state} | tx {str(delta_share.get('tx_hash', ''))[:18]} | "
+                            f"hash {str(delta_share.get('anchor_hash', ''))[:18]}\n",
+                        )
                 self.chat_text.insert(tk.END, "\n")
         self.chat_text.configure(state="disabled")
         self.chat_text.see(tk.END)
         self._refresh_shanway_view()
+
+    def _chat_analysis_attachment_payload(self, descriptor: dict[str, object] | None) -> dict[str, object]:
+        """Leitet aus dem aktuellen Datensatz eine kleine Chat-Analysebeilage ab."""
+        fingerprint = self.current_fingerprint
+        if fingerprint is None:
+            return {}
+        anchors = list(dict(getattr(fingerprint, "ae_lab_summary", {}) or {}).get("anchors", []) or [])
+        if not anchors:
+            anchors, _, _ = self._fingerprint_anchors_with_interference(fingerprint)
+        preview = []
+        for anchor in list(anchors)[:6]:
+            if not isinstance(anchor, dict):
+                continue
+            preview.append(
+                {
+                    "type": str(anchor.get("type_label", anchor.get("type", "EMERGENT"))),
+                    "constant": str(anchor.get("nearest_constant", "")),
+                    "value": float(anchor.get("value", 0.0) or 0.0),
+                }
+            )
+        return {
+            "analysis_mode": self._chat_active_analysis_mode(descriptor),
+            "source_type": str(getattr(fingerprint, "source_type", "memory") or "memory"),
+            "source_label": Path(str(getattr(fingerprint, "source_label", "") or "aktueller_datensatz")).name,
+            "file_hash": str(getattr(fingerprint, "file_hash", "")),
+            "delta_ratio": float(getattr(fingerprint, "delta_ratio", 0.0) or 0.0),
+            "symmetry_score": float(getattr(fingerprint, "symmetry_score", 0.0) or 0.0),
+            "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+            "anchor_count": int(len(anchors)),
+            "anchor_preview": preview,
+        }
+
+    def _share_current_delta_anchor(self, fingerprint: AetherFingerprint | None, consent: bool = False) -> dict[str, object]:
+        """Teilt freiwillig nur einen aus dem Delta abgeleiteten Anker, niemals das Delta selbst."""
+        if not consent or fingerprint is None:
+            return {}
+        meta_gini = max(0.0, min(1.0, 1.0 - (float(getattr(fingerprint, "symmetry_score", 0.0) or 0.0) / 100.0)))
+        anchor_hash = hashlib.sha256(
+            bytes(getattr(fingerprint, "delta", b"")) + f"{meta_gini:.6f}".encode("utf-8")
+        ).hexdigest()
+        anchors = list(dict(getattr(fingerprint, "ae_lab_summary", {}) or {}).get("anchors", []) or [])
+        if not anchors:
+            anchors, _, _ = self._fingerprint_anchors_with_interference(fingerprint)
+        receipt = self.analysis_engine.chain.submit_fingerprint(
+            {
+                "session_id": str(getattr(fingerprint, "session_id", "")),
+                "file_hash": str(getattr(fingerprint, "file_hash", "")),
+                "source_type": str(getattr(fingerprint, "source_type", "memory") or "memory"),
+                "source_label": Path(str(getattr(fingerprint, "source_label", "") or "shared_delta")).name,
+                "verdict": "SHARED",
+                "integrity_state": "DELTA_CONSENT",
+                "integrity_text": "Freiwillig freigegebener Delta-Anker",
+                "anchors": anchors,
+            }
+        )
+        return {
+            "consent": True,
+            "anchor_hash": anchor_hash,
+            "accepted": bool(isinstance(receipt, dict) and bool(receipt.get("tx_hash"))),
+            "tx_hash": str(receipt.get("tx_hash", "")) if isinstance(receipt, dict) else "",
+        }
 
     def _send_chat_message(self, source: str = "auto") -> None:
         """Analysiert eine lokale Chatnachricht und laesst Shanway deterministisch antworten."""
@@ -2581,6 +2784,8 @@ class VeiraGUI:
             record_id = 0
             full_reply = ""
             shanway_assessment: ShanwayAssessment | None = None
+            shanway_self_assessment: ShanwayAssessment | None = None
+            self_learned_tokens = 0
             detector_dna_path = ""
 
             if should_reply:
@@ -2643,6 +2848,20 @@ class VeiraGUI:
                         )
                         full_reply = f"{consensus_prefix}. {full_reply}"
                     full_reply = f"{full_reply} Gruppeninformation bleibt in dieser Gruppe."
+                shanway_self_assessment = self.shanway_engine.detect_asymmetry(
+                    full_reply,
+                    coherence_score=float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
+                    anchor_details=list(anchors),
+                    browser_mode=False,
+                    active=True,
+                )
+                if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
+                    self_learned_tokens = int(
+                        self.shanway_engine.learn_from_corpus_text(
+                            full_reply,
+                            language_hint=str(shanway_assessment.language or ""),
+                        )
+                    )
 
             payload = {}
             if reply is not None and assistant_response is not None and assistant_context is not None:
@@ -2684,16 +2903,32 @@ class VeiraGUI:
                 if shanway_assessment is not None:
                     payload["shanway_assessment"] = shanway_assessment.to_payload()
                     payload["shanway_detector_dna"] = ""
+                if shanway_self_assessment is not None:
+                    payload["shanway_self_assessment"] = shanway_self_assessment.to_payload()
+                    payload["shanway_self_learned_tokens"] = int(self_learned_tokens)
             elif blocked_sensitive and shanway_assessment is not None:
                 payload = {
                     "shanway_assessment": shanway_assessment.to_payload(),
                     "shanway_blocked": True,
                 }
+            analysis_attachment = self._chat_analysis_attachment_payload(descriptor)
+            if analysis_attachment:
+                payload["chat_analysis"] = analysis_attachment
+            delta_share = self._share_current_delta_anchor(
+                self.current_fingerprint,
+                consent=bool(self.chat_delta_share_var.get()),
+            )
+            if delta_share:
+                payload["delta_share"] = delta_share
             if kind == "group":
                 payload["group_id"] = group_id
                 payload["group_shanway_enabled"] = bool(descriptor.get("shanway_enabled", False))
+                payload["group_analysis_mode"] = self._chat_active_analysis_mode(descriptor)
             if kind.startswith("private"):
                 payload["private_scope"] = True
+                payload["analysis_mode"] = self._chat_active_analysis_mode(descriptor)
+            elif kind == "public":
+                payload["analysis_mode"] = self._chat_active_analysis_mode(descriptor)
 
             message_id = self.registry.save_chat_message(
                 session_id=self.session_context.session_id,
@@ -2731,7 +2966,8 @@ class VeiraGUI:
                     )
                 else:
                     self.chat_status_var.set(
-                        f"Shanway aktiv | Kanal {channel_name} | Intent {assistant_response.intent} | direkter Privatdialog"
+                        f"Shanway aktiv | Kanal {channel_name} | Intent {assistant_response.intent} | "
+                        f"Self-Learn {self_learned_tokens}"
                     )
                 self.loading_var.set("Chatnachricht lokal verarbeitet | kein Einfluss auf Raster oder Browser")
                 self._set_shanway_guard(shanway_assessment.message)
@@ -5667,6 +5903,7 @@ class VeiraGUI:
     def _set_scene_from_fingerprint(self, fingerprint: AetherFingerprint) -> None:
         """Initialisiert eine dynamische Szene aus einem Fingerprint."""
         self.current_fingerprint = fingerprint
+        self._sync_chat_analysis_state()
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
         self._refresh_current_dna_share_status(fingerprint)
         scene = self.renderer.create_dynamic_scene(fingerprint)
@@ -5678,6 +5915,7 @@ class VeiraGUI:
     def _update_scene_fingerprint(self, fingerprint: AetherFingerprint) -> None:
         """Aktualisiert die laufende Szene mit neuen Fingerprint-Daten."""
         self.current_fingerprint = fingerprint
+        self._sync_chat_analysis_state()
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
         self._refresh_current_dna_share_status(fingerprint)
         if self.animation_scene is None or self.current_canvas is None:
@@ -6082,6 +6320,9 @@ class VeiraGUI:
                 "dual_storage_mode": "delta_only",
                 "raw_storage_available": False,
                 "storage_gp": storage_decision.to_dict(),
+                "file_delta_key_scope": "session_file_local",
+                "file_delta_key_fingerprint": "",
+                "delta_share_manual_only": True,
             }
             local_payload.update(text_learning_info)
             record_id = self.registry.save(
@@ -6089,6 +6330,17 @@ class VeiraGUI:
                 self.session_context,
                 payload_update=local_payload,
             )
+            file_delta_key_fingerprint = self.session_context.file_delta_key_fingerprint(
+                file_hash=str(fingerprint.file_hash),
+                record_id=int(record_id),
+                session_id=str(self.session_context.session_id),
+            )
+            local_payload.update(
+                {
+                    "file_delta_key_fingerprint": str(file_delta_key_fingerprint),
+                }
+            )
+            self.registry.update_fingerprint_payload(int(record_id), local_payload)
             if save_raw:
                 try:
                     self.registry.save_encrypted_raw_bytes(
@@ -6102,6 +6354,7 @@ class VeiraGUI:
                             "rationale": str(storage_decision.rationale),
                             "recommended": bool(storage_decision.recommend_store_raw),
                             "validation_recommended": bool(storage_decision.recommend_validation),
+                            "file_delta_key_fingerprint": str(file_delta_key_fingerprint),
                         },
                     )
                     raw_saved = True
@@ -6110,10 +6363,13 @@ class VeiraGUI:
                         {
                             "dual_storage_mode": "delta_plus_encrypted_raw",
                             "raw_storage_available": True,
+                            "file_delta_key_fingerprint": str(file_delta_key_fingerprint),
                         },
                     )
                 except Exception:
                     raw_saved = False
+            setattr(fingerprint, "_file_delta_key_fingerprint", str(file_delta_key_fingerprint))
+            setattr(fingerprint, "_file_delta_key_scope", "session_file_local")
             setattr(fingerprint, "_storage_gp_decision", storage_decision.to_dict())
             setattr(fingerprint, "_raw_storage_available", bool(raw_saved))
             setattr(fingerprint, "_raw_storage_requested", bool(save_raw))

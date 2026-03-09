@@ -316,6 +316,7 @@ Diese Schicht verwaltet:
 - Chain
 - Snapshots
 - Rekonstruktion
+- oeffentliche AELAB-DNA-Exports unter `data/aelab_vault/`
 
 Wesentliche Dateien:
 

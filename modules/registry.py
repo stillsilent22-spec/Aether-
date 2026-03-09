@@ -1207,9 +1207,18 @@ class AetherRegistry:
         payload: dict[str, Any] | None = None,
     ) -> None:
         """Persistiert optionale Rohdaten nur lokal und AES-256-verschluesselt."""
-        key = session_context.raw_storage_key_bytes(int(session_context.seed))
+        key = session_context.file_delta_key_bytes(
+            file_hash=str(file_hash),
+            record_id=int(fingerprint_id),
+            session_id=str(session_context.session_id),
+        )
         if len(key) != 32:
-            raise RuntimeError("Kein gueltiger lokaler AES-256-Session-Key verfuegbar.")
+            raise RuntimeError("Kein gueltiger lokaler AES-256-Datei-Key verfuegbar.")
+        key_fingerprint = session_context.file_delta_key_fingerprint(
+            file_hash=str(file_hash),
+            record_id=int(fingerprint_id),
+            session_id=str(session_context.session_id),
+        )
         aad = (
             f"{int(fingerprint_id)}|{session_context.session_id}|{str(file_hash)}|{str(source_label)}"
         ).encode("utf-8", errors="replace")
@@ -1222,6 +1231,8 @@ class AetherRegistry:
             "included_in_exports": False,
             "raw_size": int(len(raw_bytes)),
             "stored_at": self._now_iso(),
+            "key_scope": "session_file_local",
+            "key_fingerprint": str(key_fingerprint),
         }
         if payload:
             payload_box.update(dict(payload))
@@ -1251,7 +1262,7 @@ class AetherRegistry:
                 str(source_label),
                 str(file_hash),
                 RAW_STORAGE_CIPHER,
-                str(getattr(session_context, "raw_storage_key_fingerprint", "")),
+                str(key_fingerprint),
                 sqlite3.Binary(nonce),
                 sqlite3.Binary(ciphertext),
                 json.dumps(payload_box, ensure_ascii=False),
@@ -2299,7 +2310,11 @@ class AetherRegistry:
         if raw_row is None:
             return reconstructed
 
-        key = session_context.raw_storage_key_bytes(seed)
+        key = session_context.file_delta_key_bytes(
+            file_hash=str(raw_row["file_hash"]),
+            record_id=int(record_id),
+            session_id=str(raw_row["session_id"]),
+        )
         if len(key) != 32:
             return reconstructed
 
@@ -3418,7 +3433,11 @@ class AetherRegistry:
                 int(bool(shanway_enabled)),
                 1,
                 json.dumps(
-                    {"member_count": len(members_map), "scope": "local_encrypted"},
+                    {
+                        "member_count": len(members_map),
+                        "scope": "local_encrypted",
+                        "analysis_mode": "shared",
+                    },
                     ensure_ascii=False,
                 ),
             ),
@@ -3485,6 +3504,11 @@ class AetherRegistry:
             """,
             (str(group_id), SHANWAY_MEMBER_NAME),
         ).fetchone()
+        payload_raw = str(row["payload_json"]).strip()
+        try:
+            group_payload = json.loads(payload_raw) if payload_raw else {}
+        except Exception:
+            group_payload = {}
         return {
             "group_id": str(row["group_id"]),
             "group_name": str(row["group_name"]),
@@ -3496,6 +3520,8 @@ class AetherRegistry:
             "member_count": int(count_row["member_count"]) if count_row is not None else 0,
             "current_role": str(member_row["role"]) if member_row is not None else "",
             "current_active": bool(int(member_row["active"])) if member_row is not None else False,
+            "analysis_mode": str(group_payload.get("analysis_mode", "shared") or "shared"),
+            "payload_json": group_payload,
         }
 
     def get_chat_group_members(self, group_id: str) -> list[dict[str, Any]]:
@@ -3725,6 +3751,28 @@ class AetherRegistry:
         self.connection.commit()
         return True
 
+    def toggle_group_analysis_mode(self, group_id: str, actor_username: str) -> str:
+        """Schaltet den Gruppenmodus zwischen shared und individual um."""
+        if not self._is_group_admin(group_id, actor_username):
+            raise PermissionError("Nur Gruppen-Admins duerfen den Analysemodus umschalten.")
+        group_row = self._group_row(group_id)
+        if group_row is None:
+            raise ValueError("Gruppe nicht gefunden.")
+        payload_raw = str(group_row["payload_json"]).strip()
+        try:
+            payload = json.loads(payload_raw) if payload_raw else {}
+        except Exception:
+            payload = {}
+        current_mode = str(payload.get("analysis_mode", "shared") or "shared").lower()
+        next_mode = "individual" if current_mode == "shared" else "shared"
+        payload["analysis_mode"] = next_mode
+        self.connection.execute(
+            "UPDATE chat_groups SET payload_json = ? WHERE group_id = ?",
+            (json.dumps(payload, ensure_ascii=False), str(group_id)),
+        )
+        self.connection.commit()
+        return next_mode
+
     def get_user_chat_channels(self, user_id: int, username: str) -> list[dict[str, Any]]:
         """Liefert die fuer einen Nutzer sichtbaren Chat-Kanaele."""
         normalized_username = str(username).strip()
@@ -3736,6 +3784,7 @@ class AetherRegistry:
                 "title": "Global",
                 "encrypted": False,
                 "shanway_enabled": True,
+                "analysis_mode": "shared",
             },
             {
                 "kind": "private_shanway",
@@ -3744,6 +3793,7 @@ class AetherRegistry:
                 "title": "Shanway privat",
                 "encrypted": True,
                 "shanway_enabled": True,
+                "analysis_mode": "individual",
             },
         ]
         private_rows = self.connection.execute(
@@ -3780,25 +3830,30 @@ class AetherRegistry:
                     "encrypted": True,
                     "shanway_enabled": False,
                     "recipient_username": partner,
+                    "analysis_mode": "individual",
                 }
             )
 
         group_rows = self.connection.execute(
             """
-            SELECT g.group_id, g.group_name, g.shanway_enabled, g.key_version, m.role,
+            SELECT g.group_id, g.group_name, g.shanway_enabled, g.key_version, g.payload_json, m.role,
                    COUNT(CASE WHEN m2.active = 1 AND m2.username != ? THEN 1 END) AS member_count
             FROM chat_groups AS g
             JOIN chat_group_members AS m
               ON m.group_id = g.group_id AND m.username = ? AND m.active = 1
             LEFT JOIN chat_group_members AS m2
               ON m2.group_id = g.group_id
-            GROUP BY g.group_id, g.group_name, g.shanway_enabled, g.key_version, m.role
+            GROUP BY g.group_id, g.group_name, g.shanway_enabled, g.key_version, g.payload_json, m.role
             ORDER BY g.group_name COLLATE NOCASE ASC
             """,
             (SHANWAY_MEMBER_NAME, normalized_username),
         ).fetchall()
         for row in group_rows:
             member_count = int(row["member_count"]) if row["member_count"] is not None else 0
+            try:
+                group_payload = json.loads(str(row["payload_json"])) if str(row["payload_json"]).strip() else {}
+            except Exception:
+                group_payload = {}
             channels.append(
                 {
                     "kind": "group",
@@ -3811,6 +3866,7 @@ class AetherRegistry:
                     "current_role": str(row["role"]),
                     "member_count": member_count,
                     "key_version": int(row["key_version"]),
+                    "analysis_mode": str(group_payload.get("analysis_mode", "shared") or "shared"),
                 }
             )
         return channels
