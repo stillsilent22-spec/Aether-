@@ -5099,6 +5099,93 @@ class AetherRegistry:
         Path(file_path).write_text(json.dumps(wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
         return wrapper
 
+    def publish_public_anchor_library(
+        self,
+        session_id: str = "",
+        origin_node_id: str = "",
+        user_id: int | None = None,
+        trust_weight: float = 1.0,
+        signature: str = "",
+        limit: int = 96,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        """Veroeffentlicht einen datensparsamen Anchor-Bund in einen gemeinsamen lokalen Library-Ordner."""
+        payload = self.build_dna_share_snapshot(
+            source_label="public_anchor_library",
+            origin_node_id=str(origin_node_id),
+            user_id=user_id,
+            limit=limit,
+        )
+        target_dir = Path(directory) if directory is not None else Path("data") / "public_anchor_library"
+        history_dir = target_dir / "history"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        snapshot_hash = str(payload.get("snapshot_hash", "") or self._collective_snapshot_hash(payload))
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        history_path = history_dir / f"dna_share_{timestamp}_{snapshot_hash[:12]}.json"
+        latest_path = target_dir / "latest.json"
+        index_path = target_dir / "index.json"
+
+        wrapper = self.export_collective_snapshot(
+            file_path=str(history_path),
+            payload=payload,
+            signature=signature,
+            session_id=session_id,
+            trust_weight=trust_weight,
+            merged_count=1,
+            persist_snapshot=True,
+        )
+        latest_path.write_text(json.dumps(wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
+
+        recent_files = sorted(history_dir.glob("dna_share_*.json"), key=lambda item: item.stat().st_mtime, reverse=True)
+        recent_entries: list[dict[str, Any]] = []
+        for path in recent_files[:24]:
+            recent_entries.append(
+                {
+                    "file": str(path.name),
+                    "updated_at": datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(),
+                    "size_bytes": int(path.stat().st_size),
+                }
+            )
+
+        records = list(dict(payload.get("dna_share", {}) or {}).get("records", []) or [])
+        constant_counts: dict[str, int] = {}
+        for record in records:
+            for anchor in list(dict(record).get("anchors", []) or []):
+                if not isinstance(anchor, dict):
+                    continue
+                label = str(anchor.get("nearest_constant", "") or anchor.get("type_label", "") or "EMERGENT").upper()
+                constant_counts[label] = int(constant_counts.get(label, 0)) + 1
+
+        index_payload = {
+            "schema": "aether.public_anchor_library.index.v1",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "latest_snapshot_hash": str(wrapper.get("snapshot_hash", snapshot_hash)),
+            "latest_file": str(latest_path.name),
+            "latest_history_file": str(history_path.name),
+            "record_count": int(len(records)),
+            "fingerprint_count": int(payload.get("fingerprint_count", 0) or 0),
+            "confirmed_lossless_only": True,
+            "raw_files_leave_machine": False,
+            "local_paths_included": False,
+            "origin_node_id": str(origin_node_id),
+            "anchor_constants": constant_counts,
+            "recent_files": recent_entries,
+        }
+        index_path.write_text(json.dumps(index_payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        return {
+            "directory": str(target_dir),
+            "history_file": str(history_path),
+            "latest_file": str(latest_path),
+            "index_file": str(index_path),
+            "snapshot_hash": str(wrapper.get("snapshot_hash", snapshot_hash)),
+            "record_count": int(len(records)),
+            "fingerprint_count": int(payload.get("fingerprint_count", 0) or 0),
+            "payload": dict(payload),
+            "wrapper": dict(wrapper),
+        }
+
     def import_collective_snapshot(
         self,
         file_path: str,

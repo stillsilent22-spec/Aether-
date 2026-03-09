@@ -1361,6 +1361,7 @@ class VeiraGUI:
         dna_share_actions.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Button(dna_share_actions, text="DNA Share export", command=self._export_dna_share_dialog).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ttk.Button(dna_share_actions, text="DNA Share import", command=self._import_dna_share_dialog).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ttk.Button(chain_tab, text="Anchor Library aktualisieren", command=self._publish_public_anchor_library_dialog).pack(fill="x", padx=8, pady=(0, 8))
         tk.Label(
             chain_tab,
             text="DNA-Share teilt nur CONFIRMED lossless DNA. Keine Rohdateien, keine lokalen Pfade, nur extrahierte Strukturmuster.",
@@ -3891,6 +3892,43 @@ class VeiraGUI:
         self._apply_collective_feedback()
         self._refresh_augment_views()
         self.loading_var.set(f"DNA-Share importiert: {str(imported.get('snapshot_hash', ''))[:12]}")
+
+    def _publish_public_anchor_library_dialog(self) -> None:
+        """Aktualisiert den lokalen, teilbaren Public-Anchor-Library-Ordner."""
+        try:
+            marker_payload = {
+                "source_label": "public_anchor_library",
+                "origin_node_id": str(getattr(self.session_context, "node_id", "")),
+                "session_id": str(self.session_context.session_id),
+            }
+            signature = self.security_monitor.sign_payload(
+                marker_payload,
+                str(getattr(self.session_context, "baseline_node_id", "") or getattr(self.session_context, "node_id", "")),
+            )
+            published = self.registry.publish_public_anchor_library(
+                session_id=str(self.session_context.session_id),
+                origin_node_id=str(getattr(self.session_context, "node_id", "")),
+                user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                trust_weight=self._collective_trust_weight(),
+                signature=signature,
+            )
+        except Exception as exc:
+            messagebox.showerror("Anchor Library fehlgeschlagen", str(exc))
+            return
+        self._apply_collective_feedback()
+        self._append_export_audit(
+            "public_anchor_library",
+            str(published.get("latest_file", "")),
+            {
+                "snapshot_hash": str(published.get("snapshot_hash", "")),
+                "record_count": int(published.get("record_count", 0) or 0),
+                "fingerprint_count": int(published.get("fingerprint_count", 0) or 0),
+                "directory": str(published.get("directory", "")),
+            },
+        )
+        self.loading_var.set(
+            f"Anchor Library aktualisiert: {Path(str(published.get('latest_file', 'latest.json'))).name}"
+        )
 
     def _merge_collective_snapshots_dialog(self) -> None:
         """Erzeugt einen lokalen Merge-Snapshot aus allen bekannten Paketen."""

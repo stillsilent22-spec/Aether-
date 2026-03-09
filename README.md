@@ -36,6 +36,7 @@ Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobacht
 - Anker, Frequenzmuster, Symmetrie, Entropie, Kohaerenz und Resonanz messen
 - Bayes-, Graph- und Beobachterzustaende gemeinsam in einen Fingerprint ueberfuehren
 - Vault-, Chain- und Snapshot-Pfade lokal und kontrolliert fuehren
+- bestaetigte Anker als DNA-Share- und Public-Anchor-Library-Buendel ohne Rohdaten bereitstellen
 - mit Shanway eine lokale schriftliche Assistenz ueber die berechneten Zustaende bereitstellen
 
 Das Programm ist damit weder nur Visualisierung noch nur Analyse noch nur Assistenz. Es verbindet diese Ebenen in einem gemeinsamen lokalen Regelraum.
@@ -53,6 +54,7 @@ Aether geht einen anderen Weg:
 
 - es behandelt Daten primaer als Struktur und Zustandsraum, nicht nur als Dateiformat
 - es koppelt Analyse, Beobachtung, Rekonstruktion, Governance und Darstellung direkt
+- es trennt lokale Rohdaten strikt von teilbaren Anchor-/Strukturbuendeln fuer gemeinsame Bibliotheken und Chain-Attestierung
 - es fuehrt keine freie Modellmagie ein, sondern bindet kritische Pfade an Validatoren, Fail-Closed-Regeln und lokale Auditierbarkeit
 - es versucht nicht, Bedeutung sofort semantisch zu labeln, sondern leitet zunaechst Struktur, Anker, Symmetriebruch und Restunsicherheit ab
 - Shanway ist keine vom System getrennte Sprach-KI, sondern eine lokale Schriftoberflaeche ueber denselben berechneten Zustaenden
