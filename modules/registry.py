@@ -4242,6 +4242,42 @@ class AetherRegistry:
         classification = str(assessment.get("classification", "")).strip().lower()
         return classification not in {"toxic", "blocked"}
 
+    @staticmethod
+    def _dna_share_block_reason(payload: dict[str, Any]) -> str:
+        """Leitet einen klaren Blockgrund fuer DNA-Share ab."""
+        source_type = str(payload.get("source_type", "") or "").strip().lower()
+        confirmed_lossless = bool(payload.get("confirmed_lossless", False))
+        reconstruction_verified = bool(payload.get("reconstruction_verified", False))
+        assessment = payload.get("shanway_assessment", {})
+        if not confirmed_lossless:
+            if source_type and source_type != "file":
+                return "source_not_lossless"
+            if not reconstruction_verified:
+                return "reconstruction_failed"
+            return "not_confirmed"
+        if isinstance(assessment, dict):
+            if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
+                return "shanway_sensitive"
+            classification = str(assessment.get("classification", "")).strip().lower()
+            if classification in {"toxic", "blocked"}:
+                return "shanway_toxic"
+        return ""
+
+    @staticmethod
+    def _dna_share_reason_text(reason_code: str) -> str:
+        """Liefert erklaerbaren Text fuer DNA-Share-Gates."""
+        mapping = {
+            "eligible": "freigegeben",
+            "no_vault_entries": "noch keine analysierten Vault-Eintraege",
+            "source_not_lossless": "nur Datei-Drops koennen derzeit CONFIRMED lossless werden",
+            "reconstruction_failed": "Rekonstruktion wurde noch nicht bestaetigt",
+            "not_confirmed": "Datensatz ist noch nicht als CONFIRMED lossless markiert",
+            "not_chained": "Datensatz ist lokal vorhanden, aber noch nicht ueber die Chain bestaetigt",
+            "shanway_sensitive": "Shanway-/Ethikfilter blockiert sensible oder blacklisted Inhalte",
+            "shanway_toxic": "Shanway-/Ethikfilter blockiert toxische Inhalte",
+        }
+        return mapping.get(str(reason_code), "unbekannter Filtergrund")
+
     def _load_vault_entries_by_ids(
         self,
         entry_ids: list[int],
@@ -4358,13 +4394,99 @@ class AetherRegistry:
             payload["reconstruction_verified"] = bool(
                 payload.get("reconstruction_verified", False) or chain_payload.get("reconstruction_verified", False)
             )
-            if not bool(payload.get("confirmed_lossless", False)):
-                continue
-            if not self._shanway_allows_dna_share(payload):
+            if self._dna_share_block_reason(payload):
                 continue
             entry["payload_json"] = payload
             filtered.append(entry)
         return filtered
+
+    def get_dna_share_gate_summary(self, user_id: int | None = None, limit: int = 96) -> dict[str, Any]:
+        """Erklaert, warum DNA-Share derzeit freigegeben oder blockiert ist."""
+        scoped_user = int(user_id) if user_id is not None and int(user_id) > 0 else None
+        entries = self.get_vault_entries(limit=max(1, limit), user_id=scoped_user)
+        if not entries:
+            return {
+                "entry_count": 0,
+                "eligible_count": 0,
+                "confirmed_count": 0,
+                "reconstruction_count": 0,
+                "chained_count": 0,
+                "latest_reason_code": "no_vault_entries",
+                "latest_reason_text": self._dna_share_reason_text("no_vault_entries"),
+                "reason_counts": {"no_vault_entries": 1},
+            }
+
+        if scoped_user is None:
+            rows = self.connection.execute(
+                """
+                SELECT payload_json
+                FROM chain_blocks
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (int(max(48, limit * 6)),),
+            ).fetchall()
+        else:
+            rows = self.connection.execute(
+                """
+                SELECT c.payload_json
+                FROM chain_blocks AS c
+                JOIN app_sessions AS s ON s.session_id = c.session_id
+                WHERE s.user_id = ?
+                ORDER BY c.id DESC
+                LIMIT ?
+                """,
+                (scoped_user, int(max(48, limit * 6))),
+            ).fetchall()
+
+        confirmed_ids: set[int] = set()
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except Exception:
+                continue
+            if not bool(payload.get("confirmed_lossless", False)):
+                continue
+            entry_id = int(payload.get("vault_entry_id", 0) or 0)
+            if entry_id > 0:
+                confirmed_ids.add(entry_id)
+
+        reason_counts: dict[str, int] = {}
+        confirmed_count = 0
+        reconstruction_count = 0
+        chained_count = 0
+        eligible_count = 0
+        latest_reason_code = "no_vault_entries"
+
+        for entry in entries:
+            payload = dict(entry.get("payload_json", {}) or {})
+            entry_id = int(entry.get("id", 0) or 0)
+            if bool(payload.get("confirmed_lossless", False)):
+                confirmed_count += 1
+            if bool(payload.get("reconstruction_verified", False)):
+                reconstruction_count += 1
+            if entry_id > 0 and entry_id in confirmed_ids:
+                chained_count += 1
+            reason_code = self._dna_share_block_reason(payload)
+            if not reason_code and entry_id > 0 and entry_id not in confirmed_ids and bool(payload.get("confirmed_lossless", False)):
+                reason_code = "not_chained"
+            if not reason_code:
+                reason_code = "eligible"
+                eligible_count += 1
+            reason_counts[reason_code] = int(reason_counts.get(reason_code, 0)) + 1
+            if latest_reason_code == "no_vault_entries":
+                latest_reason_code = reason_code
+
+        return {
+            "entry_count": int(len(entries)),
+            "eligible_count": int(eligible_count),
+            "confirmed_count": int(confirmed_count),
+            "reconstruction_count": int(reconstruction_count),
+            "chained_count": int(chained_count),
+            "latest_reason_code": str(latest_reason_code),
+            "latest_reason_text": self._dna_share_reason_text(latest_reason_code),
+            "reason_counts": reason_counts,
+        }
 
     def get_collective_snapshots(self, limit: int = 64) -> list[dict[str, Any]]:
         """Liefert importierte oder lokal exportierte Snapshot-Pakete."""

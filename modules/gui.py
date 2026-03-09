@@ -144,6 +144,7 @@ class VeiraGUI:
         self.anomaly_memory_var = tk.StringVar(value="Immungedaechtnis: --")
         self.collective_status_var = tk.StringVar(value="Collective: 0 Snapshots | keine Priors aktiv")
         self.public_anchor_library_var = tk.StringVar(value="Anchor Library: noch keine freigegebene DNA")
+        self.dna_share_gate_var = tk.StringVar(value="DNA-Share Gate: noch keine analysierten Vault-Eintraege")
         self.theremin_state_var = tk.StringVar(value="Theremin: inaktiv")
         self.wavelength_var = tk.StringVar(value="Dominante Wellenlaenge: -- nm")
         self.sensitivity_var = tk.DoubleVar(value=1.0)
@@ -1387,6 +1388,16 @@ class VeiraGUI:
             textvariable=self.public_anchor_library_var,
             bg="#0D1930",
             fg="#F2C14E",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+            font=("Segoe UI", 9),
+        ).pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(
+            chain_tab,
+            textvariable=self.dna_share_gate_var,
+            bg="#0D1930",
+            fg="#FFB680",
             justify="left",
             anchor="w",
             wraplength=340,
@@ -3766,6 +3777,7 @@ class VeiraGUI:
                 f"Collective: {snapshot_count} Snapshots | Trust {trust_mean:.2f} | Cluster {cluster_count} | Refs {ref_count}"
             )
         self._refresh_public_anchor_library_status()
+        self._refresh_dna_share_gate_status()
         if self.current_fingerprint is not None:
             try:
                 if hasattr(self.current_fingerprint, "_graph_snapshot"):
@@ -3800,6 +3812,38 @@ class VeiraGUI:
             constants_text = "keine Konstanten markiert"
         self.public_anchor_library_var.set(
             f"Anchor Library: {record_count} Records | FP {fingerprint_count} | {latest_hash or '--'} | {constants_text}"
+        )
+        return summary
+
+    def _refresh_dna_share_gate_status(self) -> dict[str, object]:
+        """Erklaert, warum DNA-Share aktuell freigegeben oder blockiert ist."""
+        summary = self.registry.get_dna_share_gate_summary(
+            user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+            limit=96,
+        )
+        eligible_count = int(summary.get("eligible_count", 0) or 0)
+        entry_count = int(summary.get("entry_count", 0) or 0)
+        confirmed_count = int(summary.get("confirmed_count", 0) or 0)
+        reconstruction_count = int(summary.get("reconstruction_count", 0) or 0)
+        chained_count = int(summary.get("chained_count", 0) or 0)
+        latest_reason_text = str(summary.get("latest_reason_text", ""))
+        latest_reason_code = str(summary.get("latest_reason_code", ""))
+        reason_counts = {
+            str(key): int(value)
+            for key, value in dict(summary.get("reason_counts", {}) or {}).items()
+            if str(key) != "eligible" and int(value or 0) > 0
+        }
+        if eligible_count > 0:
+            self.dna_share_gate_var.set(
+                f"DNA-Share Gate: {eligible_count}/{entry_count} freigegeben | confirmed {confirmed_count} | recon {reconstruction_count} | chain {chained_count}"
+            )
+            return summary
+        top_block = ""
+        if reason_counts:
+            top_key, top_value = sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[0]
+            top_block = f" | Hauptblocker: {self.registry._dna_share_reason_text(top_key)} ({top_value})"
+        self.dna_share_gate_var.set(
+            f"DNA-Share Gate: 0/{entry_count} freigegeben | Letzter Grund: {latest_reason_text or latest_reason_code}{top_block}"
         )
         return summary
 
