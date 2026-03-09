@@ -1,16 +1,27 @@
-Aether Source-Available Non-Commercial Notice
+Aether Source-Available Restricted License Notice
 
-Copyright (c) 2026 Kevin Hannemann
+Copyright (c) 2026 The Aether Project
 
-This repository may be viewed, studied, audited, and used for private, academic, research, and non-commercial collaboration purposes.
+This repository may be viewed, downloaded, studied, and audited for private, academic, research, and evaluation purposes.
 
-Commercial use is not permitted without prior written permission of the author. Commercial use includes, but is not limited to:
+Modification, redistribution, sublicensing, derivative publication, and commercial use are not permitted without prior written permission from the copyright holder.
+
+Restricted actions include, but are not limited to:
+
+- publishing modified versions
+- redistributing copies in source or binary form
+- creating public forks for derivative development
+- bundling this work into other products or services
+- offering hosted or managed access for commercial purposes
+- sublicensing or relicensing this work
+
+Commercial use includes, but is not limited to:
 
 - selling copies or derivatives
 - bundling this work into paid products or services
 - offering hosted or managed commercial access
 - sublicensing or relicensing for commercial distribution
 
-This notice is source-available and non-commercial. It is not an OSI-approved Open Source license.
+This notice is source-available and restrictive. It is not an OSI-approved Open Source license.
 
 The software is provided "as is", without warranty of any kind, express or implied, including but not limited to merchantability, fitness for a particular purpose, and noninfringement. In no event shall the author be liable for any claim, damages, or other liability arising from, out of, or in connection with the software or the use or other dealings in the software.

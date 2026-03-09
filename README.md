@@ -1,12 +1,22 @@
 # Aether
 
-Autor und Stand: Kevin Hannemann, 08.03.2026
+Stand: 08.03.2026
 
 ## Lizenzstatus
 
-Dieses Repository ist fuer oeffentliche Einsicht, Audit, Forschung und nicht-kommerzielle Zusammenarbeit gedacht.
+Dieses Repository ist fuer oeffentliche Einsicht, Audit, Forschung und nachvollziehbare technische Pruefung gedacht.
 
-Der aktuelle Lizenzstatus ist source-available und nicht-kommerziell. Er ist bewusst **nicht** als OSI-konforme Open-Source-Lizenz formuliert. Details stehen in [LICENSE](LICENSE) und [SECURITY.md](SECURITY.md).
+Der aktuelle Lizenzstatus ist source-available und restriktiv. Der Code darf gelesen, heruntergeladen und geprueft werden. Er soll aber nicht frei veraendert, weiterverteilt oder kommerziell verwertet werden. Er ist bewusst **nicht** als OSI-konforme Open-Source-Lizenz formuliert. Details stehen in [LICENSE](LICENSE) und [SECURITY.md](SECURITY.md).
+
+## Warum der Code lesbar sein soll
+
+Bei Aether ist die Lesbarkeit des Quellcodes kein Nebenaspekt, sondern Teil des Konzepts:
+
+- die Strukturmetriken, Sicherheitsregeln und Fail-Closed-Pfade muessen auditierbar sein
+- die Behauptung lokaler Rekonstruktion und lokaler Governance ist nur glaubwuerdig, wenn der Implementierungspfad sichtbar ist
+- sicherheitsrelevante Aussagen sollen pruefbar sein und nicht auf Black-Box-Vertrauen beruhen
+
+Die Lesbarkeit ist deshalb gewollt. Die freie Veraenderbarkeit ist es nicht.
 
 ## Abstract
 

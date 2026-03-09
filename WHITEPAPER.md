@@ -1,6 +1,5 @@
 # Aether Whitepaper
 
-Autor: Kevin Hannemann
 Stand: 08.03.2026
 Status: Technisches Whitepaper fuer die source-available Veroeffentlichung
 
