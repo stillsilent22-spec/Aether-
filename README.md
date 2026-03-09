@@ -24,6 +24,40 @@ Aether ist ein lokales System zur strukturellen Analyse, Rekonstruktion, Beobach
 
 Dieses Projekt behauptet nicht, eine neue Physik bewiesen zu haben. Es ist ein technisches Oekosystem, das lokale Metriken, Invarianten, beobachterrelative Unsicherheit, Rekonstruktionspfade, Bayes-Posterioren, Graphstrukturen und Governance-Regeln in einem gemeinsamen Rahmen zusammenfuehrt.
 
+## Was das Programm praktisch kann
+
+Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobachtungssystem mit mehreren gekoppelten Pfaden. Im aktuellen Stand kann es unter anderem:
+
+- Dateien und Byte-Stroeme per Drag-and-Drop strukturell analysieren
+- Delta-Pfade bilden und lokale Rekonstruktionsbedingungen abschaetzen
+- 3D/4D-Raumzeit- und Voxelzustande visualisieren
+- Kamera- und Theremin-Zustaende als dynamische Strukturquellen verarbeiten
+- Anker, Frequenzmuster, Symmetrie, Entropie, Kohaerenz und Resonanz messen
+- Bayes-, Graph- und Beobachterzustaende gemeinsam in einen Fingerprint ueberfuehren
+- Vault-, Chain- und Snapshot-Pfade lokal und kontrolliert fuehren
+- mit Shanway eine lokale schriftliche Assistenz ueber die berechneten Zustaende bereitstellen
+
+Das Programm ist damit weder nur Visualisierung noch nur Analyse noch nur Assistenz. Es verbindet diese Ebenen in einem gemeinsamen lokalen Regelraum.
+
+## Was Aether anders macht als herkoemmliche Software
+
+Herkoemmliche Werkzeuge trennen diese Bereiche meist strikt:
+
+- Dateianalyse-Tools messen Signaturen oder bekannte Muster
+- Visualisierungstools zeigen Daten, ohne sie rekonstruktiv oder governance-seitig einzuordnen
+- Chat- oder KI-Systeme erzeugen Sprache, ohne denselben Datenpfad wie das eigentliche Messsystem zu teilen
+- Sicherheitswerkzeuge bewerten oft nur Bedrohungen, nicht Invarianz, Rekonstruktion und Beobachterlage zugleich
+
+Aether geht einen anderen Weg:
+
+- es behandelt Daten primaer als Struktur und Zustandsraum, nicht nur als Dateiformat
+- es koppelt Analyse, Beobachtung, Rekonstruktion, Governance und Darstellung direkt
+- es fuehrt keine freie Modellmagie ein, sondern bindet kritische Pfade an Validatoren, Fail-Closed-Regeln und lokale Auditierbarkeit
+- es versucht nicht, Bedeutung sofort semantisch zu labeln, sondern leitet zunaechst Struktur, Anker, Symmetriebruch und Restunsicherheit ab
+- Shanway ist keine vom System getrennte Sprach-KI, sondern eine lokale Schriftoberflaeche ueber denselben berechneten Zustaenden
+
+Der praktische Unterschied ist: Aether arbeitet nicht zuerst mit fertigen Kategorien, sondern mit messbarer Struktur, Invarianz und Rekonstruktionsnaehe.
+
 ## Ausgangsfrage
 
 Conways Game of Life war die Ausgangsinspiration dieses Projekts. Die Faszination bestand nicht primaer darin, dass das Spiel "wie Leben aussieht", sondern darin, dass drei lokale Regeln globale Muster hervorbringen, die weder offensichtlich noch direkt im Muster selbst eincodiert erscheinen.
@@ -307,7 +341,6 @@ Aether kann denselben Zustand multimodal darstellen:
 
 - 3D/4D-Raumzeitfeld
 - synchrone Audio-/Visual-Rueckkopplung
-- Browser-Analyse
 - Chat- und Statusoberflaeche
 
 Wesentliche Dateien:
@@ -403,24 +436,24 @@ also:
 
 verdichtetes Strukturwissen teilen, aber nicht standardmaessig die vollstaendige Rekonstruktionsinformation.
 
-## Open Source
+## Quelloffenheit und Auditierbarkeit
 
-Open Source gehoert zu diesem Projekt nicht nur aus praktischen Gruenden, sondern aus einem erkenntnistheoretischen und politischen Grundsatz.
+Die Sichtbarkeit des Codes gehoert zu diesem Projekt nicht nur aus praktischen Gruenden, sondern aus einem erkenntnistheoretischen Grundsatz.
 
-Wenn das Projekt sich mit Regeln, Beobachtung, Struktur, Rekonstruktion und Macht ueber Information beschaeftigt, dann waere ein proprietaeres Black-Box-Modell mit diesem Anspruch unvereinbar.
+Wenn das Projekt sich mit Regeln, Beobachtung, Struktur, Rekonstruktion und Kontrolle ueber Information beschaeftigt, dann waere ein vollstaendig intransparenter Black-Box-Ansatz mit diesem Anspruch unvereinbar.
 
-Open Source bedeutet hier:
+Quelloffenheit bedeutet hier:
 
 - Regeln bleiben sichtbar.
 - Modelle bleiben kritisierbar.
 - Ableitungen bleiben pruefbar.
 - Technik wird nicht nur verteilt, sondern verstehbar.
 
-Die grundlegende Haltung dahinter ist die Demokratisierung von Wissen und Technik.
+Die grundlegende Haltung dahinter ist technische Nachvollziehbarkeit statt bloßem Vertrauensanspruch.
 
-### Warum Open Source fuer Aether genau richtig ist
+### Warum lesbarer Code fuer Aether richtig ist
 
-Open Source ist fuer dieses Programm nicht nur eine Verteilungsform, sondern die technisch richtige Form.
+Lesbarer Code ist fuer dieses Programm nicht nur eine Verteilungsform, sondern die technisch richtige Form.
 
 Der Grund ist einfach:
 
@@ -428,15 +461,15 @@ Der Grund ist einfach:
 - Solche Systeme muessen pruefbar sein, weil ihre Aussagen sonst nur Behauptungen bleiben.
 - Ein lokales Analyse- und Rekonstruktionssystem gewinnt Vertrauen nicht durch Marketing, sondern durch Einsicht in Code, Datenpfade und Grenzen.
 
-Fuer Aether bedeutet Open Source deshalb konkret:
+Fuer Aether bedeutet das konkret:
 
 - Die Ableitung von Metriken wie `H_lambda`, Delta, Resonanz, Bayes und Graph ist nachvollziehbar.
 - Sicherheits- und Sharing-Grenzen bleiben sichtbar und kritisierbar.
-- Lokale Nutzer koennen das System selbst betreiben, aendern und absichern.
-- Forschung, Kritik, Forks und Reproduzierbarkeit bleiben moeglich.
+- Lokale Nutzer koennen das System selbst pruefen und absichern.
+- Forschung, Kritik und Reproduzierbarkeit bleiben moeglich.
 - Das Projekt bleibt ein offener Untersuchungsraum statt einer Black Box mit unbeweisbaren Anspruechen.
 
-Gerade fuer ein Programm, das sich mit Struktur, Beobachtung, Rekonstruktion und Vertrauen beschaeftigt, ist Offenheit kein Zusatz, sondern Teil der methodischen Konsistenz.
+Gerade fuer ein Programm, das sich mit Struktur, Beobachtung, Rekonstruktion und Vertrauen beschaeftigt, ist Einsicht in den Code kein Zusatz, sondern Teil der methodischen Konsistenz.
 
 ## Philosophischer Schlusspunkt
 
