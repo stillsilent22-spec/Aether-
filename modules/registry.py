@@ -4034,7 +4034,7 @@ class AetherRegistry:
             parsed_voxels = [tuple(float(part) for part in item) for item in voxel_points if isinstance(item, (list, tuple))]
         else:
             parsed_voxels = None
-        return AetherFingerprint(
+        fingerprint = AetherFingerprint(
             session_id=str(row["session_id"]),
             file_hash=str(row["file_hash"]),
             file_size=int(row["file_size"]),
@@ -4076,6 +4076,15 @@ class AetherRegistry:
             local_chain_endpoint=str(payload.get("local_chain_endpoint", "")),
             local_chain_attested_at=str(payload.get("local_chain_attested_at", "")),
         )
+        setattr(
+            fingerprint,
+            "dna_share_gate_summary",
+            self.describe_dna_share_payload(
+                payload,
+                chained=bool(payload.get("confirmed_lossless", False)),
+            ),
+        )
+        return fingerprint
 
     def find_file_record(
         self,
@@ -4277,6 +4286,33 @@ class AetherRegistry:
             "shanway_toxic": "Shanway-/Ethikfilter blockiert toxische Inhalte",
         }
         return mapping.get(str(reason_code), "unbekannter Filtergrund")
+
+    def describe_dna_share_payload(
+        self,
+        payload: dict[str, Any] | None,
+        chained: bool | None = None,
+    ) -> dict[str, Any]:
+        """Beschreibt fuer einen einzelnen Payload, ob und warum DNA-Share moeglich ist."""
+        normalized = dict(payload or {})
+        reason_code = self._dna_share_block_reason(normalized)
+        if not reason_code:
+            confirmed_lossless = bool(normalized.get("confirmed_lossless", False))
+            if chained is False and confirmed_lossless:
+                reason_code = "not_chained"
+        eligible = not bool(reason_code)
+        if eligible:
+            reason_code = "eligible"
+        anchor_source = dict(normalized.get("ae_lab", {}) or {})
+        anchor_list = list(normalized.get("ae_anchors", []) or anchor_source.get("anchors", []) or [])
+        return {
+            "eligible": bool(eligible),
+            "reason_code": str(reason_code),
+            "reason_text": self._dna_share_reason_text(reason_code),
+            "confirmed_lossless": bool(normalized.get("confirmed_lossless", False)),
+            "reconstruction_verified": bool(normalized.get("reconstruction_verified", False)),
+            "source_type": str(normalized.get("source_type", "")),
+            "sharable_anchor_count": int(len(anchor_list)),
+        }
 
     def _load_vault_entries_by_ids(
         self,

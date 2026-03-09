@@ -145,6 +145,7 @@ class VeiraGUI:
         self.collective_status_var = tk.StringVar(value="Collective: 0 Snapshots | keine Priors aktiv")
         self.public_anchor_library_var = tk.StringVar(value="Anchor Library: noch keine freigegebene DNA")
         self.dna_share_gate_var = tk.StringVar(value="DNA-Share Gate: noch keine analysierten Vault-Eintraege")
+        self.current_dna_share_var = tk.StringVar(value="Aktueller Datensatz: noch keine Freigabepruefung")
         self.theremin_state_var = tk.StringVar(value="Theremin: inaktiv")
         self.wavelength_var = tk.StringVar(value="Dominante Wellenlaenge: -- nm")
         self.sensitivity_var = tk.DoubleVar(value=1.0)
@@ -974,6 +975,7 @@ class VeiraGUI:
         tk.Label(node_tab, textvariable=self.beauty_state_var, bg="#111A4A", fg="#F6E7A7", font=("Segoe UI", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
         tk.Label(node_tab, textvariable=self.beauty_signature_var, bg="#111A4A", fg="#F6E7A7", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
         tk.Label(node_tab, textvariable=self.observer_gap_var, bg="#111A4A", fg="#9AD7C8", font=("Consolas", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+        tk.Label(node_tab, textvariable=self.current_dna_share_var, bg="#111A4A", fg="#FFB680", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
         tk.Label(node_tab, textvariable=self.graph_region_var, bg="#111A4A", fg="#7DE8A7", font=("Consolas", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
         tk.Label(node_tab, textvariable=self.graph_phase_var, bg="#111A4A", fg="#FFB347", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
         tk.Label(node_tab, textvariable=self.graph_attractor_var, bg="#111A4A", fg="#CFE8FF", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
@@ -3778,6 +3780,7 @@ class VeiraGUI:
             )
         self._refresh_public_anchor_library_status()
         self._refresh_dna_share_gate_status()
+        self._refresh_current_dna_share_status(self.current_fingerprint)
         if self.current_fingerprint is not None:
             try:
                 if hasattr(self.current_fingerprint, "_graph_snapshot"):
@@ -3845,6 +3848,36 @@ class VeiraGUI:
         self.dna_share_gate_var.set(
             f"DNA-Share Gate: 0/{entry_count} freigegeben | Letzter Grund: {latest_reason_text or latest_reason_code}{top_block}"
         )
+        return summary
+
+    def _refresh_current_dna_share_status(self, fingerprint: AetherFingerprint | None = None) -> dict[str, object]:
+        """Zeigt fuer den aktuell sichtbaren Datensatz die konkrete DNA-Share-Freigabe an."""
+        active = fingerprint if fingerprint is not None else self.current_fingerprint
+        if active is None:
+            self.current_dna_share_var.set("Aktueller Datensatz: noch keine Freigabepruefung")
+            return {}
+        summary = dict(getattr(active, "dna_share_gate_summary", {}) or {})
+        if not summary:
+            payload = {
+                "source_type": str(getattr(active, "source_type", "")),
+                "source_label": str(getattr(active, "source_label", "")),
+                "confirmed_lossless": False,
+                "reconstruction_verified": False,
+            }
+            summary = self.registry.describe_dna_share_payload(payload, chained=False)
+        eligible = bool(summary.get("eligible", False))
+        reason_text = str(summary.get("reason_text", ""))
+        reason_code = str(summary.get("reason_code", ""))
+        anchor_count = int(summary.get("sharable_anchor_count", 0) or 0)
+        source_type = str(summary.get("source_type", getattr(active, "source_type", "")) or "").upper() or "--"
+        if eligible:
+            self.current_dna_share_var.set(
+                f"Aktueller Datensatz: DNA-Share freigegeben | {source_type} | Anker {anchor_count}"
+            )
+        else:
+            self.current_dna_share_var.set(
+                f"Aktueller Datensatz: blockiert | {source_type} | {reason_text or reason_code}"
+            )
         return summary
 
     def _export_collective_snapshot_dialog(self) -> None:
@@ -4853,6 +4886,10 @@ class VeiraGUI:
             "reconstruction_posterior": float(reconstruction_posterior),
         }
         payload["vault_benford"] = dict(benford_profile)
+        will_chain = bool(reconstruction_verified and self.session_context.security_allows("allow_chain_append", True))
+        dna_share_gate = self.registry.describe_dna_share_payload(payload, chained=will_chain)
+        payload["dna_share_gate"] = dict(dna_share_gate)
+        setattr(fingerprint, "dna_share_gate_summary", dict(dna_share_gate))
         self._attest_fingerprint_with_anchors(
             fingerprint,
             record_id=int(record_id) if record_id is not None and int(record_id) > 0 else None,
@@ -5631,6 +5668,7 @@ class VeiraGUI:
         """Initialisiert eine dynamische Szene aus einem Fingerprint."""
         self.current_fingerprint = fingerprint
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
+        self._refresh_current_dna_share_status(fingerprint)
         scene = self.renderer.create_dynamic_scene(fingerprint)
         self._set_figure(scene.figure)
         self.animation_scene = scene
@@ -5641,6 +5679,7 @@ class VeiraGUI:
         """Aktualisiert die laufende Szene mit neuen Fingerprint-Daten."""
         self.current_fingerprint = fingerprint
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
+        self._refresh_current_dna_share_status(fingerprint)
         if self.animation_scene is None or self.current_canvas is None:
             self._set_scene_from_fingerprint(fingerprint)
             return
