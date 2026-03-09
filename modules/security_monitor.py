@@ -721,6 +721,57 @@ class AetherSecurityMonitor:
             session_context.apply_security_state(snapshot.to_dict())
         return snapshot
 
+    @staticmethod
+    def can_adopt_current_node(snapshot: SecuritySnapshot | None, session_context: Any | None = None) -> bool:
+        """Erlaubt ein kontrolliertes Re-Baselining nur fuer legitime lokale Updates."""
+        if snapshot is None:
+            return False
+        role = str(getattr(session_context, "user_role", "") or getattr(session_context, "role", "") or "").lower()
+        if role not in {"admin", "owner"}:
+            return False
+        findings = [dict(item) for item in list(getattr(snapshot, "findings", [])) if isinstance(item, dict)]
+        critical = [item for item in findings if str(item.get("severity", "")).lower() == "critical"]
+        warnings = [item for item in findings if str(item.get("severity", "")).lower() == "warning"]
+        return (
+            str(getattr(snapshot, "mode", "PROD")).upper() == "PROD"
+            and bool(dict(getattr(snapshot, "policy", {}) or {}).get("fail_closed_lock", False))
+            and len(critical) == 1
+            and str(critical[0].get("event_type", "")).upper() == "NODE_TAMPER_DETECTED"
+            and not warnings
+        )
+
+    def adopt_current_node_as_baseline(self, session_context: Any | None = None, mode: str = "PROD") -> SecuritySnapshot:
+        """Uebernimmt die aktuelle lokale Installation explizit als neue vertrauenswuerdige Basis."""
+        active_mode = str(mode or "PROD").upper()
+        existing = self.registry.get_node_identity() or {}
+        manifest = self.build_manifest()
+        current_node_id = self.compute_node_id(manifest)
+        self_metrics = self._build_self_metrics()
+        self.registry.save_node_identity(
+            baseline_node_id=current_node_id,
+            current_node_id=current_node_id,
+            mode=active_mode,
+            trust_state="TRUSTED",
+            maze_state="NONE",
+            manifest=manifest,
+            self_metrics=self_metrics,
+            last_reason="Lokales Update wurde als neuer Basiszustand bestaetigt.",
+            tamper_count=int(existing.get("tamper_count", 0) or 0),
+            untrusted_count=int(existing.get("untrusted_count", 0) or 0),
+        )
+        self.registry.save_security_event(
+            user_id=int(getattr(session_context, "user_id", 0) or 0),
+            username=str(getattr(session_context, "username", "")),
+            event_type="NODE_REBASELINED",
+            severity="warning",
+            payload={
+                "node_id": current_node_id,
+                "mode": active_mode,
+                "reason": "local_update_confirmed",
+            },
+        )
+        return self.run_integrity_check(session_context=session_context, mode=active_mode)
+
     def manual_recheck(self, session_context: Any) -> SecuritySnapshot:
         """Fuehrt einen erneuten Integritaetscheck mit aktuellem Session-Kontext aus."""
         return self.run_integrity_check(

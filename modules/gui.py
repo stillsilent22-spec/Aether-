@@ -1368,7 +1368,7 @@ class VeiraGUI:
         ttk.Button(chain_tab, text="Anchor Library aktualisieren", command=self._publish_public_anchor_library_dialog).pack(fill="x", padx=8, pady=(0, 8))
         tk.Label(
             chain_tab,
-            text="DNA-Share teilt nur CONFIRMED lossless DNA. Keine Rohdateien, keine lokalen Pfade, nur extrahierte Strukturmuster.",
+            text="DNA-Share nutzt nur lokal bestaetigte Quellen. Geteilt werden ausschliesslich Anchor- und Strukturmuster, niemals ein echter lossless-Rekonstruktionspfad.",
             bg="#0D1930",
             fg="#7AB6FF",
             justify="left",

@@ -124,6 +124,7 @@ oder aequivalent:
 `D(snapshot, residual) = original`
 
 Ohne vollstaendige Rekonstruktionsinformation ist keine echte lossless-Rekonstruktion moeglich.
+Geteilte Anchor- und Strukturpakete koennen lokale Rekonstruktion verbessern oder priorisieren, ersetzen aber keinen vollstaendigen lokalen Rekonstruktionspfad.
 
 ## Klassische Shannon-Basis
 
@@ -438,6 +439,13 @@ Der sichere Regelfall ist daher:
 also:
 
 verdichtetes Strukturwissen teilen, aber nicht standardmaessig die vollstaendige Rekonstruktionsinformation.
+
+Fuer Aether bedeutet das konkret:
+
+- Rohdaten und Deltas bleiben lokal.
+- Geteilt werden nur Anchor-Daten, Frequenzsignaturen, Strukturmuster und attestierte Zusammenfassungen.
+- `CONFIRMED lossless` ist eine lokale Herkunftseigenschaft eines Datensatzes, keine Eigenschaft des exportierten Share-Bundles.
+- Exakte Rekonstruktion bleibt lokal und kann hoechstens durch geteilte Anchor-Daten besser vorbereitet werden.
 
 ## Quelloffenheit und Auditierbarkeit
 

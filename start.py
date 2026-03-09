@@ -185,6 +185,29 @@ def report_security_lock(summary: str) -> None:
         pass
 
 
+def confirm_local_update_rebaseline(summary: str) -> bool:
+    """Fragt bei rein lokalem Node-Update nach einer kontrollierten Uebernahme als neue Basis."""
+    message = (
+        "Aether Sicherheitspruefung\n\n"
+        "Die aktuelle Installation weicht vom gespeicherten Basiszustand ab.\n"
+        "Wenn du dieses Update selbst ausgefuehrt hast, kannst du den aktuellen Stand als neue lokale Basis uebernehmen.\n\n"
+        f"{summary}\n\n"
+        "Nur fuer eigene, vertrauenswuerdige Updates bestaetigen."
+    )
+    try:
+        import ctypes
+
+        result = ctypes.windll.user32.MessageBoxW(
+            0,
+            message,
+            "Aether Lokales Update bestaetigen",
+            0x00000004 | 0x00000020,
+        )
+        return int(result) == 6
+    except Exception:
+        return False
+
+
 def bootstrap() -> None:
     """Initialisiert alle Kernmodule in der vorgegebenen Reihenfolge und startet die GUI."""
     os.chdir(PROJECT_ROOT)
@@ -217,8 +240,16 @@ def bootstrap() -> None:
         mode=str(getattr(session_context, "security_mode", "PROD")),
     )
     if bool(dict(getattr(security_snapshot, "policy", {}) or {}).get("fail_closed_lock", False)):
-        report_security_lock(str(getattr(security_snapshot, "summary", "Security lock active.")))
-        return
+        if security_monitor.can_adopt_current_node(security_snapshot, session_context) and confirm_local_update_rebaseline(
+            str(getattr(security_snapshot, "summary", "Security lock active."))
+        ):
+            security_snapshot = security_monitor.adopt_current_node_as_baseline(
+                session_context=session_context,
+                mode=str(getattr(session_context, "security_mode", "PROD")),
+            )
+        if bool(dict(getattr(security_snapshot, "policy", {}) or {}).get("fail_closed_lock", False)):
+            report_security_lock(str(getattr(security_snapshot, "summary", "Security lock active.")))
+            return
     log_system = LogSystem(str(PROJECT_ROOT / "data" / "logs"), str(PROJECT_ROOT / "data" / "screenshots"))
     renderer = SpacetimeRenderer()
     audio_engine = AudioEngine()
