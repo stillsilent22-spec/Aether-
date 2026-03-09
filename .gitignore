@@ -25,6 +25,7 @@ data/aelab_vault/*.dna
 data/aelab_vault/legacy_imports/
 data/shanway_corpus/de/*
 data/shanway_corpus/en/*
+gcm-diagnose.log
 
 !data/shanway_corpus/
 !data/shanway_corpus/README.txt

@@ -5216,6 +5216,44 @@ class AetherRegistry:
             signature=signature,
         )
 
+    def get_public_anchor_library_summary(self, directory: str | None = None) -> dict[str, Any]:
+        """Liest den aktuellen Status der lokalen Public-Anchor-Library."""
+        target_dir = Path(directory) if directory is not None else Path("data") / "public_anchor_library"
+        index_path = target_dir / "index.json"
+        latest_path = target_dir / "latest.json"
+        if not index_path.is_file():
+            return {
+                "exists": False,
+                "directory": str(target_dir),
+                "record_count": 0,
+                "fingerprint_count": 0,
+                "latest_snapshot_hash": "",
+                "anchor_constants": {},
+                "updated_at": "",
+                "latest_history_file": "",
+            }
+        try:
+            index_payload = json.loads(index_path.read_text(encoding="utf-8"))
+        except Exception:
+            index_payload = {}
+        latest_wrapper: dict[str, Any] = {}
+        if latest_path.is_file():
+            try:
+                latest_wrapper = json.loads(latest_path.read_text(encoding="utf-8"))
+            except Exception:
+                latest_wrapper = {}
+        return {
+            "exists": True,
+            "directory": str(target_dir),
+            "record_count": int(index_payload.get("record_count", 0) or 0),
+            "fingerprint_count": int(index_payload.get("fingerprint_count", 0) or 0),
+            "latest_snapshot_hash": str(index_payload.get("latest_snapshot_hash", "") or latest_wrapper.get("snapshot_hash", "")),
+            "anchor_constants": dict(index_payload.get("anchor_constants", {}) or {}),
+            "updated_at": str(index_payload.get("updated_at", "")),
+            "latest_history_file": str(index_payload.get("latest_history_file", "")),
+            "latest_file": str(index_payload.get("latest_file", "latest.json")),
+        }
+
     def get_collective_feedback(self, limit: int = 32) -> dict[str, Any]:
         """Liefert das aggregierte Prior-/Pattern-Feedback aus gespeicherten Snapshots."""
         snapshots = self.get_collective_snapshots(limit=limit)

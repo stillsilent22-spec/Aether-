@@ -143,6 +143,7 @@ class VeiraGUI:
         self.delta_learning_var = tk.StringVar(value="Delta-Lernen: --")
         self.anomaly_memory_var = tk.StringVar(value="Immungedaechtnis: --")
         self.collective_status_var = tk.StringVar(value="Collective: 0 Snapshots | keine Priors aktiv")
+        self.public_anchor_library_var = tk.StringVar(value="Anchor Library: noch keine freigegebene DNA")
         self.theremin_state_var = tk.StringVar(value="Theremin: inaktiv")
         self.wavelength_var = tk.StringVar(value="Dominante Wellenlaenge: -- nm")
         self.sensitivity_var = tk.DoubleVar(value=1.0)
@@ -1379,6 +1380,16 @@ class VeiraGUI:
             fg="#9CB0CC",
             justify="left",
             anchor="w",
+            font=("Segoe UI", 9),
+        ).pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(
+            chain_tab,
+            textvariable=self.public_anchor_library_var,
+            bg="#0D1930",
+            fg="#F2C14E",
+            justify="left",
+            anchor="w",
+            wraplength=340,
             font=("Segoe UI", 9),
         ).pack(fill="x", padx=10, pady=(0, 8))
 
@@ -3754,6 +3765,7 @@ class VeiraGUI:
             self.collective_status_var.set(
                 f"Collective: {snapshot_count} Snapshots | Trust {trust_mean:.2f} | Cluster {cluster_count} | Refs {ref_count}"
             )
+        self._refresh_public_anchor_library_status()
         if self.current_fingerprint is not None:
             try:
                 if hasattr(self.current_fingerprint, "_graph_snapshot"):
@@ -3766,6 +3778,30 @@ class VeiraGUI:
             except Exception:
                 pass
         return feedback
+
+    def _refresh_public_anchor_library_status(self) -> dict[str, object]:
+        """Zeigt den aktuellen Stand des teilbaren Anchor-Layers im GUI an."""
+        summary = self.registry.get_public_anchor_library_summary()
+        if not bool(summary.get("exists", False)):
+            self.public_anchor_library_var.set("Anchor Library: noch keine freigegebene DNA")
+            return summary
+        latest_hash = str(summary.get("latest_snapshot_hash", ""))[:12]
+        record_count = int(summary.get("record_count", 0) or 0)
+        fingerprint_count = int(summary.get("fingerprint_count", 0) or 0)
+        constant_counts = {
+            str(key): int(value)
+            for key, value in dict(summary.get("anchor_constants", {}) or {}).items()
+            if int(value or 0) > 0
+        }
+        top_constants = sorted(constant_counts.items(), key=lambda item: (-item[1], item[0]))[:4]
+        if top_constants:
+            constants_text = " | ".join(f"{label} {count}" for label, count in top_constants)
+        else:
+            constants_text = "keine Konstanten markiert"
+        self.public_anchor_library_var.set(
+            f"Anchor Library: {record_count} Records | FP {fingerprint_count} | {latest_hash or '--'} | {constants_text}"
+        )
+        return summary
 
     def _export_collective_snapshot_dialog(self) -> None:
         """Exportiert den aktuellen lokalen Wissensstand als Shared-Snapshot."""
