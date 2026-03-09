@@ -1,6 +1,7 @@
 # Aether
 
 Stand: 08.03.2026
+Autor: Kevin Hannemann
 
 ## Lizenzstatus
 
