@@ -57,6 +57,10 @@ class AetherFingerprint:
     beauty_signature: dict[str, float] | None = None
     ae_lab_summary: dict[str, Any] | None = None
     voxel_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None
+    anchor_coverage_ratio: float = 0.0
+    unresolved_residual_ratio: float = 1.0
+    residual_hash: str = ""
+    coverage_verified: bool = False
     local_chain_tx_hash: str = ""
     local_chain_prev_hash: str = ""
     local_chain_endpoint: str = ""
@@ -86,6 +90,10 @@ class AetherFingerprint:
             "observer_knowledge_ratio": float(self.observer_knowledge_ratio),
             "h_lambda": float(self.h_lambda),
             "observer_state": str(self.observer_state),
+            "anchor_coverage_ratio": float(self.anchor_coverage_ratio),
+            "unresolved_residual_ratio": float(self.unresolved_residual_ratio),
+            "residual_hash": str(self.residual_hash),
+            "coverage_verified": bool(self.coverage_verified),
             "beauty_signature": {
                 str(key): float(value) for key, value in dict(self.beauty_signature or {}).items()
             },

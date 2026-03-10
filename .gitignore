@@ -23,6 +23,8 @@ data/tmpr*/
 data/shanway_lexicon.json
 data/fingerprint_chain*
 data/*rejects*
+data/public_anchor_library/mirror_*.json
+data/public_anchor_library/trust_log.json
 data/shanway_corpus/de/*
 data/shanway_corpus/en/*
 gcm-diagnose.log
@@ -31,7 +33,10 @@ gcm-diagnose.log
 !data/shanway_corpus/README.txt
 !data/shanway_corpus/de/.gitkeep
 !data/shanway_corpus/en/.gitkeep
+!data/trusted_publishers.json
 !data/aelab_vault/
 !data/aelab_vault/*.dna
 !data/aelab_vault/legacy_imports/
 !data/aelab_vault/legacy_imports/.gitkeep
+data/publisher_keys/*.pem
+!data/publisher_keys/.gitkeep

@@ -17,6 +17,10 @@ class ReconstructionResult:
     reconstructed_hash: str
     merkle_root: str
     reconstruction_verified: bool
+    anchor_coverage_ratio: float = 0.0
+    unresolved_residual_ratio: float = 1.0
+    residual_hash: str = ""
+    coverage_verified: bool = False
 
 
 class LosslessReconstructionEngine:
@@ -139,6 +143,53 @@ class LosslessReconstructionEngine:
                 for index in range(0, len(leaves), 2)
             ]
         return leaves[0].hex()
+
+    def anchor_residual_profile(
+        self,
+        raw_bytes: bytes,
+        anchor_block_indices: Sequence[int],
+        block_count: int,
+        block_size: int | None = None,
+        coverage_threshold: float = 0.85,
+    ) -> dict[str, Any]:
+        """Misst, wie viel des Byte-Stroms durch aktuelle Anchor-Bloecke abgedeckt ist."""
+        effective_block_size = max(64, int(block_size or self.chunk_size))
+        normalized_block_count = max(1, int(block_count or 0))
+        covered_indices = {
+            int(index)
+            for index in anchor_block_indices
+            if 0 <= int(index) < normalized_block_count
+        }
+        covered_byte_count = 0
+        residual_chunks = bytearray()
+        for block_index in range(normalized_block_count):
+            start = int(block_index * effective_block_size)
+            if start >= len(raw_bytes):
+                break
+            end = min(len(raw_bytes), start + effective_block_size)
+            chunk = raw_bytes[start:end]
+            if block_index in covered_indices:
+                covered_byte_count += len(chunk)
+            else:
+                residual_chunks.extend(chunk)
+        total_size = max(1, len(raw_bytes))
+        anchor_coverage_ratio = float(max(0.0, min(1.0, covered_byte_count / float(total_size))))
+        unresolved_residual_ratio = float(max(0.0, min(1.0, len(residual_chunks) / float(total_size))))
+        coverage_verified = bool(
+            math.isclose(anchor_coverage_ratio + unresolved_residual_ratio, 1.0, abs_tol=1e-6)
+            and anchor_coverage_ratio >= float(max(0.0, min(1.0, coverage_threshold)))
+        )
+        return {
+            "covered_block_count": int(len(covered_indices)),
+            "block_count": int(normalized_block_count),
+            "covered_byte_count": int(covered_byte_count),
+            "unresolved_byte_count": int(len(residual_chunks)),
+            "anchor_coverage_ratio": anchor_coverage_ratio,
+            "unresolved_residual_ratio": unresolved_residual_ratio,
+            "residual_hash": hashlib.sha256(bytes(residual_chunks)).hexdigest(),
+            "coverage_verified": coverage_verified,
+            "coverage_threshold": float(max(0.0, min(1.0, coverage_threshold))),
+        }
 
     def verify(self, original_hash: str, delta_log: Sequence[dict[str, Any]]) -> ReconstructionResult:
         """Replayed den Delta-Log und prueft den SHA-256-Hash gegen das Original."""

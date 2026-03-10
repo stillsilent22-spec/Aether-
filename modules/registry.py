@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import base64
 import hashlib
 import json
 import math
@@ -13,6 +14,8 @@ import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
+from urllib.error import URLError
+from urllib.request import urlopen
 from uuid import uuid4
 
 import numpy as np
@@ -32,6 +35,19 @@ from .local_secret_store import is_protected_local_secret, protect_local_secret,
 from .session_engine import SessionContext
 from .voxel_grid import VoxelDelta
 
+try:
+    from cryptography.exceptions import InvalidSignature
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
+
+    trusted_publisher_crypto_available = True
+except Exception:  # pragma: no cover - defensive fallback
+    InvalidSignature = Exception  # type: ignore[assignment]
+    serialization = None  # type: ignore[assignment]
+    Ed25519PrivateKey = None  # type: ignore[assignment]
+    Ed25519PublicKey = None  # type: ignore[assignment]
+    trusted_publisher_crypto_available = False
+
 if TYPE_CHECKING:
     from .spectrum_engine import SpectrumFingerprint
     from .theremin_engine import ThereminFrameState
@@ -47,6 +63,14 @@ SHANWAY_MEMBER_NAME = "shanway"
 UNREADABLE_CHAT_TEXT = "[nachricht nicht lesbar]"
 HIDDEN_CHAT_TEXT = "[verschluesselt]"
 RAW_STORAGE_CIPHER = "AES-256-GCM"
+TRUSTED_PUBLISHERS_PATH = Path("data") / "trusted_publishers.json"
+TRUSTED_PUBLISHER_KEY_DIR = Path("data") / "publisher_keys"
+TRUSTED_ANCHOR_UPLOAD_MIN_SCORE = 0.72
+OFFICIAL_PUBLIC_ANCHOR_MIRROR = {
+    "publisher_id": "stillsilent22-spec/Aether-",
+    "index_url": "https://raw.githubusercontent.com/stillsilent22-spec/Aether-/main/data/public_anchor_library/index.json",
+    "latest_url": "https://raw.githubusercontent.com/stillsilent22-spec/Aether-/main/data/public_anchor_library/latest.json",
+}
 BLOCK_HASH_IGNORED_FIELDS = {
     "anchor_status",
     "anchor_job_id",
@@ -90,6 +114,12 @@ def legacy_chain_block_hash_candidates(payload: dict[str, Any]) -> set[str]:
         hashlib.sha256(canonical_json(dict(payload)).encode("utf-8")).hexdigest(),
         hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest(),
     }
+
+
+def trusted_publisher_slug(publisher_id: str) -> str:
+    """Normalisiert Publisher-IDs fuer lokale Dateinamen."""
+    normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", str(publisher_id or "").strip())
+    return normalized or "publisher"
 
 
 class AetherRegistry:
@@ -4308,6 +4338,60 @@ class AetherRegistry:
         return classification not in {"toxic", "blocked"}
 
     @staticmethod
+    def _dna_share_trust_score(payload: dict[str, Any]) -> float:
+        """Leitet einen knappen Vertrauenswert fuer Anchor-Uploads aus vorhandener Evidenz ab."""
+        normalized = dict(payload or {})
+        score = 0.0
+        score += 0.26 if bool(normalized.get("confirmed_lossless", False)) else 0.0
+        score += 0.16 if bool(normalized.get("reconstruction_verified", False)) else 0.0
+        score += 0.16 if bool(normalized.get("coverage_verified", False)) else 0.0
+        coverage_ratio = max(0.0, min(1.0, float(normalized.get("anchor_coverage_ratio", 0.0) or 0.0)))
+        unresolved_ratio = max(0.0, min(1.0, float(normalized.get("unresolved_residual_ratio", 1.0) or 1.0)))
+        score += 0.14 * coverage_ratio
+        score += 0.10 * (1.0 - unresolved_ratio)
+        bayes_confidence = max(
+            0.0,
+            min(
+                1.0,
+                float(normalized.get("bayes_overall_confidence", 0.0) or 0.0),
+            ),
+        )
+        noether_confidence = max(
+            0.0,
+            min(
+                1.0,
+                float(
+                    dict(normalized.get("vault_noether", {}) or {}).get(
+                        "invariant_score",
+                        normalized.get("graph_confidence_mean", 0.0),
+                    )
+                    or 0.0
+                ),
+            ),
+        )
+        anchor_source = dict(normalized.get("ae_lab", {}) or {})
+        anchor_list = list(normalized.get("ae_anchors", []) or anchor_source.get("anchors", []) or [])
+        score += 0.06 * bayes_confidence
+        score += 0.05 * noether_confidence
+        score += 0.03 * min(1.0, len(anchor_list) / 4.0)
+        assessment = dict(normalized.get("shanway_assessment", {}) or {})
+        if assessment:
+            if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
+                return 0.0
+            classification = str(assessment.get("classification", "")).strip().lower()
+            if classification in {"toxic", "blocked"}:
+                return 0.0
+            if classification == "harmonic":
+                score += 0.04
+            elif classification == "uncertain":
+                score += 0.02
+            score += 0.04 * max(
+                0.0,
+                min(1.0, float(assessment.get("noether_symmetry", 0.0) or 0.0)),
+            )
+        return float(max(0.0, min(1.0, score)))
+
+    @staticmethod
     def _dna_share_block_reason(payload: dict[str, Any]) -> str:
         """Leitet einen klaren Blockgrund fuer DNA-Share ab."""
         source_type = str(payload.get("source_type", "") or "").strip().lower()
@@ -4319,6 +4403,8 @@ class AetherRegistry:
                 return "source_not_lossless"
             if not reconstruction_verified:
                 return "reconstruction_failed"
+            if not bool(payload.get("coverage_verified", False)):
+                return "coverage_failed"
             return "not_confirmed"
         if isinstance(assessment, dict):
             if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
@@ -4326,6 +4412,8 @@ class AetherRegistry:
             classification = str(assessment.get("classification", "")).strip().lower()
             if classification in {"toxic", "blocked"}:
                 return "shanway_toxic"
+        if AetherRegistry._dna_share_trust_score(payload) < TRUSTED_ANCHOR_UPLOAD_MIN_SCORE:
+            return "trust_score_failed"
         return ""
 
     @staticmethod
@@ -4336,12 +4424,120 @@ class AetherRegistry:
             "no_vault_entries": "noch keine analysierten Vault-Eintraege",
             "source_not_lossless": "nur Datei-Drops koennen derzeit CONFIRMED lossless werden",
             "reconstruction_failed": "Rekonstruktion wurde noch nicht bestaetigt",
+            "coverage_failed": "Anker-Abdeckung reicht fuer CONFIRMED lossless noch nicht aus",
             "not_confirmed": "Datensatz ist noch nicht als CONFIRMED lossless markiert",
             "not_chained": "Datensatz ist lokal vorhanden, aber noch nicht ueber die Chain bestaetigt",
             "shanway_sensitive": "Shanway-/Ethikfilter blockiert sensible oder blacklisted Inhalte",
             "shanway_toxic": "Shanway-/Ethikfilter blockiert toxische Inhalte",
+            "trust_score_failed": "Aether-Trust-Score fuer sicheren Anchor-Upload ist noch zu niedrig",
         }
         return mapping.get(str(reason_code), "unbekannter Filtergrund")
+
+    @staticmethod
+    def _is_aether_origin_marker(payload: dict[str, Any]) -> bool:
+        """Akzeptiert nur explizit als Aether-eigen markierte DNA-Share-Payloads."""
+        marker = dict(payload.get("aether_origin", {}) or {})
+        return (
+            str(marker.get("producer", "")).upper() == "AETHER"
+            and str(marker.get("pipeline", "")).upper() == "LOCAL_CONFIRMED_LOSSLESS"
+            and bool(marker.get("anchors_self_found_only", False))
+        )
+
+    @staticmethod
+    def _trusted_publisher_manifest() -> dict[str, Any]:
+        """Laedt die lokal gepinnte Trusted-Publisher-Liste fuer oeffentliche Anchor-Bundles."""
+        if not TRUSTED_PUBLISHERS_PATH.is_file():
+            return {}
+        try:
+            parsed = json.loads(TRUSTED_PUBLISHERS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return dict(parsed or {}) if isinstance(parsed, dict) else {}
+
+    def _trusted_publisher_entry(self, publisher_id: str) -> dict[str, Any]:
+        """Liefert den gepinnten Publisher-Eintrag oder ein leeres Objekt."""
+        manifest = self._trusted_publisher_manifest()
+        publishers = dict(manifest.get("publishers", {}) or {})
+        entry = dict(publishers.get(str(publisher_id), {}) or {})
+        if not bool(entry.get("enabled", False)):
+            return {}
+        return entry
+
+    def _sign_trusted_dna_share_payload(self, payload: dict[str, Any]) -> dict[str, str]:
+        """Signiert DNA-Share-Bundles mit einem lokal vorhandenen Publisher-Schluessel."""
+        if not trusted_publisher_crypto_available:
+            return {}
+        manifest = self._trusted_publisher_manifest()
+        publisher_id = str(manifest.get("default_publisher_id", "") or "").strip()
+        if not publisher_id:
+            return {}
+        entry = self._trusted_publisher_entry(publisher_id)
+        if not entry:
+            return {}
+        key_path = TRUSTED_PUBLISHER_KEY_DIR / f"{trusted_publisher_slug(publisher_id)}_ed25519_private.pem"
+        if not key_path.is_file():
+            return {}
+        raw = key_path.read_bytes()
+        private_key = serialization.load_pem_private_key(raw, password=None)
+        signature = private_key.sign(canonical_json(payload).encode("utf-8"))
+        return {
+            "trusted_publisher_id": publisher_id,
+            "trusted_signature_scheme": "ed25519",
+            "trusted_signature": base64.b64encode(signature).decode("ascii"),
+        }
+
+    def _verify_trusted_dna_share_signature(self, payload: dict[str, Any], wrapper: dict[str, Any]) -> None:
+        """Akzeptiert nur von gepinnten Publishern signierte DNA-Share-Bundles."""
+        if not trusted_publisher_crypto_available:
+            raise ValueError("Trusted-Publisher-Pruefung ist ohne 'cryptography' nicht verfuegbar.")
+        publisher_id = str(wrapper.get("trusted_publisher_id", "") or "").strip()
+        signature_b64 = str(wrapper.get("trusted_signature", "") or "").strip()
+        signature_scheme = str(wrapper.get("trusted_signature_scheme", "") or "").strip().lower()
+        if not publisher_id or not signature_b64 or signature_scheme != "ed25519":
+            raise ValueError("DNA-Share-Bundle hat keine gueltige Trusted-Publisher-Signatur.")
+        entry = self._trusted_publisher_entry(publisher_id)
+        if not entry:
+            raise ValueError("DNA-Share-Bundle stammt nicht von einem gepinnten Trusted Publisher.")
+        public_key_b64 = str(entry.get("public_key", "") or "").strip()
+        if not public_key_b64:
+            raise ValueError("Trusted Publisher hat keinen gepinnten Public Key.")
+        try:
+            public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
+            public_key.verify(base64.b64decode(signature_b64), canonical_json(payload).encode("utf-8"))
+        except (ValueError, InvalidSignature):
+            raise ValueError("Trusted-Publisher-Signatur ist ungueltig oder manipuliert.") from None
+
+    def _validate_aether_dna_share_payload(self, payload: dict[str, Any], wrapper: dict[str, Any] | None = None) -> None:
+        """Blockiert DNA-Share-Importe, die nicht wie echte Aether-Exporte aussehen."""
+        if str(payload.get("schema", "")).strip() != "aether.dna_share.v1":
+            raise ValueError("Nur Aether-DNA-Share-Bundles werden akzeptiert.")
+        if not self._is_aether_origin_marker(payload):
+            raise ValueError("DNA-Share-Bundle ist nicht als Aether-eigener Anchor-Export markiert.")
+        if wrapper is None:
+            raise ValueError("DNA-Share-Bundle braucht eine Trusted-Publisher-Huelle.")
+        self._verify_trusted_dna_share_signature(payload, wrapper)
+        dna_share = dict(payload.get("dna_share", {}) or {})
+        sharing_policy = dict(dna_share.get("sharing_policy", {}) or {})
+        if not bool(sharing_policy.get("source_confirmed_lossless_local_only", False)):
+            raise ValueError("DNA-Share-Bundle verletzt den lokalen CONFIRMED-lossless-Pfad.")
+        if not bool(sharing_policy.get("shared_anchor_assistance_only", False)):
+            raise ValueError("DNA-Share-Bundle enthaelt keinen reinen Anchor-Assistance-Pfad.")
+        records = list(dna_share.get("records", []) or [])
+        if int(dna_share.get("record_count", 0) or 0) != len(records):
+            raise ValueError("DNA-Share-Bundle hat inkonsistente Record-Zaehler.")
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("DNA-Share-Bundle enthaelt ungueltige Anchor-Records.")
+            if not self._is_aether_origin_marker(record):
+                raise ValueError("DNA-Share-Record stammt nicht aus einem Aether-Eigenfund.")
+            record_hash = str(record.get("dna_record_hash", "")).strip().lower()
+            if not record_hash:
+                raise ValueError("DNA-Share-Record hat keinen Aether-Record-Hash.")
+            normalized = dict(record)
+            normalized.pop("dna_record_hash", None)
+            expected_hash = hashlib.sha256(canonical_json(normalized).encode("utf-8")).hexdigest()
+            if expected_hash != record_hash:
+                raise ValueError("DNA-Share-Record-Hash ist ungueltig oder manipuliert.")
 
     def describe_dna_share_payload(
         self,
@@ -4360,6 +4556,7 @@ class AetherRegistry:
             reason_code = "eligible"
         anchor_source = dict(normalized.get("ae_lab", {}) or {})
         anchor_list = list(normalized.get("ae_anchors", []) or anchor_source.get("anchors", []) or [])
+        trust_score = self._dna_share_trust_score(normalized)
         return {
             "eligible": bool(eligible),
             "reason_code": str(reason_code),
@@ -4368,6 +4565,8 @@ class AetherRegistry:
             "reconstruction_verified": bool(normalized.get("reconstruction_verified", False)),
             "source_type": str(normalized.get("source_type", "")),
             "sharable_anchor_count": int(len(anchor_list)),
+            "trust_score": float(trust_score),
+            "trust_required": float(TRUSTED_ANCHOR_UPLOAD_MIN_SCORE),
         }
 
     def _load_vault_entries_by_ids(
@@ -4486,6 +4685,7 @@ class AetherRegistry:
             payload["reconstruction_verified"] = bool(
                 payload.get("reconstruction_verified", False) or chain_payload.get("reconstruction_verified", False)
             )
+            payload["dna_share_trust_score"] = float(self._dna_share_trust_score(payload))
             if self._dna_share_block_reason(payload):
                 continue
             entry["payload_json"] = payload
@@ -4548,11 +4748,15 @@ class AetherRegistry:
         reconstruction_count = 0
         chained_count = 0
         eligible_count = 0
+        trust_sum = 0.0
         latest_reason_code = "no_vault_entries"
+        latest_trust_score = 0.0
 
         for entry in entries:
             payload = dict(entry.get("payload_json", {}) or {})
             entry_id = int(entry.get("id", 0) or 0)
+            trust_score = self._dna_share_trust_score(payload)
+            trust_sum += float(trust_score)
             if bool(payload.get("confirmed_lossless", False)):
                 confirmed_count += 1
             if bool(payload.get("reconstruction_verified", False)):
@@ -4568,6 +4772,7 @@ class AetherRegistry:
             reason_counts[reason_code] = int(reason_counts.get(reason_code, 0)) + 1
             if latest_reason_code == "no_vault_entries":
                 latest_reason_code = reason_code
+                latest_trust_score = float(trust_score)
 
         return {
             "entry_count": int(len(entries)),
@@ -4578,6 +4783,9 @@ class AetherRegistry:
             "latest_reason_code": str(latest_reason_code),
             "latest_reason_text": self._dna_share_reason_text(latest_reason_code),
             "reason_counts": reason_counts,
+            "trust_mean": float(trust_sum / max(1, len(entries))),
+            "latest_trust_score": float(latest_trust_score),
+            "trust_required": float(TRUSTED_ANCHOR_UPLOAD_MIN_SCORE),
         }
 
     def get_collective_snapshots(self, limit: int = 64) -> list[dict[str, Any]]:
@@ -5125,6 +5333,23 @@ class AetherRegistry:
                 "cluster_label": str(entry.get("cluster_label", "")),
                 "anchor_count": int(len(anchors)),
                 "anchors": anchors,
+                "anchor_pattern_hash": hashlib.sha256(
+                    canonical_json(
+                        [
+                            {
+                                "type_label": str(anchor.get("type_label", "")),
+                                "nearest_constant": str(anchor.get("nearest_constant", "")),
+                                "value": float(anchor.get("value", 0.0) or 0.0),
+                            }
+                            for anchor in anchors
+                        ]
+                    ).encode("utf-8")
+                ).hexdigest(),
+                "aether_origin": {
+                    "producer": "AETHER",
+                    "pipeline": "LOCAL_CONFIRMED_LOSSLESS",
+                    "anchors_self_found_only": True,
+                },
                 "pi_positions": pi_positions,
                 "frequency_signatures": frequency_signatures,
                 "structure_patterns": {
@@ -5140,6 +5365,27 @@ class AetherRegistry:
                 "vault_noether": dict(payload.get("vault_noether", {}) or {}),
                 "vault_bayes": dict(payload.get("vault_bayes", {}) or {}),
                 "vault_benford": dict(payload.get("vault_benford", {}) or {}),
+                "trust_inputs": {
+                    "confirmed_lossless": bool(payload.get("confirmed_lossless", False)),
+                    "reconstruction_verified": bool(payload.get("reconstruction_verified", False)),
+                    "coverage_verified": bool(payload.get("coverage_verified", False)),
+                    "anchor_coverage_ratio": float(payload.get("anchor_coverage_ratio", 0.0) or 0.0),
+                    "unresolved_residual_ratio": float(payload.get("unresolved_residual_ratio", 1.0) or 1.0),
+                    "bayes_overall_confidence": float(payload.get("bayes_overall_confidence", 0.0) or 0.0),
+                    "graph_confidence_mean": float(payload.get("graph_confidence_mean", 0.0) or 0.0),
+                    "beauty_score": float(
+                        dict(payload.get("beauty_signature", {}) or {}).get("beauty_score", 0.0) or 0.0
+                    ),
+                    "noether_score": float(
+                        dict(payload.get("vault_noether", {}) or {}).get("invariant_score", 0.0) or 0.0
+                    ),
+                    "benford_score": float(
+                        dict(payload.get("vault_benford", {}) or {}).get("score", 0.0) or 0.0
+                    ),
+                    "heisenberg_uncertainty": float(
+                        dict(payload.get("ae_lab", {}) or {}).get("heisenberg_mean", 0.0) or 0.0
+                    ),
+                },
                 "sharing_policy": {
                     "source_confirmed_lossless_local": True,
                     "shanway_filter": True,
@@ -5159,6 +5405,11 @@ class AetherRegistry:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "source_label": str(source_label),
             "origin_node_id": str(origin_node_id),
+            "aether_origin": {
+                "producer": "AETHER",
+                "pipeline": "LOCAL_CONFIRMED_LOSSLESS",
+                "anchors_self_found_only": True,
+            },
             "fingerprint_count": int(len(shared_entries)),
             "vault_count": int(len(shared_entries)),
             "cluster_count": int(len(cluster_profiles)),
@@ -5314,6 +5565,8 @@ class AetherRegistry:
             "signature": str(stored.get("signature", signature or "")),
             "payload": dict(stored.get("payload_json", payload)),
         }
+        if str(dict(wrapper.get("payload", {}) or {}).get("schema", "")).strip() == "aether.dna_share.v1":
+            wrapper.update(self._sign_trusted_dna_share_payload(dict(wrapper.get("payload", {}) or {})))
         Path(file_path).write_text(json.dumps(wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
         return wrapper
 
@@ -5406,15 +5659,58 @@ class AetherRegistry:
             "wrapper": dict(wrapper),
         }
 
-    def import_collective_snapshot(
+    def pull_official_public_anchor_library(
         self,
-        file_path: str,
+        session_id: str = "",
+        trust_weight: float = 1.0,
+        timeout_seconds: float = 8.0,
+        target_dir: str | None = None,
+    ) -> dict[str, Any]:
+        """Laedt den offiziellen Aether-Mirror read-only und importiert nur gueltige DNA-Share-Bundles."""
+        target = Path(target_dir) if target_dir is not None else Path("data") / "public_anchor_library"
+        target.mkdir(parents=True, exist_ok=True)
+        pulled_at = datetime.now(timezone.utc).isoformat()
+        try:
+            with urlopen(str(OFFICIAL_PUBLIC_ANCHOR_MIRROR["index_url"]), timeout=max(1.0, float(timeout_seconds))) as response:
+                index_raw = response.read().decode("utf-8")
+            with urlopen(str(OFFICIAL_PUBLIC_ANCHOR_MIRROR["latest_url"]), timeout=max(1.0, float(timeout_seconds))) as response:
+                latest_raw = response.read().decode("utf-8")
+        except URLError as exc:
+            raise ValueError(f"Offizieller Mirror ist aktuell nicht erreichbar: {exc}") from exc
+
+        index_payload = json.loads(index_raw)
+        latest_wrapper = json.loads(latest_raw)
+        payload = dict(latest_wrapper.get("payload", {}) or {})
+        if str(payload.get("schema", "")).strip() != "aether.dna_share.v1":
+            raise ValueError("Offizieller Mirror enthaelt kein Aether-DNA-Share-Bundle.")
+        if str(latest_wrapper.get("trusted_publisher_id", "") or "") != str(OFFICIAL_PUBLIC_ANCHOR_MIRROR["publisher_id"]):
+            raise ValueError("Publisher-ID des offiziellen Mirrors stimmt nicht.")
+
+        imported = self.import_collective_snapshot_payload(
+            parsed=latest_wrapper,
+            session_id=session_id,
+            trust_weight=trust_weight,
+        )
+
+        (target / "mirror_index.json").write_text(json.dumps(index_payload, ensure_ascii=True, indent=2), encoding="utf-8")
+        (target / "mirror_latest.json").write_text(json.dumps(latest_wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
+        return {
+            "publisher_id": str(OFFICIAL_PUBLIC_ANCHOR_MIRROR["publisher_id"]),
+            "pulled_at": str(pulled_at),
+            "record_count": int(dict(payload.get("dna_share", {}) or {}).get("record_count", 0) or 0),
+            "snapshot_hash": str(latest_wrapper.get("snapshot_hash", payload.get("snapshot_hash", ""))),
+            "latest_snapshot_hash": str(index_payload.get("latest_snapshot_hash", "")),
+            "imported_snapshot_hash": str(imported.get("snapshot_hash", "")),
+            "target_dir": str(target),
+        }
+
+    def import_collective_snapshot_payload(
+        self,
+        parsed: dict[str, Any],
         session_id: str = "",
         trust_weight: float | None = None,
     ) -> dict[str, Any]:
-        """Importiert ein Snapshot-Paket von Disk und legt es lokal ab."""
-        raw = Path(file_path).read_text(encoding="utf-8")
-        parsed = json.loads(raw)
+        """Importiert ein bereits geladenes Snapshot-Paket und legt es lokal ab."""
         if isinstance(parsed, dict) and "payload" in parsed:
             payload = dict(parsed.get("payload", {}) or {})
             signature = str(parsed.get("signature", "") or "")
@@ -5425,15 +5721,32 @@ class AetherRegistry:
             signature = ""
             merged_count = int(payload.get("snapshot_count", 1) or 1)
             import_trust = 1.0
+        if str(payload.get("schema", "")).strip() == "aether.dna_share.v1":
+            self._validate_aether_dna_share_payload(payload, wrapper=dict(parsed or {}))
         final_trust = float(import_trust if trust_weight is None else trust_weight)
         return self.save_collective_snapshot(
             payload=payload,
-            source_label=str(payload.get("source_label", Path(file_path).stem)),
+            source_label=str(payload.get("source_label", "imported_snapshot")),
             origin_node_id=str(payload.get("origin_node_id", "")),
             session_id=session_id,
             trust_weight=final_trust,
             merged_count=max(1, merged_count),
             signature=signature,
+        )
+
+    def import_collective_snapshot(
+        self,
+        file_path: str,
+        session_id: str = "",
+        trust_weight: float | None = None,
+    ) -> dict[str, Any]:
+        """Importiert ein Snapshot-Paket von Disk und legt es lokal ab."""
+        raw = Path(file_path).read_text(encoding="utf-8")
+        parsed = json.loads(raw)
+        return self.import_collective_snapshot_payload(
+            parsed=dict(parsed or {}),
+            session_id=session_id,
+            trust_weight=trust_weight,
         )
 
     def get_public_anchor_library_summary(self, directory: str | None = None) -> dict[str, Any]:

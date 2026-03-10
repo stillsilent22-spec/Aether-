@@ -1,0 +1,31 @@
+name: vault_verify
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "data/public_anchor_library/**"
+      - "modules/trust_engine.py"
+      - ".github/workflows/vault_verify.yml"
+  workflow_dispatch:
+
+jobs:
+  verify-public-anchor-library:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify shared DNA bundle
+        run: |
+          python -m modules.trust_engine \
+            --bundle data/public_anchor_library/latest.json \
+            --vault-dir data/public_anchor_library \
+            --log-path data/public_anchor_library/trust_log.json \
+            --min-score 0.65

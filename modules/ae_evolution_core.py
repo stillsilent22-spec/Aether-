@@ -898,6 +898,7 @@ class AEAlgorithmVault:
                     0.1 * float(candidate.params.get("pi_like_constants", 0) or 0.0),
                 )
             detector_bonus = 0.0
+            residual_bonus = 0.0
             if str(candidate.source_kind) == "shanway_detector" and isinstance(result, dict):
                 toxicity_score = float(result.get("toxicity_score", 0.0) or 0.0)
                 asymmetry_score = float(result.get("asymmetry_score", 0.0) or 0.0)
@@ -929,6 +930,15 @@ class AEAlgorithmVault:
                     + (0.24 * blacklisted)
                     + sensitive_guard
                 )
+            if isinstance(result, dict):
+                residual_contribution = float(
+                    result.get("residual_reduction_contribution", result.get("coverage_contribution", 0.0)) or 0.0
+                )
+                residual_bonus = 0.75 * max(0.0, min(1.0, residual_contribution))
+            elif isinstance(data, dict):
+                coverage_ratio = float(data.get("anchor_coverage_ratio", 0.0) or 0.0)
+                unresolved_ratio = float(data.get("unresolved_residual_ratio", 1.0) or 1.0)
+                residual_bonus = 0.15 * max(0.0, min(1.0, coverage_ratio - unresolved_ratio))
             governance_bonus = (
                 (0.36 * float(governance["noether_symmetry"]))
                 + (0.28 * float(governance["dual_path_agreement"]))
@@ -946,6 +956,7 @@ class AEAlgorithmVault:
                 + longevity_bonus
                 + legacy_bonus
                 + detector_bonus
+                + residual_bonus
                 + governance_bonus
                 + benford_bonus
                 - uncertainty_penalty
@@ -956,6 +967,7 @@ class AEAlgorithmVault:
             governance = dict(governance)
         candidate.params["usage_count"] = int(candidate.params.get("usage_count", 0) or 0) + 1
         candidate.params["last_fitness"] = float(fitness)
+        candidate.params["residual_reduction_contribution"] = float(residual_bonus)
         candidate.params.update(governance)
         candidate.fitness = float(fitness)
         candidate.stable = bool(
@@ -1213,8 +1225,22 @@ class AEAlgorithmVault:
     def get_main_vault_algorithms(self) -> list[AlgorithmCandidate]:
         return list(self.main_vault)
 
+    def _growth_state(self) -> dict[str, Any]:
+        """Beschreibt knapp, dass AELAB-Wachstum durch Vault-Grenzen begrenzt bleibt."""
+        main_size = int(len(self.main_vault))
+        sub_size = int(len(self.sub_vaults))
+        return {
+            "main_capacity": int(self.max_main),
+            "sub_capacity": int(self.max_sub),
+            "main_fill_ratio": float(main_size / max(1, self.max_main)),
+            "sub_fill_ratio": float(sub_size / max(1, self.max_sub)),
+            "growth_bounded": bool(main_size <= self.max_main and sub_size <= self.max_sub),
+        }
+
     def snapshot(self, data: Any, limit: int = 6) -> dict[str, Any]:
-        anchors = normalize_anchor_entries(AetherAnchorInterpreter(self).interpret(data, limit=limit))
+        interpreter = AetherAnchorInterpreter(self)
+        anchors = normalize_anchor_entries(interpreter.interpret(data, limit=limit))
+        relationships = interpreter.describe_relationships(anchors)
         type_counts: dict[str, int] = {}
         for anchor in anchors:
             anchor_type = str(anchor.get("type_label", "")).strip()
@@ -1231,7 +1257,9 @@ class AEAlgorithmVault:
             "top_anchor_types": top_types,
             "top_origins": [str(item.origin) for item in self.main_vault[: max(1, int(limit))]],
             "anchors": anchors,
+            "anchor_relationships": relationships,
             **self._governance_summary(list(self.main_vault) + list(self.sub_vaults)),
+            **self._growth_state(),
             "iteration": int(self.current_iteration),
             "phase": str(self.current_phase),
             "stopped": bool(self.last_run_stopped),
@@ -1339,6 +1367,54 @@ class AetherAnchorInterpreter:
                     }
                 )
         return anchors
+
+    @staticmethod
+    def describe_relationships(anchors: list[dict[str, Any]]) -> dict[str, Any]:
+        """Verdichtet wiederkehrende Konstantenfamilien und den staerksten Anchor-Zusammenhang."""
+        families: dict[str, int] = {}
+        origins_by_constant: dict[str, set[str]] = {}
+        strongest_pair: dict[str, Any] = {}
+        strongest_score = -1.0
+        for anchor in anchors:
+            nearest = str(anchor.get("nearest_constant", "") or "EMERGENT")
+            families[nearest] = int(families.get(nearest, 0)) + 1
+            origins_by_constant.setdefault(nearest, set()).add(str(anchor.get("origin", "") or "runtime"))
+        for left_index, left in enumerate(anchors):
+            for right in anchors[left_index + 1 :]:
+                pair_score = 0.0
+                if str(left.get("nearest_constant", "")) == str(right.get("nearest_constant", "")):
+                    pair_score += 1.0
+                pair_score += max(
+                    0.0,
+                    1.0 - min(1.0, abs(float(left.get("value", 0.0) or 0.0) - float(right.get("value", 0.0) or 0.0)) / 0.25),
+                )
+                if pair_score > strongest_score:
+                    strongest_score = pair_score
+                    strongest_pair = {
+                        "left": str(left.get("type_label", "") or left.get("anchor_kind", "")),
+                        "right": str(right.get("type_label", "") or right.get("anchor_kind", "")),
+                        "constant": str(left.get("nearest_constant", "") or "EMERGENT"),
+                        "score": float(pair_score),
+                    }
+        family_labels = [f"{label}:{count}" for label, count in sorted(families.items(), key=lambda item: (-item[1], item[0]))[:3]]
+        cross_domain = [
+            str(label)
+            for label, origins in origins_by_constant.items()
+            if len({origin for origin in origins if origin}) > 1
+        ][:3]
+        summary_parts = list(family_labels)
+        if cross_domain:
+            summary_parts.append(f"cross {', '.join(cross_domain)}")
+        if strongest_pair:
+            summary_parts.append(
+                f"pair {strongest_pair.get('left', '?')}/{strongest_pair.get('right', '?')} {float(strongest_pair.get('score', 0.0) or 0.0):.2f}"
+            )
+        return {
+            "families": {str(key): int(value) for key, value in families.items()},
+            "cross_domain_constants": cross_domain,
+            "strongest_pair": strongest_pair,
+            "summary_text": " | ".join(summary_parts) if summary_parts else "keine stabilen Anchor-Beziehungen",
+        }
 
     def classify_anchor(self, result: Any, data: Any) -> str:
         if isinstance(result, (int, float)) and (abs(float(result)) < 0.01 or abs(float(result)) > 1000.0):

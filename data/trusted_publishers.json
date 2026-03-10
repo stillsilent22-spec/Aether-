@@ -1,0 +1,12 @@
+{
+  "schema": "aether.trusted_publishers.v1",
+  "default_publisher_id": "stillsilent22-spec/Aether-",
+  "publishers": {
+    "stillsilent22-spec/Aether-": {
+      "enabled": true,
+      "signature_scheme": "ed25519",
+      "public_key": "Vfwiv1cBFCS8jaPlBoipoKRK6DEyCXhRn9wg8BXG4lg=",
+      "notes": "Official public Aether mirror publisher."
+    }
+  }
+}

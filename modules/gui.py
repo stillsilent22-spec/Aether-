@@ -144,6 +144,7 @@ class VeiraGUI:
         self.anomaly_memory_var = tk.StringVar(value="Immungedaechtnis: --")
         self.collective_status_var = tk.StringVar(value="Collective: 0 Snapshots | keine Priors aktiv")
         self.public_anchor_library_var = tk.StringVar(value="Anchor Library: noch keine freigegebene DNA")
+        self.anchor_mirror_var = tk.StringVar(value="Mirror: noch kein offizieller Sync")
         self.dna_share_gate_var = tk.StringVar(value="DNA-Share Gate: noch keine analysierten Vault-Eintraege")
         self.current_dna_share_var = tk.StringVar(value="Aktueller Datensatz: noch keine Freigabepruefung")
         self.theremin_state_var = tk.StringVar(value="Theremin: inaktiv")
@@ -220,6 +221,7 @@ class VeiraGUI:
         self.chat_status_var = tk.StringVar(value="Shanway bereit | lokal | ohne LLM")
         self.chat_reply_var = tk.StringVar(value="Shanway: --")
         self.chat_semantic_var = tk.StringVar(value="Semantik: -- | Schoenheit: --")
+        self.shanway_vault_watch_var = tk.StringVar(value="AELAB Watch: bereit")
         self.chat_channel_note_var = tk.StringVar(value="Kanal: global | oeffentlich")
         self.chat_analysis_mode_var = tk.StringVar(value="shared")
         self.chat_delta_share_var = tk.BooleanVar(value=False)
@@ -261,6 +263,7 @@ class VeiraGUI:
         self.speech_thread: threading.Thread | None = None
         self.chat_thread: threading.Thread | None = None
         self.shanway_corpus_thread: threading.Thread | None = None
+        self._last_ae_vault_notice_signature = ""
         self.current_canvas: FigureCanvasTkAgg | None = None
         self.current_figure = None
         self.current_fingerprint: AetherFingerprint | None = None
@@ -347,6 +350,7 @@ class VeiraGUI:
                 f"{self.device_profile.label}: Alle Funktionen bleiben aktiv, die Darstellung laeuft nur gedrosselt."
             )
         self.root.after(1200, self._bootstrap_public_anchor_cycle)
+        self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
 
     @staticmethod
     def _ae_anchor_preview(anchors: list[dict[str, object]], limit: int = 3) -> str:
@@ -370,6 +374,75 @@ class VeiraGUI:
         ready = int(summary.get("main_ready", 0) or 0)
         quarantined = int(summary.get("quarantined_total", 0) or 0)
         return f"Λ {noether:.0f}% | Δ {dual:.0f}% | U {uncertainty:.0f}% | M {ready} | Q {quarantined}"
+
+    def _ae_vault_notice_signature(self, summary: dict[str, object]) -> str:
+        """Bildet eine knappe Signatur, damit Vault-Updates nur bei echter Aenderung gemeldet werden."""
+        signature_payload = {
+            "main": int(summary.get("main_vault_size", 0) or 0),
+            "sub": int(summary.get("sub_vault_size", 0) or 0),
+            "anchors": int(summary.get("anchor_count", 0) or 0),
+            "types": list(summary.get("top_anchor_types", []) or [])[:3],
+            "phase": str(summary.get("phase", "") or ""),
+            "iteration": int(summary.get("iteration", 0) or 0),
+            "stopped": bool(summary.get("stopped", False)),
+        }
+        return hashlib.sha256(
+            json.dumps(signature_payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+    def _announce_ae_vault_update(self, summary: dict[str, object]) -> None:
+        """Schreibt eine deduplizierte Shanway-Systemmeldung bei echten MAIN-/SUB-Aenderungen."""
+        signature = self._ae_vault_notice_signature(summary)
+        if not signature or signature == self._last_ae_vault_notice_signature:
+            return
+        self._last_ae_vault_notice_signature = signature
+        preview = str(summary.get("anchor_preview", "") or "keine dominanten AE-Anker")
+        relationship_text = str(
+            dict(summary.get("anchor_relationships", {}) or {}).get("summary_text", "") or ""
+        ).strip()
+        capacity_text = (
+            f"cap M {int(summary.get('main_vault_size', 0) or 0)}/{int(summary.get('main_capacity', 0) or 0)} "
+            f"S {int(summary.get('sub_vault_size', 0) or 0)}/{int(summary.get('sub_capacity', 0) or 0)}"
+            if int(summary.get("main_capacity", 0) or 0) > 0 and int(summary.get("sub_capacity", 0) or 0) > 0
+            else ""
+        )
+        notice = (
+            f"AELAB Update | MAIN {int(summary.get('main_vault_size', 0) or 0)} | "
+            f"SUB {int(summary.get('sub_vault_size', 0) or 0)} | "
+            f"Anker {int(summary.get('anchor_count', 0) or 0)} | "
+            f"{preview}"
+            f"{' | ' + relationship_text if relationship_text else ''}"
+            f"{' | ' + capacity_text if capacity_text else ''} | "
+            f"{self._ae_guard_preview(summary)}"
+        )
+        self.shanway_vault_watch_var.set(notice)
+        try:
+            self.registry.save_chat_message(
+                session_id=self.session_context.session_id,
+                user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                username=str(getattr(self.session_context, "username", "")),
+                message_text="",
+                reply_text=notice,
+                channel="private:shanway",
+                payload={
+                    "assistant_intent": "vault_update",
+                    "system_notice": True,
+                    "ae_vault_update": {
+                        "main_vault_size": int(summary.get("main_vault_size", 0) or 0),
+                        "sub_vault_size": int(summary.get("sub_vault_size", 0) or 0),
+                        "anchor_count": int(summary.get("anchor_count", 0) or 0),
+                        "anchor_preview": preview,
+                        "anchor_relationships": dict(summary.get("anchor_relationships", {}) or {}),
+                        "guard_preview": self._ae_guard_preview(summary),
+                    },
+                },
+                is_private=True,
+                recipient_username="shanway",
+                visible_to_shanway=False,
+            )
+        except Exception:
+            return
+        self._refresh_shanway_view()
 
     @staticmethod
     def _ae_constant_display_label(raw_label: str) -> str:
@@ -451,8 +524,10 @@ class VeiraGUI:
             self.ae_anchor_text.insert("1.0", "Keine AE-Anker im aktuellen Kontext.\n")
             self.ae_anchor_text.configure(state="disabled")
             return
+        relationships = self.ae_interpreter.describe_relationships(list(anchors))
         self.ae_anchor_status_var.set(
             f"AELAB-Anker {len(anchors)} | {self._ae_anchor_preview(list(anchors), limit=2) or 'aktiv'}"
+            f"{' | ' + str(relationships.get('summary_text', '') or '') if relationships else ''}"
         )
         for anchor in list(anchors)[:12]:
             nearest_label = self._ae_constant_display_label(str(anchor.get("nearest_constant", "PI")))
@@ -481,7 +556,8 @@ class VeiraGUI:
         sub_entries = list(state.get("sub", []) or [])
         dna_files = sorted(self.ae_vault.export_dir.glob("*.dna"))
         self.ae_vault_status_var.set(
-            f"AELAB Vault | Main {len(main_entries)} | Sub {len(sub_entries)} | DNA {len(dna_files)}"
+            f"AELAB Vault | Main {len(main_entries)}/{self.ae_vault.max_main} | "
+            f"Sub {len(sub_entries)}/{self.ae_vault.max_sub} | DNA {len(dna_files)}"
         )
         self.ae_vault_text.configure(state="normal")
         self.ae_vault_text.delete("1.0", tk.END)
@@ -543,6 +619,7 @@ class VeiraGUI:
                 "top_origins": list(snapshot.get("top_origins", [])),
                 "anchor_preview": self._ae_anchor_preview(list(snapshot.get("anchors", []))),
                 "anchors": list(snapshot.get("anchors", [])),
+                "anchor_relationships": dict(snapshot.get("anchor_relationships", {}) or {}),
                 "dna_export_path": str(snapshot.get("dna_export_path", "")),
                 "noether_mean": float(snapshot.get("noether_mean", 0.0) or 0.0),
                 "heisenberg_mean": float(snapshot.get("heisenberg_mean", 0.0) or 0.0),
@@ -553,6 +630,11 @@ class VeiraGUI:
                 "sub_only": int(snapshot.get("sub_only", 0) or 0),
                 "rejected": int(snapshot.get("rejected", 0) or 0),
                 "quarantined_total": int(snapshot.get("quarantined_total", 0) or 0),
+                "main_capacity": int(snapshot.get("main_capacity", 0) or 0),
+                "sub_capacity": int(snapshot.get("sub_capacity", 0) or 0),
+                "main_fill_ratio": float(snapshot.get("main_fill_ratio", 0.0) or 0.0),
+                "sub_fill_ratio": float(snapshot.get("sub_fill_ratio", 0.0) or 0.0),
+                "growth_bounded": bool(snapshot.get("growth_bounded", False)),
                 "iteration": int(snapshot.get("iteration", 0) or 0),
                 "phase": str(snapshot.get("phase", "")),
                 "stopped": bool(snapshot.get("stopped", False)),
@@ -566,6 +648,7 @@ class VeiraGUI:
                 f"{int(current_summary.get('anchor_count', 0) or 0)} Anker | "
                 f"{int(current_summary.get('main_vault_size', 0) or 0)} stabile Algorithmen | "
                 f"{current_summary.get('anchor_preview', '') or 'keine dominanten AE-Anker'} | "
+                f"{dict(current_summary.get('anchor_relationships', {}) or {}).get('summary_text', '') or 'keine stabilen Anchor-Beziehungen'} | "
                 f"{self._ae_guard_preview(current_summary)}"
             ),
         )
@@ -704,6 +787,9 @@ class VeiraGUI:
             "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
             "observer_state": str(getattr(fingerprint, "observer_state", "")),
+            "anchor_coverage_ratio": float(getattr(fingerprint, "anchor_coverage_ratio", 0.0) or 0.0),
+            "unresolved_residual_ratio": float(getattr(fingerprint, "unresolved_residual_ratio", 1.0) or 1.0),
+            "coverage_verified": bool(getattr(fingerprint, "coverage_verified", False)),
             "anchor_count": int(len(anchors)),
             "anchors": [
                 {
@@ -801,6 +887,7 @@ class VeiraGUI:
             self._set_ae_stop_button_state("Stop Iterationen", enabled=True)
         self._refresh_ae_anchor_panel(ae_anchors)
         self._sync_ae_vault_registry()
+        self._announce_ae_vault_update(summary)
         if ae_anchors and not self._is_text_silent_source(fingerprint):
             self.audio_engine.trigger_anchor_pings([float(anchor.get("value", 0.0) or 0.0) for anchor in ae_anchors])
         return summary
@@ -1117,6 +1204,7 @@ class VeiraGUI:
         shanway_status_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(shanway_status_card, textvariable=self.shanway_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
         tk.Label(shanway_status_card, textvariable=self.chat_status_var, bg="#10223F", fg="#2DE2E6", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(shanway_status_card, textvariable=self.shanway_vault_watch_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_reply_var, bg="#10223F", fg="#F6E7A7", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
         tk.Label(shanway_tab, text="Privater Verlauf mit Shanway", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
@@ -1437,7 +1525,10 @@ class VeiraGUI:
         dna_share_actions.pack(fill="x", padx=8, pady=(0, 8))
         ttk.Button(dna_share_actions, text="DNA Share export", command=self._export_dna_share_dialog).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ttk.Button(dna_share_actions, text="DNA Share import", command=self._import_dna_share_dialog).pack(side="left", fill="x", expand=True, padx=(4, 0))
-        ttk.Button(chain_tab, text="Anchor Library aktualisieren", command=self._publish_public_anchor_library_dialog).pack(fill="x", padx=8, pady=(0, 8))
+        anchor_library_actions = tk.Frame(chain_tab, bg="#0D1930")
+        anchor_library_actions.pack(fill="x", padx=8, pady=(0, 8))
+        ttk.Button(anchor_library_actions, text="Anchor Library aktualisieren", command=self._publish_public_anchor_library_dialog).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(anchor_library_actions, text="Mirror Sync", command=self._sync_official_anchor_mirror).pack(side="left", fill="x", expand=True, padx=(4, 0))
         tk.Label(
             chain_tab,
             text="DNA-Share nutzt nur lokal bestaetigte Quellen. Geteilt werden ausschliesslich Anchor- und Strukturmuster, niemals ein echter lossless-Rekonstruktionspfad.",
@@ -1462,6 +1553,16 @@ class VeiraGUI:
             textvariable=self.public_anchor_library_var,
             bg="#0D1930",
             fg="#F2C14E",
+            justify="left",
+            anchor="w",
+            wraplength=340,
+            font=("Segoe UI", 9),
+        ).pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(
+            chain_tab,
+            textvariable=self.anchor_mirror_var,
+            bg="#0D1930",
+            fg="#9FD6FF",
             justify="left",
             anchor="w",
             wraplength=340,
@@ -3019,6 +3120,19 @@ class VeiraGUI:
                 payload = dict(item.get("payload_json", {}))
                 timestamp = str(item.get("timestamp", ""))
                 stamp = timestamp[11:19] if len(timestamp) >= 19 else timestamp
+                if bool(payload.get("system_notice", False)) and str(item.get("reply_text", "")).strip():
+                    self.shanway_text.insert(tk.END, f"[{stamp}] AELAB Update\n")
+                    self.shanway_text.insert(tk.END, f"Shanway: {item.get('reply_text', '')}\n")
+                    update_box = dict(payload.get("ae_vault_update", {}) or {})
+                    self.shanway_text.insert(
+                        tk.END,
+                        "  "
+                        f"MAIN {int(update_box.get('main_vault_size', 0) or 0)} | "
+                        f"SUB {int(update_box.get('sub_vault_size', 0) or 0)} | "
+                        f"Anker {int(update_box.get('anchor_count', 0) or 0)} | "
+                        f"{str(update_box.get('guard_preview', '--'))}\n\n",
+                    )
+                    continue
                 self.shanway_text.insert(tk.END, f"[{stamp}] Du: {item.get('message_text', '')}\n")
                 if str(item.get("reply_text", "")).strip():
                     self.shanway_text.insert(tk.END, f"Shanway: {item.get('reply_text', '')}\n")
@@ -3894,7 +4008,11 @@ class VeiraGUI:
             "reconstruction_verified": reconstruction_verified,
             "confirmed_lossless": confirmed_lossless,
             "merkle_root": merkle_root,
-            "lossless_label": "✓ LOSSLESS VERIFIED" if reconstruction_verified else "",
+            "lossless_label": (
+                "✓ LOSSLESS VERIFIED"
+                if confirmed_lossless
+                else ("✓ RECON VERIFIED" if reconstruction_verified else "")
+            ),
             "anchor_status": (
                 "ANCHOR PENDING"
                 if confirmed_lossless and self.session_context.security_allows("allow_public_anchor", True) and self.public_anchor.is_online_mode()
@@ -4054,6 +4172,29 @@ class VeiraGUI:
         )
         return summary
 
+    def _sync_official_anchor_mirror(self, silent: bool = False) -> dict[str, object] | None:
+        """Zieht read-only den offiziellen Aether-Mirror und importiert nur signierte Aether-Bundles."""
+        try:
+            imported = self.registry.pull_official_public_anchor_library(
+                session_id=str(self.session_context.session_id),
+                trust_weight=self._collective_trust_weight(),
+            )
+        except Exception as exc:
+            if not silent:
+                self.anchor_mirror_var.set(f"Mirror: Sync fehlgeschlagen | {str(exc)}")
+                self.loading_var.set(f"Mirror-Sync fehlgeschlagen: {str(exc)}")
+            return None
+        self.anchor_mirror_var.set(
+            f"Mirror: {str(imported.get('publisher_id', 'AETHER'))} | "
+            f"Hash {str(imported.get('imported_snapshot_hash', ''))[:12]} | "
+            f"Records {int(imported.get('record_count', 0) or 0)}"
+        )
+        self._apply_collective_feedback()
+        self._refresh_augment_views()
+        if not silent:
+            self.loading_var.set(f"Mirror-Sync importiert: {str(imported.get('imported_snapshot_hash', ''))[:12]}")
+        return imported
+
     def _refresh_dna_share_gate_status(self) -> dict[str, object]:
         """Erklaert, warum DNA-Share aktuell freigegeben oder blockiert ist."""
         summary = self.registry.get_dna_share_gate_summary(
@@ -4065,6 +4206,8 @@ class VeiraGUI:
         confirmed_count = int(summary.get("confirmed_count", 0) or 0)
         reconstruction_count = int(summary.get("reconstruction_count", 0) or 0)
         chained_count = int(summary.get("chained_count", 0) or 0)
+        trust_mean = float(summary.get("trust_mean", 0.0) or 0.0)
+        trust_required = float(summary.get("trust_required", 0.0) or 0.0)
         latest_reason_text = str(summary.get("latest_reason_text", ""))
         latest_reason_code = str(summary.get("latest_reason_code", ""))
         reason_counts = {
@@ -4074,7 +4217,8 @@ class VeiraGUI:
         }
         if eligible_count > 0:
             self.dna_share_gate_var.set(
-                f"DNA-Share Gate: {eligible_count}/{entry_count} freigegeben | confirmed {confirmed_count} | recon {reconstruction_count} | chain {chained_count}"
+                f"DNA-Share Gate: {eligible_count}/{entry_count} freigegeben | confirmed {confirmed_count} | "
+                f"recon {reconstruction_count} | chain {chained_count} | trust {trust_mean * 100.0:.0f}/{trust_required * 100.0:.0f}"
             )
             return summary
         top_block = ""
@@ -4082,7 +4226,8 @@ class VeiraGUI:
             top_key, top_value = sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[0]
             top_block = f" | Hauptblocker: {self.registry._dna_share_reason_text(top_key)} ({top_value})"
         self.dna_share_gate_var.set(
-            f"DNA-Share Gate: 0/{entry_count} freigegeben | Letzter Grund: {latest_reason_text or latest_reason_code}{top_block}"
+            f"DNA-Share Gate: 0/{entry_count} freigegeben | trust {trust_mean * 100.0:.0f}/{trust_required * 100.0:.0f} | "
+            f"Letzter Grund: {latest_reason_text or latest_reason_code}{top_block}"
         )
         return summary
 
@@ -4106,13 +4251,26 @@ class VeiraGUI:
         reason_code = str(summary.get("reason_code", ""))
         anchor_count = int(summary.get("sharable_anchor_count", 0) or 0)
         source_type = str(summary.get("source_type", getattr(active, "source_type", "")) or "").upper() or "--"
+        coverage_ratio = float(getattr(active, "anchor_coverage_ratio", 0.0) or 0.0)
+        residual_ratio = float(getattr(active, "unresolved_residual_ratio", 1.0) or 1.0)
+        coverage_verified = bool(getattr(active, "coverage_verified", False))
+        recon_verified = bool(summary.get("reconstruction_verified", False))
+        trust_score = float(summary.get("trust_score", 0.0) or 0.0)
+        trust_required = float(summary.get("trust_required", 0.0) or 0.0)
+        coverage_text = (
+            f" | COV {coverage_ratio * 100.0:.0f}%"
+            f" | REST {residual_ratio * 100.0:.0f}%"
+            f" | {'COV✓' if coverage_verified else 'COV✗'}"
+            f" | {'RECON✓' if recon_verified else 'RECON✗'}"
+            f" | TRUST {trust_score * 100.0:.0f}/{trust_required * 100.0:.0f}"
+        )
         if eligible:
             self.current_dna_share_var.set(
-                f"Aktueller Datensatz: DNA-Share freigegeben | {source_type} | Anker {anchor_count}"
+                f"Aktueller Datensatz: DNA-Share freigegeben | {source_type} | Anker {anchor_count}{coverage_text}"
             )
         else:
             self.current_dna_share_var.set(
-                f"Aktueller Datensatz: blockiert | {source_type} | {reason_text or reason_code}"
+                f"Aktueller Datensatz: blockiert | {source_type} | {reason_text or reason_code}{coverage_text}"
             )
         return summary
 
@@ -4264,6 +4422,7 @@ class VeiraGUI:
         except Exception as exc:
             messagebox.showerror("Anchor Library fehlgeschlagen", str(exc))
             return
+        self._sync_official_anchor_mirror(silent=True)
         self._apply_collective_feedback()
         self._append_export_audit(
             "public_anchor_library",
@@ -4716,9 +4875,15 @@ class VeiraGUI:
             if int(block.get("id", -1)) == 0:
                 continue
             payload = block.get("payload_json", {})
+            coverage_ratio = float(payload.get("anchor_coverage_ratio", 0.0) or 0.0)
+            residual_ratio = float(payload.get("unresolved_residual_ratio", 1.0) or 1.0)
+            coverage_flag = "COV✓" if bool(payload.get("coverage_verified", False)) else "COV✗"
             line = (
                 f"{payload.get('tag', 'BLOCK')} | {str(block.get('block_hash', ''))[:10]} | "
                 f"{payload.get('lossless_label', '')} | {payload.get('anchor_status', '')}"
+                f" | cov {coverage_ratio * 100.0:.0f}%"
+                f" | rest {residual_ratio * 100.0:.0f}%"
+                f" | {coverage_flag}"
             )
             if payload.get("ipfs_cid"):
                 line += f" | 📌 IPFS {str(payload.get('ipfs_cid'))[:10]}"
@@ -4747,6 +4912,8 @@ class VeiraGUI:
 
         self.vault_text.configure(state="normal")
         self.vault_text.delete("1.0", tk.END)
+        self.vault_text.tag_config("vault_trust_ok", foreground="#8FE388")
+        self.vault_text.tag_config("vault_trust_blocked", foreground="#FF8F8F")
         self._vault_line_map = {}
         vault_line = 1
         for entry in self.vault_entries_cache[:120]:
@@ -4754,11 +4921,20 @@ class VeiraGUI:
             noether_profile = dict(payload_json.get("vault_noether", {}) or {})
             bayes_profile = dict(payload_json.get("vault_bayes", {}) or {})
             benford_profile = dict(payload_json.get("vault_benford", {}) or {})
+            dna_gate = self.registry.describe_dna_share_payload(payload_json, chained=None)
             orbit_id = str(noether_profile.get("orbit_id", "") or "")[:8]
             membership = float(bayes_profile.get("membership_posterior", 0.0) or 0.0)
             reconstruction = float(bayes_profile.get("reconstruction_posterior", 0.0) or 0.0)
             benford_informative = bool(benford_profile.get("informative", False))
             benford_score = float(benford_profile.get("score", 0.0) or 0.0)
+            coverage_ratio = float(payload_json.get("anchor_coverage_ratio", 0.0) or 0.0)
+            residual_ratio = float(payload_json.get("unresolved_residual_ratio", 1.0) or 1.0)
+            coverage_flag = "COV✓" if bool(payload_json.get("coverage_verified", False)) else "COV✗"
+            trust_score = float(dna_gate.get("trust_score", 0.0) or 0.0)
+            trust_required = float(dna_gate.get("trust_required", 0.0) or 0.0)
+            gate_reason = ""
+            if not bool(dna_gate.get("eligible", False)):
+                gate_reason = str(dna_gate.get("reason_text", "") or "")
             token_info = self.symbol_grounding.token_for_entry(entry["id"])
             token_label = ""
             if token_info is not None:
@@ -4773,6 +4949,7 @@ class VeiraGUI:
                         f" · {meaning.get('character', '-')}"
                         f" · {meaning.get('health', '-')}"
                     )
+            line_start = self.vault_text.index(tk.END)
             self.vault_text.insert(
                 tk.END,
                 (
@@ -4780,9 +4957,20 @@ class VeiraGUI:
                     f" | orbit {orbit_id or '--'}"
                     f" | vault {membership * 100.0:.0f}%"
                     f" | recon {reconstruction * 100.0:.0f}%"
+                    f" | cov {coverage_ratio * 100.0:.0f}%"
+                    f" | rest {residual_ratio * 100.0:.0f}%"
+                    f" | {coverage_flag}"
+                    f" | trust {trust_score * 100.0:.0f}/{trust_required * 100.0:.0f}"
                     f" | Bf {f'{benford_score:.2f}' if benford_informative else 'n.i.'}"
+                    f"{f' | gate {gate_reason}' if gate_reason else ''}"
                     f"{token_label}\n"
                 ),
+            )
+            line_end = self.vault_text.index(tk.END)
+            self.vault_text.tag_add(
+                "vault_trust_ok" if bool(dna_gate.get("eligible", False)) else "vault_trust_blocked",
+                line_start,
+                line_end,
             )
             self._vault_line_map[vault_line] = entry
             vault_line += 1
@@ -4864,7 +5052,19 @@ class VeiraGUI:
         source_label = str(getattr(fingerprint, "source_label", "") or fingerprint.file_hash[:12])
 
         reconstruction_verified = False
+        confirmed_lossless = False
         merkle_root = ""
+        coverage_profile: dict[str, object] = {
+            "covered_block_count": 0,
+            "block_count": 0,
+            "covered_byte_count": 0,
+            "unresolved_byte_count": 0,
+            "anchor_coverage_ratio": 0.0,
+            "unresolved_residual_ratio": 1.0,
+            "residual_hash": "",
+            "coverage_verified": False,
+            "coverage_threshold": 0.85,
+        }
         delta_benford: dict[str, object] = dict(interference_profile.get("benford_profile", {}) or {})
         if str(getattr(fingerprint, "source_type", "file")) == "file":
             noise = self.session_context.generate_aether_noise(len(fingerprint.delta))
@@ -4876,14 +5076,47 @@ class VeiraGUI:
             )
             reconstruction_verified = bool(reconstruction.reconstruction_verified)
             merkle_root = reconstruction.merkle_root
+            coverage_profile = self.reconstruction_engine.anchor_residual_profile(
+                raw_bytes=original_bytes,
+                anchor_block_indices=self._anchor_block_indices(fingerprint, anchors),
+                block_count=len(list(getattr(fingerprint, "entropy_blocks", []) or [])),
+                block_size=int(getattr(self.analysis_engine, "block_size", 256) or 256),
+            )
+            confirmed_lossless = bool(
+                reconstruction_verified and bool(coverage_profile.get("coverage_verified", False))
+            )
+            setattr(
+                fingerprint,
+                "anchor_coverage_ratio",
+                float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
+            )
+            setattr(
+                fingerprint,
+                "unresolved_residual_ratio",
+                float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
+            )
+            setattr(
+                fingerprint,
+                "residual_hash",
+                str(coverage_profile.get("residual_hash", "") or ""),
+            )
+            setattr(
+                fingerprint,
+                "coverage_verified",
+                bool(coverage_profile.get("coverage_verified", False)),
+            )
             self.metric_recon_var.set("✓" if reconstruction_verified else "✗")
-            self.recon_status_var.set(f"RECON: {'✓' if reconstruction_verified else '✗'}")
+            self.recon_status_var.set(
+                f"RECON: {'✓' if reconstruction_verified else '✗'} | "
+                f"COV {float(coverage_profile.get('anchor_coverage_ratio', 0.0) or 0.0) * 100.0:.0f}%"
+            )
             self.augmentor.record_delta_log(
                 source_label,
                 reconstruction.delta_log,
                 metadata={
                     "event_benford": delta_benford,
                     "anchor_delta_ops": anchor_delta_ops,
+                    "coverage": dict(coverage_profile),
                     "security": {
                         "mode": str(getattr(self.session_context, "security_mode", "PROD")),
                         "trust_state": str(getattr(self.session_context, "trust_state", "TRUSTED")),
@@ -4897,6 +5130,7 @@ class VeiraGUI:
 
         if bool(security_policy.get("suppress_lossless_confirmation", False)):
             reconstruction_verified = False
+            confirmed_lossless = False
             self.metric_recon_var.set("✗")
             self.recon_status_var.set(
                 f"RECON: ✗ | {str(getattr(self.session_context, 'trust_state', 'UNTRUSTED'))}"
@@ -4930,7 +5164,11 @@ class VeiraGUI:
             "anchor_interference": interference_profile,
             "alarm": bool(fingerprint.verdict == "CRITICAL"),
             "reconstruction_verified": reconstruction_verified,
-            "confirmed_lossless": bool(reconstruction_verified),
+            "confirmed_lossless": bool(confirmed_lossless),
+            "anchor_coverage_ratio": float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
+            "unresolved_residual_ratio": float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
+            "residual_hash": str(coverage_profile.get("residual_hash", "") or ""),
+            "coverage_verified": bool(coverage_profile.get("coverage_verified", False)),
             "entropy_mean": float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
             "symmetry_score": float(getattr(fingerprint, "symmetry_score", 0.0) or 0.0),
             "periodicity": int(getattr(fingerprint, "periodicity", 0) or 0),
@@ -5122,7 +5360,7 @@ class VeiraGUI:
             "reconstruction_posterior": float(reconstruction_posterior),
         }
         payload["vault_benford"] = dict(benford_profile)
-        will_chain = bool(reconstruction_verified and self.session_context.security_allows("allow_chain_append", True))
+        will_chain = bool(confirmed_lossless and self.session_context.security_allows("allow_chain_append", True))
         dna_share_gate = self.registry.describe_dna_share_payload(payload, chained=will_chain)
         payload["dna_share_gate"] = dict(dna_share_gate)
         setattr(fingerprint, "dna_share_gate_summary", dict(dna_share_gate))
@@ -5152,7 +5390,7 @@ class VeiraGUI:
         self._mint_chain_block(
             tag=block_tag,
             reconstruction_verified=reconstruction_verified,
-            confirmed_lossless=reconstruction_verified,
+            confirmed_lossless=confirmed_lossless,
             merkle_root=merkle_root,
             payload_extra={
                 "source_type": source_type,
@@ -5170,6 +5408,9 @@ class VeiraGUI:
                     "reconstruction_posterior": float(reconstruction_posterior),
                     "anchor_posterior": float(bayes_snapshot.anchor_posterior),
                 },
+                "anchor_coverage_ratio": float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
+                "unresolved_residual_ratio": float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
+                "coverage_verified": bool(coverage_profile.get("coverage_verified", False)),
                 "vault_benford": dict(benford_profile),
                 "token": self._latest_agent_token,
                 "token_name": str(token_info.get("human_name", "")) if token_info else "",
@@ -5325,6 +5566,24 @@ class VeiraGUI:
         )
         setattr(fingerprint, "anchor_interference_profile", dict(interference_profile))
         return anchors, interference_profile, anchor_delta_ops
+
+    @staticmethod
+    def _anchor_block_indices(
+        fingerprint: AetherFingerprint,
+        anchors: list[AnchorPoint],
+    ) -> list[int]:
+        """Projiziert Dateianker zur Coverage-Messung auf Entropieblock-Indizes."""
+        block_count = int(len(list(getattr(fingerprint, "entropy_blocks", []) or [])))
+        if block_count <= 0:
+            return []
+        indices: set[int] = set()
+        for anchor in anchors:
+            x_cell = int(max(0, min(15, round(float(anchor.x) * 15.0))))
+            y_cell = int(max(0, min(15, round(float(anchor.y) * 15.0))))
+            block_index = int((y_cell * 16) + x_cell)
+            if 0 <= block_index < block_count:
+                indices.add(block_index)
+        return sorted(indices)
 
     def _structural_reply_for(
         self,
