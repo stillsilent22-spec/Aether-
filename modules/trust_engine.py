@@ -112,9 +112,13 @@ class TrustScoreEngine:
             coverage_score = max(0.0, coverage_score - 0.20)
 
         pattern_hash = str(record.get("anchor_pattern_hash", "") or "").strip()
-        pattern_matches = max(0, int(pattern_counts.get(pattern_hash, 0) or 0) - 1)
-        pattern_universe = max(1, len(pattern_counts))
-        vault_frequency_score = _clamp(pattern_matches / float(pattern_universe))
+        vault_frequency = max(1, int(pattern_counts.get(pattern_hash, 0) or 0))
+        pattern_matches = max(0, int(vault_frequency - 1))
+        anchor_weight = 1.0 / math.log(1.0 + float(vault_frequency))
+        log_match_score = 0.0
+        if pattern_matches > 0:
+            log_match_score = math.log(1.0 + float(pattern_matches)) * float(anchor_weight)
+        vault_frequency_score = _clamp(log_match_score)
         if pattern_hash and pattern_matches == 0 and convergence_score >= 0.85:
             flags.append("frequency_anomaly")
 
@@ -143,15 +147,19 @@ class TrustScoreEngine:
             "convergence_score": float(convergence_score),
             "coverage_score": float(coverage_score),
             "vault_frequency_score": float(vault_frequency_score),
+            "log_match_score": float(log_match_score),
+            "anchor_weight": float(anchor_weight),
+            "vault_frequency": float(vault_frequency),
+            "match_count": float(pattern_matches),
             "reconstruction_consistency_score": float(reconstruction_consistency_score),
             "physical_plausibility_score": float(physical_plausibility_score),
         }
 
         final_score = (
-            (0.35 * breakdown["convergence_score"])
-            + (0.25 * breakdown["coverage_score"])
-            + (0.20 * breakdown["vault_frequency_score"])
-            + (0.15 * breakdown["reconstruction_consistency_score"])
+            (0.60 * breakdown["vault_frequency_score"])
+            + (0.15 * breakdown["convergence_score"])
+            + (0.10 * breakdown["coverage_score"])
+            + (0.10 * breakdown["reconstruction_consistency_score"])
             + (0.05 * breakdown["physical_plausibility_score"])
         )
         if "convergence_coverage_mismatch" in flags:

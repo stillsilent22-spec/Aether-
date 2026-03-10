@@ -9,3 +9,6 @@ opencv-python
 pillow
 pywebview
 cryptography
+fonttools
+mss
+PyGetWindow

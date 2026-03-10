@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+PI_RESONANCE_TOLERANCE = 0.0001
+
 
 def _normalize_text(text: str) -> str:
     value = str(text or "").strip().lower()
@@ -92,6 +94,23 @@ class ShanwayAssessment:
     anchor_constant: str
     anchor_constant_value: float
     anchor_deviation: float
+    goedel_signal: float
+    boundary: str
+    pi_resonance_confirmed: bool
+    it_from_bit: bool
+    vault_gap: str
+    suggested_next: str
+    suggestion_reason: str
+    structural_siblings: list[str]
+    shared_geometry: list[str]
+    semantic_distance: float
+    screen_vision: str
+    screen_source: str
+    visual_anchors: list[str]
+    file_anchors: list[str]
+    convergence: float
+    delta_visual_only: list[str]
+    delta_file_only: list[str]
     sensitive_hits: list[str]
     blacklist_hits: list[str]
     matched_terms: list[str]
@@ -127,6 +146,23 @@ class ShanwayAssessment:
             "anchor_constant": str(self.anchor_constant),
             "anchor_constant_value": float(self.anchor_constant_value),
             "anchor_deviation": float(self.anchor_deviation),
+            "goedel_signal": float(self.goedel_signal),
+            "boundary": str(self.boundary),
+            "pi_resonance_confirmed": bool(self.pi_resonance_confirmed),
+            "it_from_bit": bool(self.it_from_bit),
+            "vault_gap": str(self.vault_gap),
+            "suggested_next": str(self.suggested_next),
+            "suggestion_reason": str(self.suggestion_reason),
+            "structural_siblings": list(self.structural_siblings),
+            "shared_geometry": list(self.shared_geometry),
+            "semantic_distance": float(self.semantic_distance),
+            "screen_vision": str(self.screen_vision),
+            "screen_source": str(self.screen_source),
+            "visual_anchors": list(self.visual_anchors),
+            "file_anchors": list(self.file_anchors),
+            "convergence": float(self.convergence),
+            "delta_visual_only": list(self.delta_visual_only),
+            "delta_file_only": list(self.delta_file_only),
             "sensitive_hits": list(self.sensitive_hits),
             "blacklist_hits": list(self.blacklist_hits),
             "matched_terms": list(self.matched_terms),
@@ -156,6 +192,9 @@ class ShanwayAssessment:
             "anchor_constant_value": float(self.anchor_constant_value),
             "anchor_deviation": float(self.anchor_deviation),
             "anchor_alignment": float(max(0.0, 1.0 - min(1.0, self.anchor_deviation / 0.25))),
+            "goedel_signal": float(self.goedel_signal),
+            "boundary": str(self.boundary),
+            "it_from_bit": bool(self.it_from_bit),
             "matched_terms": list(self.matched_terms),
         }
 
@@ -319,6 +358,9 @@ class ShanwayEngine:
     def __init__(self, state_path: str | None = None) -> None:
         self.state_path = Path(state_path or (Path("data") / "shanway_lexicon.json"))
         self.learned_tokens: dict[str, dict[str, int]] = {"de": {}, "en": {}}
+        self._vault_analysis_cache_path = ""
+        self._vault_analysis_cache_mtime = 0.0
+        self._vault_analysis_cache_payload: dict[str, Any] = {}
         self._load_state()
 
     def _load_state(self) -> None:
@@ -450,6 +492,105 @@ class ShanwayEngine:
             int(len(anchors)),
         )
 
+    @staticmethod
+    def _goedel_boundary(h_lambda: float, observer_mutual_info: float) -> tuple[float, str]:
+        signal = float(h_lambda) / (float(h_lambda) + float(observer_mutual_info) + 1e-10)
+        if signal < 0.2:
+            return signal, "RECONSTRUCTABLE"
+        if signal < 0.6:
+            return signal, "STRUCTURAL_HYPOTHESIS"
+        return signal, "GOEDEL_LIMIT"
+
+    @staticmethod
+    def _pi_resonance_confirmed(anchor_details: list[dict[str, Any]] | None) -> bool:
+        for anchor in list(anchor_details or []):
+            if not isinstance(anchor, dict):
+                continue
+            if str(anchor.get("nearest_constant", "")).upper() != "PI":
+                continue
+            deviation = float(anchor.get("deviation", 1.0) or 1.0)
+            if deviation <= PI_RESONANCE_TOLERANCE:
+                return True
+        return False
+
+    def _load_vault_analysis(self, vault_analysis_path: str) -> dict[str, Any]:
+        path = Path(vault_analysis_path or "")
+        if not path.is_file():
+            return {}
+        try:
+            mtime = float(path.stat().st_mtime)
+        except Exception:
+            return {}
+        if (
+            str(path) == self._vault_analysis_cache_path
+            and abs(mtime - self._vault_analysis_cache_mtime) <= 1e-9
+            and self._vault_analysis_cache_payload
+        ):
+            return dict(self._vault_analysis_cache_payload)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        self._vault_analysis_cache_path = str(path)
+        self._vault_analysis_cache_mtime = mtime
+        self._vault_analysis_cache_payload = dict(payload)
+        return dict(payload)
+
+    def _resolve_vault_guidance(
+        self,
+        source_label: str,
+        vault_analysis_path: str,
+    ) -> tuple[str, str, str, list[str], list[str], float]:
+        payload = self._load_vault_analysis(vault_analysis_path)
+        gaps = list(dict(payload.get("vault_gaps", {}) or {}).get("gaps", []) or [])
+        vault_gap = ""
+        suggested_next = ""
+        suggestion_reason = ""
+        if gaps:
+            first_gap = dict(gaps[0] or {})
+            vault_gap = str(first_gap.get("vault_gap", "") or "")
+            suggested_next = str(first_gap.get("suggested_next", "") or "")
+            suggestion_reason = str(first_gap.get("reason", "") or "")
+
+        siblings: list[str] = []
+        shared_geometry: list[str] = []
+        semantic_distance = 0.0
+        source_name = Path(str(source_label or "")).name
+        for sibling in list(payload.get("siblings", []) or []):
+            entry = dict(sibling or {})
+            left_file = Path(str(entry.get("left_file", "") or "")).name
+            right_file = Path(str(entry.get("right_file", "") or "")).name
+            if source_name not in {left_file, right_file}:
+                continue
+            other_file = right_file if left_file == source_name else left_file
+            siblings.append(str(other_file))
+            if not shared_geometry:
+                shared_geometry = [str(item) for item in list(entry.get("shared_geometry", []) or [])[:12]]
+                semantic_distance = float(entry.get("semantic_distance", 0.0) or 0.0)
+        return (
+            vault_gap,
+            suggested_next,
+            suggestion_reason,
+            sorted(set(siblings)),
+            shared_geometry,
+            semantic_distance,
+        )
+
+    @staticmethod
+    def _screen_fields(screen_payload: dict[str, Any] | None) -> tuple[str, str, list[str], list[str], float, list[str], list[str]]:
+        payload = dict(screen_payload or {})
+        return (
+            str(payload.get("SCREEN_VISION", "") or payload.get("screen_vision", "")),
+            str(payload.get("SOURCE", "") or payload.get("source", "")),
+            [str(item) for item in list(payload.get("VISUAL_ANCHORS", []) or [])[:12]],
+            [str(item) for item in list(payload.get("FILE_ANCHORS", []) or [])[:12]],
+            float(payload.get("CONVERGENCE", 0.0) or payload.get("convergence", 0.0) or 0.0),
+            [str(item) for item in list(payload.get("DELTA_VISUAL_ONLY", []) or payload.get("delta_visual_only", []) or [])[:12]],
+            [str(item) for item in list(payload.get("DELTA_FILE_ONLY", []) or payload.get("delta_file_only", []) or [])[:12]],
+        )
+
     def detect_asymmetry(
         self,
         text: str,
@@ -457,6 +598,11 @@ class ShanwayEngine:
         anchor_details: list[dict[str, Any]] | None = None,
         browser_mode: bool = False,
         active: bool = True,
+        h_lambda: float = 0.0,
+        observer_mutual_info: float = 0.0,
+        source_label: str = "",
+        vault_analysis_path: str = "data/aelab_vault/vault_analysis.json",
+        screen_payload: dict[str, Any] | None = None,
     ) -> ShanwayAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
@@ -561,6 +707,15 @@ class ShanwayEngine:
         )
 
         anchor_constant, anchor_value, anchor_deviation, anchor_count = self._anchor_reference(anchor_details)
+        goedel_signal, boundary = self._goedel_boundary(h_lambda, observer_mutual_info)
+        pi_resonance_confirmed = self._pi_resonance_confirmed(anchor_details)
+        it_from_bit = bool(goedel_signal < 0.3 and pi_resonance_confirmed)
+        vault_gap, suggested_next, suggestion_reason, structural_siblings, shared_geometry, semantic_distance = (
+            self._resolve_vault_guidance(source_label=source_label, vault_analysis_path=vault_analysis_path)
+        )
+        screen_vision, screen_source, visual_anchors, file_anchors, convergence, delta_visual_only, delta_file_only = (
+            self._screen_fields(screen_payload)
+        )
         matched_terms = sorted(
             set(
                 positive_hits
@@ -634,6 +789,23 @@ class ShanwayEngine:
             anchor_constant=str(anchor_constant),
             anchor_constant_value=float(anchor_value),
             anchor_deviation=float(anchor_deviation),
+            goedel_signal=float(goedel_signal),
+            boundary=str(boundary),
+            pi_resonance_confirmed=bool(pi_resonance_confirmed),
+            it_from_bit=bool(it_from_bit),
+            vault_gap=str(vault_gap),
+            suggested_next=str(suggested_next),
+            suggestion_reason=str(suggestion_reason),
+            structural_siblings=list(structural_siblings),
+            shared_geometry=list(shared_geometry),
+            semantic_distance=float(semantic_distance),
+            screen_vision=str(screen_vision),
+            screen_source=str(screen_source),
+            visual_anchors=list(visual_anchors),
+            file_anchors=list(file_anchors),
+            convergence=float(convergence),
+            delta_visual_only=list(delta_visual_only),
+            delta_file_only=list(delta_file_only),
             sensitive_hits=list(sensitive_hits),
             blacklist_hits=list(blacklist_hits),
             matched_terms=list(matched_terms),
@@ -700,27 +872,86 @@ class ShanwayEngine:
         """Leitet die rein textuelle Shanway-Antwort aus dem Befund ab."""
         language = str(getattr(assessment, "language", "de") or "de")
         if assessment.classification == "inactive":
-            return (
+            response = (
                 "Shanway bleibt still, bis er explizit zugeschaltet wird."
                 if language == "de"
                 else "Shanway stays silent until it is explicitly enabled."
             )
+            return self._append_structural_notes(response, assessment)
         if assessment.sensitive or assessment.classification == "sensitive":
-            return (
+            response = (
                 "Sensible Inhalte erkannt - Analyse gestoppt"
                 if language == "de"
                 else "Sensitive content detected - analysis stopped"
             )
+            return self._append_structural_notes(response, assessment)
         if assessment.classification == "toxic":
-            return self._noise_reply(assessment)
+            return self._append_structural_notes(self._noise_reply(assessment), assessment)
         if assessment.classification == "uncertain":
             base = assistant_text.strip() if str(assistant_text).strip() else (
                 "Ich halte die Antwort bewusst vorsichtig und knapp."
                 if language == "de"
                 else "I keep the reply deliberately cautious and brief."
             )
-            return (
+            response = (
                 f"{'Analyse bleibt unsicher.' if language == 'de' else 'Analysis remains uncertain.'} "
                 f"{base}"
             )
-        return self._harmonic_reply(assessment, assistant_text=assistant_text)
+            return self._append_structural_notes(response, assessment)
+        return self._append_structural_notes(
+            self._harmonic_reply(assessment, assistant_text=assistant_text),
+            assessment,
+        )
+
+    def _append_structural_notes(self, response: str, assessment: ShanwayAssessment) -> str:
+        notes: list[str] = [str(response or "").strip()]
+        notes.append(f"BOUNDARY: {assessment.boundary} ({assessment.goedel_signal:.3f})")
+        if assessment.it_from_bit:
+            notes.append("IT_FROM_BIT_CANDIDATE")
+        if assessment.vault_gap or assessment.suggested_next:
+            gap_parts = []
+            if assessment.vault_gap:
+                gap_parts.append(f"VAULT_GAP: {assessment.vault_gap}")
+            if assessment.suggested_next:
+                gap_parts.append(f"SUGGESTED_NEXT: {assessment.suggested_next}")
+            if assessment.suggestion_reason:
+                gap_parts.append(f"REASON: {assessment.suggestion_reason}")
+            notes.append(" | ".join(gap_parts))
+        if assessment.structural_siblings:
+            notes.append(
+                "STRUCTURAL_SIBLINGS: "
+                + ", ".join(list(assessment.structural_siblings))
+                + (
+                    f" | SHARED_GEOMETRY: {', '.join(list(assessment.shared_geometry)[:8])}"
+                    if assessment.shared_geometry
+                    else ""
+                )
+                + f" | SEMANTIC_DISTANCE: {assessment.semantic_distance:.3f}"
+            )
+        if assessment.screen_vision:
+            notes.append(
+                f"SCREEN_VISION: {assessment.screen_vision}"
+                + (f" | SOURCE: {assessment.screen_source}" if assessment.screen_source else "")
+                + (
+                    f" | VISUAL_ANCHORS: {', '.join(list(assessment.visual_anchors)[:8])}"
+                    if assessment.visual_anchors
+                    else ""
+                )
+                + (
+                    f" | FILE_ANCHORS: {', '.join(list(assessment.file_anchors)[:8])}"
+                    if assessment.file_anchors
+                    else ""
+                )
+                + f" | CONVERGENCE: {assessment.convergence:.3f}"
+                + (
+                    f" | DELTA: screen_only={', '.join(list(assessment.delta_visual_only)[:6])}"
+                    if assessment.delta_visual_only
+                    else ""
+                )
+                + (
+                    f" file_only={', '.join(list(assessment.delta_file_only)[:6])}"
+                    if assessment.delta_file_only
+                    else ""
+                )
+            )
+        return " ".join(part for part in notes if str(part).strip())

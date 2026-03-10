@@ -16,6 +16,20 @@ Dieses Dokument beschreibt Aether in einem engen technischen Sinn. Es soll:
 
 Dieses Dokument ist keine Produktwerbung, keine metaphysische Schrift und kein Beweis fuer neue Naturgesetze.
 
+## Philosophical Foundation
+
+Der urspruengliche Impuls von Aether laesst sich auf eine einzige Frage verdichten: Was waere wenn Dateien keine Formate sind, sondern Zustaende. Diese Frage ist absichtlich einfacher als eine Theorie und tiefer als eine Implementierungsentscheidung. Sie verschiebt den Blick von Dateiendungen und Parsern auf messbare Struktur, Invarianz, Restunsicherheit und Beobachterlage.
+
+Aus Shannon folgt die Baseline: Entropie beschreibt rohe Unsicherheit, aber sie kennt den lernenden Beobachter nicht. Genau dort setzt Aether an. Der projektinterne Begriff `H_lambda` operationalisiert die Luecke zwischen dem Zustand selbst und dem, was ein konkreter Beobachter bereits ueber ihn traegt. Das ist keine Widerlegung von Shannon, sondern die bewusste Bearbeitung seiner Beobachterblindheit in einem lokalen technischen System.
+
+Goedel liefert die Grenzmarke: Jedes hinreichend komplexe System produziert Aussagen ueber sich selbst, die es nicht vollstaendig aus sich heraus schliessen kann. In Aether wird diese Einsicht nicht als rhetorischer Verweis benutzt, sondern als Systemgrenze operationalisiert. Die Goedel-Grenze markiert, wann ein Befund noch rekonstruierbar ist, wann er nur eine strukturelle Hypothese bleibt und wann explizite Unvollstaendigkeit ausgewiesen werden muss.
+
+Wheeler stellt die ontologische Leitfrage mit "It from Bit". Wenn beobachtbare Ordnung aus Information hervorgeht, dann ist die technische Untersuchung von Struktur nicht nur Signalverarbeitung, sondern ein lokales Instrument fuer Seinsfragen im kleinen Massstab. Noether liefert dazu das Governance-Prinzip: Wo Symmetrie stabil bleibt, ist eine Erhaltung oder Invariante zu erwarten. Wo sie bricht, muss ein System die Konsequenzen sichtbar machen statt sie zu verstecken.
+
+Schroedinger erinnert daran, dass der Beobachter nicht ausserhalb des Systems steht. Aether modelliert daher Beobachtung nicht als neutralen Nullpunkt, sondern als Teil des Zustandsraums. Die Dual-Slit-Metapher wird hier als strukturelle Vergleichsmethode lesbar: Interferenz ist nicht nur ein physikalisches Bild, sondern eine praktische Technik, um Ueberschneidung, Divergenz und Resonanz zwischen zwei Strukturen zu messen.
+
+Wichtig ist die Grenze dieser ganzen Konstruktion: Das hier ist kein Beweis. Es ist eine instrumentierte Untersuchung einer Frage, die keinen Namen hatte, als sie zuerst gestellt wurde. Aether behauptet nicht, die Welt erklaert zu haben. Es baut ein messbares, lokales und auditierbares System, in dem diese Frage ueberhaupt sauber gestellt und gegen Daten gehalten werden kann.
+
 ## 2. Ausgangsfrage
 
 Die Ausgangsfrage entstand aus Conway's Game of Life.

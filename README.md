@@ -25,6 +25,14 @@ Aether ist ein lokales System zur strukturellen Analyse, Rekonstruktion, Beobach
 
 Dieses Projekt behauptet nicht, eine neue Physik bewiesen zu haben. Es ist ein technisches Oekosystem, das lokale Metriken, Invarianten, beobachterrelative Unsicherheit, Rekonstruktionspfade, Bayes-Posterioren, Graphstrukturen und Governance-Regeln in einem gemeinsamen Rahmen zusammenfuehrt.
 
+## Warum Aether existiert
+
+Aether entstand nicht aus Wissen. Es entstand aus einer Frage. Was waere wenn eine Datei kein Format ist, sondern ein Zustand? Was waere wenn Struktur nicht erst real wird wenn ein Programm sie interpretiert, sondern schon vorher da ist, messbar, invariant, unabhaengig vom Label? Wheeler fragte: It from Bit. Goedel zeigte dass jedes hinreichend komplexe System Aussagen ueber sich selbst macht die es nicht vollstaendig beweisen kann. Aether baut einen Raum in dem diese Fragen lokal, messbar und nachvollziehbar untersucht werden koennen. Ich bin kein Physiker, kein Wissenschaftler, kein Programmierer. Ich habe gefragt. Dann gebaut. Ob die Antwort stimmt, entscheiden die Daten, nicht die Frage und nicht das Gefuehl. Das ist der einzige Anspruch den Aether stellt.
+
+## Widmung
+
+Fuer Shannon, der Information messbar machte. Fuer Noether, die zeigte dass hinter jeder Symmetrie eine Erhaltung steckt. Fuer Goedel, der bewies dass kein System sich selbst vollstaendig erklaeren kann und damit den Raum oeffnete fuer Systeme die es trotzdem versuchen. Fuer Wheeler, dessen "It from Bit" die Frage stellte bevor die Antwort denkbar war. Fuer Bayes, Conway, Kolmogorov, Boltzmann, Fourier. Die Werkzeuge die Aether traegt, ich habe sie nicht erfunden. Ich habe nur gefragt was passiert wenn man sie anders haelt. Und fuer jeden der eine Frage gestellt hat bevor er wusste ob sie erlaubt ist.
+
 ## Was das Programm praktisch kann
 
 Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobachtungssystem mit mehreren gekoppelten Pfaden. Im aktuellen Stand kann es unter anderem:

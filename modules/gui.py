@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -36,6 +37,7 @@ from .observer_engine import AnchorPoint, ObserverEngine
 from .public_anchor import PublicBlockchainAnchor
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
+from .screen_vision_engine import ScreenVisionEngine
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
@@ -96,6 +98,7 @@ class VeiraGUI:
         self.embedding_engine = CrossDomainEmbeddingEngine(session_context.seed)
         self.graph_engine = GraphFieldEngine()
         self.reconstruction_engine = LosslessReconstructionEngine()
+        self.screen_vision_engine = ScreenVisionEngine()
         self.device_profile_engine = DeviceProfileEngine()
         self.device_profile = self.device_profile_engine.detect()
         self.browser_engine = BrowserEngine()
@@ -259,6 +262,7 @@ class VeiraGUI:
         self.chat_sync_last_url = ""
         self.chat_sync_polling = False
         self.spectrum_thread: threading.Thread | None = None
+        self._pending_screen_scope: dict[str, Any] | None = None
         self.csv_thread: threading.Thread | None = None
         self.speech_thread: threading.Thread | None = None
         self.chat_thread: threading.Thread | None = None
@@ -1984,6 +1988,9 @@ class VeiraGUI:
             anchor_details=list(context.ae_anchor_details or []),
             browser_mode=True,
             active=True,
+            h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+            observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+            source_label=str(getattr(fingerprint, "source_label", "") or getattr(snapshot, "url", "")),
         )
         try:
             self.registry.update_fingerprint_payload(
@@ -2914,6 +2921,13 @@ class VeiraGUI:
                     anchor_details=list(assistant_context.ae_anchor_details or []),
                     browser_mode=False,
                     active=True,
+                    h_lambda=float(getattr(self.current_fingerprint, "h_lambda", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    observer_mutual_info=float(getattr(self.current_fingerprint, "observer_mutual_info", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    source_label=str(getattr(self.current_fingerprint, "source_label", "") or ""),
+                    screen_payload=dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
+                    if self.current_fingerprint is not None else {},
                 )
                 if shanway_assessment.sensitive:
                     blocked_sensitive = True
@@ -2971,6 +2985,13 @@ class VeiraGUI:
                     anchor_details=list(anchors),
                     browser_mode=False,
                     active=True,
+                    h_lambda=float(getattr(self.current_fingerprint, "h_lambda", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    observer_mutual_info=float(getattr(self.current_fingerprint, "observer_mutual_info", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    source_label=str(getattr(self.current_fingerprint, "source_label", "") or ""),
+                    screen_payload=dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
+                    if self.current_fingerprint is not None else {},
                 )
                 if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
                     self_learned_tokens = int(
@@ -3004,10 +3025,14 @@ class VeiraGUI:
                     "bayes_pattern_posterior": 0.0,
                     "bayes_interference_posterior": 0.0,
                     "bayes_alarm_posterior": 0.0,
-                    "observer_mutual_info": 0.0,
-                    "observer_knowledge_ratio": 0.0,
-                    "h_lambda": 0.0,
-                    "observer_state": "",
+                    "observer_mutual_info": float(getattr(self.current_fingerprint, "observer_mutual_info", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    "observer_knowledge_ratio": float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    "h_lambda": float(getattr(self.current_fingerprint, "h_lambda", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    "observer_state": str(getattr(self.current_fingerprint, "observer_state", "") or "")
+                    if self.current_fingerprint is not None else "",
                     "beauty_signature": {},
                     "model_depth_label": assistant_context.model_depth_label,
                     "model_depth_score": assistant_context.model_depth_score,
@@ -3020,6 +3045,8 @@ class VeiraGUI:
                 if shanway_assessment is not None:
                     payload["shanway_assessment"] = shanway_assessment.to_payload()
                     payload["shanway_detector_dna"] = ""
+                if self.current_fingerprint is not None:
+                    payload["screen_vision"] = dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
                 if shanway_self_assessment is not None:
                     payload["shanway_self_assessment"] = shanway_self_assessment.to_payload()
                     payload["shanway_self_learned_tokens"] = int(self_learned_tokens)
@@ -5346,18 +5373,41 @@ class VeiraGUI:
             delta_learning_curve=delta_learning_curve,
             anomaly_memory=anomaly_memory,
         )
+        ae_anchor_details = [dict(item) for item in list(ae_lab_summary.get("anchors", [])) if isinstance(item, dict)]
+        goedel_signal = float(getattr(fingerprint, "h_lambda", 0.0) or 0.0) / (
+            float(getattr(fingerprint, "h_lambda", 0.0) or 0.0)
+            + float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0)
+            + 1e-10
+        )
+        if goedel_signal < 0.2:
+            boundary = "RECONSTRUCTABLE"
+        elif goedel_signal < 0.6:
+            boundary = "STRUCTURAL_HYPOTHESIS"
+        else:
+            boundary = "GOEDEL_LIMIT"
+        pi_resonance_confirmed = any(
+            str(anchor.get("nearest_constant", "")).upper() == "PI"
+            and float(anchor.get("deviation", 1.0) or 1.0) <= 0.0001
+            for anchor in ae_anchor_details
+        )
+        it_from_bit_candidate = bool(goedel_signal < 0.3 and pi_resonance_confirmed)
         payload["token"] = self._latest_agent_token
         payload["token_name"] = str(token_info.get("human_name", "")) if token_info else ""
         payload["pattern_found"] = self.pattern_found_var.get().strip()
         payload["ae_lab"] = dict(ae_lab_summary)
-        payload["ae_anchors"] = [dict(item) for item in list(ae_lab_summary.get("anchors", []))[:16]]
+        payload["ae_anchors"] = [dict(item) for item in ae_anchor_details[:16]]
+        payload["goedel_signal"] = float(goedel_signal)
+        payload["boundary"] = str(boundary)
+        payload["pi_resonance_confirmed"] = bool(pi_resonance_confirmed)
+        payload["it_from_bit_candidate"] = bool(it_from_bit_candidate)
+        payload["screen_vision"] = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
         noether_profile = self.analysis_engine.vault_noether_profile(
             fingerprint,
-            anchor_details=list(ae_lab_summary.get("anchors", [])),
+            anchor_details=list(ae_anchor_details),
         )
         benford_profile = self.analysis_engine.vault_benford_profile(
             fingerprint,
-            anchor_details=list(ae_lab_summary.get("anchors", [])),
+            anchor_details=list(ae_anchor_details),
         )
         membership_posterior = self.bayes_engine.vault_membership_posterior(
             similarity_best=float(similarity_best),
@@ -5415,15 +5465,19 @@ class VeiraGUI:
                 "vault_entry_id": int(vault_entry_id),
                 "integrity_text": str(getattr(fingerprint, "integrity_text", "")),
                 "pattern_found": self.pattern_found_var.get().strip(),
-                "anchor_count": int(len(list(ae_lab_summary.get("anchors", [])))),
+                "anchor_count": int(len(ae_anchor_details)),
                 "anchor_preview": str(ae_lab_summary.get("anchor_preview", "")),
-                "ae_anchors": [dict(item) for item in list(ae_lab_summary.get("anchors", []))[:16]],
+                "ae_anchors": [dict(item) for item in ae_anchor_details[:16]],
                 "vault_noether": dict(noether_profile),
                 "vault_bayes": {
                     "membership_posterior": float(membership_posterior),
                     "reconstruction_posterior": float(reconstruction_posterior),
                     "anchor_posterior": float(bayes_snapshot.anchor_posterior),
                 },
+                "goedel_signal": float(goedel_signal),
+                "boundary": str(boundary),
+                "pi_resonance_confirmed": bool(pi_resonance_confirmed),
+                "it_from_bit_candidate": bool(it_from_bit_candidate),
                 "anchor_coverage_ratio": float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
                 "unresolved_residual_ratio": float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
                 "coverage_verified": bool(coverage_profile.get("coverage_verified", False)),
@@ -5479,7 +5533,12 @@ class VeiraGUI:
                 "system_gp_rules": language_top,
                 "system_gp_evolution_path": language_events,
                 "ae_lab": dict(ae_lab_summary),
-                "ae_anchor_details": [dict(item) for item in list(ae_lab_summary.get("anchors", []))[:16]],
+                "ae_anchor_details": [dict(item) for item in ae_anchor_details[:16]],
+                "goedel_signal": float(goedel_signal),
+                "boundary": str(boundary),
+                "pi_resonance_confirmed": bool(pi_resonance_confirmed),
+                "it_from_bit_candidate": bool(it_from_bit_candidate),
+                "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
                 "local_chain_tx_hash": str(getattr(fingerprint, "local_chain_tx_hash", "")),
                 "local_chain_prev_hash": str(getattr(fingerprint, "local_chain_prev_hash", "")),
                 "local_chain_endpoint": str(getattr(fingerprint, "local_chain_endpoint", "")),
@@ -6388,12 +6447,60 @@ class VeiraGUI:
             self.loading_var.set("Bild per Drag & Drop erkannt. Spektrumanalyse startet ...")
             self._start_spectrum_analysis(normalized)
         else:
+            self._prepare_scoped_screen_request(normalized)
             self.loading_var.set("Datei per Drag & Drop erkannt. Analyse startet ...")
             self._start_analysis(normalized)
+
+    def _prepare_scoped_screen_request(self, file_path: str) -> None:
+        """Aktiviert Screen-Vision nur fuer den expliziten Dateidrop und nur fuer das Aether-Fenster."""
+        candidate = Path(str(file_path or "")).resolve()
+        if not candidate.is_file():
+            self._pending_screen_scope = None
+            return
+        self._pending_screen_scope = {
+            "file_path": str(candidate),
+            "window_title": str(self.root.title() or "Aether"),
+            "explicit_trigger": True,
+        }
+
+    def _capture_scoped_screen_payload(self, source_path: Path, fingerprint: AetherFingerprint) -> dict[str, Any]:
+        """Liest optional nur das aktive Analysefenster aus und vergleicht es mit der Datei-DNA."""
+        request = dict(self._pending_screen_scope or {})
+        self._pending_screen_scope = None
+        if not request:
+            return {}
+        try:
+            requested_path = Path(str(request.get("file_path", "") or "")).resolve()
+        except Exception:
+            return {}
+        if requested_path != source_path.resolve():
+            return {}
+        try:
+            result = self.screen_vision_engine.capture_and_compare(
+                analysis_engine=self.analysis_engine,
+                window_title=str(request.get("window_title", "") or "Aether"),
+                file_path=str(source_path),
+                file_fingerprint=fingerprint,
+                explicit_trigger=bool(request.get("explicit_trigger", False)),
+            )
+            return result.to_payload()
+        except Exception as exc:
+            return {
+                "SCREEN_VISION": "scoped",
+                "SOURCE": source_path.name,
+                "VISUAL_ANCHORS": [],
+                "FILE_ANCHORS": [],
+                "CONVERGENCE": 0.0,
+                "DELTA_VISUAL_ONLY": [],
+                "DELTA_FILE_ONLY": [],
+                "status": "unavailable",
+                "reason": str(exc),
+            }
 
     def _start_analysis_from_entry(self) -> None:
         """Startet eine Analyse fuer den manuell eingegebenen Pfad."""
         candidate = self.path_var.get().strip()
+        self._pending_screen_scope = None
         if candidate and Path(candidate).is_dir():
             self._start_dna_directory_import(candidate)
             return
@@ -6589,6 +6696,9 @@ class VeiraGUI:
                 source_label=str(source_path),
                 source_type="text_file" if is_text_source else "file",
             )
+            screen_vision_payload = self._capture_scoped_screen_payload(source_path, fingerprint)
+            if screen_vision_payload:
+                setattr(fingerprint, "screen_vision_payload", dict(screen_vision_payload))
             storage_decision = self.storage_gp_engine.evaluate(fingerprint)
             raw_saved = False
             local_payload = {
@@ -6600,6 +6710,8 @@ class VeiraGUI:
                 "delta_share_manual_only": True,
             }
             local_payload.update(text_learning_info)
+            if screen_vision_payload:
+                local_payload["screen_vision"] = dict(screen_vision_payload)
             record_id = self.registry.save(
                 fingerprint,
                 self.session_context,
