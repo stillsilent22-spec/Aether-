@@ -60,6 +60,7 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
 from .ae_evolution_core import normalize_anchor_entries
 from .blockchain_interface import AetherChain
 from .ethics_engine import EthicsAssessment, EthicsEngine
+from .reconstruction_engine import LosslessReconstructionEngine
 from .session_engine import SessionContext
 from .voxel_grid import VoxelGrid4D
 
@@ -163,6 +164,10 @@ class AetherFingerprint:
     file_profile: dict[str, Any] | None = None
     observer_payload: dict[str, Any] | None = None
     emergence_layers: list[dict[str, Any]] | None = None
+    delta_session_seed: int = 0
+    reconstruction_verification: dict[str, Any] | None = None
+    verdict_reconstruction: str = ""
+    verdict_reconstruction_reason: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """Serialisiert den Fingerprint als JSON-taugliches Dictionary."""
@@ -206,6 +211,10 @@ class AetherFingerprint:
             "file_profile": dict(self.file_profile or {}),
             "observer_payload": dict(self.observer_payload or {}),
             "emergence_layers": [dict(item) for item in list(self.emergence_layers or [])],
+            "delta_session_seed": int(self.delta_session_seed),
+            "reconstruction_verification": dict(self.reconstruction_verification or {}),
+            "verdict_reconstruction": str(self.verdict_reconstruction),
+            "verdict_reconstruction_reason": str(self.verdict_reconstruction_reason),
             "delta": self.delta.hex(),
             "delta_ratio": float(self.delta_ratio),
             "anomaly_coordinates": [[int(x), int(y)] for x, y in self.anomaly_coordinates],
@@ -269,6 +278,7 @@ class AnalysisEngine:
         self.block_size = block_size
         self.registry = registry
         self.ethics_engine = ethics_engine if ethics_engine is not None else EthicsEngine()
+        self.reconstruction_engine = LosslessReconstructionEngine(chunk_size=max(64, int(block_size)))
 
     def set_registry(self, registry: AetherRegistry | None) -> None:
         """
@@ -1086,16 +1096,92 @@ class AnalysisEngine:
             peaks.append({"frequency": 0.0, "magnitude": 0.0})
         return peaks
 
-    def _build_delta(self, raw: bytes) -> tuple[bytes, float]:
+    def _build_delta(self, raw: bytes) -> tuple[bytes, float, int]:
         """Erzeugt das session-abhaengige Delta und seine Kompressionsrate."""
         file_size = len(raw)
-        noise = self.session_context.generate_aether_noise(file_size)
+        session_seed = int(self.session_context.get_seed())
+        noise = SessionContext.noise_from_seed(session_seed, file_size)
         delta = bytes(a ^ b for a, b in zip(raw, noise))
         if file_size == 0:
-            return delta, 0.0
+            return delta, 0.0, session_seed
         compressed_size = len(zlib.compress(delta, level=9))
         delta_ratio = float(max(0.0, min(1.0, compressed_size / file_size)))
-        return delta, delta_ratio
+        return delta, delta_ratio, session_seed
+
+    @staticmethod
+    def _reconstruct_delta_bytes(delta: bytes, session_seed: int) -> bytes:
+        """Hebt ein sessionbasiertes XOR-Delta wieder in Originalbytes auf."""
+        noise = SessionContext.noise_from_seed(int(session_seed) & 0xFFFFFFFF, len(delta))
+        return bytes(value ^ mask for value, mask in zip(delta, noise))
+
+    def _reconstruction_verdict(
+        self,
+        verification: dict[str, Any],
+        delta_session_seed: int,
+    ) -> tuple[str, str]:
+        """Leitet einen klaren Rekonstruktionsbefund samt Fehlergrund ab."""
+        failures: list[str] = []
+        if not bool(verification.get("verified", False)):
+            if not bool(verification.get("byte_match", False)):
+                failures.append("byte_match failed")
+            if not bool(verification.get("size_match", False)):
+                failures.append("size_match failed")
+        anchor_ratio = float(verification.get("anchor_coverage_ratio", 0.0) or 0.0)
+        residual_ratio = float(
+            verification.get("unresolved_residual_ratio", 1.0)
+            if verification.get("unresolved_residual_ratio", None) is not None
+            else 1.0
+        )
+        if anchor_ratio <= 0.85:
+            failures.append(f"anchor_coverage_ratio {anchor_ratio:.3f} <= 0.850")
+        if residual_ratio >= 0.15:
+            failures.append(f"unresolved_residual_ratio {residual_ratio:.3f} >= 0.150")
+        session_seed_match = bool(int(delta_session_seed) == int(self.session_context.get_seed()))
+        if not session_seed_match:
+            failures.append("delta_session_seed mismatch")
+        if not failures:
+            return "CONFIRMED", ""
+        return "FAILED", "; ".join(failures)
+
+    def _apply_reconstruction_verification(
+        self,
+        fingerprint: AetherFingerprint,
+        raw: bytes,
+    ) -> AetherFingerprint:
+        """Prueft die Delta-Rekonstruktion direkt im Analysepfad und schreibt den Befund in den Fingerprint."""
+        reconstructed = self._reconstruct_delta_bytes(
+            bytes(getattr(fingerprint, "delta", b"") or b""),
+            int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+        )
+        verification = dict(self.reconstruction_engine.verify_lossless(raw, reconstructed))
+        verification["delta_session_seed"] = int(getattr(fingerprint, "delta_session_seed", 0) or 0)
+        verification["session_seed_match"] = bool(
+            int(getattr(fingerprint, "delta_session_seed", 0) or 0) == int(self.session_context.get_seed())
+        )
+        verdict_reconstruction, reason = self._reconstruction_verdict(
+            verification=verification,
+            delta_session_seed=int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+        )
+        verification["verdict_reconstruction"] = str(verdict_reconstruction)
+        verification["reason"] = str(reason)
+        fingerprint.reconstruction_verification = verification
+        fingerprint.verdict_reconstruction = str(verdict_reconstruction)
+        fingerprint.verdict_reconstruction_reason = str(reason)
+        fingerprint.anchor_coverage_ratio = float(verification.get("anchor_coverage_ratio", 0.0) or 0.0)
+        fingerprint.unresolved_residual_ratio = float(
+            verification.get("unresolved_residual_ratio", 1.0)
+            if verification.get("unresolved_residual_ratio", None) is not None
+            else 1.0
+        )
+        fingerprint.coverage_verified = bool(
+            float(verification.get("anchor_coverage_ratio", 0.0) or 0.0) > 0.85
+            and float(
+                verification.get("unresolved_residual_ratio", 1.0)
+                if verification.get("unresolved_residual_ratio", None) is not None
+                else 1.0
+            ) < 0.15
+        )
+        return fingerprint
 
     @staticmethod
     def _scan_hash(raw: bytes) -> str:
@@ -1616,7 +1702,7 @@ class AnalysisEngine:
         distribution = dict(distribution or Counter(raw))
         symmetry_score = self._symmetry_score(distribution)
         fourier_peaks = self._fourier_peaks(raw)
-        delta, delta_ratio = self._build_delta(raw)
+        delta, delta_ratio, delta_session_seed = self._build_delta(raw)
         beauty_signature = self._beauty_signature(
             raw=raw,
             entropy_blocks=entropy_blocks,
@@ -1684,8 +1770,10 @@ class AnalysisEngine:
             scan_hash=scan_hash,
             scan_payload=scan_payload,
             file_profile=dict(file_profile or {}),
+            delta_session_seed=int(delta_session_seed),
         )
-        return self._apply_file_profile(fingerprint, file_profile=file_profile)
+        fingerprint = self._apply_file_profile(fingerprint, file_profile=file_profile)
+        return self._apply_reconstruction_verification(fingerprint, raw=raw)
 
     def analyze_bytes(
         self,

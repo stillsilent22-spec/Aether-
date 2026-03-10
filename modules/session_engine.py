@@ -244,7 +244,12 @@ class SessionContext:
         self.login_algorithms = tuple(getattr(security_session, "algorithm_pair", ("sha256", "blake2b")))
         self.session_id = str(getattr(security_session, "session_id", "") or uuid4())
         derived_seed = getattr(security_session, "session_seed", None)
-        self.seed = seed if seed is not None else int(derived_seed if derived_seed is not None else random.SystemRandom().randrange(0, 2**32))
+        self.session_seed = int(
+            seed if seed is not None else (
+                derived_seed if derived_seed is not None else random.SystemRandom().randrange(0, 2**32)
+            )
+        ) & 0xFFFFFFFF
+        self.seed = int(self.session_seed)
         self.created_at = str(getattr(security_session, "login_at", "") or datetime.now(timezone.utc).isoformat())
         self.raw_storage_enabled = bool(self.user_settings.get("store_raw_encrypted", False))
         self.security_mode = str(self.user_settings.get("security_mode", "PROD") or "PROD").upper()
@@ -260,6 +265,10 @@ class SessionContext:
         picked = random.sample(ALGORITHM_POOL, 3)
         self.active_algorithms = [cls((self.seed + idx * 977) & 0xFFFFFFFF) for idx, cls in enumerate(picked)]
         self.honeypot_clusters: List[dict[str, Any]] = []
+
+    def get_seed(self) -> int:
+        """Liefert den stabilen Session-Seed fuer diese Laufzeitsitzung."""
+        return int(getattr(self, "session_seed", self.seed) or 0) & 0xFFFFFFFF
 
     def apply_security_state(self, state: dict[str, Any] | None) -> None:
         """Uebernimmt den aktuellen lokalen Sicherheitszustand in die Session."""

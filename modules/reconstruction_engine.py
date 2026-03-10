@@ -203,3 +203,51 @@ class LosslessReconstructionEngine:
             merkle_root=merkle_root,
             reconstruction_verified=(reconstructed_hash == str(original_hash)),
         )
+
+    def verify_lossless(self, original_bytes: bytes, reconstructed_bytes: bytes) -> dict[str, Any]:
+        """Vergleicht Original und Rekonstruktion bytegenau und liefert Diagnosekennzahlen."""
+        original = bytes(original_bytes or b"")
+        reconstructed = bytes(reconstructed_bytes or b"")
+        original_size = int(len(original))
+        reconstructed_size = int(len(reconstructed))
+        original_hash = hashlib.sha256(original).hexdigest()
+        reconstructed_hash = hashlib.sha256(reconstructed).hexdigest()
+        size_match = bool(original_size == reconstructed_size)
+        byte_match = bool(original_hash == reconstructed_hash)
+
+        if original_size <= 0:
+            compression_ratio = 1.0 if reconstructed_size <= 0 else 1.0
+            anchor_coverage_ratio = 1.0 if reconstructed_size <= 0 else 0.0
+            unresolved_residual_ratio = 0.0 if reconstructed_size <= 0 else 1.0
+            residual_size_bytes = int(reconstructed_size)
+        else:
+            shared_length = min(original_size, reconstructed_size)
+            matched_bytes = sum(
+                1
+                for index in range(shared_length)
+                if original[index] == reconstructed[index]
+            )
+            residual_size_bytes = int(
+                (shared_length - matched_bytes) + abs(original_size - reconstructed_size)
+            )
+            compression_ratio = float(
+                max(0.0, min(1.0, reconstructed_size / float(original_size)))
+            )
+            anchor_coverage_ratio = float(
+                max(0.0, min(1.0, matched_bytes / float(original_size)))
+            )
+            unresolved_residual_ratio = float(
+                max(0.0, min(1.0, residual_size_bytes / float(original_size)))
+            )
+
+        return {
+            "verified": bool(byte_match and size_match),
+            "original_hash": str(original_hash),
+            "reconstructed_hash": str(reconstructed_hash),
+            "byte_match": bool(byte_match),
+            "size_match": bool(size_match),
+            "compression_ratio": float(compression_ratio),
+            "anchor_coverage_ratio": float(anchor_coverage_ratio),
+            "unresolved_residual_ratio": float(unresolved_residual_ratio),
+            "residual_size_bytes": int(residual_size_bytes),
+        }

@@ -87,6 +87,12 @@ def _run_case(
         file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
         observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
         beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        fingerprint_payload={
+            "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
+            "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
+            "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
+            "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+        },
     )
     response = shanway.render_response(assessment)
     return {
@@ -102,6 +108,8 @@ def _run_case(
         "missing_data": list(assessment.missing_data),
         "response": str(response),
         "progress_count": int(len(progress_events)),
+        "reconstruction_verified": bool(dict(getattr(fingerprint, "reconstruction_verification", {}) or {}).get("verified", False)),
+        "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
     }
 
 
@@ -140,6 +148,12 @@ def main() -> None:
                     assert response.startswith("MISSING_DATA:") or response.startswith("MISSING_DEPENDENCIES:"), (
                         f"Missing-Data nicht zuerst in Shanway fuer {sample.name}"
                     )
+                assert bool(result["reconstruction_verified"]), (
+                    f"Rekonstruktion nicht bestaetigt fuer {sample.name}"
+                )
+                assert str(result["verdict_reconstruction"]) == "CONFIRMED", (
+                    f"Rekonstruktionsverdict falsch fuer {sample.name}: {result['verdict_reconstruction']}"
+                )
                 assert float(result["ram_percent"]) < 90.0, (
                     f"RAM-Auslastung zu hoch im Selbsttest: {result['ram_percent']}"
                 )

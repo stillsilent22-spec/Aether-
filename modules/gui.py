@@ -2052,6 +2052,12 @@ class VeiraGUI:
             beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
             observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             history_factor=float(len(self.history_entries_cache)),
+            fingerprint_payload={
+                "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
+                "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
+                "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
+                "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+            },
         )
         try:
             self.registry.update_fingerprint_payload(
@@ -3006,6 +3012,12 @@ class VeiraGUI:
                     observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
                     history_factor=float(len(self.history_entries_cache)),
+                    fingerprint_payload={
+                        "reconstruction_verification": dict(getattr(self.current_fingerprint, "reconstruction_verification", {}) or {}),
+                        "verdict_reconstruction": str(getattr(self.current_fingerprint, "verdict_reconstruction", "") or ""),
+                        "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
+                        "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
+                    } if self.current_fingerprint is not None else {},
                 )
                 if shanway_assessment.sensitive:
                     blocked_sensitive = True
@@ -3087,6 +3099,12 @@ class VeiraGUI:
                     observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
                     history_factor=float(len(self.history_entries_cache)),
+                    fingerprint_payload={
+                        "reconstruction_verification": dict(getattr(self.current_fingerprint, "reconstruction_verification", {}) or {}),
+                        "verdict_reconstruction": str(getattr(self.current_fingerprint, "verdict_reconstruction", "") or ""),
+                        "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
+                        "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
+                    } if self.current_fingerprint is not None else {},
                 )
                 if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
                     self_learned_tokens = int(
@@ -6237,6 +6255,12 @@ class VeiraGUI:
                 beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
                 history_factor=float(len(self.history_entries_cache)),
+                fingerprint_payload={
+                    "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
+                    "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
+                    "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
+                    "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+                },
             )
             shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
             fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]

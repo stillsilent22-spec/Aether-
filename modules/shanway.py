@@ -126,6 +126,9 @@ class ShanwayAssessment:
     blacklist_hits: list[str]
     matched_terms: list[str]
     message: str
+    reconstruction_verification: dict[str, Any]
+    verdict_reconstruction: str
+    verdict_reconstruction_reason: str
 
     def to_payload(self) -> dict[str, Any]:
         """Serialisiert den Befund fuer Chat-, Vault- und Browser-Payloads."""
@@ -189,6 +192,9 @@ class ShanwayAssessment:
             "blacklist_hits": list(self.blacklist_hits),
             "matched_terms": list(self.matched_terms),
             "message": str(self.message),
+            "reconstruction_verification": dict(self.reconstruction_verification),
+            "verdict_reconstruction": str(self.verdict_reconstruction),
+            "verdict_reconstruction_reason": str(self.verdict_reconstruction_reason),
         }
 
     def detector_payload(self) -> dict[str, Any]:
@@ -223,6 +229,8 @@ class ShanwayAssessment:
             "missing_data": list(self.missing_data),
             "next_action": str(self.next_action),
             "matched_terms": list(self.matched_terms),
+            "verdict_reconstruction": str(self.verdict_reconstruction),
+            "reconstruction_verified": bool(self.reconstruction_verification.get("verified", False)),
         }
 
 
@@ -647,6 +655,16 @@ class ShanwayEngine:
             dependencies.extend(["mss", "pyautogui"])
         return sorted(set(dependencies))
 
+    @staticmethod
+    def _reconstruction_fields(
+        fingerprint_payload: dict[str, Any] | None,
+    ) -> tuple[dict[str, Any], str, str]:
+        payload = dict(fingerprint_payload or {})
+        verification = dict(payload.get("reconstruction_verification", {}) or {})
+        verdict = str(payload.get("verdict_reconstruction", "") or verification.get("verdict_reconstruction", ""))
+        reason = str(payload.get("verdict_reconstruction_reason", "") or verification.get("reason", ""))
+        return verification, verdict, reason
+
     def suggest_next_action(self, state: dict[str, Any]) -> str:
         missing_dependencies = [str(item) for item in list(state.get("missing_dependencies", []) or []) if str(item).strip()]
         missing_data = [str(item) for item in list(state.get("missing_data", []) or []) if str(item).strip()]
@@ -750,6 +768,7 @@ class ShanwayEngine:
         beauty_signature: dict[str, Any] | None = None,
         observer_knowledge_ratio: float = 0.0,
         history_factor: float = 1.0,
+        fingerprint_payload: dict[str, Any] | None = None,
     ) -> ShanwayAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
@@ -867,6 +886,9 @@ class ShanwayEngine:
         missing_dependencies = sorted(set(missing_dependencies + self._observer_missing_dependencies(observer_payload)))
         observer_visual_entropy, observer_process_name, observer_process_cpu, observer_process_threads = (
             self._observer_fields(observer_payload)
+        )
+        reconstruction_verification, verdict_reconstruction, verdict_reconstruction_reason = (
+            self._reconstruction_fields(fingerprint_payload)
         )
         next_action = self.suggest_next_action(
             {
@@ -998,6 +1020,9 @@ class ShanwayEngine:
             blacklist_hits=list(blacklist_hits),
             matched_terms=list(matched_terms),
             message=str(message),
+            reconstruction_verification=dict(reconstruction_verification),
+            verdict_reconstruction=str(verdict_reconstruction),
+            verdict_reconstruction_reason=str(verdict_reconstruction_reason),
         )
 
     def _harmonic_reply(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
@@ -1089,6 +1114,48 @@ class ShanwayEngine:
             "File, screen, and observer signals should be checked directly now."
         )
 
+    def _reconstruction_reply(self, assessment: ShanwayAssessment) -> str:
+        """Formuliert additive Rekonstruktionshinweise aus dem Fingerprint-Payload."""
+        verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})
+        verdict = str(getattr(assessment, "verdict_reconstruction", "") or "")
+        if not verification and not verdict:
+            return ""
+        compression_ratio = float(verification.get("compression_ratio", 1.0) or 1.0)
+        compression_gain = max(0.0, min(100.0, (1.0 - compression_ratio) * 100.0))
+        if verdict.upper() == "CONFIRMED":
+            return (
+                "Rekonstruktion bestaetigt: "
+                f"{compression_gain:.1f}% Kompressionsgewinn bei bestaetigtem lossless-Status."
+            )
+
+        issues: list[str] = []
+        anchor_ratio = float(verification.get("anchor_coverage_ratio", 0.0) or 0.0)
+        if anchor_ratio < 0.85:
+            current_anchors = max(1, int(getattr(assessment, "anchor_count", 0) or 0))
+            if anchor_ratio <= 1e-9:
+                additional_anchors = max(1, current_anchors)
+            else:
+                estimated_total = int(math.ceil(current_anchors * (0.85 / anchor_ratio)))
+                additional_anchors = max(1, estimated_total - current_anchors)
+            issues.append(
+                f"geschaetzt {additional_anchors} zusaetzliche Anchor(s), um {0.85 - anchor_ratio:.3f} Coverage-Luecke zu schliessen"
+            )
+        residual_ratio = float(verification.get("unresolved_residual_ratio", 0.0) or 0.0)
+        residual_size = int(verification.get("residual_size_bytes", 0) or 0)
+        if residual_ratio > 0.15:
+            issues.append(f"exakt {residual_size} Byte Residuum bleiben noch unaufgeloest")
+        if verification.get("session_seed_match") is False:
+            issues.append("der Delta-Seed muss fuer die Rekonstruktion unveraendert erhalten bleiben")
+        if not bool(verification.get("byte_match", True)):
+            issues.append("die Bytefolge stimmt noch nicht exakt mit dem Original ueberein")
+        if not bool(verification.get("size_match", True)):
+            issues.append("die rekonstruierte Dateigroesse weicht noch vom Original ab")
+        if not issues:
+            reason = str(getattr(assessment, "verdict_reconstruction_reason", "") or "")
+            if reason:
+                issues.append(reason)
+        return "Fuer vollstaendige Rekonstruktion fehlt noch: " + "; ".join(issues or ["weitere Diagnosewerte"])
+
     def _noise_reply(self, assessment: ShanwayAssessment) -> str:
         """Liefert bewusst eine ruhige schriftliche Sperrantwort statt Rauschtext."""
         language = str(getattr(assessment, "language", "de") or "de")
@@ -1163,6 +1230,9 @@ class ShanwayEngine:
             )
         if assessment.missing_data:
             notes.append("MISSING_DATA: " + ", ".join(list(assessment.missing_data)))
+        reconstruction_note = self._reconstruction_reply(assessment)
+        if reconstruction_note:
+            notes.append(reconstruction_note)
         notes.append(str(response or "").strip())
         notes.append(f"BOUNDARY: {assessment.boundary} ({assessment.goedel_signal:.3f})")
         if assessment.it_from_bit:

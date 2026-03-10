@@ -4157,10 +4157,47 @@ class AetherRegistry:
                 else (dict(payload.get("ae_lab", {})) if isinstance(payload.get("ae_lab", {}), dict) else None)
             ),
             voxel_points=parsed_voxels,
+            anchor_coverage_ratio=float(payload.get("anchor_coverage_ratio", 0.0) or 0.0),
+            unresolved_residual_ratio=float(payload.get("unresolved_residual_ratio", 1.0) or 1.0),
+            residual_hash=str(payload.get("residual_hash", "")),
+            coverage_verified=bool(payload.get("coverage_verified", False)),
             local_chain_tx_hash=str(payload.get("local_chain_tx_hash", "")),
             local_chain_prev_hash=str(payload.get("local_chain_prev_hash", "")),
             local_chain_endpoint=str(payload.get("local_chain_endpoint", "")),
             local_chain_attested_at=str(payload.get("local_chain_attested_at", "")),
+            scan_hash=str(payload.get("scan_hash", "")),
+            scan_payload=(
+                dict(payload.get("scan_payload", {}))
+                if isinstance(payload.get("scan_payload", {}), dict)
+                else None
+            ),
+            screen_vision_payload=(
+                dict(payload.get("screen_vision_payload", {}))
+                if isinstance(payload.get("screen_vision_payload", {}), dict)
+                else None
+            ),
+            file_profile=(
+                dict(payload.get("file_profile", {}))
+                if isinstance(payload.get("file_profile", {}), dict)
+                else None
+            ),
+            observer_payload=(
+                dict(payload.get("observer_payload", {}))
+                if isinstance(payload.get("observer_payload", {}), dict)
+                else None
+            ),
+            emergence_layers=[
+                dict(item) for item in list(payload.get("emergence_layers", []))
+                if isinstance(item, dict)
+            ] if isinstance(payload.get("emergence_layers", []), list) else None,
+            delta_session_seed=int(payload.get("delta_session_seed", row["session_seed"]) or 0),
+            reconstruction_verification=(
+                dict(payload.get("reconstruction_verification", {}))
+                if isinstance(payload.get("reconstruction_verification", {}), dict)
+                else None
+            ),
+            verdict_reconstruction=str(payload.get("verdict_reconstruction", "")),
+            verdict_reconstruction_reason=str(payload.get("verdict_reconstruction_reason", "")),
         )
         setattr(
             fingerprint,

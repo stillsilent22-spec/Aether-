@@ -208,7 +208,7 @@ class SecurityManager:
             live_key_fingerprint=fingerprint,
             algo_primary=PRIMARY_ALGO,
             algo_secondary=SECONDARY_ALGO,
-            payload={"security_model": "local", "issued_at": login_at},
+            payload={"security_model": "local", "issued_at": login_at, "session_seed": int(session_seed)},
         )
         self.registry.save_security_event(
             user_id=int(record["id"]),
