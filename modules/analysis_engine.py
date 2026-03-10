@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
+import mimetypes
+import re
+import sqlite3
+import struct
+import zipfile
 import zlib
 from collections import Counter
 from dataclasses import dataclass
@@ -15,6 +21,42 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.fft import rfft, rfftfreq
 
+try:
+    import magic
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    magic = None
+
+try:
+    import cv2
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    cv2 = None
+
+try:
+    import fitz
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    fitz = None
+
+try:
+    from PIL import Image, ImageStat
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    Image = None
+    ImageStat = None
+
+try:
+    from pydub import AudioSegment
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    AudioSegment = None
+
+try:
+    from fontTools.ttLib import TTFont
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    TTFont = None
+
+try:
+    from moviepy import VideoFileClip
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    VideoFileClip = None
+
 from .ae_evolution_core import normalize_anchor_entries
 from .blockchain_interface import AetherChain
 from .ethics_engine import EthicsAssessment, EthicsEngine
@@ -23,6 +65,55 @@ from .voxel_grid import VoxelGrid4D
 
 if TYPE_CHECKING:
     from .registry import AetherRegistry
+
+
+MAGIC_SIGNATURES: tuple[tuple[bytes, str, str], ...] = (
+    (b"%PDF-", "application/pdf", "document"),
+    (b"PK\x03\x04", "application/zip", "archive"),
+    (b"PK\x05\x06", "application/zip", "archive"),
+    (b"PK\x07\x08", "application/zip", "archive"),
+    (b"Rar!\x1a\x07", "application/vnd.rar", "archive"),
+    (b"7z\xbc\xaf'\x1c", "application/x-7z-compressed", "archive"),
+    (b"\x89PNG\r\n\x1a\n", "image/png", "image"),
+    (b"\xff\xd8\xff", "image/jpeg", "image"),
+    (b"GIF87a", "image/gif", "image"),
+    (b"GIF89a", "image/gif", "image"),
+    (b"RIFF", "application/riff", "container"),
+    (b"ID3", "audio/mpeg", "audio"),
+    (b"OggS", "application/ogg", "audio"),
+    (b"fLaC", "audio/flac", "audio"),
+    (b"MZ", "application/x-msdownload", "executable"),
+    (b"\x7fELF", "application/x-elf", "executable"),
+    (b"SQLite format 3\x00", "application/vnd.sqlite3", "data"),
+    (b"\x00\x00\x01\xba", "video/mpeg", "video"),
+)
+
+TEXTUAL_SUFFIXES = {
+    ".txt", ".md", ".rst", ".py", ".js", ".ts", ".json", ".csv", ".html", ".htm",
+    ".css", ".xml", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".log", ".bat", ".ps1",
+}
+
+IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
+VIDEO_SUFFIXES = {".mp4", ".mkv", ".avi", ".mov", ".webm", ".wmv", ".m4v"}
+AUDIO_SUFFIXES = {".mp3", ".wav", ".flac", ".ogg", ".aac", ".m4a", ".wma"}
+FONT_SUFFIXES = {".ttf", ".otf", ".woff", ".woff2"}
+ARCHIVE_SUFFIXES = {".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso"}
+DOC_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".html", ".htm"}
+CODE_SUFFIXES = {".py", ".js", ".dll", ".exe", ".so", ".bin", ".ps1", ".sh"}
+DATA_SUFFIXES = {".csv", ".json", ".sqlite", ".db", ".bin", ".iso"}
+
+
+def _safe_decode_text(raw: bytes) -> str:
+    for encoding in ("utf-8", "utf-16", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except Exception:
+            continue
+    return raw.decode("utf-8", errors="ignore")
+
+
+def _json_bytes(payload: Any) -> bytes:
+    return json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
 
 
 @dataclass
@@ -68,6 +159,9 @@ class AetherFingerprint:
     local_chain_attested_at: str = ""
     scan_hash: str = ""
     scan_payload: dict[str, Any] | None = None
+    file_profile: dict[str, Any] | None = None
+    observer_payload: dict[str, Any] | None = None
+    emergence_layers: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialisiert den Fingerprint als JSON-taugliches Dictionary."""
@@ -107,6 +201,9 @@ class AetherFingerprint:
             "local_chain_attested_at": str(self.local_chain_attested_at),
             "scan_hash": str(self.scan_hash),
             "scan_payload": dict(self.scan_payload or {}),
+            "file_profile": dict(self.file_profile or {}),
+            "observer_payload": dict(self.observer_payload or {}),
+            "emergence_layers": [dict(item) for item in list(self.emergence_layers or [])],
             "delta": self.delta.hex(),
             "delta_ratio": float(self.delta_ratio),
             "anomaly_coordinates": [[int(x), int(y)] for x, y in self.anomaly_coordinates],
@@ -176,6 +273,565 @@ class AnalysisEngine:
             registry: Registry-Instanz oder None.
         """
         self.registry = registry
+
+    @staticmethod
+    def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+        return float(max(low, min(high, value)))
+
+    def _stream_entry(self, label: str, data: bytes, kind: str = "derived") -> dict[str, Any]:
+        return {
+            "label": str(label),
+            "kind": str(kind),
+            "size": int(len(data)),
+            "bytes": bytes(data),
+        }
+
+    def _guess_magic_mime(self, raw: bytes, file_path: Path) -> str:
+        if magic is not None:
+            try:
+                detector = magic.Magic(mime=True)
+                return str(detector.from_buffer(raw[:65536]))
+            except Exception:
+                pass
+        for signature, mime_type, _family in MAGIC_SIGNATURES:
+            if raw.startswith(signature):
+                return str(mime_type)
+        guessed, _encoding = mimetypes.guess_type(str(file_path))
+        return str(guessed or "application/octet-stream")
+
+    def _classify_file_family(self, raw: bytes, file_path: Path, mime_type: str) -> dict[str, str]:
+        suffix = str(file_path.suffix.lower())
+        lowered_mime = str(mime_type or "").lower()
+        category = "binary"
+        subtype = "opaque"
+        if suffix in AUDIO_SUFFIXES or lowered_mime.startswith("audio/"):
+            category, subtype = "audio", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in VIDEO_SUFFIXES or lowered_mime.startswith("video/"):
+            category, subtype = "video", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in IMAGE_SUFFIXES or lowered_mime.startswith("image/"):
+            category, subtype = "image", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in FONT_SUFFIXES or "font" in lowered_mime:
+            category, subtype = "font", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in ARCHIVE_SUFFIXES or "zip" in lowered_mime or "rar" in lowered_mime or "7z" in lowered_mime:
+            category, subtype = "archive", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in DOC_SUFFIXES or lowered_mime.startswith("text/") or lowered_mime == "application/pdf":
+            category, subtype = "document", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in DATA_SUFFIXES or lowered_mime in {"application/json", "text/csv", "application/vnd.sqlite3"}:
+            category, subtype = "data", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in CODE_SUFFIXES or lowered_mime in {"application/x-msdownload", "application/x-elf"}:
+            category, subtype = "code", suffix.lstrip(".") or lowered_mime.replace("/", "_")
+        elif suffix in TEXTUAL_SUFFIXES:
+            category, subtype = "document", suffix.lstrip(".")
+        return {
+            "mime_type": str(lowered_mime or "application/octet-stream"),
+            "category": str(category),
+            "subtype": str(subtype or "opaque"),
+            "suffix": suffix,
+        }
+
+    def _stream_metrics(self, streams: list[dict[str, Any]]) -> dict[str, Any]:
+        metrics: list[dict[str, Any]] = []
+        entropies: list[float] = []
+        symmetries: list[float] = []
+        for stream in streams:
+            raw = bytes(stream.get("bytes", b""))
+            if not raw:
+                continue
+            entropy = self._shannon_entropy(raw[: min(len(raw), 4096)])
+            symmetry = self._symmetry_score(dict(Counter(raw[: min(len(raw), 4096)])))
+            entropies.append(float(entropy))
+            symmetries.append(float(symmetry))
+            metrics.append(
+                {
+                    "label": str(stream.get("label", "")),
+                    "kind": str(stream.get("kind", "")),
+                    "size": int(stream.get("size", 0) or 0),
+                    "entropy": round(float(entropy), 12),
+                    "symmetry": round(float(symmetry), 12),
+                }
+            )
+        entropy_mean = float(np.mean(entropies)) if entropies else 0.0
+        symmetry_mean = float(np.mean(symmetries)) if symmetries else 100.0
+        stream_count = int(len(metrics))
+        observer_boost = self._clamp(
+            (math.log2(1.0 + float(stream_count)) / math.log2(9.0)) * (float(entropy_mean) / 8.0),
+            0.0,
+            1.0,
+        )
+        return {
+            "stream_count": stream_count,
+            "stream_metrics": metrics,
+            "type_entropy_mean": round(float(entropy_mean), 12),
+            "type_symmetry_mean": round(float(symmetry_mean), 12),
+            "type_information_gain": round(float(observer_boost), 12),
+        }
+
+    def _parser_missing(self, dependency: str, category: str, subtype: str, raw: bytes) -> dict[str, Any]:
+        return {
+            "category": str(category),
+            "subtype": str(subtype),
+            "summary": {},
+            "streams": [self._stream_entry("raw_bytes", raw[: min(len(raw), 65536)], kind="raw")],
+            "missing_dependencies": [str(dependency)],
+            "missing_data": [],
+        }
+
+    def _parse_image_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        if Image is None or ImageStat is None:
+            return self._parser_missing("pillow", category, subtype, raw)
+        with Image.open(io.BytesIO(raw)) as image:
+            rgb = image.convert("RGB")
+            stats = ImageStat.Stat(rgb)
+            summary = {
+                "width": int(rgb.width),
+                "height": int(rgb.height),
+                "mode": str(image.mode),
+                "mean": [round(float(value), 6) for value in list(stats.mean)],
+                "stddev": [round(float(value), 6) for value in list(stats.stddev)],
+            }
+            thumbnail = rgb.copy()
+            thumbnail.thumbnail((128, 128))
+            streams = [
+                self._stream_entry("pixel_bytes", rgb.tobytes(), kind="pixel"),
+                self._stream_entry("thumbnail_bytes", thumbnail.tobytes(), kind="pixel"),
+                self._stream_entry("image_summary", _json_bytes(summary), kind="metadata"),
+            ]
+            return {
+                "category": category,
+                "subtype": subtype,
+                "summary": summary,
+                "streams": streams,
+                "missing_dependencies": [],
+                "missing_data": [],
+            }
+
+    def _parse_audio_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        if AudioSegment is None:
+            return self._parser_missing("pydub", category, subtype, raw)
+        segment = AudioSegment.from_file(str(file_path))
+        sample_array = np.array(segment.get_array_of_samples())
+        if int(segment.channels) > 1 and sample_array.size >= int(segment.channels):
+            sample_array = sample_array.reshape((-1, int(segment.channels)))
+        chunk_count = min(64, max(1, int(math.ceil(len(segment) / 100.0))))
+        rms_values: list[float] = []
+        for index in range(chunk_count):
+            start = int(index * len(segment) / chunk_count)
+            end = int((index + 1) * len(segment) / chunk_count)
+            slice_segment = segment[start:end]
+            rms_values.append(float(slice_segment.rms))
+        summary = {
+            "duration_ms": int(len(segment)),
+            "frame_rate": int(segment.frame_rate),
+            "channels": int(segment.channels),
+            "sample_width": int(segment.sample_width),
+            "sample_count": int(sample_array.size),
+        }
+        rms_stream = np.array(rms_values, dtype=np.float64).tobytes()
+        sample_bytes = sample_array[: min(sample_array.size, 65536)].tobytes()
+        streams = [
+            self._stream_entry("audio_samples", sample_bytes, kind="audio"),
+            self._stream_entry("audio_waveform_rms", rms_stream, kind="waveform"),
+            self._stream_entry("audio_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": [],
+        }
+
+    def _parse_video_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        missing_dependencies: list[str] = []
+        if cv2 is None:
+            return self._parser_missing("opencv-python", category, subtype, raw)
+        capture = cv2.VideoCapture(str(file_path))
+        if not capture.isOpened():
+            return {
+                "category": category,
+                "subtype": subtype,
+                "summary": {"opened": False},
+                "streams": [self._stream_entry("raw_bytes", raw[: min(len(raw), 65536)], kind="raw")],
+                "missing_dependencies": [],
+                "missing_data": ["video_frames_unavailable"],
+            }
+        frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+        width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+        height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+        sample_targets = list(sorted({0, max(0, frame_count // 4), max(0, frame_count // 2), max(0, frame_count - 1)}))
+        sampled_frames: list[bytes] = []
+        frame_entropies: list[float] = []
+        for target in sample_targets:
+            capture.set(cv2.CAP_PROP_POS_FRAMES, float(target))
+            ok, frame = capture.read()
+            if not ok or frame is None:
+                continue
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            resized = cv2.resize(rgb, (min(128, rgb.shape[1]), min(128, rgb.shape[0])), interpolation=cv2.INTER_AREA)
+            frame_bytes = resized.tobytes()
+            sampled_frames.append(frame_bytes)
+            frame_entropies.append(self._shannon_entropy(frame_bytes[: min(len(frame_bytes), 4096)]))
+        capture.release()
+        if VideoFileClip is None:
+            missing_dependencies.append("moviepy")
+            audio_summary: dict[str, Any] = {"audio_track_inspected": False}
+        else:
+            audio_summary = {"audio_track_inspected": False}
+            try:
+                clip = VideoFileClip(str(file_path))
+                audio_summary = {
+                    "audio_track_inspected": bool(clip.audio is not None),
+                    "duration_s": round(float(clip.duration or 0.0), 6),
+                }
+                try:
+                    clip.close()
+                except Exception:
+                    pass
+            except Exception:
+                missing_dependencies.append("moviepy")
+        summary = {
+            "frame_count": int(frame_count),
+            "fps": round(float(fps), 6),
+            "width": int(width),
+            "height": int(height),
+            "sampled_frame_count": int(len(sampled_frames)),
+            "frame_entropy_mean": round(float(np.mean(frame_entropies)) if frame_entropies else 0.0, 12),
+            "audio": audio_summary,
+        }
+        streams = [self._stream_entry(f"video_frame_{index}", frame, kind="frame") for index, frame in enumerate(sampled_frames)]
+        streams.append(self._stream_entry("video_summary", _json_bytes(summary), kind="metadata"))
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": sorted(set(missing_dependencies)),
+            "missing_data": [] if sampled_frames else ["video_frames_unavailable"],
+        }
+
+    def _parse_pdf_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        if fitz is None:
+            return self._parser_missing("pymupdf", category, subtype, raw)
+        document = fitz.open(stream=raw, filetype="pdf")
+        page_texts: list[str] = []
+        page_lengths: list[int] = []
+        for page in document:
+            text = page.get_text("text")
+            page_texts.append(text)
+            page_lengths.append(len(text))
+        summary = {
+            "page_count": int(document.page_count),
+            "text_length": int(sum(page_lengths)),
+            "metadata": {str(key): str(value) for key, value in dict(document.metadata or {}).items()},
+            "page_text_lengths": page_lengths[:32],
+        }
+        streams = [
+            self._stream_entry("pdf_text", "\n".join(page_texts).encode("utf-8", errors="ignore"), kind="text"),
+            self._stream_entry("pdf_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        document.close()
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": [] if page_texts else ["pdf_text_unavailable"],
+        }
+
+    def _parse_docx_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        text_payload = ""
+        entry_names: list[str] = []
+        with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+            entry_names = sorted(archive.namelist())
+            if "word/document.xml" in entry_names:
+                xml_bytes = archive.read("word/document.xml")
+                text_payload = " ".join(re.findall(r">([^<]+)<", _safe_decode_text(xml_bytes)))
+        summary = {
+            "entry_count": int(len(entry_names)),
+            "entries": entry_names[:24],
+            "text_length": int(len(text_payload)),
+        }
+        streams = [
+            self._stream_entry("docx_text", text_payload.encode("utf-8", errors="ignore"), kind="text"),
+            self._stream_entry("docx_manifest", "\n".join(entry_names).encode("utf-8"), kind="metadata"),
+            self._stream_entry("docx_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        missing_data = [] if text_payload else ["docx_text_unavailable"]
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": missing_data,
+        }
+
+    def _parse_text_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        text = _safe_decode_text(raw)
+        lines = text.splitlines()
+        tokens = re.findall(r"[A-Za-z0-9_]+", text)
+        summary = {
+            "line_count": int(len(lines)),
+            "token_count": int(len(tokens)),
+            "character_count": int(len(text)),
+        }
+        streams = [
+            self._stream_entry("text_content", text.encode("utf-8", errors="ignore"), kind="text"),
+            self._stream_entry("text_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": [],
+        }
+
+    def _parse_font_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        if TTFont is None:
+            return self._parser_missing("fonttools", category, subtype, raw)
+        font = TTFont(str(file_path), recalcBBoxes=False, recalcTimestamp=False)
+        glyph_order = list(font.getGlyphOrder())
+        widths: list[int] = []
+        if "hmtx" in font:
+            widths = [int(width) for _name, (width, _lsb) in list(font["hmtx"].metrics.items())[:512]]
+        summary = {
+            "glyph_count": int(len(glyph_order)),
+            "units_per_em": int(getattr(font["head"], "unitsPerEm", 0) if "head" in font else 0),
+            "family_name": str(font["name"].getDebugName(1) if "name" in font else ""),
+        }
+        streams = [
+            self._stream_entry("font_glyph_order", "\n".join(glyph_order[:512]).encode("utf-8"), kind="metadata"),
+            self._stream_entry("font_widths", np.array(widths, dtype=np.int32).tobytes(), kind="geometry"),
+            self._stream_entry("font_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        try:
+            font.close()
+        except Exception:
+            pass
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": [],
+        }
+
+    def _parse_archive_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        suffix = str(file_path.suffix.lower())
+        if suffix == ".zip" or raw.startswith(b"PK"):
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                names = sorted(archive.namelist())
+                preview_entries: list[bytes] = []
+                for name in names[:8]:
+                    try:
+                        preview_entries.append(archive.read(name)[:4096])
+                    except Exception:
+                        continue
+            summary = {"entry_count": int(len(names)), "entries": names[:32]}
+            streams = [self._stream_entry("archive_manifest", "\n".join(names).encode("utf-8"), kind="metadata")]
+            streams.extend(self._stream_entry(f"archive_entry_{index}", entry, kind="payload") for index, entry in enumerate(preview_entries))
+            streams.append(self._stream_entry("archive_summary", _json_bytes(summary), kind="metadata"))
+            return {
+                "category": category,
+                "subtype": subtype,
+                "summary": summary,
+                "streams": streams,
+                "missing_dependencies": [],
+                "missing_data": [],
+            }
+        missing = []
+        if suffix == ".rar":
+            missing.append("rar support unavailable")
+        if suffix == ".7z":
+            missing.append("7z support unavailable")
+        if suffix == ".iso":
+            missing.append("iso filesystem parsing unavailable")
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": {"entry_count": 0},
+            "streams": [self._stream_entry("archive_header", raw[: min(len(raw), 65536)], kind="raw")],
+            "missing_dependencies": [],
+            "missing_data": missing,
+        }
+
+    def _parse_data_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        suffix = str(file_path.suffix.lower())
+        summary: dict[str, Any] = {}
+        streams: list[dict[str, Any]] = []
+        missing_data: list[str] = []
+        if suffix == ".json":
+            try:
+                payload = json.loads(_safe_decode_text(raw))
+                canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2)
+                summary = {"root_type": type(payload).__name__, "size": int(len(canonical))}
+                streams.append(self._stream_entry("json_canonical", canonical.encode("utf-8"), kind="text"))
+            except Exception:
+                missing_data.append("json_parse_failed")
+        elif suffix in {".sqlite", ".db"}:
+            try:
+                connection = sqlite3.connect(f"file:{file_path}?mode=ro", uri=True)
+                cursor = connection.cursor()
+                tables = [row[0] for row in cursor.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
+                counts = {}
+                for table in tables[:16]:
+                    try:
+                        counts[str(table)] = int(cursor.execute(f"SELECT COUNT(*) FROM \"{table}\"").fetchone()[0])
+                    except Exception:
+                        counts[str(table)] = 0
+                summary = {"tables": tables[:32], "table_counts": counts}
+                streams.append(self._stream_entry("sqlite_schema", _json_bytes(summary), kind="metadata"))
+                connection.close()
+            except Exception:
+                missing_data.append("sqlite_parse_failed")
+        elif suffix == ".csv":
+            text = _safe_decode_text(raw)
+            lines = text.splitlines()
+            header = lines[0].split(",") if lines else []
+            summary = {"row_count": int(max(0, len(lines) - 1)), "column_count": int(len(header))}
+            streams.append(self._stream_entry("csv_text", text.encode("utf-8"), kind="text"))
+        elif suffix == ".iso":
+            summary = {"header_bytes": int(min(65536, len(raw)))}
+            streams.append(self._stream_entry("iso_header", raw[: min(len(raw), 65536)], kind="raw"))
+        else:
+            summary = {"binary_size": int(len(raw))}
+            streams.append(self._stream_entry("data_bytes", raw[: min(len(raw), 65536)], kind="raw"))
+        streams.append(self._stream_entry("data_summary", _json_bytes(summary), kind="metadata"))
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": missing_data,
+        }
+
+    def _parse_code_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
+        suffix = str(file_path.suffix.lower())
+        if suffix in TEXTUAL_SUFFIXES:
+            text = _safe_decode_text(raw)
+            lines = text.splitlines()
+            summary = {"line_count": int(len(lines)), "char_count": int(len(text))}
+            streams = [
+                self._stream_entry("code_text", text.encode("utf-8", errors="ignore"), kind="text"),
+                self._stream_entry("code_summary", _json_bytes(summary), kind="metadata"),
+            ]
+            return {
+                "category": category,
+                "subtype": subtype,
+                "summary": summary,
+                "streams": streams,
+                "missing_dependencies": [],
+                "missing_data": [],
+            }
+        summary = {
+            "mz_header": bool(raw.startswith(b"MZ")),
+            "elf_header": bool(raw.startswith(b"\x7fELF")),
+            "header_size": int(min(len(raw), 1024)),
+        }
+        streams = [
+            self._stream_entry("binary_header", raw[: min(len(raw), 4096)], kind="raw"),
+            self._stream_entry("binary_summary", _json_bytes(summary), kind="metadata"),
+        ]
+        return {
+            "category": category,
+            "subtype": subtype,
+            "summary": summary,
+            "streams": streams,
+            "missing_dependencies": [],
+            "missing_data": [],
+        }
+
+    def detect_and_parse_file(self, file_path: str) -> dict[str, Any]:
+        """Erkennt Dateityp, extrahiert typspezifische Streams und meldet fehlende Abhaengigkeiten."""
+        path = Path(file_path)
+        raw = path.read_bytes()
+        mime_type = self._guess_magic_mime(raw, path)
+        classification = self._classify_file_family(raw, path, mime_type)
+        category = str(classification["category"])
+        subtype = str(classification["subtype"])
+        try:
+            if category == "image":
+                parsed = self._parse_image_profile(path, raw, category, subtype)
+            elif category == "audio":
+                parsed = self._parse_audio_profile(path, raw, category, subtype)
+            elif category == "video":
+                parsed = self._parse_video_profile(path, raw, category, subtype)
+            elif category == "font":
+                parsed = self._parse_font_profile(path, raw, category, subtype)
+            elif category == "archive":
+                parsed = self._parse_archive_profile(path, raw, category, subtype)
+            elif category == "data":
+                parsed = self._parse_data_profile(path, raw, category, subtype)
+            elif category == "code":
+                parsed = self._parse_code_profile(path, raw, category, subtype)
+            elif category == "document" and subtype == "pdf":
+                parsed = self._parse_pdf_profile(path, raw, category, subtype)
+            elif category == "document" and subtype == "docx":
+                parsed = self._parse_docx_profile(path, raw, category, subtype)
+            else:
+                parsed = self._parse_text_profile(path, raw, category, subtype) if category == "document" else {
+                    "category": category,
+                    "subtype": subtype,
+                    "summary": {"binary_size": int(len(raw))},
+                    "streams": [self._stream_entry("raw_bytes", raw[: min(len(raw), 65536)], kind="raw")],
+                    "missing_dependencies": [],
+                    "missing_data": [],
+                }
+        except Exception as exc:
+            parsed = {
+                "category": category,
+                "subtype": subtype,
+                "summary": {"parser_error": str(exc)},
+                "streams": [self._stream_entry("raw_bytes", raw[: min(len(raw), 65536)], kind="raw")],
+                "missing_dependencies": [],
+                "missing_data": ["parser_failed"],
+            }
+
+        streams = [dict(item) for item in list(parsed.get("streams", []) or [])]
+        stream_metrics = self._stream_metrics(streams)
+        public_streams = [
+            {
+                "label": str(stream.get("label", "")),
+                "kind": str(stream.get("kind", "")),
+                "size": int(stream.get("size", 0) or 0),
+            }
+            for stream in streams
+        ]
+        parser_confidence = self._clamp(
+            1.0
+            - (float(len(parsed.get("missing_dependencies", []) or [])) * 0.25)
+            - (float(len(parsed.get("missing_data", []) or [])) * 0.15),
+            0.0,
+            1.0,
+        )
+        missing_dependencies = sorted(set(str(item) for item in list(parsed.get("missing_dependencies", []) or [])))
+        if magic is None:
+            missing_dependencies.append("python-magic")
+            missing_dependencies = sorted(set(missing_dependencies))
+        return {
+            "path": str(path),
+            "file_name": str(path.name),
+            "suffix": str(path.suffix.lower()),
+            "file_size": int(len(raw)),
+            "mime_type": str(mime_type),
+            "category": category,
+            "subtype": subtype,
+            "raw_bytes": raw,
+            "streams": streams,
+            "feature_streams": public_streams,
+            "summary": dict(parsed.get("summary", {}) or {}),
+            "missing_dependencies": missing_dependencies,
+            "missing_data": sorted(set(str(item) for item in list(parsed.get("missing_data", []) or []))),
+            "parser_confidence": round(float(parser_confidence), 12),
+            "type_metrics": stream_metrics,
+        }
 
     def _shannon_entropy(self, block: bytes) -> float:
         """Berechnet die Shannon-Entropie eines Byteblocks."""
@@ -766,6 +1422,44 @@ class AnalysisEngine:
             label = "OFFEN"
         return observer_information, knowledge_ratio, h_lambda, label
 
+    def _apply_file_profile(
+        self,
+        fingerprint: AetherFingerprint,
+        file_profile: dict[str, Any] | None = None,
+    ) -> AetherFingerprint:
+        profile = dict(file_profile or {})
+        if not profile:
+            return fingerprint
+        type_metrics = dict(profile.get("type_metrics", {}) or {})
+        type_entropy_mean = float(type_metrics.get("type_entropy_mean", 0.0) or 0.0)
+        type_information_gain = float(type_metrics.get("type_information_gain", 0.0) or 0.0)
+        parser_confidence = float(profile.get("parser_confidence", 0.0) or 0.0)
+        observer_boost = float(
+            min(
+                float(fingerprint.entropy_mean),
+                (type_entropy_mean / 8.0) * math.log2(1.0 + float(type_metrics.get("stream_count", 0) or 0)) * parser_confidence,
+            )
+        )
+        if observer_boost > 0.0:
+            fingerprint.observer_mutual_info = float(
+                min(float(fingerprint.entropy_mean), float(fingerprint.observer_mutual_info) + observer_boost)
+            )
+            fingerprint.observer_knowledge_ratio = self._clamp(
+                float(fingerprint.observer_mutual_info) / max(1e-9, float(fingerprint.entropy_mean))
+            )
+            fingerprint.h_lambda = float(max(0.0, float(fingerprint.entropy_mean) - float(fingerprint.observer_mutual_info)))
+            if float(fingerprint.h_lambda) <= 1.0:
+                fingerprint.observer_state = "LOSSLESS_NAH"
+            elif float(fingerprint.h_lambda) <= 2.8:
+                fingerprint.observer_state = "VERTRAUT"
+            elif float(fingerprint.h_lambda) <= 4.8:
+                fingerprint.observer_state = "LERNBAR"
+            else:
+                fingerprint.observer_state = "OFFEN"
+        profile["type_observer_boost"] = round(float(observer_boost), 12)
+        fingerprint.file_profile = profile
+        return fingerprint
+
     def _build_fingerprint(
         self,
         raw: bytes,
@@ -776,6 +1470,7 @@ class AnalysisEngine:
         source_type: str,
         source_label: str,
         voxel_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None,
+        file_profile: dict[str, Any] | None = None,
     ) -> AetherFingerprint:
         """Baut einen AetherFingerprint aus vorbereiteten Metriken."""
         file_size = len(raw)
@@ -848,9 +1543,9 @@ class AnalysisEngine:
             voxel_points=voxel_points,
             scan_hash=scan_hash,
             scan_payload=scan_payload,
+            file_profile=dict(file_profile or {}),
         )
-
-        return fingerprint
+        return self._apply_file_profile(fingerprint, file_profile=file_profile)
 
     def analyze_bytes(
         self,
@@ -858,6 +1553,7 @@ class AnalysisEngine:
         source_label: str = "memory",
         source_type: str = "memory",
         callback: callable = None,
+        file_profile: dict[str, Any] | None = None,
     ) -> AetherFingerprint:
         """Analysiert einen Byte-Strom direkt ohne Dateizugriff."""
         file_size = len(raw)
@@ -876,6 +1572,7 @@ class AnalysisEngine:
             anomaly_coordinates=anomaly_coordinates,
             source_type=source_type,
             source_label=source_label,
+            file_profile=file_profile,
         )
         if callback is not None:
             callback(fingerprint)
@@ -903,7 +1600,7 @@ class AnalysisEngine:
             voxel_points=voxel_grid.render_points(limit=900),
         )
 
-    def analyze(self, file_path: str) -> AetherFingerprint:
+    def analyze(self, file_path: str, source_type: str = "file") -> AetherFingerprint:
         """
         Fuehrt die vollstaendige Analyse einer Datei durch und erzeugt einen AetherFingerprint.
 
@@ -911,7 +1608,17 @@ class AnalysisEngine:
             file_path: Pfad zur Zieldatei.
         """
         try:
-            raw = Path(file_path).read_bytes()
+            file_profile = self.detect_and_parse_file(file_path)
         except OSError as exc:
             raise RuntimeError(f"Datei konnte nicht gelesen werden: {exc}") from exc
-        return self.analyze_bytes(raw, source_label=str(Path(file_path)), source_type="file")
+        raw = bytes(file_profile.get("raw_bytes", b""))
+        return self.analyze_bytes(
+            raw,
+            source_label=str(Path(file_path)),
+            source_type=str(source_type or "file"),
+            file_profile={
+                key: value
+                for key, value in file_profile.items()
+                if key not in {"raw_bytes", "streams"}
+            },
+        )

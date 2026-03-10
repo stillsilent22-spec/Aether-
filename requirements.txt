@@ -12,3 +12,9 @@ cryptography
 fonttools
 mss
 PyGetWindow
+python-magic
+pydub
+moviepy
+PyMuPDF
+psutil
+pyautogui

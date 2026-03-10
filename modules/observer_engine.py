@@ -2,12 +2,31 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterable, Sequence
 
 import cv2
 import numpy as np
+
+try:
+    import mss
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    mss = None
+
+try:
+    import psutil
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    psutil = None
+
+try:
+    import pyautogui
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    pyautogui = None
 
 from .analysis_engine import AetherFingerprint
 
@@ -617,6 +636,231 @@ class ObserverEngine:
             benford_profile=benford_profile,
             tau=float(len(anchors)),
         )
+
+    def _render_text_preview(self, lines: Sequence[str], width: int = 960, height: int = 540) -> np.ndarray:
+        frame = np.zeros((height, width, 3), dtype=np.uint8)
+        y_pos = 40
+        for line in list(lines)[:14]:
+            cv2.putText(
+                frame,
+                str(line)[:96],
+                (24, y_pos),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.75,
+                (220, 235, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            y_pos += 32
+        return frame
+
+    def _synthetic_render_preview(
+        self,
+        file_path: str,
+        fingerprint: AetherFingerprint | None = None,
+    ) -> np.ndarray:
+        path = Path(str(file_path))
+        profile = dict(getattr(fingerprint, "file_profile", {}) or {})
+        category = str(profile.get("category", "binary") or "binary")
+        summary = dict(profile.get("summary", {}) or {})
+
+        if category == "image":
+            image = cv2.imread(str(path), cv2.IMREAD_COLOR)
+            if image is not None:
+                return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+        if category == "video":
+            capture = cv2.VideoCapture(str(path))
+            ok, frame = capture.read()
+            capture.release()
+            if ok and frame is not None:
+                return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+        if category == "audio":
+            samples = bytes(getattr(fingerprint, "delta", b"")[:4096]) if fingerprint is not None else b""
+            canvas = np.zeros((540, 960, 3), dtype=np.uint8)
+            if samples:
+                values = np.frombuffer(samples, dtype=np.uint8).astype(np.float32)
+                if values.size > 0:
+                    values = cv2.resize(values.reshape(1, -1), (900, 1), interpolation=cv2.INTER_AREA).flatten()
+                    center = 270
+                    for index, value in enumerate(values[:900]):
+                        amplitude = int((float(value) / 255.0) * 220.0)
+                        x_pos = index + 30
+                        cv2.line(canvas, (x_pos, center - amplitude), (x_pos, center + amplitude), (90, 220, 255), 1)
+            cv2.putText(canvas, f"AUDIO {path.name}", (24, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (240, 240, 240), 2, cv2.LINE_AA)
+            return canvas
+
+        if category == "font":
+            return self._render_text_preview(
+                [
+                    f"FONT PREVIEW: {path.name}",
+                    "Sphinx of black quartz, judge my vow.",
+                    "0123456789",
+                    json.dumps(summary, ensure_ascii=True)[:96],
+                ]
+            )
+
+        if category in {"document", "code", "data", "archive"}:
+            lines = [
+                f"{category.upper()} PREVIEW: {path.name}",
+                f"MIME: {profile.get('mime_type', 'application/octet-stream')}",
+                f"SUBTYPE: {profile.get('subtype', 'opaque')}",
+            ]
+            for key, value in list(summary.items())[:10]:
+                lines.append(f"{key}: {value}")
+            return self._render_text_preview(lines)
+
+        return self._render_text_preview(
+            [
+                f"BINARY PREVIEW: {path.name}",
+                f"SIZE: {int(getattr(fingerprint, 'file_size', 0) or 0)} bytes",
+                f"H_lambda: {float(getattr(fingerprint, 'h_lambda', 0.0) or 0.0):.3f}",
+                f"Symmetry: {float(getattr(fingerprint, 'symmetry_score', 0.0) or 0.0):.2f}",
+            ]
+        )
+
+    def _capture_scoped_frame(self, region: dict[str, int] | None = None) -> np.ndarray | None:
+        if mss is None:
+            if pyautogui is None:
+                return None
+            try:
+                screenshot = pyautogui.screenshot(
+                    region=(
+                        int(region["left"]),
+                        int(region["top"]),
+                        int(region["width"]),
+                        int(region["height"]),
+                    )
+                ) if region else pyautogui.screenshot()
+                return np.asarray(screenshot, dtype=np.uint8)
+            except Exception:
+                return None
+        try:
+            with mss.mss() as sct:
+                monitor = dict(region or sct.monitors[1])
+                frame = np.array(sct.grab(monitor))
+            if frame.ndim == 3 and frame.shape[2] >= 3:
+                return frame[:, :, :3][:, :, ::-1]
+            return frame
+        except Exception:
+            if pyautogui is None:
+                return None
+            try:
+                screenshot = pyautogui.screenshot()
+                return np.asarray(screenshot, dtype=np.uint8)
+            except Exception:
+                return None
+
+    def _process_snapshot(self) -> dict[str, object]:
+        if psutil is None:
+            return {"available": False, "missing_dependencies": ["psutil"]}
+        process = psutil.Process()
+        try:
+            cpu_percent = float(process.cpu_percent(interval=0.05))
+        except Exception:
+            cpu_percent = 0.0
+        try:
+            memory_info = process.memory_info()
+            rss = int(getattr(memory_info, "rss", 0) or 0)
+            vms = int(getattr(memory_info, "vms", 0) or 0)
+        except Exception:
+            rss = 0
+            vms = 0
+        try:
+            io_info = process.io_counters()
+            read_bytes = int(getattr(io_info, "read_bytes", 0) or 0)
+            write_bytes = int(getattr(io_info, "write_bytes", 0) or 0)
+        except Exception:
+            read_bytes = 0
+            write_bytes = 0
+        try:
+            open_files = len(process.open_files())
+        except Exception:
+            open_files = 0
+        try:
+            connections = len(process.net_connections(kind="all"))
+        except Exception:
+            connections = 0
+        return {
+            "available": True,
+            "pid": int(process.pid),
+            "name": str(process.name()),
+            "cpu_percent": float(cpu_percent),
+            "rss": int(rss),
+            "vms": int(vms),
+            "threads": int(process.num_threads()),
+            "open_files": int(open_files),
+            "network_connections": int(connections),
+            "io_read_bytes": int(read_bytes),
+            "io_write_bytes": int(write_bytes),
+        }
+
+    def observe_render_and_processes(
+        self,
+        file_path: str,
+        timeout: int = 10,
+        fingerprint: AetherFingerprint | None = None,
+        scoped_region: dict[str, int] | None = None,
+        scoped_screen_payload: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Beobachtet gerenderten Zustand und Prozessresiduum fail-closed ohne externes Oeffnen."""
+        start_time = time.perf_counter()
+        process_before = self._process_snapshot()
+        frame_rgb = self._capture_scoped_frame(region=scoped_region)
+        screen_mode = "scoped_capture"
+        if frame_rgb is None:
+            frame_rgb = self._synthetic_render_preview(file_path=file_path, fingerprint=fingerprint)
+            screen_mode = "synthetic_preview"
+        gray = cv2.cvtColor(np.asarray(frame_rgb, dtype=np.uint8), cv2.COLOR_RGB2GRAY)
+        visual_entropy = _entropy(gray.flatten())
+        visual_hash = hashlib.sha256(np.asarray(frame_rgb, dtype=np.uint8).tobytes()).hexdigest()
+        visual_metrics = {
+            "mode": str(screen_mode),
+            "width": int(frame_rgb.shape[1]),
+            "height": int(frame_rgb.shape[0]),
+            "visual_entropy": round(float(visual_entropy), 12),
+            "visual_hash": str(visual_hash),
+            "screen_payload": dict(scoped_screen_payload or {}),
+            "pyautogui_available": bool(pyautogui is not None),
+            "mss_available": bool(mss is not None),
+        }
+        process_after = self._process_snapshot()
+        process_residuum = {
+            "before": process_before,
+            "after": process_after,
+            "timeout": int(timeout),
+            "elapsed_ms": round(float((time.perf_counter() - start_time) * 1000.0), 3),
+        }
+        visual_residual = {
+            "hash": str(visual_hash),
+            "entropy": round(float(visual_entropy), 12),
+            "frame_shape": [int(value) for value in list(frame_rgb.shape)],
+        }
+        process_hash = hashlib.sha256(json.dumps(process_residuum, ensure_ascii=True, sort_keys=True).encode("utf-8")).hexdigest()
+        return {
+            "screen_vision_mode": str(screen_mode),
+            "visual_state": visual_metrics,
+            "process_state": process_after,
+            "visual_residual": visual_residual,
+            "process_residuum": process_residuum,
+            "visual_residual_hash": str(visual_hash),
+            "process_residuum_hash": str(process_hash),
+            "O_t": {
+                "visual_entropy": round(float(visual_entropy), 12),
+                "cpu_percent": float(dict(process_after or {}).get("cpu_percent", 0.0) or 0.0),
+                "threads": int(dict(process_after or {}).get("threads", 0) or 0),
+            },
+            "M_t": {
+                "file_category": str(dict(getattr(fingerprint, "file_profile", {}) or {}).get("category", "binary")),
+                "observer_state": str(getattr(fingerprint, "observer_state", "OFFEN") if fingerprint is not None else "OFFEN"),
+                "screen_mode": str(screen_mode),
+            },
+            "R_t": {
+                "visual_residual_hash": str(visual_hash),
+                "process_residuum_hash": str(process_hash),
+            },
+        }
 
     def prior_cells_from_anchors(self, anchors: Iterable[AnchorPoint]) -> list[tuple[int, int]]:
         """Projiziert Anker auf ein persistentes 20x20-Prior-Raster."""

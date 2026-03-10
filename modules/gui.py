@@ -1991,6 +1991,19 @@ class VeiraGUI:
             h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
             observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
             source_label=str(getattr(fingerprint, "source_label", "") or getattr(snapshot, "url", "")),
+            file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
+            observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
+            bayes_payload={
+                "overall_confidence": float(getattr(getattr(self, "_bayes_snapshot", None), "overall_confidence", 0.0) or 0.0),
+                "pattern_posterior": float(getattr(getattr(self, "_bayes_snapshot", None), "pattern_posterior", 0.0) or 0.0),
+            },
+            graph_payload={
+                "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
+                "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
+            },
+            beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+            observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
+            history_factor=float(len(self.history_entries_cache)),
         )
         try:
             self.registry.update_fingerprint_payload(
@@ -2928,6 +2941,23 @@ class VeiraGUI:
                     source_label=str(getattr(self.current_fingerprint, "source_label", "") or ""),
                     screen_payload=dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
                     if self.current_fingerprint is not None else {},
+                    file_profile=dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    observer_payload=dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    bayes_payload={
+                        "overall_confidence": float(getattr(getattr(self, "_bayes_snapshot", None), "overall_confidence", 0.0) or 0.0),
+                        "pattern_posterior": float(getattr(getattr(self, "_bayes_snapshot", None), "pattern_posterior", 0.0) or 0.0),
+                    },
+                    graph_payload={
+                        "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
+                        "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
+                    },
+                    beauty_signature=dict(getattr(self.current_fingerprint, "beauty_signature", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    history_factor=float(len(self.history_entries_cache)),
                 )
                 if shanway_assessment.sensitive:
                     blocked_sensitive = True
@@ -2992,6 +3022,23 @@ class VeiraGUI:
                     source_label=str(getattr(self.current_fingerprint, "source_label", "") or ""),
                     screen_payload=dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
                     if self.current_fingerprint is not None else {},
+                    file_profile=dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    observer_payload=dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    bayes_payload={
+                        "overall_confidence": float(getattr(getattr(self, "_bayes_snapshot", None), "overall_confidence", 0.0) or 0.0),
+                        "pattern_posterior": float(getattr(getattr(self, "_bayes_snapshot", None), "pattern_posterior", 0.0) or 0.0),
+                    },
+                    graph_payload={
+                        "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
+                        "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
+                    },
+                    beauty_signature=dict(getattr(self.current_fingerprint, "beauty_signature", {}) or {})
+                    if self.current_fingerprint is not None else {},
+                    observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
+                    if self.current_fingerprint is not None else 0.0,
+                    history_factor=float(len(self.history_entries_cache)),
                 )
                 if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
                     self_learned_tokens = int(
@@ -3047,6 +3094,8 @@ class VeiraGUI:
                     payload["shanway_detector_dna"] = ""
                 if self.current_fingerprint is not None:
                     payload["screen_vision"] = dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
+                    payload["file_profile"] = dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
+                    payload["observer_payload"] = dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
                 if shanway_self_assessment is not None:
                     payload["shanway_self_assessment"] = shanway_self_assessment.to_payload()
                     payload["shanway_self_learned_tokens"] = int(self_learned_tokens)
@@ -5401,6 +5450,8 @@ class VeiraGUI:
         payload["pi_resonance_confirmed"] = bool(pi_resonance_confirmed)
         payload["it_from_bit_candidate"] = bool(it_from_bit_candidate)
         payload["screen_vision"] = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
+        payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
+        payload["observer_payload"] = dict(getattr(fingerprint, "observer_payload", {}) or {})
         noether_profile = self.analysis_engine.vault_noether_profile(
             fingerprint,
             anchor_details=list(ae_anchor_details),
@@ -5478,6 +5529,8 @@ class VeiraGUI:
                 "boundary": str(boundary),
                 "pi_resonance_confirmed": bool(pi_resonance_confirmed),
                 "it_from_bit_candidate": bool(it_from_bit_candidate),
+                "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
+                "observer_payload": dict(getattr(fingerprint, "observer_payload", {}) or {}),
                 "anchor_coverage_ratio": float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
                 "unresolved_residual_ratio": float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
                 "coverage_verified": bool(coverage_profile.get("coverage_verified", False)),
@@ -5539,6 +5592,8 @@ class VeiraGUI:
                 "pi_resonance_confirmed": bool(pi_resonance_confirmed),
                 "it_from_bit_candidate": bool(it_from_bit_candidate),
                 "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
+                "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
+                "observer_payload": dict(getattr(fingerprint, "observer_payload", {}) or {}),
                 "local_chain_tx_hash": str(getattr(fingerprint, "local_chain_tx_hash", "")),
                 "local_chain_prev_hash": str(getattr(fingerprint, "local_chain_prev_hash", "")),
                 "local_chain_endpoint": str(getattr(fingerprint, "local_chain_endpoint", "")),
@@ -6082,6 +6137,39 @@ class VeiraGUI:
         self.observer_gap_var.set(
             f"H_lambda {h_lambda:.2f} | I(O;X|t) {mutual_info:.2f} | Wissen {observer_ratio * 100.0:.0f}% | {observer_state}"
         )
+        try:
+            assistant_context = self._assistant_context_for(fingerprint)
+            shanway_assessment = self.shanway_engine.detect_asymmetry(
+                f"{getattr(fingerprint, 'source_label', '')} {getattr(fingerprint, 'integrity_text', '')}",
+                coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
+                anchor_details=list(assistant_context.ae_anchor_details or []),
+                browser_mode=False,
+                active=True,
+                h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+                observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+                source_label=str(getattr(fingerprint, "source_label", "") or ""),
+                screen_payload=dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
+                file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
+                observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
+                bayes_payload={
+                    "overall_confidence": float(getattr(getattr(self, "_bayes_snapshot", None), "overall_confidence", 0.0) or 0.0),
+                    "pattern_posterior": float(getattr(getattr(self, "_bayes_snapshot", None), "pattern_posterior", 0.0) or 0.0),
+                },
+                graph_payload={
+                    "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
+                    "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
+                },
+                beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+                observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
+                history_factor=float(len(self.history_entries_cache)),
+            )
+            shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
+            self.chat_reply_var.set(f"Shanway: {shanway_text}")
+            self.chat_semantic_var.set(
+                f"Semantik: {reply.semantics_label} | Schoenheit: {reply.beauty_label} | Boundary: {shanway_assessment.boundary}"
+            )
+        except Exception:
+            pass
         self._update_graph_field(fingerprint)
         self._update_bayes_layer(fingerprint, anchors=anchors)
 
@@ -6691,14 +6779,20 @@ class VeiraGUI:
                         "shanway_text_corpus": False,
                         "learned_tokens": 0,
                     }
-            fingerprint = self.analysis_engine.analyze_bytes(
-                raw_bytes,
-                source_label=str(source_path),
+            fingerprint = self.analysis_engine.analyze(
+                str(source_path),
                 source_type="text_file" if is_text_source else "file",
             )
             screen_vision_payload = self._capture_scoped_screen_payload(source_path, fingerprint)
             if screen_vision_payload:
                 setattr(fingerprint, "screen_vision_payload", dict(screen_vision_payload))
+            observer_payload = self.observer_engine.observe_render_and_processes(
+                file_path=str(source_path),
+                timeout=10,
+                fingerprint=fingerprint,
+                scoped_screen_payload=screen_vision_payload,
+            )
+            setattr(fingerprint, "observer_payload", dict(observer_payload))
             storage_decision = self.storage_gp_engine.evaluate(fingerprint)
             raw_saved = False
             local_payload = {
@@ -6712,6 +6806,8 @@ class VeiraGUI:
             local_payload.update(text_learning_info)
             if screen_vision_payload:
                 local_payload["screen_vision"] = dict(screen_vision_payload)
+            local_payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
+            local_payload["observer_payload"] = dict(observer_payload)
             record_id = self.registry.save(
                 fingerprint,
                 self.session_context,

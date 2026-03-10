@@ -111,6 +111,15 @@ class ShanwayAssessment:
     convergence: float
     delta_visual_only: list[str]
     delta_file_only: list[str]
+    missing_dependencies: list[str]
+    missing_data: list[str]
+    next_action: str
+    narrative_text: str
+    emergence_layers: list[dict[str, Any]]
+    observer_visual_entropy: float
+    observer_process_name: str
+    observer_process_cpu: float
+    observer_process_threads: int
     sensitive_hits: list[str]
     blacklist_hits: list[str]
     matched_terms: list[str]
@@ -163,6 +172,15 @@ class ShanwayAssessment:
             "convergence": float(self.convergence),
             "delta_visual_only": list(self.delta_visual_only),
             "delta_file_only": list(self.delta_file_only),
+            "missing_dependencies": list(self.missing_dependencies),
+            "missing_data": list(self.missing_data),
+            "next_action": str(self.next_action),
+            "narrative_text": str(self.narrative_text),
+            "emergence_layers": [dict(item) for item in list(self.emergence_layers)],
+            "observer_visual_entropy": float(self.observer_visual_entropy),
+            "observer_process_name": str(self.observer_process_name),
+            "observer_process_cpu": float(self.observer_process_cpu),
+            "observer_process_threads": int(self.observer_process_threads),
             "sensitive_hits": list(self.sensitive_hits),
             "blacklist_hits": list(self.blacklist_hits),
             "matched_terms": list(self.matched_terms),
@@ -195,6 +213,9 @@ class ShanwayAssessment:
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
             "it_from_bit": bool(self.it_from_bit),
+            "missing_dependencies": list(self.missing_dependencies),
+            "missing_data": list(self.missing_data),
+            "next_action": str(self.next_action),
             "matched_terms": list(self.matched_terms),
         }
 
@@ -591,6 +612,119 @@ class ShanwayEngine:
             [str(item) for item in list(payload.get("DELTA_FILE_ONLY", []) or payload.get("delta_file_only", []) or [])[:12]],
         )
 
+    @staticmethod
+    def _file_guidance(file_profile: dict[str, Any] | None) -> tuple[list[str], list[str]]:
+        profile = dict(file_profile or {})
+        missing_dependencies = [str(item) for item in list(profile.get("missing_dependencies", []) or []) if str(item).strip()]
+        missing_data = [str(item) for item in list(profile.get("missing_data", []) or []) if str(item).strip()]
+        return sorted(set(missing_dependencies)), sorted(set(missing_data))
+
+    @staticmethod
+    def _observer_fields(observer_payload: dict[str, Any] | None) -> tuple[float, str, float, int]:
+        payload = dict(observer_payload or {})
+        visual_state = dict(payload.get("visual_state", {}) or {})
+        process_state = dict(payload.get("process_state", {}) or {})
+        return (
+            float(visual_state.get("visual_entropy", 0.0) or 0.0),
+            str(process_state.get("name", "") or ""),
+            float(process_state.get("cpu_percent", 0.0) or 0.0),
+            int(process_state.get("threads", 0) or 0),
+        )
+
+    @staticmethod
+    def _observer_missing_dependencies(observer_payload: dict[str, Any] | None) -> list[str]:
+        payload = dict(observer_payload or {})
+        visual_state = dict(payload.get("visual_state", {}) or {})
+        process_state = dict(payload.get("process_state", {}) or {})
+        dependencies = [str(item) for item in list(process_state.get("missing_dependencies", []) or []) if str(item).strip()]
+        if not bool(visual_state.get("mss_available", True)) and not bool(visual_state.get("pyautogui_available", True)):
+            dependencies.extend(["mss", "pyautogui"])
+        return sorted(set(dependencies))
+
+    def suggest_next_action(self, state: dict[str, Any]) -> str:
+        missing_dependencies = [str(item) for item in list(state.get("missing_dependencies", []) or []) if str(item).strip()]
+        missing_data = [str(item) for item in list(state.get("missing_data", []) or []) if str(item).strip()]
+        vault_gap = str(state.get("vault_gap", "") or "")
+        source_label = Path(str(state.get("source_label", "") or "")).suffix.lower()
+        if missing_dependencies:
+            packages = " ".join(missing_dependencies)
+            return f"pip install {packages} && restart"
+        if missing_data:
+            if source_label == ".mp4":
+                return "Mehr Frames oder Audio-Track fuer lossless Rekonstruktion erfassen"
+            return "Zusatzdaten oder vollstaendige Parser-Layer nachreichen"
+        if vault_gap:
+            return "Re-Baselining via start.py"
+        if source_label == ".pdf":
+            return "Mehr wissenschaftliche PDFs fuer stabile Text-Attraktoren einspeisen"
+        if source_label in {".mp3", ".wav", ".flac"}:
+            return "Mehr Audiodateien mit klaren Spektralboegen einspeisen"
+        return "Weitere strukturverwandte Dateien einspeisen"
+
+    def _build_emergence_layers(
+        self,
+        state: dict[str, Any],
+        noether_symmetry: float,
+        h_lambda: float,
+        observer_mutual_info: float,
+        vault_gap: str,
+    ) -> tuple[list[dict[str, Any]], str]:
+        file_profile = dict(state.get("file_profile", {}) or {})
+        observer_payload = dict(state.get("observer_payload", {}) or {})
+        bayes_payload = dict(state.get("bayes_payload", {}) or {})
+        graph_payload = dict(state.get("graph_payload", {}) or {})
+        beauty_signature = dict(state.get("beauty_signature", {}) or {})
+        source_label = str(state.get("source_label", "") or "")
+        observer_ratio = float(state.get("observer_knowledge_ratio", 0.0) or 0.0)
+        history_factor = float(state.get("history_factor", 1.0) or 1.0)
+        k_value = max(0.05, min(1.5, observer_ratio + (history_factor * 0.02)))
+        convergence = 1.0 - math.exp(-k_value * max(1.0, history_factor))
+        beauty_score = float(beauty_signature.get("beauty_score", 0.0) or 0.0) / 100.0
+        bayes_confidence = float(bayes_payload.get("overall_confidence", bayes_payload.get("confidence", 0.0)) or 0.0)
+        graph_attractor = float(graph_payload.get("attractor_score", 0.0) or 0.0)
+        graph_phase = str(graph_payload.get("phase_state", graph_payload.get("phase", "")) or "")
+        process_state = dict(observer_payload.get("process_state", {}) or {})
+        layers = [
+            {
+                "layer": 1,
+                "name": "BASIS_ANALYSIS",
+                "precision_gain": round(float(max(0.0, noether_symmetry)), 12),
+                "summary": f"Raw metrics fuer {source_label or 'source'} mit Kategorie {file_profile.get('category', 'binary')}.",
+            },
+            {
+                "layer": 2,
+                "name": "OBSERVER_BAYES",
+                "precision_gain": round(float(max(0.0, observer_mutual_info)), 12),
+                "summary": f"H_lambda {h_lambda:.3f}, I_obs {observer_mutual_info:.3f}, Bayes {bayes_confidence:.3f}.",
+            },
+            {
+                "layer": 3,
+                "name": "GRAPH_EVOLUTION",
+                "precision_gain": round(float(max(0.0, graph_attractor)), 12),
+                "summary": f"Graphphase {graph_phase or 'EMERGENT'} mit Attraktor {graph_attractor:.3f}.",
+            },
+            {
+                "layer": 4,
+                "name": "SELF_RECONSTRUCTION",
+                "precision_gain": round(float(max(0.0, convergence)), 12),
+                "summary": (
+                    f"Konvergenz {convergence:.3f} bei Wheeler={bool(state.get('it_from_bit', False))} "
+                    f"und Prozess {process_state.get('name', 'python')}."
+                ),
+            },
+        ]
+        fragmented = (noether_symmetry * 100.0) < 80.0 or float(h_lambda) > 2.0 or bool(vault_gap)
+        if fragmented:
+            return layers, "Struktur zu fragmentiert - keine narrative Verdichtung moeglich."
+        narrative = (
+            "Die Struktur zeigt einen klaren narrativen Bogen: "
+            f"Hohe Invarianz bis t≈{convergence * 100.0:.0f} %, "
+            f"Symmetriebruch mit H_lambda={h_lambda:.2f} bit, "
+            f"dann Konvergenz zu stabilem Attraktor ({graph_phase or 'EMERGENT'}) "
+            f"mit Bayes {bayes_confidence:.2f} und Beauty {beauty_score:.2f}."
+        )
+        return layers, narrative
+
     def detect_asymmetry(
         self,
         text: str,
@@ -603,6 +737,13 @@ class ShanwayEngine:
         source_label: str = "",
         vault_analysis_path: str = "data/aelab_vault/vault_analysis.json",
         screen_payload: dict[str, Any] | None = None,
+        file_profile: dict[str, Any] | None = None,
+        observer_payload: dict[str, Any] | None = None,
+        bayes_payload: dict[str, Any] | None = None,
+        graph_payload: dict[str, Any] | None = None,
+        beauty_signature: dict[str, Any] | None = None,
+        observer_knowledge_ratio: float = 0.0,
+        history_factor: float = 1.0,
     ) -> ShanwayAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
@@ -716,6 +857,36 @@ class ShanwayEngine:
         screen_vision, screen_source, visual_anchors, file_anchors, convergence, delta_visual_only, delta_file_only = (
             self._screen_fields(screen_payload)
         )
+        missing_dependencies, missing_data = self._file_guidance(file_profile)
+        missing_dependencies = sorted(set(missing_dependencies + self._observer_missing_dependencies(observer_payload)))
+        observer_visual_entropy, observer_process_name, observer_process_cpu, observer_process_threads = (
+            self._observer_fields(observer_payload)
+        )
+        next_action = self.suggest_next_action(
+            {
+                "missing_dependencies": missing_dependencies,
+                "missing_data": missing_data,
+                "vault_gap": vault_gap,
+                "source_label": source_label,
+            }
+        )
+        emergence_layers, narrative_text = self._build_emergence_layers(
+            state={
+                "source_label": source_label,
+                "file_profile": dict(file_profile or {}),
+                "observer_payload": dict(observer_payload or {}),
+                "bayes_payload": dict(bayes_payload or {}),
+                "graph_payload": dict(graph_payload or {}),
+                "beauty_signature": dict(beauty_signature or {}),
+                "observer_knowledge_ratio": float(observer_knowledge_ratio),
+                "history_factor": float(history_factor),
+                "it_from_bit": bool(it_from_bit),
+            },
+            noether_symmetry=float(noether_symmetry),
+            h_lambda=float(h_lambda),
+            observer_mutual_info=float(observer_mutual_info),
+            vault_gap=str(vault_gap),
+        )
         matched_terms = sorted(
             set(
                 positive_hits
@@ -806,6 +977,15 @@ class ShanwayEngine:
             convergence=float(convergence),
             delta_visual_only=list(delta_visual_only),
             delta_file_only=list(delta_file_only),
+            missing_dependencies=list(missing_dependencies),
+            missing_data=list(missing_data),
+            next_action=str(next_action),
+            narrative_text=str(narrative_text),
+            emergence_layers=[dict(item) for item in list(emergence_layers)],
+            observer_visual_entropy=float(observer_visual_entropy),
+            observer_process_name=str(observer_process_name),
+            observer_process_cpu=float(observer_process_cpu),
+            observer_process_threads=int(observer_process_threads),
             sensitive_hits=list(sensitive_hits),
             blacklist_hits=list(blacklist_hits),
             matched_terms=list(matched_terms),
@@ -905,6 +1085,14 @@ class ShanwayEngine:
 
     def _append_structural_notes(self, response: str, assessment: ShanwayAssessment) -> str:
         notes: list[str] = [str(response or "").strip()]
+        if assessment.missing_dependencies:
+            notes.append(
+                "MISSING_DEPENDENCIES: "
+                + ", ".join(list(assessment.missing_dependencies))
+                + f" | ACTION: {assessment.next_action}"
+            )
+        if assessment.missing_data:
+            notes.append("MISSING_DATA: " + ", ".join(list(assessment.missing_data)))
         notes.append(f"BOUNDARY: {assessment.boundary} ({assessment.goedel_signal:.3f})")
         if assessment.it_from_bit:
             notes.append("IT_FROM_BIT_CANDIDATE")
@@ -928,6 +1116,25 @@ class ShanwayEngine:
                 )
                 + f" | SEMANTIC_DISTANCE: {assessment.semantic_distance:.3f}"
             )
+        if assessment.observer_process_name or assessment.observer_visual_entropy > 0.0:
+            notes.append(
+                f"OBSERVER: visual_entropy={assessment.observer_visual_entropy:.3f}"
+                + (f" | process={assessment.observer_process_name}" if assessment.observer_process_name else "")
+                + f" | cpu={assessment.observer_process_cpu:.2f}"
+                + f" | threads={assessment.observer_process_threads}"
+            )
+        if assessment.emergence_layers:
+            notes.append(
+                "EMERGENCE_LAYERS: "
+                + " | ".join(
+                    f"L{int(layer.get('layer', 0) or 0)} {str(layer.get('name', 'LAYER'))}: {str(layer.get('summary', ''))}"
+                    for layer in list(assessment.emergence_layers)[:4]
+                )
+            )
+        if assessment.narrative_text:
+            notes.append(f"NARRATIVE: {assessment.narrative_text}")
+        if assessment.next_action and not assessment.missing_dependencies:
+            notes.append(f"NEXT_ACTION: {assessment.next_action}")
         if assessment.screen_vision:
             notes.append(
                 f"SCREEN_VISION: {assessment.screen_vision}"
