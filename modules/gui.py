@@ -196,6 +196,9 @@ class VeiraGUI:
         self.raw_storage_enabled_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "raw_storage_enabled", False))
         )
+        self.low_power_mode_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("low_power_mode", False))
+        )
         self.camera_toggle_var = tk.BooleanVar(value=False)
         self.agent_toggle_var = tk.BooleanVar(value=False)
         self.camera_mirror_var = tk.BooleanVar(value=True)
@@ -243,6 +246,7 @@ class VeiraGUI:
         )
         self.chat_sync_secret_var = tk.StringVar(value="")
         self.chat_sync_status_var = tk.StringVar(value="Mehrrechner-Sync: aus")
+        self.analysis_progress_var = tk.DoubleVar(value=0.0)
         self.security_key_var = tk.StringVar(
             value=(
                 f"LIVE {self.session_context.live_session_fingerprint or 'LOCAL'} | "
@@ -3553,6 +3557,22 @@ class VeiraGUI:
         layer_box.pack(fill="x", padx=12, pady=(4, 8))
         layer_box.bind("<<ComboboxSelected>>", self._on_storage_layer_changed)
 
+        power_row = tk.Frame(self.left_frame, bg="#111A4A")
+        power_row.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Checkbutton(
+            power_row,
+            text="Low-Power-Mode",
+            variable=self.low_power_mode_var,
+            command=self._on_low_power_toggle,
+        ).pack(side="left")
+        tk.Label(
+            power_row,
+            text="256 KB Chunks, reduzierte Fraktalmetrik",
+            bg="#111A4A",
+            fg="#8FB5FF",
+            font=("Segoe UI", 8),
+        ).pack(side="right")
+
         tk.Label(self.left_frame, text="Datei oder CSV per Drag & Drop ins Fenster ziehen startet sofort die passende Analyse bzw. den 4D-Voxel-Import.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
 
         tk.Label(self.left_frame, text="Theremin-Regler", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(0, 4))
@@ -3576,7 +3596,13 @@ class VeiraGUI:
         if sr is None:
             self.speech_button.configure(text="Spracheingabe starten (nicht verfuegbar)")
 
-        self.progress = ttk.Progressbar(self.left_frame, orient="horizontal", mode="indeterminate")
+        self.progress = ttk.Progressbar(
+            self.left_frame,
+            orient="horizontal",
+            mode="determinate",
+            maximum=100.0,
+            variable=self.analysis_progress_var,
+        )
         tk.Label(self.left_frame, textvariable=self.loading_var, bg="#111A4A", fg="#A8B9E8", justify="left", anchor="w", wraplength=350, font=("Segoe UI", 9)).pack(fill="x", padx=12, pady=(4, 10))
 
         tk.Label(self.left_frame, text="Letzte Log-Eintraege", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(0, 6))
@@ -6400,14 +6426,42 @@ class VeiraGUI:
         self.audio_engine.stop_audiovisual_stream()
         self.animation_scene = None
 
-    def _set_loading(self, active: bool) -> None:
+    def _on_low_power_toggle(self) -> None:
+        """Aktualisiert den lokalen Energiesparmodus fuer Folgeanalysen."""
+        enabled = bool(self.low_power_mode_var.get())
+        self.session_context.user_settings["low_power_mode"] = enabled
+        self.loading_var.set(
+            "Low-Power-Modus aktiv | 256 KB Chunks | reduzierte Fraktalmetrik"
+            if enabled
+            else "Low-Power-Modus aus | 512 KB Chunks | volle Analyse"
+        )
+
+    def _set_loading(self, active: bool, determinate: bool = False) -> None:
         """Aktiviert oder deaktiviert den Ladeindikator."""
         if active:
+            self.analysis_progress_var.set(0.0)
+            if determinate:
+                self.progress.configure(mode="determinate", maximum=100.0)
+            else:
+                self.progress.configure(mode="indeterminate")
             self.progress.pack(fill="x", padx=12, pady=(0, 6))
-            self.progress.start(12)
+            if not determinate:
+                self.progress.start(12)
         else:
-            self.progress.stop()
+            try:
+                self.progress.stop()
+            except Exception:
+                pass
+            self.analysis_progress_var.set(0.0)
             self.progress.pack_forget()
+
+    def _update_analysis_progress(self, stage: str, progress: float, detail: str = "") -> None:
+        """Spiegelt Analysefortschritt auf den sichtbaren Ladebalken."""
+        percent = max(0.0, min(100.0, float(progress) * 100.0))
+        self.analysis_progress_var.set(percent)
+        stage_label = str(stage or "analysis").replace("_", " ").strip().capitalize()
+        suffix = f" | {detail}" if str(detail or "").strip() else ""
+        self.loading_var.set(f"Analyse {percent:5.1f}% | {stage_label}{suffix}")
 
     def _update_wavelength_indicator(self, wavelength_nm: float, color_rgb: tuple[int, int, int] | None = None) -> None:
         """Aktualisiert die farbige Wellenlaengenanzeige."""
@@ -6727,7 +6781,7 @@ class VeiraGUI:
             return
         self.voxel_grid.clear()
         self.loading_var.set("Dateianalyse laeuft ...")
-        self._set_loading(True)
+        self._set_loading(True, determinate=True)
         save_raw = bool(self.raw_storage_enabled_var.get())
         self.analysis_thread = threading.Thread(
             target=self._analysis_worker,
@@ -6781,11 +6835,17 @@ class VeiraGUI:
         """Fuehrt Datei-Analyse, Speicherung, Rendering und Logging im Hintergrund aus."""
         try:
             source_path = Path(file_path)
-            raw_bytes = source_path.read_bytes()
+            raw_bytes = b""
             text_learning_info: dict[str, object] = {}
             is_text_source = source_path.suffix.lower() in {".txt", ".md"}
+            low_power = bool(self.low_power_mode_var.get())
+
+            def progress(stage: str, value: float, detail: str = "") -> None:
+                self.root.after(0, lambda s=stage, v=value, d=detail: self._update_analysis_progress(s, v, d))
+
             if is_text_source:
                 try:
+                    raw_bytes = source_path.read_bytes()
                     text_content = raw_bytes.decode("utf-8", errors="ignore")
                     learned_tokens = self.shanway_engine.learn_from_corpus_text(
                         text_content,
@@ -6803,7 +6863,10 @@ class VeiraGUI:
             fingerprint = self.analysis_engine.analyze(
                 str(source_path),
                 source_type="text_file" if is_text_source else "file",
+                low_power=low_power,
+                progress_callback=progress,
             )
+            progress("observer", 0.93, "Screen/Observer verknuepfen")
             screen_vision_payload = self._capture_scoped_screen_payload(source_path, fingerprint)
             if screen_vision_payload:
                 fingerprint.screen_vision_payload = dict(screen_vision_payload)
@@ -6815,6 +6878,7 @@ class VeiraGUI:
             )
             fingerprint.observer_payload = dict(observer_payload)
             storage_decision = self.storage_gp_engine.evaluate(fingerprint)
+            progress("persist", 0.97, "Datensatz speichern")
             raw_saved = False
             local_payload = {
                 "dual_storage_mode": "delta_only",
@@ -6848,6 +6912,8 @@ class VeiraGUI:
             self.registry.update_fingerprint_payload(int(record_id), local_payload)
             if save_raw:
                 try:
+                    if not raw_bytes:
+                        raw_bytes = source_path.read_bytes()
                     self.registry.save_encrypted_raw_bytes(
                         fingerprint_id=int(record_id),
                         session_context=self.session_context,
@@ -6894,6 +6960,8 @@ class VeiraGUI:
                         reason="Anomalie traf lokalen Honeypot-Koeder.",
                     )
                     break
+
+            progress("finalize", 1.0, "Analyse abgeschlossen")
 
             self.root.after(
                 0,

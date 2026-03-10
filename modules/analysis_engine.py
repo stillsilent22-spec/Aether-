@@ -16,7 +16,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 from scipy.fft import rfft, rfftfreq
@@ -243,6 +243,9 @@ class AetherFingerprint:
 class AnalysisEngine:
     """Analysiert Dateien, berechnet Ethik-Integritaet und erzeugt AetherFingerprints."""
 
+    DEFAULT_CHUNK_SIZE = 512 * 1024
+    LOW_POWER_CHUNK_SIZE = 256 * 1024
+
     def __init__(
         self,
         session_context: SessionContext,
@@ -279,6 +282,120 @@ class AnalysisEngine:
     @staticmethod
     def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
         return float(max(low, min(high, value)))
+
+    def _resolve_chunk_size(self, chunk_size: int | None = None, low_power: bool = False) -> int:
+        """Leitet eine CPU-freundliche Analyse-Chunk-Groesse ab."""
+        requested = int(chunk_size or (self.LOW_POWER_CHUNK_SIZE if low_power else self.DEFAULT_CHUNK_SIZE))
+        return int(max(self.LOW_POWER_CHUNK_SIZE, min(self.DEFAULT_CHUNK_SIZE, requested)))
+
+    def _report_progress(
+        self,
+        progress_callback: Callable[[str, float, str], None] | None,
+        stage: str,
+        progress: float,
+        detail: str = "",
+    ) -> None:
+        """Meldet Analysefortschritt robust als normierte 0..1-Spanne."""
+        if progress_callback is None:
+            return
+        try:
+            progress_callback(str(stage), self._clamp(float(progress), 0.0, 1.0), str(detail or ""))
+        except Exception:
+            return
+
+    def _progress_scope(
+        self,
+        progress_callback: Callable[[str, float, str], None] | None,
+        start: float,
+        end: float,
+    ) -> Callable[[str, float, str], None]:
+        """Skaliert Teilfortschritte in einen globalen Analysebereich."""
+        low = self._clamp(float(start), 0.0, 1.0)
+        high = self._clamp(float(end), low, 1.0)
+
+        def scoped(stage: str, progress: float, detail: str = "") -> None:
+            scaled = low + ((high - low) * self._clamp(float(progress), 0.0, 1.0))
+            self._report_progress(progress_callback, stage, scaled, detail)
+
+        return scoped
+
+    def _iter_chunk_windows(self, size: int, chunk_size: int) -> list[tuple[int, int]]:
+        """Teilt eine Datenmenge deterministisch in Analysefenster auf."""
+        if size <= 0:
+            return [(0, 0)]
+        resolved_chunk = max(1, int(chunk_size))
+        return [
+            (offset, min(size, offset + resolved_chunk))
+            for offset in range(0, size, resolved_chunk)
+        ]
+
+    def _read_file_bytes_chunked(
+        self,
+        file_path: Path,
+        chunk_size: int,
+        progress_callback: Callable[[str, float, str], None] | None = None,
+    ) -> bytes:
+        """Liest Dateien sequenziell in 256-512-KB-Fenstern fuer niedrige RAM-Spitzen."""
+        total_size = int(file_path.stat().st_size if file_path.exists() else 0)
+        if total_size <= 0:
+            self._report_progress(progress_callback, "read", 1.0, f"{file_path.name} leer")
+            return b""
+        windows = self._iter_chunk_windows(total_size, chunk_size)
+        buffer = bytearray()
+        with file_path.open("rb") as handle:
+            for index, (_start, _end) in enumerate(windows, start=1):
+                chunk = handle.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.extend(chunk)
+                self._report_progress(
+                    progress_callback,
+                    "read",
+                    index / max(1, len(windows)),
+                    f"{file_path.name} lesen | Chunk {index}/{len(windows)}",
+                )
+        return bytes(buffer)
+
+    def _chunked_entropy_distribution(
+        self,
+        raw: bytes,
+        chunk_size: int,
+        progress_callback: Callable[[str, float, str], None] | None = None,
+    ) -> tuple[list[float], dict[int, int]]:
+        """Berechnet Entropiebloecke und Byte-Verteilung sequentiell pro Chunk."""
+        file_size = len(raw)
+        if file_size <= 0:
+            self._report_progress(progress_callback, "metrics", 1.0, "Leerer Byte-Strom")
+            return [], {}
+        windows = self._iter_chunk_windows(file_size, chunk_size)
+        entropy_blocks: list[float] = []
+        distribution_counter: Counter[int] = Counter()
+        for index, (start, end) in enumerate(windows, start=1):
+            chunk = raw[start:end]
+            if chunk:
+                distribution_counter.update(chunk)
+                for block_start in range(0, len(chunk), self.block_size):
+                    block = chunk[block_start : block_start + self.block_size]
+                    entropy_blocks.append(self._shannon_entropy(block))
+            self._report_progress(
+                progress_callback,
+                "metrics",
+                index / max(1, len(windows)),
+                f"Grundmetriken | Chunk {index}/{len(windows)}",
+            )
+        return entropy_blocks, dict(distribution_counter)
+
+    def _periodicity_sample(self, raw: bytes, chunk_size: int, low_power: bool = False) -> bytes:
+        """Begrenzt die Periodizitaetsanalyse auf reprasentative Byteausschnitte."""
+        if not raw:
+            return b""
+        sample_limit = int(chunk_size if low_power else (chunk_size * 2))
+        if len(raw) <= sample_limit:
+            return raw
+        half = max(1, sample_limit // 2)
+        head = raw[:half]
+        tail = raw[-half:]
+        return bytes(head + tail)
 
     def _stream_entry(self, label: str, data: bytes, kind: str = "derived") -> dict[str, Any]:
         return {
@@ -750,10 +867,18 @@ class AnalysisEngine:
             "missing_data": [],
         }
 
-    def detect_and_parse_file(self, file_path: str) -> dict[str, Any]:
+    def detect_and_parse_file(
+        self,
+        file_path: str,
+        chunk_size: int | None = None,
+        low_power: bool = False,
+        progress_callback: Callable[[str, float, str], None] | None = None,
+    ) -> dict[str, Any]:
         """Erkennt Dateityp, extrahiert typspezifische Streams und meldet fehlende Abhaengigkeiten."""
         path = Path(file_path)
-        raw = path.read_bytes()
+        resolved_chunk_size = self._resolve_chunk_size(chunk_size=chunk_size, low_power=low_power)
+        raw = self._read_file_bytes_chunked(path, resolved_chunk_size, progress_callback=progress_callback)
+        self._report_progress(progress_callback, "type_detect", 0.40, f"{path.suffix.lower() or '.bin'} erkennen")
         mime_type = self._guess_magic_mime(raw, path)
         classification = self._classify_file_family(raw, path, mime_type)
         category = str(classification["category"])
@@ -797,6 +922,7 @@ class AnalysisEngine:
             }
 
         streams = [dict(item) for item in list(parsed.get("streams", []) or [])]
+        self._report_progress(progress_callback, "type_parse", 0.82, f"{category}/{subtype} parsen")
         stream_metrics = self._stream_metrics(streams)
         public_streams = [
             {
@@ -817,6 +943,7 @@ class AnalysisEngine:
         if magic is None:
             missing_dependencies.append("python-magic")
             missing_dependencies = sorted(set(missing_dependencies))
+        self._report_progress(progress_callback, "type_ready", 1.0, f"{path.name} vorbereitet")
         return {
             "path": str(path),
             "file_name": str(path.name),
@@ -833,6 +960,8 @@ class AnalysisEngine:
             "missing_data": sorted(set(str(item) for item in list(parsed.get("missing_data", []) or []))),
             "parser_confidence": round(float(parser_confidence), 12),
             "type_metrics": stream_metrics,
+            "analysis_chunk_size": int(resolved_chunk_size),
+            "low_power_mode": bool(low_power),
         }
 
     def _shannon_entropy(self, block: bytes) -> float:
@@ -1338,11 +1467,16 @@ class AnalysisEngine:
         delta: bytes,
         delta_ratio: float,
         symmetry_score: float,
+        low_power: bool = False,
     ) -> dict[str, float]:
         """Berechnet eine additive 7D-Schoenheitssignatur fuer Diagnose und Visualisierung."""
         alpha_1f = self._power_law_alpha(raw)
         lyapunov = self._lyapunov_proxy(entropy_blocks)
-        mandelbrot_d = self._katz_fractal_dimension(entropy_blocks)
+        fractal_source = list(entropy_blocks)
+        if low_power and len(fractal_source) > 32:
+            step = max(2, int(math.ceil(len(fractal_source) / 32.0)))
+            fractal_source = fractal_source[::step]
+        mandelbrot_d = self._katz_fractal_dimension(fractal_source)
         kolmogorov_k = self._compressibility_proxy(raw)
         benford_b = self._benford_similarity(delta)
         zipf_z = self._zipf_alpha(distribution)
@@ -1372,6 +1506,7 @@ class AnalysisEngine:
             "symmetry_phi": float(symmetry_phi),
             "delta_stability": float(delta_stability),
             "beauty_score": float(max(0.0, min(100.0, beauty_score))),
+            "low_power_mode": float(1.0 if low_power else 0.0),
         }
 
     def _observer_knowledge_state(
@@ -1473,10 +1608,12 @@ class AnalysisEngine:
         source_label: str,
         voxel_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None,
         file_profile: dict[str, Any] | None = None,
+        distribution: dict[int, int] | None = None,
+        low_power: bool = False,
     ) -> AetherFingerprint:
         """Baut einen AetherFingerprint aus vorbereiteten Metriken."""
         file_size = len(raw)
-        distribution = dict(Counter(raw))
+        distribution = dict(distribution or Counter(raw))
         symmetry_score = self._symmetry_score(distribution)
         fourier_peaks = self._fourier_peaks(raw)
         delta, delta_ratio = self._build_delta(raw)
@@ -1487,6 +1624,7 @@ class AnalysisEngine:
             delta=delta,
             delta_ratio=delta_ratio,
             symmetry_score=symmetry_score,
+            low_power=low_power,
         )
         ethics = self._compute_ethics(
             symmetry_score=symmetry_score,
@@ -1556,16 +1694,24 @@ class AnalysisEngine:
         source_type: str = "memory",
         callback: callable = None,
         file_profile: dict[str, Any] | None = None,
+        low_power: bool = False,
+        chunk_size: int | None = None,
+        progress_callback: Callable[[str, float, str], None] | None = None,
     ) -> AetherFingerprint:
         """Analysiert einen Byte-Strom direkt ohne Dateizugriff."""
         file_size = len(raw)
-        entropy_blocks = [
-            self._shannon_entropy(raw[idx : idx + self.block_size])
-            for idx in range(0, file_size, self.block_size)
-        ]
+        resolved_chunk_size = self._resolve_chunk_size(chunk_size=chunk_size, low_power=low_power)
+        self._report_progress(progress_callback, "metrics", 0.0, f"{source_label} vorbereiten")
+        entropy_blocks, distribution = self._chunked_entropy_distribution(
+            raw,
+            resolved_chunk_size,
+            progress_callback=self._progress_scope(progress_callback, 0.0, 0.58),
+        )
         entropy_mean = float(np.mean(entropy_blocks)) if entropy_blocks else 0.0
-        periodicity = self._periodicity(raw)
+        self._report_progress(progress_callback, "periodicity", 0.64, "Periodizitaet berechnen")
+        periodicity = self._periodicity(self._periodicity_sample(raw, resolved_chunk_size, low_power=low_power))
         anomaly_coordinates = self._anomaly_coordinates(entropy_blocks)
+        self._report_progress(progress_callback, "fingerprint", 0.82, "Fingerprint verdichten")
         fingerprint = self._build_fingerprint(
             raw=raw,
             entropy_blocks=entropy_blocks,
@@ -1575,7 +1721,14 @@ class AnalysisEngine:
             source_type=source_type,
             source_label=source_label,
             file_profile=file_profile,
+            distribution=distribution,
+            low_power=low_power,
         )
+        if fingerprint.file_profile is not None:
+            fingerprint.file_profile["analysis_chunk_size"] = int(resolved_chunk_size)
+            fingerprint.file_profile["low_power_mode"] = bool(low_power)
+            fingerprint.file_profile["analysis_mode"] = "low_power" if low_power else "full"
+        self._report_progress(progress_callback, "done", 1.0, "Analyse abgeschlossen")
         if callback is not None:
             callback(fingerprint)
         return fingerprint
@@ -1602,7 +1755,14 @@ class AnalysisEngine:
             voxel_points=voxel_grid.render_points(limit=900),
         )
 
-    def analyze(self, file_path: str, source_type: str = "file") -> AetherFingerprint:
+    def analyze(
+        self,
+        file_path: str,
+        source_type: str = "file",
+        low_power: bool = False,
+        chunk_size: int | None = None,
+        progress_callback: Callable[[str, float, str], None] | None = None,
+    ) -> AetherFingerprint:
         """
         Fuehrt die vollstaendige Analyse einer Datei durch und erzeugt einen AetherFingerprint.
 
@@ -1610,7 +1770,12 @@ class AnalysisEngine:
             file_path: Pfad zur Zieldatei.
         """
         try:
-            file_profile = self.detect_and_parse_file(file_path)
+            file_profile = self.detect_and_parse_file(
+                file_path,
+                chunk_size=chunk_size,
+                low_power=low_power,
+                progress_callback=self._progress_scope(progress_callback, 0.0, 0.34),
+            )
         except OSError as exc:
             raise RuntimeError(f"Datei konnte nicht gelesen werden: {exc}") from exc
         raw = bytes(file_profile.get("raw_bytes", b""))
@@ -1623,4 +1788,7 @@ class AnalysisEngine:
                 for key, value in file_profile.items()
                 if key not in {"raw_bytes", "streams"}
             },
+            low_power=low_power,
+            chunk_size=int(file_profile.get("analysis_chunk_size", 0) or self._resolve_chunk_size(chunk_size=chunk_size, low_power=low_power)),
+            progress_callback=self._progress_scope(progress_callback, 0.36, 0.90),
         )
