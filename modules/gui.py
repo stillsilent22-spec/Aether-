@@ -30,6 +30,7 @@ from .conway_engine import ContinuousConway
 from .device_profile import DeviceProfileEngine, RuntimePressure
 from .dialog_engine import AssistantContext, StructuralDialogEngine, StructuralReply
 from .embedding_engine import CrossDomainEmbeddingEngine
+from .efficiency_monitor import EfficiencyMonitor, EfficiencySnapshot
 from .evolved_language import EvolvedLanguageEngine, EvolvedSentence
 from .graph_engine import GraphFieldEngine, GraphFieldSnapshot
 from .log_system import LogSystem
@@ -101,6 +102,7 @@ class VeiraGUI:
         self.screen_vision_engine = ScreenVisionEngine()
         self.device_profile_engine = DeviceProfileEngine()
         self.device_profile = self.device_profile_engine.detect()
+        self.efficiency_monitor = EfficiencyMonitor()
         self.browser_engine = BrowserEngine()
         self.chat_sync_client = ChatSyncClient()
         self.chat_relay_server = ChatRelayServer(str(Path("data") / "chat_relay_events.jsonl"))
@@ -247,6 +249,14 @@ class VeiraGUI:
         self.chat_sync_secret_var = tk.StringVar(value="")
         self.chat_sync_status_var = tk.StringVar(value="Mehrrechner-Sync: aus")
         self.analysis_progress_var = tk.DoubleVar(value=0.0)
+        self.efficiency_cpu_var = tk.StringVar(value="CPU: --")
+        self.efficiency_ram_var = tk.StringVar(value="RAM: --")
+        self.efficiency_process_var = tk.StringVar(value="Process RSS: --")
+        self.efficiency_threads_var = tk.StringVar(value="Threads: --")
+        self.efficiency_phase_var = tk.StringVar(value="Phase: bereit")
+        self.efficiency_warning_var = tk.StringVar(value="Warnung: --")
+        self.efficiency_cpu_live_var = tk.DoubleVar(value=0.0)
+        self.efficiency_ram_live_var = tk.DoubleVar(value=0.0)
         self.security_key_var = tk.StringVar(
             value=(
                 f"LIVE {self.session_context.live_session_fingerprint or 'LOCAL'} | "
@@ -330,6 +340,10 @@ class VeiraGUI:
         self._delta_ratio_series: list[float] = []
         self.learning_curve_canvas: tk.Canvas | None = None
         self.anomaly_memory_label: tk.Label | None = None
+        self.efficiency_text: tk.Text | None = None
+        self.efficiency_job: str | None = None
+        self._efficiency_log_lines: list[str] = []
+        self._last_efficiency_warning_at = 0.0
         self.chat_channels_cache: list[dict[str, object]] = []
         self.chat_channel_map: dict[str, dict[str, object]] = {}
         self._last_dual_storage_decision: dict[str, object] = {}
@@ -353,6 +367,8 @@ class VeiraGUI:
         self._refresh_chat_view()
         self._prime_language_panel()
         self._apply_raw_storage_mode_label(bool(self.raw_storage_enabled_var.get()))
+        self._append_efficiency_log("Effizienzmonitor bereit.")
+        self.root.after(500, self._poll_efficiency_monitor)
         if self.device_profile.low_end:
             self.loading_var.set(
                 f"{self.device_profile.label}: Alle Funktionen bleiben aktiv, die Darstellung laeuft nur gedrosselt."
@@ -1102,6 +1118,7 @@ class VeiraGUI:
         self.right_notebook.bind("<<NotebookTabChanged>>", self._on_augment_tab_changed)
         node_tab = tk.Frame(self.right_notebook, bg="#111A4A")
         camera_tab = tk.Frame(self.right_notebook, bg="#0D1930")
+        efficiency_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         theremin_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         shanway_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         chat_tab = tk.Frame(self.right_notebook, bg="#0D1930")
@@ -1111,6 +1128,7 @@ class VeiraGUI:
         verify_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         self.right_notebook.add(node_tab, text="NODE")
         self.right_notebook.add(camera_tab, text="KAMERA")
+        self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
         self.right_notebook.add(theremin_tab, text="THEREMIN")
         self.right_notebook.add(shanway_tab, text="SHANWAY")
         self.right_notebook.add(chat_tab, text="CHATS")
@@ -1193,6 +1211,32 @@ class VeiraGUI:
         tk.Label(camera_tab, text="Conway-Feld", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(2, 6))
         self.conway_canvas = tk.Canvas(camera_tab, width=400, height=220, bg="#060B14", highlightthickness=0)
         self.conway_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        tk.Label(efficiency_tab, text="Effizienz-Dashboard", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 8))
+        efficiency_card = tk.Frame(efficiency_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        efficiency_card.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(efficiency_card, textvariable=self.efficiency_phase_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(efficiency_card, textvariable=self.efficiency_cpu_var, bg="#10223F", fg="#E7F4FF", font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        ttk.Progressbar(efficiency_card, maximum=100, variable=self.efficiency_cpu_live_var, style="ObserverCoherence.Horizontal.TProgressbar").pack(fill="x", padx=10, pady=(2, 6))
+        tk.Label(efficiency_card, textvariable=self.efficiency_ram_var, bg="#10223F", fg="#F6E7A7", font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        ttk.Progressbar(efficiency_card, maximum=100, variable=self.efficiency_ram_live_var, style="ObserverHobs.Horizontal.TProgressbar").pack(fill="x", padx=10, pady=(2, 6))
+        tk.Label(efficiency_card, textvariable=self.efficiency_process_var, bg="#10223F", fg="#9AD7C8", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_threads_var, bg="#10223F", fg="#CFE8FF", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_warning_var, bg="#10223F", fg="#FFB347", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 10))
+        tk.Label(efficiency_tab, text="Status-Log", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        self.efficiency_text = tk.Text(
+            efficiency_tab,
+            bg="#07111F",
+            fg="#D7E8FF",
+            relief="flat",
+            wrap="word",
+            font=("Consolas", 8),
+            height=14,
+            padx=10,
+            pady=10,
+        )
+        self.efficiency_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.efficiency_text.configure(state="disabled")
 
         tk.Label(theremin_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(12, 6))
         theremin_row = tk.Frame(theremin_tab, bg="#0D1930")
@@ -6435,6 +6479,7 @@ class VeiraGUI:
             if enabled
             else "Low-Power-Modus aus | 512 KB Chunks | volle Analyse"
         )
+        self._append_efficiency_log("Low-Power-Modus aktiviert." if enabled else "Low-Power-Modus deaktiviert.")
 
     def _set_loading(self, active: bool, determinate: bool = False) -> None:
         """Aktiviert oder deaktiviert den Ladeindikator."""
@@ -6462,6 +6507,57 @@ class VeiraGUI:
         stage_label = str(stage or "analysis").replace("_", " ").strip().capitalize()
         suffix = f" | {detail}" if str(detail or "").strip() else ""
         self.loading_var.set(f"Analyse {percent:5.1f}% | {stage_label}{suffix}")
+
+    def _append_efficiency_log(self, message: str) -> None:
+        """Schreibt knappe Effizienzmeldungen in den dedizierten Status-Log."""
+        text = str(message or "").strip()
+        if not text:
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self._efficiency_log_lines.append(f"[{timestamp}] {text}")
+        self._efficiency_log_lines = self._efficiency_log_lines[-24:]
+        if self.efficiency_text is None:
+            return
+        self.efficiency_text.configure(state="normal")
+        self.efficiency_text.delete("1.0", tk.END)
+        self.efficiency_text.insert("1.0", "\n".join(self._efficiency_log_lines))
+        self.efficiency_text.configure(state="disabled")
+
+    def _apply_efficiency_snapshot(self, snapshot: EfficiencySnapshot) -> None:
+        """Spiegelt CPU-/RAM-Werte in die GUI."""
+        if not snapshot.available:
+            missing = ", ".join(list(snapshot.missing_dependencies)) if snapshot.missing_dependencies else "monitor unavailable"
+            self.efficiency_cpu_var.set("CPU: --")
+            self.efficiency_ram_var.set("RAM: --")
+            self.efficiency_process_var.set("Process RSS: --")
+            self.efficiency_threads_var.set("Threads: --")
+            self.efficiency_phase_var.set(f"Phase: {snapshot.status or 'inaktiv'}")
+            self.efficiency_warning_var.set(f"Warnung: {snapshot.warning or missing}")
+            self.efficiency_cpu_live_var.set(0.0)
+            self.efficiency_ram_live_var.set(0.0)
+            return
+        self.efficiency_cpu_var.set(f"CPU: {snapshot.cpu_percent:.1f}%")
+        self.efficiency_ram_var.set(f"RAM: {snapshot.ram_used_mb:.0f} MB | {snapshot.ram_percent:.1f}%")
+        self.efficiency_process_var.set(f"Process RSS: {snapshot.process_rss_mb:.1f} MB")
+        self.efficiency_threads_var.set(f"Threads: {snapshot.threads}")
+        self.efficiency_phase_var.set(f"Phase: {snapshot.status or 'bereit'}")
+        self.efficiency_warning_var.set(f"Warnung: {snapshot.warning or '--'}")
+        self.efficiency_cpu_live_var.set(max(0.0, min(100.0, snapshot.cpu_percent)))
+        self.efficiency_ram_live_var.set(max(0.0, min(100.0, snapshot.ram_percent)))
+
+    def _poll_efficiency_monitor(self) -> None:
+        """Aktualisiert das Effizienz-Dashboard zyklisch und loggt RAM-Warnungen."""
+        snapshot = self.efficiency_monitor.sample(status=str(self.loading_var.get() or "bereit"))
+        self._apply_efficiency_snapshot(snapshot)
+        if snapshot.warning:
+            now = time.monotonic()
+            if (now - float(self._last_efficiency_warning_at)) >= 30.0:
+                suggestion = " Low-Power aktivieren?" if not bool(self.low_power_mode_var.get()) else ""
+                self._append_efficiency_log(f"{snapshot.warning} ({snapshot.ram_percent:.1f}% RAM).{suggestion}")
+                self._last_efficiency_warning_at = now
+        elif not self._efficiency_log_lines:
+            self._append_efficiency_log("Effizienzwerte stabil.")
+        self.efficiency_job = self.root.after(1200, self._poll_efficiency_monitor)
 
     def _update_wavelength_indicator(self, wavelength_nm: float, color_rgb: tuple[int, int, int] | None = None) -> None:
         """Aktualisiert die farbige Wellenlaengenanzeige."""
@@ -7440,6 +7536,12 @@ class VeiraGUI:
             except Exception:
                 pass
             self.chat_sync_job = None
+        if self.efficiency_job is not None:
+            try:
+                self.root.after_cancel(self.efficiency_job)
+            except Exception:
+                pass
+            self.efficiency_job = None
         try:
             self.registry.close_user_session(self.session_context.session_id)
             self.registry.save_security_event(

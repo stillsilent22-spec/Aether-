@@ -23,6 +23,7 @@ REQUIRED_IMPORTS = {
     "numpy": "numpy",
     "scipy": "scipy",
     "matplotlib": "matplotlib",
+    "psutil": "psutil",
     "sounddevice": "sounddevice",
     "SpeechRecognition": "speech_recognition",
     "pyinstaller": "PyInstaller",

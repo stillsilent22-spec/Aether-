@@ -94,6 +94,8 @@ class ShanwayAssessment:
     anchor_constant: str
     anchor_constant_value: float
     anchor_deviation: float
+    h_lambda: float
+    observer_mutual_info: float
     goedel_signal: float
     boundary: str
     pi_resonance_confirmed: bool
@@ -155,6 +157,8 @@ class ShanwayAssessment:
             "anchor_constant": str(self.anchor_constant),
             "anchor_constant_value": float(self.anchor_constant_value),
             "anchor_deviation": float(self.anchor_deviation),
+            "h_lambda": float(self.h_lambda),
+            "observer_mutual_info": float(self.observer_mutual_info),
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
             "pi_resonance_confirmed": bool(self.pi_resonance_confirmed),
@@ -210,6 +214,8 @@ class ShanwayAssessment:
             "anchor_constant_value": float(self.anchor_constant_value),
             "anchor_deviation": float(self.anchor_deviation),
             "anchor_alignment": float(max(0.0, 1.0 - min(1.0, self.anchor_deviation / 0.25))),
+            "h_lambda": float(self.h_lambda),
+            "observer_mutual_info": float(self.observer_mutual_info),
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
             "it_from_bit": bool(self.it_from_bit),
@@ -960,6 +966,8 @@ class ShanwayEngine:
             anchor_constant=str(anchor_constant),
             anchor_constant_value=float(anchor_value),
             anchor_deviation=float(anchor_deviation),
+            h_lambda=float(h_lambda),
+            observer_mutual_info=float(observer_mutual_info),
             goedel_signal=float(goedel_signal),
             boundary=str(boundary),
             pi_resonance_confirmed=bool(pi_resonance_confirmed),
@@ -1029,6 +1037,58 @@ class ShanwayEngine:
         prefix = "Resonanz stabil." if language == "de" else "Resonance is stable."
         return f"{prefix} {base}{anchor_text}".strip()
 
+    @staticmethod
+    def _good_coherence(assessment: ShanwayAssessment) -> bool:
+        """Kennzeichnet sauber rekonstruierbare, koharente Strukturzustaende."""
+        return bool(float(assessment.noether_symmetry) >= 0.80 and float(assessment.h_lambda) < 1.5)
+
+    @staticmethod
+    def _structural_break(assessment: ShanwayAssessment) -> bool:
+        """Markiert auffaellige Datei-/Observer-Brueche fuer klare Warntexte."""
+        return bool(
+            float(assessment.noether_symmetry) < 0.72
+            or float(assessment.h_lambda) >= 1.5
+            or str(assessment.boundary).upper() == "GOEDEL_LIMIT"
+        )
+
+    def _narrative_summary_reply(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+        """Formt bei guter Koharenz eine kurze, lesbare Verdichtung statt Metrikflut."""
+        language = str(getattr(assessment, "language", "de") or "de")
+        if language == "de":
+            lead = (
+                "Die Struktur wirkt geschlossen und stabil. "
+                f"Symmetrie {assessment.noether_symmetry * 100.0:.0f}% und H_lambda {assessment.h_lambda:.2f} "
+                "halten den Befund aktuell gut rekonstruierbar."
+            )
+            if str(assessment.anchor_constant).upper() in {"PI", "PHI"} and float(assessment.anchor_deviation) <= 0.08:
+                return lead + f" {assessment.anchor_constant} bleibt als ruhiger Referenzanker sichtbar."
+            if str(assistant_text or "").strip():
+                return lead + " Die Verdichtung bleibt kurz und konsistent."
+            return lead
+        lead = (
+            "The structure reads as closed and stable. "
+            f"Symmetry at {assessment.noether_symmetry * 100.0:.0f}% and H_lambda {assessment.h_lambda:.2f} "
+            "keep the finding reconstructable for now."
+        )
+        if str(assessment.anchor_constant).upper() in {"PI", "PHI"} and float(assessment.anchor_deviation) <= 0.08:
+            return lead + f" {assessment.anchor_constant} remains visible as a calm reference anchor."
+        if str(assistant_text or "").strip():
+            return lead + " The condensation stays short and consistent."
+        return lead
+
+    def _anomaly_reply(self, assessment: ShanwayAssessment) -> str:
+        """Leitet bei Strukturbruch einen expliziten Malware-/Manipulationshinweis ab."""
+        language = str(getattr(assessment, "language", "de") or "de")
+        if language == "de":
+            return (
+                "Strukturbruch erkannt - moegliche Malware / Manipulation? "
+                "Datei-, Screen- und Observer-Signale sollten jetzt gezielt geprueft werden."
+            )
+        return (
+            "Structural break detected - possible malware / manipulation? "
+            "File, screen, and observer signals should be checked directly now."
+        )
+
     def _noise_reply(self, assessment: ShanwayAssessment) -> str:
         """Liefert bewusst eine ruhige schriftliche Sperrantwort statt Rauschtext."""
         language = str(getattr(assessment, "language", "de") or "de")
@@ -1068,23 +1128,33 @@ class ShanwayEngine:
         if assessment.classification == "toxic":
             return self._append_structural_notes(self._noise_reply(assessment), assessment)
         if assessment.classification == "uncertain":
-            base = assistant_text.strip() if str(assistant_text).strip() else (
-                "Ich halte die Antwort bewusst vorsichtig und knapp."
-                if language == "de"
-                else "I keep the reply deliberately cautious and brief."
-            )
-            response = (
-                f"{'Analyse bleibt unsicher.' if language == 'de' else 'Analysis remains uncertain.'} "
-                f"{base}"
-            )
+            if self._structural_break(assessment):
+                response = self._anomaly_reply(assessment)
+            else:
+                base = assistant_text.strip() if str(assistant_text).strip() else (
+                    "Ich halte die Antwort bewusst vorsichtig und knapp."
+                    if language == "de"
+                    else "I keep the reply deliberately cautious and brief."
+                )
+                response = (
+                    f"{'Analyse bleibt unsicher.' if language == 'de' else 'Analysis remains uncertain.'} "
+                    f"{base}"
+                )
             return self._append_structural_notes(response, assessment)
+        if self._good_coherence(assessment):
+            return self._append_structural_notes(
+                self._narrative_summary_reply(assessment, assistant_text=assistant_text),
+                assessment,
+            )
+        if self._structural_break(assessment):
+            return self._append_structural_notes(self._anomaly_reply(assessment), assessment)
         return self._append_structural_notes(
             self._harmonic_reply(assessment, assistant_text=assistant_text),
             assessment,
         )
 
     def _append_structural_notes(self, response: str, assessment: ShanwayAssessment) -> str:
-        notes: list[str] = [str(response or "").strip()]
+        notes: list[str] = []
         if assessment.missing_dependencies:
             notes.append(
                 "MISSING_DEPENDENCIES: "
@@ -1093,6 +1163,7 @@ class ShanwayEngine:
             )
         if assessment.missing_data:
             notes.append("MISSING_DATA: " + ", ".join(list(assessment.missing_data)))
+        notes.append(str(response or "").strip())
         notes.append(f"BOUNDARY: {assessment.boundary} ({assessment.goedel_signal:.3f})")
         if assessment.it_from_bit:
             notes.append("IT_FROM_BIT_CANDIDATE")
