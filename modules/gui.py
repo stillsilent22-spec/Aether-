@@ -3096,6 +3096,7 @@ class VeiraGUI:
                     payload["screen_vision"] = dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
                     payload["file_profile"] = dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
                     payload["observer_payload"] = dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
+                    payload["emergence_layers"] = [dict(item) for item in list(getattr(self.current_fingerprint, "emergence_layers", []) or [])]
                 if shanway_self_assessment is not None:
                     payload["shanway_self_assessment"] = shanway_self_assessment.to_payload()
                     payload["shanway_self_learned_tokens"] = int(self_learned_tokens)
@@ -5452,6 +5453,7 @@ class VeiraGUI:
         payload["screen_vision"] = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
         payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
         payload["observer_payload"] = dict(getattr(fingerprint, "observer_payload", {}) or {})
+        payload["emergence_layers"] = [dict(item) for item in list(getattr(fingerprint, "emergence_layers", []) or [])]
         noether_profile = self.analysis_engine.vault_noether_profile(
             fingerprint,
             anchor_details=list(ae_anchor_details),
@@ -5529,8 +5531,10 @@ class VeiraGUI:
                 "boundary": str(boundary),
                 "pi_resonance_confirmed": bool(pi_resonance_confirmed),
                 "it_from_bit_candidate": bool(it_from_bit_candidate),
+                "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
                 "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
                 "observer_payload": dict(getattr(fingerprint, "observer_payload", {}) or {}),
+                "emergence_layers": [dict(item) for item in list(getattr(fingerprint, "emergence_layers", []) or [])],
                 "anchor_coverage_ratio": float(coverage_profile.get("anchor_coverage_ratio", 0.0) or 0.0),
                 "unresolved_residual_ratio": float(coverage_profile.get("unresolved_residual_ratio", 1.0) or 1.0),
                 "coverage_verified": bool(coverage_profile.get("coverage_verified", False)),
@@ -5594,6 +5598,7 @@ class VeiraGUI:
                 "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
                 "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
                 "observer_payload": dict(getattr(fingerprint, "observer_payload", {}) or {}),
+                "emergence_layers": [dict(item) for item in list(getattr(fingerprint, "emergence_layers", []) or [])],
                 "local_chain_tx_hash": str(getattr(fingerprint, "local_chain_tx_hash", "")),
                 "local_chain_prev_hash": str(getattr(fingerprint, "local_chain_prev_hash", "")),
                 "local_chain_endpoint": str(getattr(fingerprint, "local_chain_endpoint", "")),
@@ -6164,10 +6169,26 @@ class VeiraGUI:
                 history_factor=float(len(self.history_entries_cache)),
             )
             shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
+            fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]
+            latest_record_id = int(getattr(self, "_latest_file_record_id", 0) or 0)
+            if latest_record_id > 0 and self.current_fingerprint is fingerprint:
+                self.registry.update_fingerprint_payload(
+                    latest_record_id,
+                    {
+                        "emergence_layers": [dict(item) for item in list(shanway_assessment.emergence_layers or [])],
+                        "shanway_assessment": shanway_assessment.to_payload(),
+                    },
+                )
             self.chat_reply_var.set(f"Shanway: {shanway_text}")
             self.chat_semantic_var.set(
                 f"Semantik: {reply.semantics_label} | Schoenheit: {reply.beauty_label} | Boundary: {shanway_assessment.boundary}"
             )
+            if self.animation_scene is not None and self.current_fingerprint is fingerprint:
+                self.renderer.apply_fingerprint_to_scene(self.animation_scene, fingerprint)
+                self.renderer.update_dynamic_scene(self.animation_scene)
+                self.audio_engine.update_audiovisual_frame(self.animation_scene.audiovisual_frame)
+                if self.current_canvas is not None:
+                    self.current_canvas.draw_idle()
         except Exception:
             pass
         self._update_graph_field(fingerprint)
@@ -6785,14 +6806,14 @@ class VeiraGUI:
             )
             screen_vision_payload = self._capture_scoped_screen_payload(source_path, fingerprint)
             if screen_vision_payload:
-                setattr(fingerprint, "screen_vision_payload", dict(screen_vision_payload))
+                fingerprint.screen_vision_payload = dict(screen_vision_payload)
             observer_payload = self.observer_engine.observe_render_and_processes(
                 file_path=str(source_path),
                 timeout=10,
                 fingerprint=fingerprint,
                 scoped_screen_payload=screen_vision_payload,
             )
-            setattr(fingerprint, "observer_payload", dict(observer_payload))
+            fingerprint.observer_payload = dict(observer_payload)
             storage_decision = self.storage_gp_engine.evaluate(fingerprint)
             raw_saved = False
             local_payload = {
@@ -6808,6 +6829,7 @@ class VeiraGUI:
                 local_payload["screen_vision"] = dict(screen_vision_payload)
             local_payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
             local_payload["observer_payload"] = dict(observer_payload)
+            local_payload["emergence_layers"] = [dict(item) for item in list(getattr(fingerprint, "emergence_layers", []) or [])]
             record_id = self.registry.save(
                 fingerprint,
                 self.session_context,

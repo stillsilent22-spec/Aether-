@@ -159,6 +159,7 @@ class AetherFingerprint:
     local_chain_attested_at: str = ""
     scan_hash: str = ""
     scan_payload: dict[str, Any] | None = None
+    screen_vision_payload: dict[str, Any] | None = None
     file_profile: dict[str, Any] | None = None
     observer_payload: dict[str, Any] | None = None
     emergence_layers: list[dict[str, Any]] | None = None
@@ -201,6 +202,7 @@ class AetherFingerprint:
             "local_chain_attested_at": str(self.local_chain_attested_at),
             "scan_hash": str(self.scan_hash),
             "scan_payload": dict(self.scan_payload or {}),
+            "screen_vision_payload": dict(self.screen_vision_payload or {}),
             "file_profile": dict(self.file_profile or {}),
             "observer_payload": dict(self.observer_payload or {}),
             "emergence_layers": [dict(item) for item in list(self.emergence_layers or [])],

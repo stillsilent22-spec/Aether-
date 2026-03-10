@@ -23,6 +23,87 @@ def _canonical_json(payload: Any) -> str:
     return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
 
 
+def _compact_file_profile(profile: dict[str, Any] | None) -> dict[str, Any]:
+    """Reduziert Multi-Type-Dateiprofile auf append-only relevante Kerndaten."""
+    payload = dict(profile or {})
+    summary = dict(payload.get("summary", {}) or {})
+    return {
+        "category": str(payload.get("category", "binary") or "binary"),
+        "subtype": str(payload.get("subtype", "") or ""),
+        "mime_type": str(payload.get("mime_type", "") or ""),
+        "parser_confidence": float(payload.get("parser_confidence", 0.0) or 0.0),
+        "missing_dependencies": [str(item) for item in list(payload.get("missing_dependencies", []) or []) if str(item).strip()],
+        "missing_data": [str(item) for item in list(payload.get("missing_data", []) or []) if str(item).strip()],
+        "type_metrics": dict(payload.get("type_metrics", {}) or {}),
+        "summary": {
+            "stream_count": int(summary.get("stream_count", 0) or 0),
+            "type_metric_count": int(summary.get("type_metric_count", 0) or 0),
+        },
+    }
+
+
+def _compact_screen_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Verdichtet Screen-Vision fuer Signaturen und Vault-Snapshots."""
+    screen = dict(payload or {})
+    return {
+        "SCREEN_VISION": str(screen.get("SCREEN_VISION", screen.get("screen_vision", "")) or ""),
+        "SOURCE": str(screen.get("SOURCE", screen.get("source", "")) or ""),
+        "CONVERGENCE": str(screen.get("CONVERGENCE", screen.get("convergence", "")) or ""),
+        "shared_anchor_count": int(len(list(screen.get("shared_anchors", []) or []))),
+        "visual_anchor_count": int(len(list(screen.get("VISUAL_ANCHORS", screen.get("visual_anchors", []) or [])))),
+        "file_anchor_count": int(len(list(screen.get("FILE_ANCHORS", screen.get("file_anchors", []) or [])))),
+    }
+
+
+def _compact_observer_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Bewahrt visuelle und prozessuale Residuen ohne voluminose Rohdaten."""
+    observer = dict(payload or {})
+    visual_state = dict(observer.get("visual_state", {}) or {})
+    process_state = dict(observer.get("process_state", {}) or {})
+    return {
+        "screen_vision_mode": str(observer.get("screen_vision_mode", "") or ""),
+        "visual_state": {
+            "mode": str(visual_state.get("mode", "") or ""),
+            "width": int(visual_state.get("width", 0) or 0),
+            "height": int(visual_state.get("height", 0) or 0),
+            "visual_entropy": float(visual_state.get("visual_entropy", 0.0) or 0.0),
+        },
+        "process_state": {
+            "name": str(process_state.get("name", "") or ""),
+            "cpu_percent": float(process_state.get("cpu_percent", 0.0) or 0.0),
+            "rss_mb": float(process_state.get("rss_mb", 0.0) or 0.0),
+            "threads": int(process_state.get("threads", 0) or 0),
+            "missing_dependencies": [
+                str(item)
+                for item in list(process_state.get("missing_dependencies", []) or [])
+                if str(item).strip()
+            ],
+        },
+        "visual_residual_hash": str(observer.get("visual_residual_hash", "") or ""),
+        "process_residuum_hash": str(observer.get("process_residuum_hash", "") or ""),
+        "O_t": dict(observer.get("O_t", {}) or {}),
+        "M_t": dict(observer.get("M_t", {}) or {}),
+        "R_t": dict(observer.get("R_t", {}) or {}),
+    }
+
+
+def _compact_emergence_layers(layers: Sequence[dict[str, Any]] | None) -> list[dict[str, Any]]:
+    """Haelt Emergenz-Layer knapp und deterministisch."""
+    compact: list[dict[str, Any]] = []
+    for item in list(layers or [])[:4]:
+        if not isinstance(item, dict):
+            continue
+        compact.append(
+            {
+                "layer": str(item.get("layer", "") or ""),
+                "status": str(item.get("status", "") or ""),
+                "summary": str(item.get("summary", "") or ""),
+                "confidence": float(item.get("confidence", 0.0) or 0.0),
+            }
+        )
+    return compact
+
+
 def _xor_bytes(*buffers: bytes) -> bytes:
     """XORt Bytepuffer gleicher Laenge."""
     if not buffers:
@@ -139,13 +220,22 @@ class AetherAugmentor:
             "source_type": str(getattr(fingerprint, "source_type", "file")),
             "source_label": str(getattr(fingerprint, "source_label", "")),
             "file_hash": fingerprint.file_hash,
+            "scan_hash": str(getattr(fingerprint, "scan_hash", "")),
             "verdict": fingerprint.verdict,
             "feature_vector": vector,
             "symmetry_score": float(fingerprint.symmetry_score),
             "coherence_score": float(getattr(fingerprint, "coherence_score", 0.0)),
             "resonance_score": float(getattr(fingerprint, "resonance_score", 0.0)),
             "ethics_score": float(getattr(fingerprint, "ethics_score", 0.0)),
+            "observer_mutual_info": float(getattr(fingerprint, "observer_mutual_info", 0.0)),
+            "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0)),
+            "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0)),
+            "observer_state": str(getattr(fingerprint, "observer_state", "OFFEN")),
             "similarity_best": float(similarity_best),
+            "screen_vision": _compact_screen_payload(dict(getattr(fingerprint, "screen_vision_payload", {}) or {})),
+            "file_profile": _compact_file_profile(dict(getattr(fingerprint, "file_profile", {}) or {})),
+            "observer_payload": _compact_observer_payload(dict(getattr(fingerprint, "observer_payload", {}) or {})),
+            "emergence_layers": _compact_emergence_layers(list(getattr(fingerprint, "emergence_layers", []) or [])),
         }
         signature = self.sign_payload(payload)
         self.registry.save_vault_entry(

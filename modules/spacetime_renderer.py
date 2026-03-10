@@ -57,6 +57,13 @@ class AudioVisualFrame:
     threshold_plane_z: float
     points: list[AudioVisualVoxel] = field(default_factory=list)
     anchor_stars: list[AudioVisualVoxel] = field(default_factory=list)
+    file_category: str = "binary"
+    screen_mode: str = ""
+    visual_entropy: float = 0.0
+    process_cpu: float = 0.0
+    process_threads: int = 0
+    observer_intensity: float = 0.0
+    emergence_intensity: float = 0.0
 
 
 @dataclass
@@ -205,6 +212,53 @@ class SpacetimeRenderer:
             "mandelbrot_deviation": float(deviation),
         }
 
+    def _observer_frame_metrics(self, fingerprint: AetherFingerprint | None) -> dict[str, float | int | str]:
+        """Verdichtet Screen-/Observer-Zustaende fuer Render- und Audio-Frames."""
+        if fingerprint is None:
+            return {
+                "file_category": "binary",
+                "screen_mode": "",
+                "visual_entropy": 0.0,
+                "process_cpu": 0.0,
+                "process_threads": 0,
+                "observer_intensity": 0.0,
+                "emergence_intensity": 0.0,
+            }
+        file_profile = dict(getattr(fingerprint, "file_profile", {}) or {})
+        observer_payload = dict(getattr(fingerprint, "observer_payload", {}) or {})
+        visual_state = dict(observer_payload.get("visual_state", {}) or {})
+        process_state = dict(observer_payload.get("process_state", {}) or {})
+        emergence_layers = list(getattr(fingerprint, "emergence_layers", []) or [])
+        screen_payload = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
+        visual_entropy = float(visual_state.get("visual_entropy", 0.0) or 0.0)
+        process_cpu = float(process_state.get("cpu_percent", 0.0) or 0.0)
+        process_threads = int(process_state.get("threads", 0) or 0)
+        screen_mode = str(
+            visual_state.get("mode", "")
+            or observer_payload.get("screen_vision_mode", "")
+            or screen_payload.get("SCREEN_VISION", screen_payload.get("screen_vision", ""))
+            or ""
+        )
+        observer_intensity = self._clamp(
+            (
+                self._clamp(visual_entropy / 8.0, 0.0, 1.0)
+                + self._clamp(process_cpu / 100.0, 0.0, 1.0)
+                + self._clamp(process_threads / 32.0, 0.0, 1.0)
+            ) / 3.0,
+            0.0,
+            1.0,
+        )
+        emergence_intensity = self._clamp(len(emergence_layers) / 4.0, 0.0, 1.0)
+        return {
+            "file_category": str(file_profile.get("category", "binary") or "binary"),
+            "screen_mode": screen_mode,
+            "visual_entropy": float(visual_entropy),
+            "process_cpu": float(process_cpu),
+            "process_threads": int(process_threads),
+            "observer_intensity": float(observer_intensity),
+            "emergence_intensity": float(emergence_intensity),
+        }
+
     def _boundary_threshold(self, mandelbrot_d: float) -> float:
         """Leitet eine sichtbare Mandelbrot-Grenze im Raster ab."""
         return self._clamp(0.52 + ((float(mandelbrot_d) - 1.5) * 0.28), 0.18, 0.82)
@@ -216,6 +270,26 @@ class SpacetimeRenderer:
         deviation = self._clamp(abs(float(mandelbrot_d) - 1.5) / 0.9, 0.0, 1.0)
         return (blue * (1.0 - deviation)) + (orange * deviation)
 
+    def _draw_observer_overlay(self, ax: Any, av_frame: AudioVisualFrame) -> None:
+        """Schreibt kompaktes Observer-/Emergenz-Feedback direkt in die Szene."""
+        overlay = (
+            f"{str(av_frame.file_category or 'binary').upper()} | "
+            f"Screen {str(av_frame.screen_mode or 'off')} | "
+            f"Hvis {float(av_frame.visual_entropy):.2f} | "
+            f"CPU {float(av_frame.process_cpu):.1f}% | "
+            f"Threads {int(av_frame.process_threads)} | "
+            f"L4 {float(av_frame.emergence_intensity):.2f}"
+        )
+        ax.text2D(
+            0.02,
+            0.97,
+            overlay,
+            transform=ax.transAxes,
+            color="#D6E8FF",
+            fontsize=8,
+            bbox={"facecolor": "#091426", "edgecolor": "#28466F", "alpha": 0.76, "boxstyle": "round,pad=0.28"},
+        )
+
     def _build_audiovisual_frame(
         self,
         scene: RenderScene,
@@ -225,6 +299,7 @@ class SpacetimeRenderer:
         """Berechnet den gemeinsamen Bild-/Ton-Frame aus exakt demselben Datenstrom."""
         fingerprint = scene.fingerprint
         metrics = self._beauty_metrics(fingerprint)
+        observer_metrics = self._observer_frame_metrics(fingerprint)
         boundary_threshold = self._boundary_threshold(float(metrics["mandelbrot_d"]))
         min_z = float(np.min(dynamic_z))
         max_z = float(np.max(dynamic_z))
@@ -302,23 +377,55 @@ class SpacetimeRenderer:
                     )
 
         anchor_stars = self._build_anchor_stars(fingerprint, dynamic_z, phase)
+        pulse_hz = self._clamp(
+            float(metrics["pulse_hz"])
+            * (
+                1.0
+                + (0.12 * float(observer_metrics["observer_intensity"]))
+                + (0.08 * float(observer_metrics["emergence_intensity"]))
+            ),
+            0.618,
+            5.4,
+        )
+        pink_noise_mix = self._clamp(
+            float(metrics["pink_noise_mix"]) * (1.0 - (0.18 * float(observer_metrics["observer_intensity"]))),
+            0.0,
+            1.0,
+        )
+        white_noise_mix = self._clamp(
+            float(metrics["white_noise_mix"])
+            + (0.18 * float(observer_metrics["observer_intensity"]))
+            + (0.08 * float(observer_metrics["emergence_intensity"])),
+            0.0,
+            1.0,
+        )
+        mix_total = max(1e-6, pink_noise_mix + white_noise_mix)
+        pink_noise_mix = pink_noise_mix / mix_total
+        white_noise_mix = white_noise_mix / mix_total
 
         return AudioVisualFrame(
             phase=float(phase),
-            pulse_hz=float(metrics["pulse_hz"]),
-            bpm=float(metrics["pulse_hz"]) * 60.0,
+            pulse_hz=float(pulse_hz),
+            bpm=float(pulse_hz) * 60.0,
             alpha_1f=float(metrics["alpha_1f"]),
             mandelbrot_d=float(metrics["mandelbrot_d"]),
             symmetry_phi=float(metrics["symmetry_phi"]),
             heisenberg_confidence=float(metrics["heisenberg_confidence"]),
             noether_alarm=bool(metrics["noether_alarm"]),
-            pink_noise_mix=float(metrics["pink_noise_mix"]),
-            white_noise_mix=float(metrics["white_noise_mix"]),
+            pink_noise_mix=float(pink_noise_mix),
+            white_noise_mix=float(white_noise_mix),
             left_right_divergence=float(metrics["left_right_divergence"]),
             boundary_threshold=float(boundary_threshold),
             threshold_plane_z=float(threshold_plane_z),
             points=points,
             anchor_stars=anchor_stars,
+            file_category=str(observer_metrics["file_category"]),
+            screen_mode=str(observer_metrics["screen_mode"]),
+            visual_entropy=float(observer_metrics["visual_entropy"]),
+            process_cpu=float(observer_metrics["process_cpu"]),
+            process_threads=int(observer_metrics["process_threads"]),
+            observer_intensity=float(observer_metrics["observer_intensity"]),
+            emergence_intensity=float(observer_metrics["emergence_intensity"]),
         )
 
     def _build_anchor_stars(
@@ -498,6 +605,7 @@ class SpacetimeRenderer:
 
         if scene.storage_layer == "Raw Deltas" and scene.raw_points is not None and scene.raw_points.size > 0:
             self._draw_raw_delta_layer(scene, phase, av_frame)
+            self._draw_observer_overlay(ax, av_frame)
             return
 
         facecolors = self._dynamic_facecolors(scene, phase, av_frame)
@@ -600,6 +708,7 @@ class SpacetimeRenderer:
         elev = 26.0 + (5.0 * np.sin(phase * 0.45))
         ax.view_init(elev=elev, azim=azim)
         ax.set_title("Aether - Dynamisches Raumzeitfeld", color="#DDF9FF", pad=14)
+        self._draw_observer_overlay(ax, av_frame)
 
     def _draw_raw_delta_layer(self, scene: RenderScene, phase: float, av_frame: AudioVisualFrame) -> None:
         """Zeichnet rohe 4D-Deltas als Weltlinien ueber einem leichten Heatmap-Feld."""

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 import threading
 import time
@@ -86,6 +87,11 @@ class AudioEngine:
         self._audiovisual_reverb_right = np.zeros(max(2048, sample_rate // 3), dtype=np.float32)
         self._audiovisual_reverb_index = 0
 
+    @staticmethod
+    def _clamp(value: float, low: float, high: float) -> float:
+        """Begrenzt Audiowerte robust auf einen sicheren Bereich."""
+        return float(max(low, min(high, value)))
+
     def _apply_fade(self, signal: np.ndarray) -> np.ndarray:
         """Wendet weiches Fade-In und Fade-Out an."""
         fade_len = max(1, int(0.05 * self.sample_rate))
@@ -95,9 +101,10 @@ class AudioEngine:
         signal[-fade_len:] *= fade_out
         return signal
 
-    def _brownian_noise(self, length: int, amplitude: float) -> np.ndarray:
+    def _brownian_noise(self, length: int, amplitude: float, rng: np.random.Generator | None = None) -> np.ndarray:
         """Erzeugt normalisiertes Brownian Noise aus weissem Rauschen."""
-        white = self._rng.normal(0.0, 1.0, length).astype(np.float32)
+        generator = rng if rng is not None else self._rng
+        white = generator.normal(0.0, 1.0, length).astype(np.float32)
         brown = np.cumsum(white)
         max_abs = np.max(np.abs(brown)) if length > 0 else 1.0
         normalized = (brown / max_abs) if max_abs else brown
@@ -111,6 +118,37 @@ class AudioEngine:
         chord = np.sum(waves, axis=0) / max(1, len(waves))
         return chord.astype(np.float32)
 
+    @staticmethod
+    def _fingerprint_seed(fingerprint: AetherFingerprint) -> int:
+        """Leitet einen stabilen Audio-Seed nur aus Fingerprint-Zustaenden ab."""
+        base = (
+            f"{getattr(fingerprint, 'file_hash', '')}|"
+            f"{getattr(fingerprint, 'scan_hash', '')}|"
+            f"{getattr(fingerprint, 'source_label', '')}|"
+            f"{getattr(fingerprint, 'verdict', '')}"
+        ).encode("utf-8", errors="ignore")
+        return int.from_bytes(hashlib.sha256(base).digest()[:8], "big", signed=False)
+
+    def _fingerprint_rng(self, fingerprint: AetherFingerprint) -> np.random.Generator:
+        """Erzeugt pro Fingerprint einen reproduzierbaren Zufallsstrom."""
+        return np.random.default_rng(self._fingerprint_seed(fingerprint))
+
+    @staticmethod
+    def _category_frequencies(category: str) -> list[float]:
+        """Ordnet Dateikategorien stabile Akkordzentren zu."""
+        palette = {
+            "audio": [196.0, 392.0, 784.0],
+            "video": [174.61, 261.63, 523.25],
+            "image": [329.63, 493.88, 659.25],
+            "document": [220.0, 277.18, 440.0],
+            "font": [246.94, 369.99, 493.88],
+            "archive": [110.0, 164.81, 220.0],
+            "code": [146.83, 220.0, 293.66],
+            "data": [164.81, 329.63, 659.25],
+            "binary": [220.0, 330.0, 440.0],
+        }
+        return list(palette.get(str(category or "binary").lower(), palette["binary"]))
+
     def generate_tone(self, fingerprint: AetherFingerprint) -> np.ndarray:
         """
         Generiert einen Audio-Array passend zum Analyseurteil.
@@ -118,23 +156,55 @@ class AudioEngine:
         Args:
             fingerprint: Ergebnisobjekt der Analyse.
         """
+        file_profile = dict(getattr(fingerprint, "file_profile", {}) or {})
+        observer_payload = dict(getattr(fingerprint, "observer_payload", {}) or {})
+        visual_state = dict(observer_payload.get("visual_state", {}) or {})
+        process_state = dict(observer_payload.get("process_state", {}) or {})
+        emergence_layers = list(getattr(fingerprint, "emergence_layers", []) or [])
+        category = str(file_profile.get("category", "binary") or "binary")
+        category_frequencies = self._category_frequencies(category)
+        observer_entropy = float(visual_state.get("visual_entropy", 0.0) or 0.0)
+        process_cpu = float(process_state.get("cpu_percent", 0.0) or 0.0)
+        observer_drive = self._clamp(
+            (
+                self._clamp(observer_entropy / 8.0, 0.0, 1.0)
+                + self._clamp(process_cpu / 100.0, 0.0, 1.0)
+            ) / 2.0,
+            0.0,
+            1.0,
+        )
+        emergence_drive = self._clamp(len(emergence_layers) / 4.0, 0.0, 1.0)
+        rng = self._fingerprint_rng(fingerprint)
         if fingerprint.verdict == "RECURSIVE":
-            base = self._base_chord([293.0, 587.0, 1174.0])
-            shimmer = self._base_chord([311.0, 622.0, 1244.0]) * 0.45
-            tone = base + shimmer + self._brownian_noise(len(base), amplitude=0.08)
+            recursive_base = [freq * 1.333 for freq in category_frequencies]
+            base = self._base_chord(recursive_base)
+            shimmer = self._base_chord([freq * 1.414 for freq in recursive_base]) * (0.32 + (0.22 * emergence_drive))
+            tone = base + shimmer + self._brownian_noise(len(base), amplitude=0.06 + (0.06 * observer_drive), rng=rng)
         elif fingerprint.verdict == "CRITICAL":
-            tone = self._base_chord([233.0, 311.0, 466.0])
-            tone += self._brownian_noise(len(tone), amplitude=0.9)
+            critical_base = [category_frequencies[0] * 0.92, category_frequencies[1] * 0.94, category_frequencies[2] * 1.06]
+            tone = self._base_chord(critical_base)
+            tone += self._brownian_noise(len(tone), amplitude=0.45 + (0.45 * observer_drive), rng=rng)
             click_len = min(220, len(tone))
             if click_len > 0:
                 tone[:click_len] += np.hanning(click_len).astype(np.float32) * 0.95
         elif fingerprint.verdict == "SUSPICIOUS":
-            tone = self._base_chord([220.0, 330.0, 440.0])
+            tone = self._base_chord(category_frequencies)
             anomaly_degree = max(0.0, min(1.0, (100.0 - fingerprint.symmetry_score) / 100.0))
             anomaly_degree = max(anomaly_degree, min(1.0, len(fingerprint.anomaly_coordinates) / 24.0))
-            tone += self._brownian_noise(len(tone), amplitude=0.15 + anomaly_degree * 0.55)
+            tone += self._brownian_noise(
+                len(tone),
+                amplitude=0.12 + (anomaly_degree * 0.38) + (observer_drive * 0.22),
+                rng=rng,
+            )
         else:
-            tone = self._base_chord([220.0, 330.0, 440.0])
+            tone = self._base_chord(category_frequencies)
+            if observer_drive > 0.05 or emergence_drive > 0.05:
+                overtone = self._base_chord([freq * (1.0 + (0.08 * emergence_drive)) for freq in category_frequencies])
+                tone = tone + (overtone * np.float32(0.12 + (0.18 * observer_drive)))
+
+        if observer_drive > 0.01:
+            shimmer = self._base_chord([freq * (1.0 + (0.04 * observer_drive)) for freq in category_frequencies])
+            tone = tone + (shimmer * np.float32(0.05 + (0.12 * emergence_drive)))
 
         tone = self._apply_fade(tone)
         peak = np.max(np.abs(tone)) if len(tone) else 1.0
@@ -616,8 +686,18 @@ class AudioEngine:
 
         pulse_hz = float(getattr(frame, "pulse_hz", 0.618) or 0.618)
         divergence = float(getattr(frame, "left_right_divergence", 0.0) or 0.0)
+        observer_intensity = self._clamp(float(getattr(frame, "observer_intensity", 0.0) or 0.0), 0.0, 1.0)
+        emergence_intensity = self._clamp(float(getattr(frame, "emergence_intensity", 0.0) or 0.0), 0.0, 1.0)
+        process_cpu = self._clamp(float(getattr(frame, "process_cpu", 0.0) or 0.0) / 100.0, 0.0, 1.0)
+        pulse_hz = float(pulse_hz * (1.0 + (0.08 * emergence_intensity) + (0.04 * observer_intensity)))
+        divergence = float(self._clamp(divergence + (0.22 * observer_intensity), 0.0, 1.0))
         pink_mix = float(getattr(frame, "pink_noise_mix", 0.0) or 0.0)
         white_mix = float(getattr(frame, "white_noise_mix", 0.0) or 0.0)
+        pink_mix = self._clamp(pink_mix * (1.0 - (0.20 * observer_intensity)), 0.0, 1.0)
+        white_mix = self._clamp(white_mix + (0.18 * observer_intensity) + (0.10 * emergence_intensity), 0.0, 1.0)
+        noise_total = max(1e-6, pink_mix + white_mix)
+        pink_mix /= noise_total
+        white_mix /= noise_total
 
         for point in ordered_points:
             left_gain, right_gain = self._pan_gains(float(getattr(point, "pan", 0.0) or 0.0))
@@ -660,7 +740,12 @@ class AudioEngine:
 
             signal = (
                 (0.72 * harmonic)
-                + (0.28 + (0.24 * float(getattr(point, "strobe", 0.0) or 0.0))) * carrier_noise
+                + (
+                    0.28
+                    + (0.24 * float(getattr(point, "strobe", 0.0) or 0.0))
+                    + (0.12 * observer_intensity)
+                    + (0.08 * process_cpu)
+                ) * carrier_noise
                 + anomaly_burst
             ).astype(np.float32)
             signal *= (rhythm * np.float32(point_volume)).astype(np.float32)
@@ -676,12 +761,12 @@ class AudioEngine:
             depth_weight += point_volume
 
         if divergence > 0.001:
-            drift_left = self._pinkish_noise(frames) * np.float32(0.025 * divergence)
+            drift_left = self._pinkish_noise(frames) * np.float32((0.025 + (0.015 * emergence_intensity)) * divergence)
             drift_right = self._rng.normal(0.0, 1.0, frames).astype(np.float32)
             drift_peak = float(np.max(np.abs(drift_right))) if frames > 0 else 1.0
             if drift_peak > 0.0:
                 drift_right = (drift_right / drift_peak).astype(np.float32)
-            right += drift_right * np.float32(0.025 * divergence)
+            right += drift_right * np.float32((0.025 + (0.018 * observer_intensity)) * divergence)
             left += drift_left
 
         reverb_depth = float(depth_total / depth_weight) if depth_weight > 0.0 else 0.0
