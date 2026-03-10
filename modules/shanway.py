@@ -1124,8 +1124,8 @@ class ShanwayEngine:
         compression_gain = max(0.0, min(100.0, (1.0 - compression_ratio) * 100.0))
         if verdict.upper() == "CONFIRMED":
             return (
-                "Rekonstruktion bestaetigt: "
-                f"{compression_gain:.1f}% Kompressionsgewinn bei bestaetigtem lossless-Status."
+                "Rekonstruktion bestätigt: "
+                f"{compression_gain:.1f} % Platzersparnis, lossless-Status bitgenau bestätigt."
             )
 
         issues: list[str] = []
@@ -1138,23 +1138,23 @@ class ShanwayEngine:
                 estimated_total = int(math.ceil(current_anchors * (0.85 / anchor_ratio)))
                 additional_anchors = max(1, estimated_total - current_anchors)
             issues.append(
-                f"geschaetzt {additional_anchors} zusaetzliche Anchor(s), um {0.85 - anchor_ratio:.3f} Coverage-Luecke zu schliessen"
+                f"geschätzt {additional_anchors} zusätzliche Anchors, um die Coverage-Lücke zu schließen"
             )
         residual_ratio = float(verification.get("unresolved_residual_ratio", 0.0) or 0.0)
         residual_size = int(verification.get("residual_size_bytes", 0) or 0)
         if residual_ratio > 0.15:
-            issues.append(f"exakt {residual_size} Byte Residuum bleiben noch unaufgeloest")
+            issues.append(f"exakt {residual_size} Byte Residuum bleiben noch offen")
         if verification.get("session_seed_match") is False:
-            issues.append("der Delta-Seed muss fuer die Rekonstruktion unveraendert erhalten bleiben")
+            issues.append("Delta-Seed muss für Rekonstruktion erhalten bleiben")
         if not bool(verification.get("byte_match", True)):
-            issues.append("die Bytefolge stimmt noch nicht exakt mit dem Original ueberein")
+            issues.append("die Bytefolge stimmt noch nicht exakt mit dem Original überein")
         if not bool(verification.get("size_match", True)):
-            issues.append("die rekonstruierte Dateigroesse weicht noch vom Original ab")
+            issues.append("die rekonstruierte Dateigröße weicht noch vom Original ab")
         if not issues:
             reason = str(getattr(assessment, "verdict_reconstruction_reason", "") or "")
             if reason:
                 issues.append(reason)
-        return "Fuer vollstaendige Rekonstruktion fehlt noch: " + "; ".join(issues or ["weitere Diagnosewerte"])
+        return "Für vollständige Rekonstruktion fehlt noch: " + "; ".join(issues or ["weitere Diagnosewerte"])
 
     def _noise_reply(self, assessment: ShanwayAssessment) -> str:
         """Liefert bewusst eine ruhige schriftliche Sperrantwort statt Rauschtext."""
