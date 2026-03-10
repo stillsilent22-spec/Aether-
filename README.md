@@ -456,6 +456,55 @@ Fuer Aether bedeutet das konkret:
 - `CONFIRMED lossless` ist eine lokale Herkunftseigenschaft eines Datensatzes, keine Eigenschaft des exportierten Share-Bundles.
 - Exakte Rekonstruktion bleibt lokal und kann hoechstens durch geteilte Anchor-Daten besser vorbereitet werden.
 
+## Tests & Verifikation
+
+Fuer den ersten echten lokalen Roundtrip-Test gibt es jetzt einen direkten Smoke-Test-Pfad:
+
+- CLI: `python start.py --test-roundtrip`
+- Direktes Testskript: `python tests/test_lossless_roundtrip.py`
+- Pytest-kompatibel: `python -m pytest tests/test_lossless_roundtrip.py`
+
+Der Test fuehrt bewusst einen kleinen End-to-End-Pfad aus:
+
+- ein stabiler Bytezustand wird analysiert
+- der erzeugte `AetherFingerprint` wird auf `reconstruction_verification` und `verdict_reconstruction` geprueft
+- der `session_seed` wird explizit gespeichert
+- ein neuer `SessionContext` simuliert den Reload
+- Delta plus persistierter Seed werden erneut zu Bytes dekodiert
+- SHA-256 und Dateigroesse muessen danach exakt mit dem Original uebereinstimmen
+
+Erwartetes Verhalten:
+
+- `CONFIRMED`: `verified == True`, SHA-256 stimmt, Groesse stimmt, `anchor_coverage_ratio > 0.85`, `unresolved_residual_ratio < 0.15`
+- `FAILED`: mindestens eine Bedingung ist gebrochen, zum Beispiel zu wenig Coverage, zu grosses Residuum oder verlorener `session_seed`
+
+Wichtig:
+
+- Lossless bleibt in Aether immer konditional.
+- Pattern-Snapshots oder Anchors allein sind nicht automatisch verlustfrei.
+- Lossless ist nur dann belastbar, wenn Anchors, Residual und Seed-Persistenz gemeinsam die Rekonstruktion tragen.
+
+## Windows ZIP Build
+
+Fuer die Windows-Auslieferung ohne Installer ist der vorgesehene Pfad jetzt:
+
+- Abhaengigkeiten fuer den Build installieren: `python -m pip install pyinstaller winshell pywin32`
+- Build starten: `pyinstaller --noconfirm --clean Aether.spec`
+- Ergebnis zippen: den Ordner `dist\Aether\` komplett als `Aether-App.zip` verpacken
+
+Hinweise zum Build:
+
+- Die Spec baut bewusst im `--onedir`-Modus.
+- `Aether.exe` startet ohne Konsole.
+- Falls eine `icon.ico` im Projektwurzelordner liegt, wird sie automatisch fuer die EXE verwendet.
+- Beim ersten Start der gefrorenen App wird automatisch ein Desktop-Shortcut `Aether.lnk` angelegt, wenn noch keiner existiert.
+
+Kurzanleitung fuer Endnutzer:
+
+1. `Aether-App.zip` herunterladen und entpacken.
+2. Den Ordner `Aether` oeffnen.
+3. `Aether.exe` doppelklicken. Beim ersten Start erscheint automatisch `Aether.lnk` auf dem Desktop.
+
 ## Quelloffenheit und Auditierbarkeit
 
 Die Sichtbarkeit des Codes gehoert zu diesem Projekt nicht nur aus praktischen Gruenden, sondern aus einem erkenntnistheoretischen Grundsatz.

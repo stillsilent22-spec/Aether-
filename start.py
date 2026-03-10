@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import multiprocessing as mp
 import os
 import subprocess
@@ -10,6 +11,16 @@ import sys
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
+
+try:
+    import winshell
+except Exception:  # pragma: no cover - optionale Packaging-Abhaengigkeit
+    winshell = None
+
+try:
+    from win32com.client import Dispatch
+except Exception:  # pragma: no cover - optionale Packaging-Abhaengigkeit
+    Dispatch = None
 
 
 if getattr(sys, "frozen", False):
@@ -32,6 +43,8 @@ REQUIRED_IMPORTS = {
     "pillow": "PIL",
     "pywebview": "webview",
     "cryptography": "cryptography",
+    "winshell": "winshell",
+    "pywin32": "win32com.client",
 }
 
 
@@ -124,6 +137,59 @@ def install_requirements() -> None:
 def restart_application() -> None:
     """Startet das Programm nach erfolgreicher Installation neu."""
     os.execv(sys.executable, [sys.executable, str(PROJECT_ROOT / "start.py")])
+
+
+def restart_application_with_args(args: list[str] | None = None) -> None:
+    """Startet das Programm nach erfolgreicher Installation mit erhaltenen CLI-Flags neu."""
+    argv = [sys.executable, str(PROJECT_ROOT / "start.py")]
+    if args:
+        argv.extend([str(item) for item in list(args) if str(item).strip()])
+    os.execv(sys.executable, argv)
+
+
+def _desktop_shortcut_path() -> Path | None:
+    """Loest den Desktop-Pfad robust fuer lokale Windows-Shortcuts auf."""
+    if not sys.platform.startswith("win"):
+        return None
+    if winshell is not None:
+        try:
+            desktop_dir = Path(str(winshell.desktop())).expanduser()
+            if desktop_dir.exists():
+                return desktop_dir / "Aether.lnk"
+        except Exception:
+            pass
+    fallback = Path.home() / "Desktop"
+    return (fallback / "Aether.lnk") if fallback.parent.exists() else None
+
+
+def ensure_desktop_shortcut() -> None:
+    """Erstellt beim ersten Start der Frozen-App einen Desktop-Shortcut auf Aether.exe."""
+    if not getattr(sys, "frozen", False):
+        return
+    if not sys.platform.startswith("win"):
+        return
+    if winshell is None or Dispatch is None:
+        append_startup_trace("shortcut_skip missing winshell/pywin32")
+        return
+    shortcut_path = _desktop_shortcut_path()
+    if shortcut_path is None:
+        append_startup_trace("shortcut_skip desktop_unavailable")
+        return
+    if shortcut_path.exists():
+        return
+    exe_path = Path(sys.executable).resolve()
+    try:
+        shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+        shell = Dispatch("WScript.Shell")
+        shortcut = shell.CreateShortCut(str(shortcut_path))
+        shortcut.Targetpath = str(exe_path)
+        shortcut.WorkingDirectory = str(exe_path.parent)
+        shortcut.IconLocation = f"{exe_path},0"
+        shortcut.Description = "Aether"
+        shortcut.save()
+        append_startup_trace(f"shortcut_created {shortcut_path}")
+    except Exception as exc:
+        append_startup_trace(f"shortcut_error {type(exc).__name__}: {exc}")
 
 
 def append_startup_trace(message: str) -> None:
@@ -280,8 +346,38 @@ def bootstrap() -> None:
     gui.run()
 
 
-def main() -> None:
+def run_roundtrip_smoke_trigger() -> int:
+    """Laedt den lokalen Roundtrip-Selbsttest und fuehrt ihn ohne GUI-Start aus."""
+    test_path = PROJECT_ROOT / "tests" / "test_lossless_roundtrip.py"
+    if not test_path.exists():
+        raise RuntimeError(f"Roundtrip-Test nicht gefunden: {test_path}")
+    spec = importlib.util.spec_from_file_location("aether_roundtrip_test", str(test_path))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Roundtrip-Testmodul konnte nicht geladen werden.")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    runner = getattr(module, "run_roundtrip_smoke_test", None)
+    if not callable(runner):
+        raise RuntimeError("run_roundtrip_smoke_test() fehlt im Roundtrip-Testmodul.")
+    result = dict(runner())
+    verification = dict(result.get("reconstruction_verification", {}) or {})
+    verdict = str(result.get("verdict_reconstruction", "") or "")
+    gain = max(
+        0.0,
+        min(100.0, (1.0 - float(verification.get("compression_ratio", 1.0) or 1.0)) * 100.0),
+    )
+    if verdict != "CONFIRMED" or not bool(verification.get("verified", False)):
+        reason = str(verification.get("reason", "") or result.get("response", "") or "Roundtrip nicht bestaetigt.")
+        print(f"Roundtrip fehlgeschlagen: {verdict or 'FAILED'} | {reason}")
+        return 1
+    print(f"Roundtrip erfolgreich: {verdict}, {gain:.1f}% Gewinn")
+    return 0
+
+
+def main(argv: list[str] | None = None) -> None:
     """Fuehrt Vorpruefungen aus und startet anschliessend Aether."""
+    cli_args = list(sys.argv[1:] if argv is None else argv)
+    test_roundtrip = "--test-roundtrip" in cli_args
     try:
         append_startup_trace("main_begin")
         mp.freeze_support()
@@ -295,8 +391,15 @@ def main() -> None:
                 print("Installation startet automatisch ...")
                 install_requirements()
                 print("Installation erfolgreich. Anwendung wird neu gestartet ...")
-                restart_application()
+                restart_application_with_args(cli_args)
                 return
+        if test_roundtrip:
+            append_startup_trace("main_roundtrip_test")
+            exit_code = run_roundtrip_smoke_trigger()
+            if exit_code != 0:
+                raise RuntimeError("Roundtrip-Selbsttest fehlgeschlagen.")
+            return
+        ensure_desktop_shortcut()
         append_startup_trace("main_bootstrap")
         bootstrap()
     except KeyboardInterrupt:

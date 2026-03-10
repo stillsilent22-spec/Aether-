@@ -34,6 +34,11 @@ hiddenimports = [
     "sounddevice",
     "matplotlib.backends.backend_tkagg",
     "cryptography",
+    "winshell",
+    "win32com",
+    "win32com.client",
+    "pythoncom",
+    "pywintypes",
 ]
 
 excludes = [
@@ -91,11 +96,12 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+icon_path = Path("icon.ico").resolve()
+icon_value = str(icon_path) if icon_path.is_file() else None
+
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name="Aether",
     debug=False,
@@ -110,4 +116,16 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon_value,
+    exclude_binaries=True,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="Aether",
 )

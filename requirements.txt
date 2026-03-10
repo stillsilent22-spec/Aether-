@@ -18,3 +18,5 @@ moviepy
 PyMuPDF
 psutil
 pyautogui
+winshell
+pywin32
