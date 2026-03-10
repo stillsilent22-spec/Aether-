@@ -458,6 +458,9 @@ class VeiraGUI:
     @staticmethod
     def _ae_probe_payload_from_fingerprint(fingerprint: AetherFingerprint) -> dict[str, object]:
         """Verdichtet einen Fingerprint zu einem stabilen AELAB-Eingabepayload."""
+        scan_payload = dict(getattr(fingerprint, "scan_payload", {}) or {})
+        if scan_payload:
+            return scan_payload
         return {
             "source_type": str(getattr(fingerprint, "source_type", "file")),
             "source_label": str(getattr(fingerprint, "source_label", "")),
@@ -829,7 +832,20 @@ class VeiraGUI:
             "trust_state": str(getattr(self.session_context, "trust_state", "TRUSTED")),
             "maze_state": str(getattr(self.session_context, "maze_state", "NONE")),
         }
-        snapshot = dict(self.ae_vault.evolve(ae_payload) or self.ae_vault.snapshot(ae_payload, limit=12))
+        export_payload = self._ae_probe_payload_from_fingerprint(fingerprint)
+        export_anchors = [
+            dict(item)
+            for item in list(dict(export_payload or {}).get("scan_anchor_entries", []) or [])
+            if isinstance(item, dict)
+        ]
+        snapshot = dict(
+            self.ae_vault.evolve(
+                ae_payload,
+                export_anchors=export_anchors if export_anchors else None,
+                export_payload=export_payload,
+            )
+            or self.ae_vault.snapshot(ae_payload, limit=12)
+        )
         ae_anchors = list(snapshot.get("anchors", []))
         summary = {
             "active": True,

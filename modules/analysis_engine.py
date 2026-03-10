@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 from scipy.fft import rfft, rfftfreq
 
+from .ae_evolution_core import normalize_anchor_entries
 from .blockchain_interface import AetherChain
 from .ethics_engine import EthicsAssessment, EthicsEngine
 from .session_engine import SessionContext
@@ -65,6 +66,8 @@ class AetherFingerprint:
     local_chain_prev_hash: str = ""
     local_chain_endpoint: str = ""
     local_chain_attested_at: str = ""
+    scan_hash: str = ""
+    scan_payload: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialisiert den Fingerprint als JSON-taugliches Dictionary."""
@@ -102,6 +105,8 @@ class AetherFingerprint:
             "local_chain_prev_hash": str(self.local_chain_prev_hash),
             "local_chain_endpoint": str(self.local_chain_endpoint),
             "local_chain_attested_at": str(self.local_chain_attested_at),
+            "scan_hash": str(self.scan_hash),
+            "scan_payload": dict(self.scan_payload or {}),
             "delta": self.delta.hex(),
             "delta_ratio": float(self.delta_ratio),
             "anomaly_coordinates": [[int(x), int(y)] for x, y in self.anomaly_coordinates],
@@ -199,7 +204,9 @@ class AnalysisEngine:
             last_seen[pattern] = idx
         if not distances:
             return 0
-        return Counter(distances).most_common(1)[0][0]
+        counts = Counter(distances)
+        best_count = max(counts.values())
+        return min(distance for distance, count in counts.items() if count == best_count)
 
     def _symmetry_score(self, distribution: dict[int, int]) -> float:
         """Berechnet den Symmetrie-Score als 100 minus normalisierter Gini-Wert."""
@@ -276,11 +283,17 @@ class AnalysisEngine:
         freqs = rfftfreq(data_array.size, d=1.0)
         if spectrum.size > 0:
             spectrum[0] = 0.0
-        peak_count = min(5, spectrum.size)
-        peak_indices = np.argsort(spectrum)[-peak_count:][::-1] if peak_count else np.array([], dtype=int)
+        ranked_peaks = sorted(
+            (
+                (float(spectrum[index]), float(freqs[index]), int(index))
+                for index in range(int(spectrum.size))
+                if float(spectrum[index]) > 0.0
+            ),
+            key=lambda item: (-item[0], item[1], item[2]),
+        )
         peaks = [
-            {"frequency": float(freqs[idx]), "magnitude": float(spectrum[idx])}
-            for idx in peak_indices
+            {"frequency": float(frequency), "magnitude": float(magnitude)}
+            for magnitude, frequency, _index in ranked_peaks[:5]
         ]
         while len(peaks) < 5:
             peaks.append({"frequency": 0.0, "magnitude": 0.0})
@@ -296,6 +309,185 @@ class AnalysisEngine:
         compressed_size = len(zlib.compress(delta, level=9))
         delta_ratio = float(max(0.0, min(1.0, compressed_size / file_size)))
         return delta, delta_ratio
+
+    @staticmethod
+    def _scan_hash(raw: bytes) -> str:
+        """Liefert einen rein bytebasierten Hash fuer deterministische DNA-Scans."""
+        return hashlib.sha256(raw).hexdigest()
+
+    def _build_scan_delta(self, raw: bytes, scan_hash: str) -> tuple[bytes, float]:
+        """Erzeugt ein bytebasiertes Delta ohne Session-Einfluss."""
+        file_size = len(raw)
+        if file_size == 0:
+            return b"", 0.0
+        seed = int(str(scan_hash or "0")[:16], 16) & 0xFFFFFFFF
+        noise = SessionContext.noise_from_seed(seed, file_size)
+        delta = bytes(a ^ b for a, b in zip(raw, noise))
+        compressed_size = len(zlib.compress(delta, level=9))
+        delta_ratio = float(max(0.0, min(1.0, compressed_size / file_size)))
+        return delta, delta_ratio
+
+    def _build_scan_anchor_entries(
+        self,
+        entropy_blocks: list[float],
+        fourier_peaks: list[dict[str, float]],
+        periodicity: int,
+        symmetry_score: float,
+        scan_delta_ratio: float,
+        beauty_signature: dict[str, float],
+        file_size: int,
+    ) -> list[dict[str, Any]]:
+        """Leitet eine stabile, rein bytebasierte Anchor-Menge fuer DNA-Exports ab."""
+        raw_entries: list[dict[str, Any]] = []
+        ranked_entropy = sorted(
+            (
+                (int(index), float(value))
+                for index, value in enumerate(entropy_blocks)
+                if abs(float(value)) > 1e-12
+            ),
+            key=lambda item: (-round(item[1], 12), item[0]),
+        )
+        for index, value in ranked_entropy[:8]:
+            raw_entries.append(
+                {
+                    "index": int(index),
+                    "value": round(float(value), 12),
+                    "origin": "scan_entropy",
+                    "type": "SCAN_ENTROPY",
+                    "stability": True,
+                    "reproducible": True,
+                }
+            )
+
+        ranked_peaks = sorted(
+            (
+                (
+                    int(index),
+                    float(peak.get("frequency", 0.0) or 0.0),
+                    float(peak.get("magnitude", 0.0) or 0.0),
+                )
+                for index, peak in enumerate(fourier_peaks)
+            ),
+            key=lambda item: (-round(item[2], 12), item[1], item[0]),
+        )
+        for index, frequency, magnitude in ranked_peaks[:4]:
+            if abs(frequency) > 1e-12:
+                raw_entries.append(
+                    {
+                        "index": int(1000 + index),
+                        "value": round(float(frequency), 12),
+                        "origin": "scan_fourier_frequency",
+                        "type": "SCAN_FREQUENCY",
+                        "stability": True,
+                        "reproducible": True,
+                    }
+                )
+            magnitude_norm = float(magnitude / max(1.0, float(file_size)))
+            if abs(magnitude_norm) > 1e-12:
+                raw_entries.append(
+                    {
+                        "index": int(1100 + index),
+                        "value": round(float(magnitude_norm), 12),
+                        "origin": "scan_fourier_magnitude",
+                        "type": "SCAN_MAGNITUDE",
+                        "stability": True,
+                        "reproducible": True,
+                    }
+                )
+
+        scalar_entries = [
+            ("scan_periodicity", "SCAN_PERIODICITY", 2000, float(periodicity)),
+            ("scan_symmetry", "SCAN_SYMMETRY", 2001, float(symmetry_score) / 100.0),
+            ("scan_delta_ratio", "SCAN_DELTA_RATIO", 2002, float(scan_delta_ratio)),
+            (
+                "scan_beauty_score",
+                "SCAN_BEAUTY",
+                2003,
+                float(dict(beauty_signature or {}).get("beauty_score", 0.0) or 0.0) / 100.0,
+            ),
+        ]
+        for origin, anchor_type, index, value in scalar_entries:
+            if abs(float(value)) <= 1e-12:
+                continue
+            raw_entries.append(
+                {
+                    "index": int(index),
+                    "value": round(float(value), 12),
+                    "origin": str(origin),
+                    "type": str(anchor_type),
+                    "stability": True,
+                    "reproducible": True,
+                }
+            )
+
+        raw_entries.sort(
+            key=lambda item: (
+                int(item.get("index", 0) or 0),
+                float(item.get("value", 0.0) or 0.0),
+                str(item.get("type", "")),
+                str(item.get("origin", "")),
+            )
+        )
+        return normalize_anchor_entries(raw_entries)
+
+    def _build_scan_payload(
+        self,
+        raw: bytes,
+        file_size: int,
+        entropy_blocks: list[float],
+        entropy_mean: float,
+        periodicity: int,
+        anomaly_coordinates: list[tuple[int, int]],
+        symmetry_score: float,
+        fourier_peaks: list[dict[str, float]],
+    ) -> tuple[str, dict[str, Any]]:
+        """Baut einen deterministischen AELAB-Scanpayload ausschliesslich aus Input-Bytes."""
+        scan_hash = self._scan_hash(raw)
+        scan_delta, scan_delta_ratio = self._build_scan_delta(raw, scan_hash)
+        scan_beauty_signature = self._beauty_signature(
+            raw=raw,
+            entropy_blocks=entropy_blocks,
+            distribution=dict(Counter(raw)),
+            delta=scan_delta,
+            delta_ratio=scan_delta_ratio,
+            symmetry_score=symmetry_score,
+        )
+        scan_anchor_entries = self._build_scan_anchor_entries(
+            entropy_blocks=entropy_blocks,
+            fourier_peaks=fourier_peaks,
+            periodicity=periodicity,
+            symmetry_score=symmetry_score,
+            scan_delta_ratio=scan_delta_ratio,
+            beauty_signature=scan_beauty_signature,
+            file_size=file_size,
+        )
+        payload = {
+            "scan_hash": str(scan_hash),
+            "file_hash": str(scan_hash),
+            "file_size": int(file_size),
+            "entropy_mean": round(float(entropy_mean), 12),
+            "entropy_blocks": [round(float(value), 12) for value in entropy_blocks[:64]],
+            "periodicity": int(periodicity),
+            "symmetry_score": round(float(symmetry_score), 12),
+            "delta_ratio": round(float(scan_delta_ratio), 12),
+            "beauty_signature": {
+                str(key): round(float(value), 12)
+                for key, value in sorted(dict(scan_beauty_signature or {}).items(), key=lambda item: item[0])
+            },
+            "fourier_peaks": [
+                {
+                    "frequency": round(float(item.get("frequency", 0.0) or 0.0), 12),
+                    "magnitude": round(float(item.get("magnitude", 0.0) or 0.0), 12),
+                }
+                for item in fourier_peaks[:5]
+            ],
+            "anomaly_coordinates": [
+                [int(x_pos), int(y_pos)]
+                for x_pos, y_pos in sorted((int(x), int(y)) for x, y in anomaly_coordinates)
+            ],
+            "scan_anchor_entries": [dict(item) for item in scan_anchor_entries],
+        }
+        return str(scan_hash), payload
 
     def _power_law_alpha(self, raw: bytes) -> float:
         """Schaetzt die 1/f-Steigung des Spektrums als additive Schoenheitsdimension."""
@@ -613,10 +805,21 @@ class AnalysisEngine:
             resonance_score=ethics.resonance_score,
         )
         verdict = self._verdict_from_integrity(ethics.integrity_state)
+        file_hash = self._scan_hash(raw)
+        scan_hash, scan_payload = self._build_scan_payload(
+            raw=raw,
+            file_size=file_size,
+            entropy_blocks=entropy_blocks,
+            entropy_mean=entropy_mean,
+            periodicity=periodicity,
+            anomaly_coordinates=anomaly_coordinates,
+            symmetry_score=symmetry_score,
+            fourier_peaks=fourier_peaks,
+        )
 
         fingerprint = AetherFingerprint(
             session_id=self.session_context.session_id,
-            file_hash=hashlib.sha256(raw).hexdigest(),
+            file_hash=file_hash,
             file_size=file_size,
             entropy_blocks=entropy_blocks,
             entropy_mean=entropy_mean,
@@ -643,6 +846,8 @@ class AnalysisEngine:
             observer_state=observer_state,
             beauty_signature=beauty_signature,
             voxel_points=voxel_points,
+            scan_hash=scan_hash,
+            scan_payload=scan_payload,
         )
 
         return fingerprint

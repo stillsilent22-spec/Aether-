@@ -20,7 +20,8 @@ def _json_safe(value: Any) -> Any:
     if isinstance(value, dict):
         return {str(key): _json_safe(val) for key, val in value.items()}
     if isinstance(value, (list, tuple, set)):
-        return [_json_safe(item) for item in value]
+        iterable = sorted(value, key=lambda item: repr(item)) if isinstance(value, set) else value
+        return [_json_safe(item) for item in iterable]
     return str(value)
 
 
@@ -361,6 +362,7 @@ class AEAlgorithmVault:
         self.last_run_stopped = False
         self.last_stop_iteration = 0
         self.quarantined_total = 0
+        self._rng = random.Random(0)
 
     def request_stop(self) -> dict[str, Any]:
         """Markiert die laufende oder naechste Evolution zur fruehzeitigen Beendigung."""
@@ -495,13 +497,19 @@ class AEAlgorithmVault:
             1 if candidate.stable else 0,
         )
 
+    @staticmethod
+    def _evolution_seed(value: Any) -> int:
+        """Leitet einen stabilen Seed aus dem serialisierten Beobachtungspfad ab."""
+        canonical = json.dumps(_json_safe(value), ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+        return int(hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16], 16)
+
     def _project_observation_path(self, value: Any, depth: int = 0) -> Any:
         """Erzeugt einen zweiten, geglaetteten Beobachtungspfad fuer Dual-Path-Tests."""
         if depth >= 3:
             return value
         if isinstance(value, dict):
             projected: dict[str, Any] = {}
-            for key, item in list(value.items())[:48]:
+            for key, item in sorted(value.items(), key=lambda entry: str(entry[0]))[:48]:
                 if isinstance(item, bool):
                     projected[str(key)] = bool(item)
                 elif isinstance(item, int):
@@ -541,7 +549,8 @@ class AEAlgorithmVault:
                 values.append(float(payload))
                 return
             if isinstance(payload, dict):
-                for item in payload.values():
+                for key in sorted(payload.keys(), key=str):
+                    item = payload[key]
                     walk(item)
                     if len(values) >= limit:
                         break
@@ -827,9 +836,9 @@ class AEAlgorithmVault:
         mutated = copy.deepcopy(dict(spec or {}))
         kind = str(mutated.get("kind", "")).strip().lower()
         if kind == "extract_index":
-            mutated["index"] = max(0, int(mutated.get("index", 0) or 0) + random.choice([-1, 0, 1]))
+            mutated["index"] = max(0, int(mutated.get("index", 0) or 0) + self._rng.choice([-1, 0, 1]))
         elif kind == "constant":
-            mutated["value"] = float(mutated.get("value", 0.0) or 0.0) + random.uniform(-1.0, 1.0)
+            mutated["value"] = float(mutated.get("value", 0.0) or 0.0) + self._rng.uniform(-1.0, 1.0)
         elif kind == "sum":
             mutated["left"] = self._mutate_spec(dict(mutated.get("left", {})))
             mutated["right"] = self._mutate_spec(dict(mutated.get("right", {})))
@@ -848,9 +857,9 @@ class AEAlgorithmVault:
             if isinstance(value, bool):
                 continue
             if isinstance(value, int):
-                mutated.params[key] = max(0, int(value + random.choice([-1, 0, 1])))
+                mutated.params[key] = max(0, int(value + self._rng.choice([-1, 0, 1])))
             elif isinstance(value, float):
-                mutated.params[key] = float(value + random.uniform(-1.0, 1.0))
+                mutated.params[key] = float(value + self._rng.uniform(-1.0, 1.0))
         mutated.origin += "+mut"
         mutated.fitness = 0.0
         mutated.stable = False
@@ -994,7 +1003,13 @@ class AEAlgorithmVault:
             return len(result) >= 3
         return False
 
-    def evolve(self, data: Any) -> dict[str, Any]:
+    def evolve(
+        self,
+        data: Any,
+        export_anchors: list[dict[str, Any]] | None = None,
+        export_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self._rng.seed(self._evolution_seed(data))
         self.current_iteration = 0
         self.current_phase = "extract"
         self.last_run_stopped = False
@@ -1047,7 +1062,13 @@ class AEAlgorithmVault:
                 algorithm.params["guard_state"] = "SUB_ONLY"
         self._prune_main_vault()
         snapshot = self.snapshot(data, limit=12)
-        export_path = self._export_anchor_dna(list(snapshot.get("anchors", []) or []))
+        export_source = dict(export_payload or {}) if isinstance(export_payload, dict) else data
+        resolved_export_anchors = (
+            [dict(item) for item in list(export_anchors or []) if isinstance(item, dict)]
+            if export_anchors is not None
+            else list(snapshot.get("anchors", []) or [])
+        )
+        export_path = self._export_anchor_dna(resolved_export_anchors, source_payload=export_source)
         if export_path:
             snapshot["dna_export_path"] = str(export_path)
         snapshot["stopped"] = bool(self.last_run_stopped)
@@ -1070,7 +1091,7 @@ class AEAlgorithmVault:
                     )
                 )
         elif isinstance(data, dict):
-            for key in list(data.keys())[: self.max_sub]:
+            for key in sorted(data.keys(), key=str)[: self.max_sub]:
                 algorithms.append(
                     AlgorithmCandidate(
                         logic=None,
@@ -1223,7 +1244,18 @@ class AEAlgorithmVault:
         self._prune_sub_vault()
 
     def get_main_vault_algorithms(self) -> list[AlgorithmCandidate]:
-        return list(self.main_vault)
+        return sorted(
+            list(self.main_vault),
+            key=lambda candidate: (
+                -float(candidate.fitness),
+                -float(candidate.params.get("vault_posterior_confidence", 0.0) or 0.0),
+                -float(candidate.params.get("noether_symmetry", 0.0) or 0.0),
+                float(candidate.params.get("heisenberg_uncertainty", 1.0) or 1.0),
+                -len(candidate.anchor_points),
+                -int(bool(candidate.stable)),
+                candidate.signature(),
+            ),
+        )
 
     def _growth_state(self) -> dict[str, Any]:
         """Beschreibt knapp, dass AELAB-Wachstum durch Vault-Grenzen begrenzt bleibt."""
@@ -1250,12 +1282,13 @@ class AEAlgorithmVault:
             key
             for key, _count in sorted(type_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
         ]
+        top_origins = sorted({str(item.origin) for item in self.get_main_vault_algorithms()[: max(1, int(limit))]})
         return {
             "main_vault_size": int(len(self.main_vault)),
             "sub_vault_size": int(len(self.sub_vaults)),
             "anchor_count": int(len(anchors)),
             "top_anchor_types": top_types,
-            "top_origins": [str(item.origin) for item in self.main_vault[: max(1, int(limit))]],
+            "top_origins": top_origins,
             "anchors": anchors,
             "anchor_relationships": relationships,
             **self._governance_summary(list(self.main_vault) + list(self.sub_vaults)),
@@ -1267,10 +1300,14 @@ class AEAlgorithmVault:
 
     def export_anchor_snapshot(self, anchors: list[dict[str, Any]] | None = None, data: Any = None) -> str:
         """Exportiert explizit den aktuellen Anchor-Zustand als DNA-Datei."""
-        resolved_anchors = list(anchors or [])
+        resolved_anchors = [
+            dict(item)
+            for item in list(dict(data or {}).get("scan_anchor_entries", []) or [])
+            if isinstance(item, dict)
+        ] if isinstance(data, dict) and dict(data or {}).get("scan_anchor_entries") else list(anchors or [])
         if not resolved_anchors and data is not None:
             resolved_anchors = list(self.snapshot(data, limit=12).get("anchors", []) or [])
-        return str(self._export_anchor_dna(resolved_anchors) or "")
+        return str(self._export_anchor_dna(resolved_anchors, source_payload=data) or "")
 
     def archive_legacy_dna(self, source_path: str, bucket: str = "sub", legacy_id: str = "") -> str:
         """Kopiert eine alte DNA-Datei in den verwalteten AELAB-Legacy-Bereich."""
@@ -1288,19 +1325,48 @@ class AEAlgorithmVault:
         shutil.copy2(source, target)
         return str(target)
 
-    def _export_anchor_dna(self, anchors: list[dict[str, Any]]) -> str:
+    @staticmethod
+    def _scan_hash_from_payload(source_payload: Any, anchors: list[dict[str, Any]]) -> str:
+        """Leitet fuer DNA-Header bevorzugt einen rein datengetriebenen Scan-Hash ab."""
+        if isinstance(source_payload, dict):
+            candidate = str(source_payload.get("scan_hash", "") or source_payload.get("file_hash", "")).strip()
+            if candidate:
+                return candidate
+        canonical = json.dumps(
+            [_json_safe(anchor) for anchor in anchors],
+            ensure_ascii=True,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _export_anchor_dna(self, anchors: list[dict[str, Any]], source_payload: Any = None) -> str:
         """Spiegelt skalare AE-Anker als einfache DNA-Datei ins lokale Vault-Verzeichnis."""
-        exportable = [
-            dict(anchor)
-            for anchor in list(anchors)
-            if abs(float(anchor.get("value", 0.0) or 0.0)) > 1e-12
-        ]
+        exportable = sorted(
+            [
+                dict(anchor)
+                for anchor in list(anchors)
+                if abs(float(anchor.get("value", 0.0) or 0.0)) > 1e-12
+            ],
+            key=lambda anchor: (
+                int(anchor.get("index", 0) or 0),
+                round(float(anchor.get("value", 0.0) or 0.0), 12),
+                str(anchor.get("type_label", "")),
+                str(anchor.get("origin", "")),
+            ),
+        )
         if not exportable:
             self.last_anchor_export_path = ""
             return ""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        file_path = self.export_dir / f"anchors_{timestamp}.dna"
-        lines = [f"AETHER_AE_DNA 1 {timestamp} {len(exportable)}"]
+        scan_hash = self._scan_hash_from_payload(source_payload, exportable)
+        type_count = len(
+            {
+                str(anchor.get("type_label", "") or str(anchor.get("anchor_kind", "") or "EMERGENT"))
+                for anchor in exportable
+            }
+        )
+        file_path = self.export_dir / f"anchors_{scan_hash[:16]}.dna"
+        lines = [f"AETHER_AE_DNA 1 {scan_hash} {type_count} {len(exportable)}"]
         for anchor in exportable:
             lines.append(
                 f"{int(anchor.get('index', 0))} "
