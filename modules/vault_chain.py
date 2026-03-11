@@ -16,6 +16,7 @@ from .analysis_engine import AetherFingerprint
 from .chat_crypto import decrypt_text, derive_fernet_key, encrypt_text, crypto_available
 from .observer_engine import AnchorPoint
 from .registry import GENESIS_HASH, compute_chain_block_hash, legacy_chain_block_hash_candidates
+from .security_engine import pseudonymous_network_identity, public_ttd_share_policy, validate_public_ttd_candidate
 from .session_engine import SessionContext
 
 
@@ -575,6 +576,147 @@ class AetherAugmentor:
             except Exception:
                 return {}
         return result
+
+    def build_public_ttd_anchor_bundle(
+        self,
+        source_label: str,
+        reflection_payload: dict[str, Any] | None,
+        *,
+        fingerprint: AetherFingerprint | None = None,
+        scope: str = "metrics_only",
+    ) -> dict[str, Any]:
+        """Erzeugt ein metrics-only Bundle fuer stabile TTD-Anker ohne Rohdaten oder Deltas."""
+        policy = public_ttd_share_policy(scope)
+        if not bool(policy.get("share_public_anchor", False)):
+            return {}
+        compact = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=False)
+        candidates = [dict(item) for item in list(compact.get("ttd_candidates", []) or []) if isinstance(item, dict)]
+        if not candidates:
+            return {}
+        candidate = dict(candidates[0] or {})
+        fingerprint_payload = {
+            "entropy_mean": float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
+            "observer_mutual_info": float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+            "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
+            "boundary": str(getattr(fingerprint, "boundary", "") or ""),
+            "anomaly_count": int(len(list(getattr(fingerprint, "anomaly_coordinates", []) or []))),
+            "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
+            "source_label": str(getattr(fingerprint, "source_label", "") or source_label or ""),
+            "scan_hash": str(getattr(fingerprint, "scan_hash", "") or ""),
+            "file_hash": str(getattr(fingerprint, "file_hash", "") or ""),
+        } if fingerprint is not None else {"source_label": str(source_label or "")}
+        validation = validate_public_ttd_candidate(
+            candidate,
+            fingerprint_payload=fingerprint_payload,
+            reflection_payload=compact,
+        )
+        if not bool(validation.get("valid", False)):
+            return {
+                "valid": False,
+                "validation": dict(validation),
+            }
+        metrics = dict(validation.get("metrics", {}) or {})
+        payload = {
+            "schema": "aether.public_ttd_anchor.v1",
+            "kind": "public_ttd_anchor",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "source_label": str(source_label or fingerprint_payload.get("source_label", "") or "ttd_anchor"),
+            "ttd_hash": str(candidate.get("hash", "") or ""),
+            "public_metrics": {
+                "residual": round(float(metrics.get("residual", 0.0) or 0.0), 12),
+                "symmetry": round(float(metrics.get("symmetry", 0.0) or 0.0), 12),
+                "i_obs_ratio": round(float(metrics.get("i_obs_ratio", 0.0) or 0.0), 12),
+                "delta_stability": round(float(metrics.get("delta_stability", 0.0) or 0.0), 12),
+                "delta_i_obs_percent": round(float(dict(candidate.get("public_metrics", {}) or {}).get("delta_i_obs_percent", 0.0) or 0.0), 12),
+                "recursive_count": int(metrics.get("recursive_count", 0) or 0),
+            },
+            "pseudonym": pseudonymous_network_identity(self.session_context, purpose="public_ttd_anchor"),
+            "raw_data_included": False,
+            "deltas_included": False,
+            "internal_only": False,
+        }
+        signature = self.sign_payload(payload) if bool(policy.get("share_signature", False)) else ""
+        envelope = {
+            "payload": payload,
+            "payload_hash": hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest(),
+            "signature": signature,
+            "signature_included": bool(signature),
+            "validation": dict(validation),
+        }
+        return envelope
+
+    def append_public_ttd_anchor_bundle(
+        self,
+        bundle: dict[str, Any] | None,
+        *,
+        directory: str | None = None,
+    ) -> dict[str, Any]:
+        """Speichert oeffentliche TTD-Anker append-only in einen lokalen Public-Pool."""
+        envelope = dict(bundle or {})
+        payload = dict(envelope.get("payload", {}) or {})
+        payload_hash = str(envelope.get("payload_hash", "") or "")
+        expected_hash = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest() if payload else ""
+        if not payload or payload_hash != expected_hash:
+            return {"stored": False, "reason": "invalid_payload_hash", "bundle_path": "", "latest_path": ""}
+        target_dir = Path(directory) if directory is not None else Path("data") / "public_ttd_anchor_pool"
+        history_dir = target_dir / "history"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        history_dir.mkdir(parents=True, exist_ok=True)
+        latest_path = target_dir / "latest.json"
+        history_path = history_dir / f"ttd_anchor_{str(payload.get('timestamp', '')).replace(':', '').replace('-', '')[:15]}_{payload_hash[:12]}.json"
+
+        latest_bundle: dict[str, Any] = {}
+        existing: list[dict[str, Any]] = []
+        if latest_path.is_file():
+            try:
+                latest_bundle = json.loads(latest_path.read_text(encoding="utf-8"))
+                existing = [dict(item) for item in list(latest_bundle.get("public_anchors", []) or []) if isinstance(item, dict)]
+            except Exception:
+                latest_bundle = {}
+                existing = []
+        if any(str(item.get("ttd_hash", "") or "") == str(payload.get("ttd_hash", "") or "") for item in existing):
+            return {
+                "stored": False,
+                "already_present": True,
+                "bundle_path": str(history_path),
+                "latest_path": str(latest_path),
+                "public_anchor_count": int(len(existing)),
+            }
+        history_path.write_text(json.dumps(envelope, ensure_ascii=True, indent=2), encoding="utf-8")
+        existing.append(dict(payload))
+        public_anchors = existing[-256:]
+        latest_wrapper = {
+            "schema": "aether.public_ttd_anchor.pool.v1",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "public_anchor_count": int(len(public_anchors)),
+            "public_anchors": public_anchors,
+        }
+        latest_path.write_text(json.dumps(latest_wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
+        return {
+            "stored": True,
+            "bundle_path": str(history_path),
+            "latest_path": str(latest_path),
+            "public_anchor_count": int(len(public_anchors)),
+            "ttd_hash": str(payload.get("ttd_hash", "") or ""),
+        }
+
+    def load_public_ttd_anchor_bundle(self, directory: str | None = None) -> dict[str, Any]:
+        """Laedt den lokalen Public-TTD-Pool fail-closed fuer Observer-Lernen."""
+        target_dir = Path(directory) if directory is not None else Path("data") / "public_ttd_anchor_pool"
+        latest_path = target_dir / "latest.json"
+        if not latest_path.is_file():
+            return {"schema": "aether.public_ttd_anchor.pool.v1", "public_anchors": []}
+        try:
+            payload = json.loads(latest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {"schema": "aether.public_ttd_anchor.pool.v1", "public_anchors": []}
+        anchors = [dict(item) for item in list(payload.get("public_anchors", []) or []) if isinstance(item, dict)]
+        return {
+            "schema": "aether.public_ttd_anchor.pool.v1",
+            "public_anchors": anchors,
+            "public_anchor_count": int(len(anchors)),
+            "updated_at": str(payload.get("updated_at", "") or ""),
+        }
 
     def export_signed_json(self, kind: str, file_path: str) -> int:
         """Exportiert Vault- oder Delta-Daten als signiertes JSON."""

@@ -155,6 +155,90 @@ def pseudonymous_network_identity(session_like: Any | None, purpose: str = "netw
     return hashlib.sha256(material.encode("utf-8", errors="replace")).hexdigest()[:24].upper()
 
 
+def public_ttd_share_policy(scope: str = "metrics_only") -> dict[str, Any]:
+    """Normalisiert Freigaben fuer oeffentliche TTD-Anker ohne Rohdatenleak."""
+    normalized = str(scope or "metrics_only").strip().lower()
+    if normalized not in {"deny", "metrics_only", "signed"}:
+        normalized = "metrics_only"
+    return {
+        "scope": normalized,
+        "share_public_anchor": normalized in {"metrics_only", "signed"},
+        "share_hash_only": True,
+        "share_signature": normalized == "signed",
+        "share_raw_data": False,
+        "share_deltas": False,
+        "consent_required": normalized != "deny",
+        "fail_closed": True,
+    }
+
+
+def validate_public_ttd_candidate(
+    candidate: dict[str, Any] | None,
+    *,
+    fingerprint_payload: dict[str, Any] | None = None,
+    reflection_payload: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Prueft, ob ein TTD-Kandidat als rein oeffentlicher Anchor freigegeben werden darf."""
+    item = dict(candidate or {})
+    fingerprint = dict(fingerprint_payload or {})
+    reflection = dict(reflection_payload or {})
+    public_metrics = dict(item.get("public_metrics", {}) or {})
+    verification = dict(fingerprint.get("reconstruction_verification", {}) or {})
+
+    residual = float(item.get("residual", reflection.get("residual_after", public_metrics.get("residual", 1.0))) or 1.0)
+    symmetry = float(item.get("symmetry", public_metrics.get("symmetry", 0.0)) or 0.0)
+    delta_stability = float(item.get("delta_stability", reflection.get("stability_score", 0.0)) or 0.0)
+    recursive_count = int(
+        item.get("recursive_count", len(list(reflection.get("recursive_reflections", []) or [])))
+        or len(list(reflection.get("recursive_reflections", []) or []))
+    )
+    entropy_mean = float(fingerprint.get("entropy_mean", 0.0) or 0.0)
+    observer_mutual_info = float(fingerprint.get("observer_mutual_info", 0.0) or 0.0)
+    observer_ratio = float(fingerprint.get("observer_knowledge_ratio", 0.0) or 0.0)
+    i_obs_ratio = float(item.get("i_obs_ratio", public_metrics.get("i_obs_ratio", 0.0)) or 0.0)
+    if i_obs_ratio <= 0.0:
+        if entropy_mean > 1e-9:
+            i_obs_ratio = float(max(0.0, min(1.0, observer_mutual_info / entropy_mean)))
+        else:
+            i_obs_ratio = float(max(0.0, min(1.0, observer_ratio)))
+    anomaly_count = int(fingerprint.get("anomaly_count", 0) or 0)
+    boundary = str(fingerprint.get("boundary", "") or "")
+
+    reasons: list[str] = []
+    if residual >= 0.05:
+        reasons.append(f"residual {residual:.3f} >= 0.050")
+    if symmetry <= 0.90:
+        reasons.append(f"symmetry {symmetry:.3f} <= 0.900")
+    if i_obs_ratio <= 0.90:
+        reasons.append(f"i_obs_ratio {i_obs_ratio:.3f} <= 0.900")
+    if delta_stability <= 0.90:
+        reasons.append(f"delta_stability {delta_stability:.3f} <= 0.900")
+    if recursive_count < 3:
+        reasons.append(f"recursive_count {recursive_count} < 3")
+    if boundary.upper() == "GOEDEL_LIMIT":
+        reasons.append("boundary GOEDEL_LIMIT")
+    if anomaly_count > 0:
+        reasons.append(f"anomaly_count {anomaly_count} > 0")
+    if verification and not bool(verification.get("verified", False)):
+        reasons.append("reconstruction_verification failed")
+
+    return {
+        "valid": not reasons,
+        "reasons": reasons,
+        "metrics": {
+            "residual": float(residual),
+            "symmetry": float(symmetry),
+            "i_obs_ratio": float(i_obs_ratio),
+            "delta_stability": float(delta_stability),
+            "recursive_count": int(recursive_count),
+            "anomaly_count": int(anomaly_count),
+        },
+        "hash_only": True,
+        "raw_data_allowed": False,
+        "deltas_allowed": False,
+    }
+
+
 @dataclass(frozen=True)
 class SecuritySession:
     """Beschreibt eine authentifizierte Nutzer-Session."""

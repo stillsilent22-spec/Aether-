@@ -40,7 +40,7 @@ Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobacht
 - Dateien und Byte-Stroeme per Drag-and-Drop strukturell analysieren
 - Delta-Pfade bilden und lokale Rekonstruktionsbedingungen abschaetzen
 - 3D/4D-Raumzeit- und Voxelzustande visualisieren
-- Kamera- und Theremin-Zustaende als dynamische Strukturquellen verarbeiten
+- Kamera- und Raster-Zustaende als dynamische Strukturquellen verarbeiten
 - Anker, Frequenzmuster, Symmetrie, Entropie, Kohaerenz und Resonanz messen
 - Bayes-, Graph- und Beobachterzustaende gemeinsam in einen Fingerprint ueberfuehren
 - Vault-, Chain- und Snapshot-Pfade lokal und kontrolliert fuehren
@@ -528,7 +528,7 @@ Die Chat-Oberflaeche ist lokal-first und baut auf denselben Aether-Zustaenden au
 
 - private Chats mit Shanway bleiben lokal verschluesselt
 - Gruppenkanale koennen Shanway gezielt einbeziehen und behalten ihren Verlauf lokal bzw. im consentierten Relay-Sync
-- Spracheingabe kann in Dateipfad, Chat oder den privaten Shanway-Kanal gehen
+- Schreiben und Tastatur bleiben die primaere Interaktion; Mikrofonpfade sind bewusst deaktiviert
 - optionale Netz-Kontexte werden nicht still gezogen, sondern nur nach expliziter Freigabe
 
 Der neue Netzpfad ist bewusst begrenzt:
@@ -544,9 +544,10 @@ Dadurch kann Shanway auf Fragen wie `Was ist AGI?` oder browserbezogene Rueckfra
 
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
 
-- stabile TTD-Anker koennen als Peer-Delta-Bundle exportiert werden
+- stabile TTD-Anker koennen als lokale, metrics-only Public-TTD-Bundles freigegeben werden
 - stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `data/export_log.jsonl`-Eintrag aus
 - standardmaessig werden nur oeffentliche Hash-/Metrikdaten geteilt
+- die GUI fragt vor jeder Public-TTD-Freigabe explizit nach `Nein / Nur anonym / Mit Signatur`
 - interne Self-Reflection-Deltas bleiben ohne explizite Vollfreigabe lokal
 - importierte oeffentliche Anker fliessen nur lokal in den Observer-Lernzustand ein
 

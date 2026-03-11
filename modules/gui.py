@@ -13,6 +13,7 @@ import webbrowser
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import Any
 from uuid import uuid4
 
 import cv2
@@ -53,11 +54,6 @@ from .vault_chain import AetherAugmentor
 from .voxel_grid import VoxelGrid4D
 from .ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
 from .aelab_legacy import iter_legacy_dna_files, parse_legacy_dna_file
-
-try:
-    import speech_recognition as sr
-except Exception:
-    sr = None
 
 try:
     from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -248,11 +244,15 @@ class VeiraGUI:
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_network_mode", False))
         )
         self.shanway_network_mode_label_var = tk.StringVar(value="Netz-Kontext aus")
+        self.ttd_auto_share_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("ttd_auto_share", False))
+        )
         self.shanway_raster_insight_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_raster_insight", False))
         )
         self.shanway_sensitive_var = tk.StringVar(value="Shanway Guard: bereit")
         self.peer_delta_status_var = tk.StringVar(value="Peer-Delta: lokal | keine Freigabe")
+        self.public_ttd_status_var = tk.StringVar(value="TTD-Pool: lokal | keine oeffentliche Freigabe")
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
         )
@@ -291,7 +291,6 @@ class VeiraGUI:
         self.spectrum_thread: threading.Thread | None = None
         self._pending_screen_scope: dict[str, Any] | None = None
         self.csv_thread: threading.Thread | None = None
-        self.speech_thread: threading.Thread | None = None
         self.chat_thread: threading.Thread | None = None
         self.shanway_corpus_thread: threading.Thread | None = None
         self._last_ae_vault_notice_signature = ""
@@ -397,6 +396,7 @@ class VeiraGUI:
             )
         self.root.after(1200, self._bootstrap_public_anchor_cycle)
         self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
+        self.root.after(2200, lambda: self._sync_local_public_ttd_pool(silent=True))
 
     @staticmethod
     def _ae_anchor_preview(anchors: list[dict[str, object]], limit: int = 3) -> str:
@@ -1461,7 +1461,16 @@ class VeiraGUI:
         shanway_share_row.pack(fill="x", padx=10, pady=(0, 8))
         ttk.Button(shanway_share_row, text="Peer-Delta export", command=self._export_self_reflection_bundle_dialog).pack(side="left")
         ttk.Button(shanway_share_row, text="Peer-Delta import", command=self._import_self_reflection_bundle_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(shanway_share_row, text="TTD teilen", command=self._share_current_ttd_anchor_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(shanway_share_row, text="TTD lernen", command=self._sync_local_public_ttd_pool).pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(
+            shanway_share_row,
+            text="TTD auto teilen",
+            variable=self.ttd_auto_share_var,
+            command=self._on_ttd_auto_share_toggle,
+        ).pack(side="left", padx=(8, 0))
         tk.Label(shanway_share_row, textvariable=self.peer_delta_status_var, bg="#0D1930", fg="#8FD6FF", font=("Consolas", 8, "bold")).pack(side="right")
+        tk.Label(shanway_tab, textvariable=self.public_ttd_status_var, bg="#0D1930", fg="#9CB0CC", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
         shanway_status_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         shanway_status_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(shanway_status_card, textvariable=self.shanway_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
@@ -1527,11 +1536,6 @@ class VeiraGUI:
             shanway_actions,
             text="Mit Netz",
             command=lambda: self._send_private_shanway_message(force_network=True),
-        ).pack(side="left", padx=(6, 0))
-        ttk.Button(
-            shanway_actions,
-            text="Mic",
-            command=lambda: self._start_speech_input(target="shanway"),
         ).pack(side="left", padx=(6, 0))
         ttk.Button(
             shanway_actions,
@@ -1742,11 +1746,6 @@ class VeiraGUI:
             chat_input_row,
             text="Mit Netz",
             command=lambda: self._send_chat_message("chat", force_network=True),
-        ).pack(side="left", padx=(0, 4))
-        ttk.Button(
-            chat_input_row,
-            text="Mic",
-            command=lambda: self._start_speech_input(target="chat"),
         ).pack(side="left", padx=(0, 4))
         ttk.Button(chat_input_row, text="Aktualisieren", command=self._refresh_chat_view).pack(side="left", padx=(0, 4))
         ttk.Button(chat_input_row, text="Leeren", command=lambda: self._clear_message_input("chat")).pack(side="left")
@@ -3068,6 +3067,7 @@ class VeiraGUI:
                     "shanway_enabled": bool(self.shanway_enabled_var.get()),
                     "shanway_browser_mode": bool(self.shanway_browser_mode_var.get()),
                     "shanway_network_mode": bool(self.shanway_network_mode_var.get()),
+                    "ttd_auto_share": bool(self.ttd_auto_share_var.get()),
                     "shanway_raster_insight": bool(self.shanway_raster_insight_var.get()),
                 },
             )
@@ -3129,6 +3129,17 @@ class VeiraGUI:
         else:
             self.chat_status_var.set("Shanway aktiv | Raster-Einsicht aus")
 
+    def _on_ttd_auto_share_toggle(self) -> None:
+        """Persistiert den lokalen TTD-Auto-Share-Schalter fail-closed."""
+        enabled = bool(self.ttd_auto_share_var.get())
+        self._persist_shanway_preferences()
+        if enabled:
+            self.public_ttd_status_var.set(
+                "TTD-Pool: Vorschlag aktiv | stabile Anker fragen lokal vor Metrics-Only-Freigabe"
+            )
+        else:
+            self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentliche Freigabe")
+
     def _set_shanway_guard(self, message: str) -> None:
         """Aktualisiert die sichtbare Shanway-Schutzmeldung."""
         self.shanway_sensitive_var.set(str(message or "Shanway Guard: bereit"))
@@ -3189,6 +3200,205 @@ class VeiraGUI:
         ttk.Button(button_row, text="Alle inkl. Self-Deltas", command=lambda: _close("all")).pack(side="left", padx=(6, 0))
         self.root.wait_window(dialog)
         return str(result["scope"])
+
+    def _ask_public_ttd_share_scope(self, title: str, prompt: str) -> str:
+        """Fragt fail-closed nach der Freigabe eines oeffentlichen TTD-Ankers."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.configure(bg="#0D1930")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        result = {"scope": "deny"}
+        tk.Label(
+            dialog,
+            text=prompt,
+            bg="#0D1930",
+            fg="#E7F4FF",
+            wraplength=380,
+            justify="left",
+            font=("Segoe UI", 10),
+        ).pack(padx=14, pady=(14, 10))
+        button_row = tk.Frame(dialog, bg="#0D1930")
+        button_row.pack(fill="x", padx=14, pady=(0, 14))
+
+        def _close(scope: str) -> None:
+            result["scope"] = str(scope or "deny")
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ttk.Button(button_row, text="Nein", command=lambda: _close("deny")).pack(side="left")
+        ttk.Button(button_row, text="Nur anonym", command=lambda: _close("metrics_only")).pack(
+            side="left",
+            padx=(6, 0),
+        )
+        ttk.Button(button_row, text="Mit Signatur", command=lambda: _close("signed")).pack(
+            side="left",
+            padx=(6, 0),
+        )
+        self.root.wait_window(dialog)
+        return str(result["scope"])
+
+    def _share_current_ttd_anchor_dialog(self, *, auto_prompt: bool = False) -> dict[str, object]:
+        """Teilt einen stabilen TTD-Anker nur als Hash+Metriken und nur nach Consent."""
+        fingerprint = self.current_fingerprint
+        if fingerprint is None:
+            if not auto_prompt:
+                messagebox.showinfo("TTD teilen", "Es ist noch kein aktiver Datensatz geladen.", parent=self.root)
+            return {"shared": False, "reason": "no_fingerprint"}
+        reflection_payload = dict(getattr(fingerprint, "self_reflection_delta", {}) or {})
+        candidates = [
+            dict(item)
+            for item in list(reflection_payload.get("ttd_candidates", []) or [])
+            if isinstance(item, dict)
+        ]
+        if not candidates:
+            if not auto_prompt:
+                messagebox.showinfo(
+                    "TTD teilen",
+                    "Aktuell liegt kein stabiler TTD-Kandidat fuer eine oeffentliche Freigabe vor.",
+                    parent=self.root,
+                )
+            self.public_ttd_status_var.set("TTD-Pool: kein stabiler Kandidat fuer oeffentliche Freigabe")
+            return {"shared": False, "reason": "no_candidate"}
+        first = dict(candidates[0] or {})
+        prompt = (
+            "Anker hochladen? (Nur Hash + Metriken, pseudonym, global sichtbar)\n\n"
+            f"Hash: {str(first.get('hash', ''))[:12]}...\n"
+            f"Symmetrie: {float(first.get('symmetry', 0.0) or 0.0) * 100.0:.0f}%\n"
+            f"Residual: {float(first.get('residual', 0.0) or 0.0):.3f}\n"
+            f"I_obs-Ratio: {float(dict(first.get('public_metrics', {}) or {}).get('i_obs_ratio', 0.0) or 0.0) * 100.0:.0f}%"
+        )
+        scope = self._ask_public_ttd_share_scope("TTD-Anker freigeben", prompt)
+        if scope == "deny":
+            self.public_ttd_status_var.set("TTD-Pool: Freigabe abgebrochen")
+            return {"shared": False, "reason": "denied"}
+        bundle = self.augmentor.build_public_ttd_anchor_bundle(
+            source_label=str(getattr(fingerprint, "source_label", "") or "ttd_anchor"),
+            reflection_payload=reflection_payload,
+            fingerprint=fingerprint,
+            scope=scope,
+        )
+        if not bundle:
+            self.public_ttd_status_var.set("TTD-Pool: Bundle konnte nicht erzeugt werden")
+            return {"shared": False, "reason": "bundle_empty"}
+        if not bool(bundle.get("valid", True)):
+            validation = dict(bundle.get("validation", {}) or {})
+            reasons = ", ".join(list(validation.get("reasons", []) or [])) or "ungueltige Metriken"
+            self.public_ttd_status_var.set(f"TTD-Pool: Freigabe blockiert | {reasons}")
+            try:
+                self.registry.save_security_event(
+                    user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                    username=str(getattr(self.session_context, "username", "")),
+                    event_type="public_ttd_share_blocked",
+                    severity="warning",
+                    payload={
+                        "source_label": str(getattr(fingerprint, "source_label", "") or ""),
+                        "reasons": list(validation.get("reasons", []) or []),
+                    },
+                )
+            except Exception:
+                pass
+            if not auto_prompt:
+                messagebox.showwarning("TTD teilen", f"Freigabe blockiert:\n{reasons}", parent=self.root)
+            return {"shared": False, "reason": "validation_failed", "validation": validation}
+        stored = self.augmentor.append_public_ttd_anchor_bundle(bundle)
+        bundle_payload = dict(bundle.get("payload", {}) or {})
+        status_hash = str(bundle_payload.get("ttd_hash", "") or "")[:12]
+        if bool(stored.get("stored", False)):
+            self.public_ttd_status_var.set(
+                f"TTD-Pool: geteilt | {status_hash}... | Count {int(stored.get('public_anchor_count', 0) or 0)}"
+            )
+            self.chat_status_var.set("Shanway: stabiler TTD-Anker lokal in den oeffentlichen Metrik-Pool ueberfuehrt")
+            self.chat_reply_var.set(
+                f"Stabiler TTD-Anker detektiert ({status_hash}...). Freigabe erfolgte nur als Hash + Metriken."
+            )
+            try:
+                self.registry.save_security_event(
+                    user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                    username=str(getattr(self.session_context, "username", "")),
+                    event_type="public_ttd_shared",
+                    severity="info",
+                    payload={
+                        "scope": scope,
+                        "ttd_hash": str(bundle_payload.get("ttd_hash", "") or ""),
+                        "public_metrics": dict(bundle_payload.get("public_metrics", {}) or {}),
+                        "signature_included": bool(bundle.get("signature_included", False)),
+                    },
+                )
+            except Exception:
+                pass
+            self._sync_local_public_ttd_pool(silent=True)
+            return {
+                "shared": True,
+                "scope": scope,
+                "ttd_hash": str(bundle_payload.get("ttd_hash", "") or ""),
+                "stored": dict(stored),
+            }
+        if bool(stored.get("already_present", False)):
+            self.public_ttd_status_var.set(f"TTD-Pool: bereits vorhanden | {status_hash}...")
+            self._sync_local_public_ttd_pool(silent=True)
+            return {
+                "shared": False,
+                "reason": "already_present",
+                "ttd_hash": str(bundle_payload.get("ttd_hash", "") or ""),
+            }
+        self.public_ttd_status_var.set("TTD-Pool: Freigabe fehlgeschlagen")
+        return {"shared": False, "reason": str(stored.get("reason", "store_failed") or "store_failed")}
+
+    def _sync_local_public_ttd_pool(self, silent: bool = False) -> dict[str, object]:
+        """Laedt lokal freigegebene oeffentliche TTD-Anker und ueberfuehrt sie in den Lernzustand."""
+        bundle = self.augmentor.load_public_ttd_anchor_bundle()
+        public_anchors = [dict(item) for item in list(bundle.get("public_anchors", []) or []) if isinstance(item, dict)]
+        if not public_anchors:
+            self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentlichen Metriken vorhanden")
+            return {"imported_anchor_count": 0, "public_anchor_count": 0}
+        learning_result = self.observer_engine.merge_public_anchor_bundle(self.session_context, bundle)
+        imported = int(learning_result.get("imported_anchor_count", 0) or 0)
+        total = int(learning_result.get("public_anchor_count", 0) or 0)
+        symmetry_gain = float(learning_result.get("symmetry_gain_percent", 0.0) or 0.0)
+        i_obs_gain = float(learning_result.get("i_obs_gain_percent", 0.0) or 0.0)
+        insight = str(learning_result.get("current_insight", "") or "").strip()
+        self.public_ttd_status_var.set(
+            f"TTD-Pool: gelernt | import {imported} | lokal {total} | dSym {symmetry_gain:.2f}% | dI_obs {i_obs_gain:.2f}%"
+        )
+        if self.current_fingerprint is not None:
+            observer_payload = dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
+            observer_payload["learning_state"] = dict(
+                self.observer_engine.load_learning_state(self.session_context)
+            )
+            self.current_fingerprint.observer_payload = observer_payload
+        if insight:
+            if self.current_fingerprint is not None:
+                reflection_payload = dict(getattr(self.current_fingerprint, "self_reflection_delta", {}) or {})
+                reflection_payload["learned_insight"] = insight
+                self.current_fingerprint.self_reflection_delta = reflection_payload
+            self.chat_semantic_var.set(
+                f"Semantik: global gelernt | Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
+            )
+            self.chat_reply_var.set(insight)
+        try:
+            self.registry.save_security_event(
+                user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                username=str(getattr(self.session_context, "username", "")),
+                event_type="public_ttd_imported",
+                severity="info",
+                payload={
+                    "imported_anchor_count": imported,
+                    "public_anchor_count": total,
+                    "symmetry_gain_percent": symmetry_gain,
+                    "i_obs_gain_percent": i_obs_gain,
+                },
+            )
+        except Exception:
+            pass
+        if not silent:
+            self.loading_var.set(
+                f"TTD-Lernen aktualisiert: {imported} Anker | Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
+            )
+        return learning_result
 
     def _export_self_reflection_bundle_dialog(self) -> None:
         """Exportiert consent-basiert ein Peer-Delta-Bundle ohne Auto-Freigabe."""
@@ -4469,11 +4679,6 @@ class VeiraGUI:
         self.path_entry = ttk.Entry(self.left_frame, textvariable=self.path_var)
         self.path_entry.pack(fill="x", padx=12, pady=(4, 8))
         self.path_entry.bind("<Return>", lambda _event: self._start_analysis_from_entry())
-
-        self.speech_button = ttk.Button(self.left_frame, text="Spracheingabe starten", command=self._start_speech_input)
-        self.speech_button.pack(fill="x", padx=12, pady=(0, 8))
-        if sr is None:
-            self.speech_button.configure(text="Spracheingabe starten (nicht verfuegbar)")
 
         self.progress = ttk.Progressbar(
             self.left_frame,
@@ -8144,6 +8349,11 @@ class VeiraGUI:
         ttd_export = dict(getattr(fingerprint, "_ttd_auto_export", {}) or {})
         if ttd_candidates:
             first = dict(ttd_candidates[0] or {})
+            self.public_ttd_status_var.set(
+                f"TTD-Pool: Vorschlag bereit | {str(first.get('hash', ''))[:12]}... | "
+                f"Sym {float(first.get('symmetry', 0.0) or 0.0) * 100.0:.0f}% | "
+                f"Residual {float(first.get('residual', 0.0) or 0.0):.3f}"
+            )
             if bool(ttd_export.get("exported", False)):
                 self.peer_delta_status_var.set(
                     f"Peer-Delta: TTD auto-exportiert | {str(first.get('hash', ''))[:12]}... | DNA {Path(str(ttd_export.get('export_path', '') or '')).name}"
@@ -8156,8 +8366,11 @@ class VeiraGUI:
                 self.peer_delta_status_var.set(
                     f"Peer-Delta: TTD bereit | {str(first.get('hash', ''))[:12]}... | {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
                 )
+            if bool(self.ttd_auto_share_var.get()):
+                self.root.after(180, lambda: self._share_current_ttd_anchor_dialog(auto_prompt=True))
         else:
             self.peer_delta_status_var.set("Peer-Delta: lokal | keine stabile TTD-Freigabe")
+            self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentliche Freigabe")
         self.state_var.set(self.renderer.get_state_description(fingerprint))
         if honeypot_hit:
             self.honeypot_var.set("Diagnostik: Aktivitaet erkannt")
@@ -8341,77 +8554,11 @@ class VeiraGUI:
         profile = self.registry.get_session_entropy_profile(self.session_context.session_id)
         self.state_var.set(
             f"{self.renderer.get_state_description(fingerprint)}\n"
-            f"Voxel-Weltlinien: {len(self.voxel_grid)} | Mic {frame_state.mic_peak_freq:.1f} Hz | "
+            f"Voxel-Weltlinien: {len(self.voxel_grid)} | Raster-Frequenz {frame_state.mic_peak_freq:.1f} Hz | "
             f"Ethik {frame_state.ethics_score:.1f}\n"
             f"Session-Entropie Mittelwert: {profile['entropy_mean']:.2f} "
             f"(Samples: {profile['samples']}, Anomalierate: {profile['anomaly_rate']:.2%})"
         )
-
-    @staticmethod
-    def _append_text_widget(widget: tk.Text | None, text: str) -> None:
-        """Fuegt Text robust an eine Chat-/Shanway-Eingabe an."""
-        if widget is None:
-            return
-        fragment = str(text or "").strip()
-        if not fragment:
-            return
-        try:
-            current = widget.get("1.0", tk.END).strip()
-        except Exception:
-            current = ""
-        try:
-            if current:
-                widget.insert(tk.END, ("\n" if not current.endswith("\n") else "") + fragment)
-            else:
-                widget.insert("1.0", fragment)
-        except Exception:
-            return
-
-    def _start_speech_input(self, target: str = "path") -> None:
-        """Startet die Spracherkennung asynchron fuer Pfad-, Chat- oder Shanway-Eingabe."""
-        if sr is None:
-            self.loading_var.set("Spracherkennung nicht verfuegbar. Manuellen Pfad verwenden.")
-            return
-        if self.speech_thread is not None and self.speech_thread.is_alive():
-            self.loading_var.set("Spracherkennung laeuft bereits.")
-            return
-        target_label = {
-            "path": "Dateipfad",
-            "chat": "Chat",
-            "shanway": "Shanway",
-        }.get(str(target or "path"), "Eingabe")
-        self.loading_var.set(f"Spracherkennung aktiv fuer {target_label} ...")
-        self.speech_thread = threading.Thread(target=self._speech_worker, args=(str(target or "path"),), daemon=True)
-        self.speech_thread.start()
-
-    def _speech_worker(self, target: str = "path") -> None:
-        """Nimmt Sprache auf und uebergibt sie an den gewaehlten Zielpfad."""
-        try:
-            recognizer = sr.Recognizer()
-            with sr.Microphone() as source:
-                recognizer.adjust_for_ambient_noise(source, duration=0.4)
-                audio = recognizer.listen(source, timeout=5, phrase_time_limit=7)
-            text = recognizer.recognize_google(audio, language="de-DE").strip()
-            self.root.after(0, lambda: self._apply_speech_text(text, target=target))
-        except Exception:
-            self.root.after(0, lambda: self.loading_var.set("Spracherkennung momentan nicht verfuegbar."))
-
-    def _apply_speech_text(self, text: str, target: str = "path") -> None:
-        """Uebernimmt erkannten Text je nach Ziel in Pfad-, Chat- oder Shanway-Eingabe."""
-        normalized_target = str(target or "path").strip().lower()
-        if normalized_target == "chat":
-            self._append_text_widget(getattr(self, "chat_compose_text", None), text)
-            self.loading_var.set("Spracheingabe in den Chat uebernommen.")
-            return
-        if normalized_target == "shanway":
-            self._append_text_widget(getattr(self, "shanway_input_text", None), text)
-            self.loading_var.set("Spracheingabe in Shanway uebernommen.")
-            return
-        self.path_var.set(text)
-        if Path(text).is_file():
-            self._start_analysis(text)
-        else:
-            self.loading_var.set("Spracheingabe uebernommen. Bitte Dateipfad pruefen.")
 
     def _refresh_recent_logs(self) -> None:
         """Aktualisiert die Anzeige der letzten zehn Logeintraege."""

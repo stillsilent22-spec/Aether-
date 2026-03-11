@@ -21,6 +21,7 @@ from modules.observer_engine import ObserverEngine
 from modules.reconstruction_engine import LosslessReconstructionEngine
 from modules.session_engine import SessionContext
 from modules.shanway import ShanwayEngine
+from modules.vault_chain import AetherAugmentor
 
 
 def _sample_bytes() -> bytes:
@@ -318,6 +319,84 @@ def test_ttd_auto_export_writes_dna_seed_and_jsonl() -> None:
     shutil.rmtree(temp_export_root, ignore_errors=True)
 
 
+def test_public_ttd_pool_shares_hash_only_and_updates_learning_state() -> None:
+    """Oeffentliche TTD-Freigaben duerfen nur Hash+Metriken enthalten und muessen lokales Lernen aktualisieren."""
+    temp_public_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_pool"
+    shutil.rmtree(temp_public_root, ignore_errors=True)
+    temp_public_root.mkdir(parents=True, exist_ok=True)
+
+    context = SessionContext(seed=515151)
+    engine = AnalysisEngine(context)
+    fingerprint = engine.analyze_bytes(
+        _sample_bytes(),
+        source_label="tests::public_ttd_pool",
+        source_type="memory",
+    )
+    augmentor = AetherAugmentor(context, registry=None)
+    observer = ObserverEngine()
+    observer.learning_store_dir = temp_public_root / "observer_learning"
+
+    reflection_payload = {
+        "residual_after": 0.02,
+        "stability_score": 0.98,
+        "recursive_reflections": [
+            {"level": 1, "delta": 0.04, "mt_shift": 0.30, "residual_before": 0.05, "residual_after": 0.04},
+            {"level": 2, "delta": 0.03, "mt_shift": 0.24, "residual_before": 0.04, "residual_after": 0.03},
+            {"level": 3, "delta": 0.02, "mt_shift": 0.18, "residual_before": 0.03, "residual_after": 0.02},
+        ],
+        "ttd_candidates": [
+            {
+                "hash": hashlib.sha256(b"public-ttd-anchor").hexdigest(),
+                "delta_stability": 0.98,
+                "symmetry": 0.94,
+                "residual": 0.02,
+                "public_metrics": {
+                    "residual": 0.02,
+                    "symmetry": 0.94,
+                    "i_obs_ratio": 0.95,
+                    "delta_i_obs_percent": 1.2,
+                },
+            }
+        ],
+    }
+
+    bundle = augmentor.build_public_ttd_anchor_bundle(
+        source_label="tests::public_ttd_pool",
+        reflection_payload=reflection_payload,
+        fingerprint=fingerprint,
+        scope="metrics_only",
+    )
+    assert bool(bundle)
+    assert bool(dict(bundle.get("validation", {}) or {}).get("valid", False)) is True
+    payload = dict(bundle.get("payload", {}) or {})
+    assert payload.get("schema") == "aether.public_ttd_anchor.v1"
+    assert bool(payload.get("raw_data_included", True)) is False
+    assert bool(payload.get("deltas_included", True)) is False
+    assert bool(payload.get("internal_only", True)) is False
+    assert "pseudonym" in payload
+
+    stored = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
+    assert bool(stored.get("stored", False)) is True
+
+    loaded = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
+    public_anchors = [dict(item) for item in list(loaded.get("public_anchors", []) or []) if isinstance(item, dict)]
+    assert len(public_anchors) == 1
+    assert "public_metrics" in public_anchors[0]
+    assert "raw_data_included" in public_anchors[0]
+    assert bool(public_anchors[0].get("raw_data_included", True)) is False
+    assert bool(public_anchors[0].get("deltas_included", True)) is False
+
+    learning_result = observer.merge_public_anchor_bundle(context, loaded)
+    assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
+    assert int(learning_result.get("public_anchor_count", 0) or 0) >= 1
+    assert float(learning_result.get("symmetry_gain_percent", 0.0) or 0.0) > 0.0
+    assert "kollektive Konvergenz" in str(learning_result.get("current_insight", "") or "")
+
+    duplicate = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
+    assert bool(duplicate.get("already_present", False)) is True
+    shutil.rmtree(temp_public_root, ignore_errors=True)
+
+
 def test_agent_loop_plans_browser_followup_for_open_state() -> None:
     """Offene Shanway-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
     loop = AgentLoopEngine()
@@ -441,6 +520,7 @@ def main() -> None:
     failure = run_roundtrip_failure_smoke_test()
     test_lossless_roundtrip_with_recursive_raster_reflection()
     test_ttd_auto_export_writes_dna_seed_and_jsonl()
+    test_public_ttd_pool_shares_hash_only_and_updates_learning_state()
     test_agent_loop_plans_browser_followup_for_open_state()
     test_browser_engine_fetch_search_context_is_parsed_without_real_network()
     test_shanway_partner_reply_includes_history_and_web_context()
@@ -463,6 +543,7 @@ def main() -> None:
     )
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
     print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
+    print("Public TTD Pool: Hash+Metriken geteilt und lokales Lernen verifiziert")
     print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
     print("Browser-Kontext: stubbed DuckDuckGo-Verdichtung lokal verifiziert")
     print("Chat-Partner: Verlauf und Netzkontext lokal verifiziert")

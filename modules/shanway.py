@@ -1685,7 +1685,7 @@ class ShanwayEngine:
                 "TTD_SUGGESTION: "
                 f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... | "
                 f"Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}% | "
-                "Consent: Nur oeffentliche Anker / Alle inkl. Self-Deltas"
+                "Consent: Nur anonym (Hash+Metriken) / Mit Signatur / Peer-Deltas separat"
             )
         if assessment.recursive_reflections:
             notes.append(

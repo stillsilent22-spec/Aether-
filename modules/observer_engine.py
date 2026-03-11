@@ -188,7 +188,7 @@ class ObserverEngine:
         if imported_count > 0:
             return (
                 f"Gelernte Insight aus vorheriger Session: +{imported_count} oeffentliche Anker integriert, "
-                f"Symmetrie-Basis jetzt {self._rolling_mean(sym_values[-8:]) * 100.0:.2f}%."
+                f"Symmetrie-Basis jetzt {self._rolling_mean(sym_values[-8:]) * 100.0:.2f}% - kollektive Konvergenz erkannt."
             )
         if sym_values and residual_values:
             current_symmetry = float(sym_values[-1])
@@ -387,7 +387,7 @@ class ObserverEngine:
         for item in list(imported_public_anchors or []):
             if not isinstance(item, dict):
                 continue
-            anchor_hash = str(item.get("hash", "") or "").strip()
+            anchor_hash = str(item.get("hash", item.get("ttd_hash", "")) or "").strip()
             if not anchor_hash or anchor_hash in public_anchor_hashes:
                 continue
             public_anchor_hashes.append(anchor_hash)
@@ -432,11 +432,29 @@ class ObserverEngine:
             for item in list(payload.get("public_anchors", []) or [])
             if isinstance(item, dict)
         ]
+        previous_state = self.load_learning_state(session_context)
+        previous_count = int(len(list(previous_state.get("public_anchor_hashes", []) or [])))
         updated = self.update_learning_state(session_context, reflection_payload={}, imported_public_anchors=public_anchors)
+        symmetry_values: list[float] = []
+        delta_values: list[float] = []
+        for item in public_anchors:
+            metrics = dict(item.get("public_metrics", {}) or {})
+            symmetry = float(metrics.get("symmetry", 0.0) or 0.0)
+            delta_i_obs = float(metrics.get("delta_i_obs_percent", 0.0) or 0.0)
+            if symmetry > 0.0:
+                symmetry_values.append(symmetry)
+            if delta_i_obs > 0.0:
+                delta_values.append(delta_i_obs)
+        symmetry_gain = round(float(self._rolling_mean(symmetry_values) * 100.0), 12) if symmetry_values else 0.0
+        i_obs_gain = round(float(self._rolling_mean(delta_values)), 12) if delta_values else 0.0
+        current_count = int(updated.get("public_anchor_count", 0) or 0)
         return {
-            "imported_anchor_count": int(len(public_anchors)),
-            "public_anchor_count": int(updated.get("public_anchor_count", 0) or 0),
+            "imported_anchor_count": max(0, current_count - previous_count),
+            "public_anchor_count": current_count,
             "last_global_learn_delta": float(updated.get("last_global_learn_delta", 0.0) or 0.0),
+            "symmetry_gain_percent": float(symmetry_gain),
+            "i_obs_gain_percent": float(i_obs_gain),
+            "current_insight": str(updated.get("current_insight", "") or ""),
         }
 
     @staticmethod

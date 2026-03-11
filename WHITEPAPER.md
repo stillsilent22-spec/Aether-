@@ -254,9 +254,10 @@ Damit bleibt der Chat kein separater KI-Service, sondern ein weiterer Beobachter
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 
-- stabile TTD-Anker koennen als Peer-Delta-Bundles exportiert werden
+- stabile TTD-Anker koennen als lokale, metrics-only Public-TTD-Bundles freigegeben werden
 - stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `export_log.jsonl`-Audit aus
 - standardmaessig nur mit oeffentlichen Hash- und Metrikdaten
+- vor jeder Public-TTD-Freigabe steht ein expliziter Consent-Schritt `Nein / Nur anonym / Mit Signatur`
 - interne Self-Reflection-Deltas bleiben `internal_only`
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
 
@@ -269,6 +270,7 @@ Damit wird ein enger, aber wichtiger Unterschied festgehalten:
 - Aether vernetzt sich nur unter ausdruecklicher Zustimmung
 - Aether teilt keine Rohdaten
 - Aether lernt kollektiv nur ueber kompakte, attestierte Strukturspuren
+- Mikrofonpfade sind bewusst deaktiviert; Schreiben, Raster und Miniatur bleiben die primaeren lokalen Beobachtungsformen
 
 Dies ist ein Modell, keine bewiesene universelle Dynamik.
 
