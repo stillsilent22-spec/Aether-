@@ -477,10 +477,12 @@ class SpacetimeRenderer:
         ax.xaxis.set_pane_color((0.06, 0.08, 0.20, 0.9))
         ax.yaxis.set_pane_color((0.06, 0.08, 0.20, 0.9))
         ax.zaxis.set_pane_color((0.03, 0.05, 0.12, 0.9))
-        ax.grid(True, color="#3A4F93", alpha=0.25, linewidth=0.6)
+        ax.grid(True, color="#4F6FD6", alpha=0.42, linewidth=0.9)
         ax.set_xlabel("X", color="#C5D4FF")
         ax.set_ylabel("Y", color="#C5D4FF")
         ax.set_zlabel("Raumzeit-Kruemmung", color="#C5D4FF")
+        ax.set_xticks(np.arange(0, 16, 1))
+        ax.set_yticks(np.arange(0, 16, 1))
         ax.tick_params(colors="#A7B7E2", labelsize=8)
 
     def _dynamic_z(self, scene: RenderScene, phase: float) -> np.ndarray:
@@ -539,6 +541,74 @@ class SpacetimeRenderer:
             color="#7AB6FF" if av_frame.mandelbrot_d <= 2.1 else "#FF8C42",
             linewidth=0.25,
             alpha=0.28,
+        )
+
+    def _draw_detection_raster(
+        self,
+        ax: Any,
+        scene: RenderScene,
+        dynamic_z: np.ndarray,
+        av_frame: AudioVisualFrame,
+    ) -> None:
+        """Zeichnet ein deutlich sichtbares Diagnose-Raster fuer schnelle Malware- und Anomaliepruefung."""
+        floor_z = float(np.min(dynamic_z)) - 0.55
+        for index in range(16):
+            is_major = index % 4 == 0
+            color = "#A8C9FF" if is_major else "#3656B2"
+            width = 1.45 if is_major else 0.7
+            alpha = 0.62 if is_major else 0.34
+            ax.plot(
+                [index, index],
+                [0, 15],
+                [floor_z, floor_z],
+                color=color,
+                linewidth=width,
+                alpha=alpha,
+                zorder=0,
+            )
+            ax.plot(
+                [0, 15],
+                [index, index],
+                [floor_z, floor_z],
+                color=color,
+                linewidth=width,
+                alpha=alpha,
+                zorder=0,
+            )
+
+        suspicious_cells: set[tuple[int, int]] = set()
+        for x_pos, y_pos in list(scene.anomaly_coordinates or []):
+            if 0 <= int(x_pos) < 16 and 0 <= int(y_pos) < 16:
+                suspicious_cells.add((int(x_pos), int(y_pos)))
+
+        entropy_threshold = 0.78 if scene.verdict in {"SUSPICIOUS", "CRITICAL"} else 0.9
+        hot_y, hot_x = np.where(scene.entropy_norm >= entropy_threshold)
+        for y_pos, x_pos in zip(hot_y.tolist(), hot_x.tolist()):
+            suspicious_cells.add((int(x_pos), int(y_pos)))
+
+        outline_color = "#FF6B57" if scene.verdict == "CRITICAL" else "#FFB347"
+        for x_pos, y_pos in sorted(suspicious_cells):
+            x0 = max(0.0, float(x_pos) - 0.48)
+            x1 = min(15.0, float(x_pos) + 0.48)
+            y0 = max(0.0, float(y_pos) - 0.48)
+            y1 = min(15.0, float(y_pos) + 0.48)
+            ax.plot(
+                [x0, x1, x1, x0, x0],
+                [y0, y0, y1, y1, y0],
+                [floor_z + 0.02] * 5,
+                color=outline_color,
+                linewidth=2.0,
+                alpha=0.92,
+            )
+
+        ax.text2D(
+            0.02,
+            0.965,
+            "Rasterdiagnose: helle Linien = Hauptzellen | orange/rot = auffaellige Felder",
+            transform=ax.transAxes,
+            color="#F6D58E",
+            fontsize=9,
+            fontweight="bold",
         )
 
     def _voxel_rgba(self, point: AudioVisualVoxel, av_frame: AudioVisualFrame, phase: float) -> np.ndarray:
@@ -611,6 +681,7 @@ class SpacetimeRenderer:
         facecolors = self._dynamic_facecolors(scene, phase, av_frame)
         wire_color = self.verdict_colors.get(scene.verdict, "#2DE2E6")
         self._draw_boundary_plane(ax, scene, av_frame)
+        self._draw_detection_raster(ax, scene, dynamic_z, av_frame)
 
         ax.plot_surface(
             scene.grid_x,
@@ -707,7 +778,7 @@ class SpacetimeRenderer:
         azim = (35.0 + (phase * 15.0)) % 360.0
         elev = 26.0 + (5.0 * np.sin(phase * 0.45))
         ax.view_init(elev=elev, azim=azim)
-        ax.set_title("Aether - Dynamisches Raumzeitfeld", color="#DDF9FF", pad=14)
+        ax.set_title("Aether Rasterdiagnose - Malware und Strukturfeld", color="#DDF9FF", pad=14)
         self._draw_observer_overlay(ax, av_frame)
 
     def _draw_raw_delta_layer(self, scene: RenderScene, phase: float, av_frame: AudioVisualFrame) -> None:
@@ -728,6 +799,7 @@ class SpacetimeRenderer:
             alpha=0.16,
         )
         self._draw_boundary_plane(ax, scene, av_frame)
+        self._draw_detection_raster(ax, scene, dynamic_z, av_frame)
 
         wire_color = self.verdict_colors.get(scene.verdict, "#2DE2E6")
         raw = scene.raw_points
@@ -807,7 +879,7 @@ class SpacetimeRenderer:
         azim = (48.0 + (phase * 18.0)) % 360.0
         elev = 24.0 + (6.0 * np.sin(phase * 0.35))
         ax.view_init(elev=elev, azim=azim)
-        ax.set_title("Aether - 4D Weltlinien (Raw Deltas)", color="#DDF9FF", pad=14)
+        ax.set_title("Aether Rasterdiagnose - 4D Weltlinien und Delta-Spuren", color="#DDF9FF", pad=14)
 
     def create_dynamic_scene(self, fingerprint: AetherFingerprint) -> RenderScene:
         """

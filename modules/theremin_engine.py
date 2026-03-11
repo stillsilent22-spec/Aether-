@@ -189,7 +189,7 @@ class ThereminEngine:
             blend_getter: Callback fuer Harmonie-Dissonanz-Mischung.
         """
         if self.is_running:
-            status_callback("Theremin laeuft bereits.")
+            status_callback("Kamera-Raster laeuft bereits.")
             return True
 
         self._frame_callback = frame_callback
@@ -206,25 +206,25 @@ class ThereminEngine:
             if not self._capture.isOpened():
                 self._capture = cv2.VideoCapture(self.camera_index)
             if not self._capture.isOpened():
-                status_callback("Theremin konnte nicht starten: Keine Webcam gefunden.")
+                status_callback("Kamera-Raster konnte nicht starten: Keine Webcam gefunden.")
                 return False
             self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
             self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
             self._capture.set(cv2.CAP_PROP_FPS, float(self.target_fps))
         except Exception as exc:
             self._last_error = str(exc)
-            status_callback(f"Theremin-Fehler beim Webcam-Start: {exc}")
+            status_callback(f"Kamera-Raster-Fehler beim Webcam-Start: {exc}")
             return False
 
         if not self.audio_engine.start_theremin_stream():
-            status_callback("Theremin startet ohne Audio-Stream (kein Audiogeraet verfuegbar).")
+            status_callback("Kamera-Raster startet im visuellen Modus ohne Audio-Stream.")
         if not self._start_mic_input():
-            status_callback("Theremin startet ohne Mikrofon-FFT (kein Eingabegeraet verfuegbar).")
+            status_callback("Kamera-Raster startet ohne Mikrofon-FFT (kein Eingabegeraet verfuegbar).")
 
         self._running.set()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
-        status_callback("Theremin aktiv. Webcam-Analyse laeuft.")
+        status_callback("Kamera-Raster aktiv. Webcam-Analyse laeuft.")
         return True
 
     def stop(self) -> None:
@@ -242,7 +242,7 @@ class ThereminEngine:
         self._stop_mic_input()
         self.audio_engine.stop_theremin_stream()
         if self._status_callback is not None:
-            self._status_callback("Theremin gestoppt.")
+            self._status_callback("Kamera-Raster gestoppt.")
 
     def _start_mic_input(self) -> bool:
         """Startet einen Mikrofon-Stream fuer Live-FFT."""
@@ -326,7 +326,7 @@ class ThereminEngine:
             ok, frame_bgr = self._capture.read()
             if not ok or frame_bgr is None:
                 if self._status_callback is not None:
-                    self._status_callback("Webcam liefert keine Frames. Theremin wartet auf Signal.")
+                    self._status_callback("Webcam liefert keine Frames. Kamera-Raster wartet auf Signal.")
                 time.sleep(0.12)
                 continue
             try:
@@ -496,14 +496,14 @@ class ThereminEngine:
                         )
                 except Exception:
                     if self._status_callback is not None:
-                        self._status_callback("Warnung: Theremin-Frame konnte nicht in Registry gespeichert werden.")
+                        self._status_callback("Warnung: Kamera-Raster-Frame konnte nicht in Registry gespeichert werden.")
 
                 if self._frame_callback is not None:
                     self._frame_callback(frame_state, fingerprint)
             except Exception as exc:
                 self._last_error = str(exc)
                 if self._status_callback is not None:
-                    self._status_callback(f"Theremin-Verarbeitung fehlgeschlagen: {exc}")
+                    self._status_callback(f"Kamera-Raster-Verarbeitung fehlgeschlagen: {exc}")
 
             self._frame_index += 1
             elapsed = time.perf_counter() - loop_start

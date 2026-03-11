@@ -34,6 +34,7 @@ class AudioEngine:
         """
         self.sample_rate = sample_rate
         self.duration = duration
+        self.output_enabled = False
 
         self._theremin_lock = threading.Lock()
         self._theremin_stream: Any | None = None
@@ -218,6 +219,8 @@ class AudioEngine:
 
         Fehler bei fehlendem Audiogeraet oder fehlender Bibliothek werden abgefangen.
         """
+        if not self.output_enabled:
+            return
         if sd is None:
             print("Warnung: Soundausgabe nicht verfuegbar (sounddevice fehlt).")
             return
@@ -229,6 +232,10 @@ class AudioEngine:
 
     def start_audiovisual_stream(self) -> bool:
         """Startet den kontinuierlichen Stereo-Stream fuer synaesthetisches AV-Feedback."""
+        if not self.output_enabled:
+            with self._audiovisual_lock:
+                self._audiovisual_state["active"] = False
+            return False
         if sd is None:
             return False
         with self._audiovisual_lock:
@@ -271,6 +278,13 @@ class AudioEngine:
 
     def update_audiovisual_frame(self, frame: AudioVisualFrame | None) -> None:
         """Aktualisiert den gemeinsamen Bild-/Ton-Frame fuer die synaesthetische Ausgabe."""
+        if not self.output_enabled:
+            with self._audiovisual_lock:
+                self._audiovisual_state["frame"] = frame
+                self._audiovisual_state["active"] = False
+                self._audiovisual_state["sample_index"] = 0
+                self._audiovisual_state["anchor_pings"] = []
+            return
         if frame is None or not getattr(frame, "points", None):
             with self._audiovisual_lock:
                 self._audiovisual_state["frame"] = None
@@ -292,6 +306,8 @@ class AudioEngine:
 
     def trigger_anchor_pings(self, anchor_values: list[float]) -> None:
         """Spielt neu gefundene AE-Anker als reine harmonische Pings."""
+        if not self.output_enabled:
+            return
         if sd is None:
             return
         frequencies = [
@@ -344,6 +360,11 @@ class AudioEngine:
 
     def start_aether_oscillator(self) -> bool:
         """Startet einen einzelnen kontinuierlichen Aether-Oszillator."""
+        if not self.output_enabled:
+            with self._aether_lock:
+                self._aether_state["active"] = False
+                self._aether_state["volume"] = 0.0
+            return False
         if sd is None:
             return False
         with self._aether_lock:
@@ -388,6 +409,8 @@ class AudioEngine:
 
     def play_alarm_burst(self, duration_ms: int = 200) -> None:
         """Spielt einen kurzen dissonanten Alarmburst."""
+        if not self.output_enabled:
+            return
         if sd is None:
             return
         duration = max(0.08, min(0.4, duration_ms / 1000.0))
@@ -407,6 +430,8 @@ class AudioEngine:
 
     def start_theremin_stream(self) -> bool:
         """Startet den kontinuierlichen Echtzeit-Output fuer das Theremin."""
+        if not self.output_enabled:
+            return False
         if sd is None:
             return False
         with self._theremin_lock:

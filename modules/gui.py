@@ -67,7 +67,7 @@ except Exception:
 
 
 class VeiraGUI:
-    """Stellt die komplette Bedienoberflaeche fuer Analyse, Spektrum und Theremin bereit."""
+    """Stellt die komplette Bedienoberflaeche fuer Analyse, Kamera-Raster und Shanway bereit."""
 
     def __init__(
         self,
@@ -152,7 +152,7 @@ class VeiraGUI:
         self.anchor_mirror_var = tk.StringVar(value="Mirror: noch kein offizieller Sync")
         self.dna_share_gate_var = tk.StringVar(value="DNA-Share Gate: noch keine analysierten Vault-Eintraege")
         self.current_dna_share_var = tk.StringVar(value="Aktueller Datensatz: noch keine Freigabepruefung")
-        self.theremin_state_var = tk.StringVar(value="Theremin: inaktiv")
+        self.theremin_state_var = tk.StringVar(value="Kamera-Raster: bereit | Audio deaktiviert")
         self.wavelength_var = tk.StringVar(value="Dominante Wellenlaenge: -- nm")
         self.sensitivity_var = tk.DoubleVar(value=1.0)
         self.harmony_var = tk.DoubleVar(value=0.65)
@@ -466,6 +466,119 @@ class VeiraGUI:
             )
         except Exception:
             return
+        self._refresh_shanway_view()
+
+    def _build_ae_shanway_feedback(
+        self,
+        summary: dict[str, object],
+        fingerprint: AetherFingerprint | None = None,
+        *,
+        stop_requested: bool = False,
+    ) -> str:
+        """Verdichtet AELAB-Zwischenstand zu einem klaren schriftlichen Shanway-Bericht."""
+        current = fingerprint or self.current_fingerprint
+        iteration = int(summary.get("iteration", 0) or 0)
+        phase = str(summary.get("phase", "idle") or "idle")
+        anchor_count = int(summary.get("anchor_count", 0) or 0)
+        main_ready = int(summary.get("main_ready", 0) or 0)
+        sub_only = int(summary.get("sub_only", 0) or 0)
+        rejected = int(summary.get("rejected", 0) or 0)
+        quarantined = int(summary.get("quarantined_total", 0) or 0)
+        preview = str(summary.get("anchor_preview", "") or "keine dominanten AE-Anker")
+        top_anchor_types = ", ".join(str(item) for item in list(summary.get("top_anchor_types", []) or [])[:3] if str(item).strip())
+        dna_export = Path(str(summary.get("dna_export_path", "") or "")).name
+        intro = (
+            f"AELAB wurde bei Iteration {iteration} in Phase {phase} angehalten."
+            if stop_requested or bool(summary.get("stopped", False))
+            else f"AELAB hat Iteration {iteration} in Phase {phase} abgeschlossen."
+        )
+        found_parts = [
+            f"Gefunden wurden {anchor_count} Anker",
+            f"{main_ready} stabile Muster im Main-Vault",
+            f"{sub_only} weitere nur im Sub-Vault",
+        ]
+        if top_anchor_types:
+            found_parts.append(f"dominant: {top_anchor_types}")
+        missing_parts = []
+        if anchor_count <= 0:
+            missing_parts.append("noch keine tragenden Anker")
+        if main_ready <= 0:
+            missing_parts.append("noch kein stabiler Main-Vault-Eintrag")
+        if rejected > 0:
+            missing_parts.append(f"{rejected} Muster wurden verworfen")
+        if quarantined > 0:
+            missing_parts.append(f"{quarantined} Signaturen bleiben quarantiniert")
+        if not missing_parts:
+            missing_parts.append("aktuell keine kritischen Luecken im Iterationslauf")
+        details = (
+            f"{intro} {'; '.join(found_parts)}. "
+            f"Auffaellig ist {preview}. "
+            f"Noch offen: {'; '.join(missing_parts)}."
+        )
+        if dna_export:
+            details += f" Snapshot: {dna_export}."
+        if current is None:
+            return details
+        try:
+            assessment = self.shanway_engine.detect_asymmetry(
+                details,
+                coherence_score=float(getattr(current, "ethics_score", 0.0) or 0.0),
+                h_lambda=float(getattr(current, "h_lambda", 0.0) or 0.0),
+                observer_mutual_info=float(getattr(current, "observer_mutual_info", 0.0) or 0.0),
+                source_label=str(getattr(current, "source_label", "") or ""),
+                file_profile=dict(getattr(current, "file_profile", {}) or {}),
+                observer_payload=dict(getattr(current, "observer_payload", {}) or {}),
+                bayes_payload=dict(getattr(current, "bayes_payload", {}) or {}),
+                graph_payload=dict(getattr(current, "graph_payload", {}) or {}),
+                beauty_signature=dict(getattr(current, "beauty_signature", {}) or {}),
+                observer_knowledge_ratio=float(getattr(current, "observer_knowledge_ratio", 0.0) or 0.0),
+                fingerprint_payload=current.to_payload() if hasattr(current, "to_payload") else {},
+            )
+            return self.shanway_engine.render_response(assessment, assistant_text=details)
+        except Exception:
+            return details
+
+    def _publish_ae_shanway_feedback(
+        self,
+        summary: dict[str, object],
+        fingerprint: AetherFingerprint | None = None,
+        *,
+        stop_requested: bool = False,
+    ) -> None:
+        """Spiegelt AELAB-Ergebnisse als lesbaren Shanway-Status in GUI und Verlauf."""
+        feedback = self._build_ae_shanway_feedback(
+            summary,
+            fingerprint=fingerprint,
+            stop_requested=stop_requested,
+        )
+        self.chat_reply_var.set(f"Shanway: {feedback}")
+        iteration = int(summary.get("iteration", 0) or 0)
+        phase = str(summary.get("phase", "idle") or "idle")
+        self.chat_status_var.set(f"Shanway aktiv | AELAB Iteration {iteration} | Phase {phase}")
+        self.chat_semantic_var.set(
+            f"Semantik: Anker {int(summary.get('anchor_count', 0) or 0)} | "
+            f"Main {int(summary.get('main_ready', 0) or 0)} | "
+            f"Q {int(summary.get('quarantined_total', 0) or 0)}"
+        )
+        try:
+            self.registry.save_chat_message(
+                session_id=self.session_context.session_id,
+                user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                username=str(getattr(self.session_context, "username", "")),
+                message_text="",
+                reply_text=feedback,
+                channel="private:shanway",
+                payload={
+                    "assistant_intent": "ae_iteration_feedback",
+                    "system_notice": True,
+                    "ae_iteration_feedback": dict(summary),
+                },
+                is_private=True,
+                recipient_username="shanway",
+                visible_to_shanway=False,
+            )
+        except Exception:
+            pass
         self._refresh_shanway_view()
 
     @staticmethod
@@ -782,6 +895,38 @@ class VeiraGUI:
             + (f" | Export {Path(export_path).name}" if export_path else "")
         )
         self._set_ae_stop_button_state(f"Gestoppt (Iteration {iteration})", enabled=False)
+        self.theremin_state_var.set("Kamera-Raster: bereit | Audio deaktiviert")
+        self._publish_ae_shanway_feedback(
+            {
+                "iteration": iteration,
+                "phase": phase,
+                "anchor_count": len(anchors),
+                "anchor_preview": self._ae_anchor_preview(anchors),
+                "main_ready": int(dict(getattr(self.current_fingerprint, "ae_lab_summary", {}) or {}).get("main_ready", 0) or 0)
+                if self.current_fingerprint is not None
+                else 0,
+                "sub_only": int(dict(getattr(self.current_fingerprint, "ae_lab_summary", {}) or {}).get("sub_only", 0) or 0)
+                if self.current_fingerprint is not None
+                else 0,
+                "rejected": int(dict(getattr(self.current_fingerprint, "ae_lab_summary", {}) or {}).get("rejected", 0) or 0)
+                if self.current_fingerprint is not None
+                else 0,
+                "quarantined_total": int(
+                    dict(getattr(self.current_fingerprint, "ae_lab_summary", {}) or {}).get("quarantined_total", 0) or 0
+                )
+                if self.current_fingerprint is not None
+                else 0,
+                "top_anchor_types": list(
+                    dict(getattr(self.current_fingerprint, "ae_lab_summary", {}) or {}).get("top_anchor_types", []) or []
+                )
+                if self.current_fingerprint is not None
+                else [],
+                "stopped": True,
+                "dna_export_path": str(export_path or ""),
+            },
+            fingerprint=self.current_fingerprint,
+            stop_requested=True,
+        )
 
     def _run_ae_lab(
         self,
@@ -928,8 +1073,7 @@ class VeiraGUI:
         self._refresh_ae_anchor_panel(ae_anchors)
         self._sync_ae_vault_registry()
         self._announce_ae_vault_update(summary)
-        if ae_anchors and not self._is_text_silent_source(fingerprint):
-            self.audio_engine.trigger_anchor_pings([float(anchor.get("value", 0.0) or 0.0) for anchor in ae_anchors])
+        self._publish_ae_shanway_feedback(summary, fingerprint=fingerprint)
         return summary
 
     def _is_text_silent_source(self, fingerprint: AetherFingerprint | None) -> bool:
@@ -1082,7 +1226,7 @@ class VeiraGUI:
         return status
 
     def _build_augment_window(self) -> None:
-        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Voxel und Anker bleiben permanent sichtbar."""
+        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Voxel, Kamera-Raster und Shanway bleiben sichtbar."""
         self.augment_window = self.root
         for child in self.right_frame.winfo_children():
             child.destroy()
@@ -1119,7 +1263,7 @@ class VeiraGUI:
         node_tab = tk.Frame(self.right_notebook, bg="#111A4A")
         camera_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         efficiency_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        theremin_tab = tk.Frame(self.right_notebook, bg="#0D1930")
+        live_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         shanway_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         chat_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         browser_tab = tk.Frame(self.right_notebook, bg="#0D1930")
@@ -1129,7 +1273,7 @@ class VeiraGUI:
         self.right_notebook.add(node_tab, text="NODE")
         self.right_notebook.add(camera_tab, text="KAMERA")
         self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
-        self.right_notebook.add(theremin_tab, text="THEREMIN")
+        self.right_notebook.add(live_tab, text="LIVE-RASTER")
         self.right_notebook.add(shanway_tab, text="SHANWAY")
         self.right_notebook.add(chat_tab, text="CHATS")
         self.right_notebook.add(browser_tab, text="BROWSER")
@@ -1193,9 +1337,10 @@ class VeiraGUI:
         camera_controls.pack(fill="x", padx=10, pady=(10, 8))
         ttk.Checkbutton(camera_controls, text="Kamera", variable=self.camera_toggle_var, command=self._toggle_camera_feed).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(camera_controls, text="Mirror", variable=self.camera_mirror_var).pack(side="left", padx=(0, 8))
-        ttk.Checkbutton(camera_controls, text="Theremin", variable=self.camera_theremin_var, command=self._toggle_camera_theremin).pack(side="left")
+        tk.Label(camera_controls, text="Audio deaktiviert | nur visuelles Raster", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(side="left")
         self.camera_canvas = tk.Canvas(camera_tab, width=400, height=240, bg="#040811", highlightthickness=0)
         self.camera_canvas.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(camera_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(camera_tab, textvariable=self.recon_status_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10)
         metrics = tk.Frame(camera_tab, bg="#0D1930")
         metrics.pack(fill="x", padx=10, pady=(6, 8))
@@ -1238,19 +1383,22 @@ class VeiraGUI:
         self.efficiency_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.efficiency_text.configure(state="disabled")
 
-        tk.Label(theremin_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(12, 6))
-        theremin_row = tk.Frame(theremin_tab, bg="#0D1930")
-        theremin_row.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Button(theremin_row, text="Theremin aktivieren", command=self._start_theremin).pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ttk.Button(theremin_row, text="Theremin stoppen", command=self._stop_theremin).pack(side="left", fill="x", expand=True, padx=(4, 0))
-        tk.Label(theremin_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
-        theremin_metrics = tk.Frame(theremin_tab, bg="#0D1930")
-        theremin_metrics.pack(fill="x", padx=10, pady=(0, 10))
-        for label, variable in [("Kohaerenz", self.metric_ct_var), ("Frequenz", self.metric_freq_var), ("Detune", self.metric_detune_var), ("Anker", self.metric_anchor_count_var), ("Prior", self.metric_prior_var), ("Benford", self.metric_benford_var), ("Runtime", self.metric_runtime_var)]:
-            row = tk.Frame(theremin_metrics, bg="#0D1930")
+        tk.Label(live_tab, text="Live-Raster", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
+        tk.Label(live_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
+        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Ton und Theremin-Steuerung sind entfernt.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(live_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
+        live_metrics = tk.Frame(live_tab, bg="#0D1930")
+        live_metrics.pack(fill="x", padx=10, pady=(0, 8))
+        for label, variable in [("Kohaerenz", self.metric_ct_var), ("Anker", self.metric_anchor_count_var), ("Prior", self.metric_prior_var), ("Benford", self.metric_benford_var), ("Runtime", self.metric_runtime_var)]:
+            row = tk.Frame(live_metrics, bg="#0D1930")
             row.pack(fill="x")
             tk.Label(row, text=label, bg="#0D1930", fg="#8FB5FF", font=("Consolas", 9)).pack(side="left")
             tk.Label(row, textvariable=variable, bg="#0D1930", fg="#E7F4FF", font=("Consolas", 9, "bold")).pack(side="right")
+        live_feedback = tk.Frame(live_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        live_feedback.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        tk.Label(live_feedback, text="Shanway Abschlussfeedback", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(live_feedback, textvariable=self.chat_reply_var, bg="#10223F", fg="#E7F4FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 4))
+        tk.Label(live_feedback, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
 
         tk.Label(shanway_tab, text="Shanway", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         shanway_mode_row = tk.Frame(shanway_tab, bg="#0D1930")
@@ -3548,10 +3696,15 @@ class VeiraGUI:
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        row = tk.Frame(self.left_frame, bg="#111A4A")
-        row.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Button(row, text="Theremin aktivieren", command=self._start_theremin).pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ttk.Button(row, text="Theremin stoppen", command=self._stop_theremin).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        tk.Label(
+            self.left_frame,
+            text="Kamera-Raster aktivierst du im KAMERA-Tab. Audio bleibt deaktiviert.",
+            bg="#111A4A",
+            fg="#8FB5FF",
+            wraplength=345,
+            justify="left",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=12, pady=(0, 8))
 
         export_row = tk.Frame(self.left_frame, bg="#111A4A")
         export_row.pack(fill="x", padx=12, pady=(0, 8))
@@ -3637,11 +3790,15 @@ class VeiraGUI:
 
         tk.Label(self.left_frame, text="Datei oder CSV per Drag & Drop ins Fenster ziehen startet sofort die passende Analyse bzw. den 4D-Voxel-Import.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
 
-        tk.Label(self.left_frame, text="Theremin-Regler", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(0, 4))
-        tk.Label(self.left_frame, text="Entropie-Sensitivitaet", bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 9)).pack(anchor="w", padx=12)
-        ttk.Scale(self.left_frame, from_=0.4, to=2.8, variable=self.sensitivity_var, orient="horizontal").pack(fill="x", padx=12, pady=(2, 6))
-        tk.Label(self.left_frame, text="Harmonie / Dissonanz-Verhaeltnis", bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 9)).pack(anchor="w", padx=12)
-        ttk.Scale(self.left_frame, from_=0.0, to=1.0, variable=self.harmony_var, orient="horizontal").pack(fill="x", padx=12, pady=(2, 8))
+        tk.Label(
+            self.left_frame,
+            text="Live-Raster-Hinweis: Shanway schreibt nach abgeschlossenen Iterationen direkt, was stabil ist und was noch fehlt.",
+            bg="#111A4A",
+            fg="#C7D7FF",
+            wraplength=345,
+            justify="left",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=12, pady=(0, 8))
 
         tk.Label(self.left_frame, textvariable=self.wavelength_var, bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=12, pady=(0, 4))
         self.wavelength_canvas = tk.Canvas(self.left_frame, width=320, height=22, bg="#111A4A", highlightthickness=0, bd=0)
@@ -3736,17 +3893,12 @@ class VeiraGUI:
                 except Exception:
                     pass
                 self.conway_job = None
-            if self.camera_theremin_var.get():
-                self.audio_engine.stop_aether_oscillator()
+            self.camera_theremin_var.set(False)
 
     def _toggle_camera_theremin(self) -> None:
-        """Schaltet den additiven Aether-Oszillator fuer Kamerametriken."""
-        if self.camera_theremin_var.get():
-            if not self.audio_engine.start_aether_oscillator():
-                self.camera_theremin_var.set(False)
-                self.loading_var.set("Aether-Oszillator konnte nicht gestartet werden.")
-        else:
-            self.audio_engine.stop_aether_oscillator()
+        """Bleibt aus Governance-Gruenden deaktiviert; Kamera arbeitet rein visuell."""
+        self.camera_theremin_var.set(False)
+        self.loading_var.set("Audioausgabe ist deaktiviert. Die Kamera arbeitet nur noch visuell im Raster.")
 
     def _on_agent_toggle(self) -> None:
         """Setzt den Agentzustand beim Umschalten sauber."""
@@ -3900,11 +4052,11 @@ class VeiraGUI:
                         "token_name": related[0] if related else self._latest_agent_token,
                     }
                 )
-            if self.camera_theremin_var.get():
-                self.audio_engine.start_aether_oscillator()
-                frequency = 110.0 + (snapshot.metrics.center_lum / 255.0) * 880.0
-                detune = (snapshot.metrics.center_mass_x - 0.5) * 1200.0
-                self.audio_engine.update_aether_state(frequency=frequency, detune=detune, volume=0.16)
+            self.theremin_state_var.set(
+                "Kamera-Raster: aktiv | "
+                f"Kohaerenz {float(snapshot.metrics.coherence) * 100.0:.0f}% | "
+                f"Anker {len(snapshot.anchors)} | Audio deaktiviert"
+            )
             self._overlay_agent_text(directive)
             self._check_alarm_conditions(snapshot.metrics)
 
@@ -3985,11 +4137,11 @@ class VeiraGUI:
                             "token_name": related[0] if related else self._latest_agent_token,
                         }
                     )
-                if self.camera_theremin_var.get():
-                    self.audio_engine.start_aether_oscillator()
-                    frequency = 110.0 + (snapshot.metrics.center_lum / 255.0) * 880.0
-                    detune = (snapshot.metrics.center_mass_x - 0.5) * 1200.0
-                    self.audio_engine.update_aether_state(frequency=frequency, detune=detune, volume=0.16)
+                self.theremin_state_var.set(
+                    "Kamera-Raster: aktiv | "
+                    f"Kohaerenz {float(snapshot.metrics.coherence) * 100.0:.0f}% | "
+                    f"Anker {len(snapshot.anchors)} | Audio deaktiviert"
+                )
                 self._overlay_agent_text(directive)
                 self._check_alarm_conditions(snapshot.metrics)
         except queue.Empty:
@@ -6417,7 +6569,7 @@ class VeiraGUI:
         ax.text2D(
             0.03,
             0.96,
-            "Mitte bleibt fuer Drag-and-Drop, Kamera und Theremin.\nBrowser und Shanway-Chat greifen dieses Raster nicht live an.",
+            "Mitte bleibt fuer Drag-and-Drop, Kamera und Live-Raster.\nBrowser und Shanway-Chat greifen dieses Raster nicht live an.",
             transform=ax.transAxes,
             color="#CFE8FF",
             fontsize=9,
@@ -7228,39 +7380,29 @@ class VeiraGUI:
         messagebox.showerror("Analysefehler", f"Die Analyse konnte nicht abgeschlossen werden:\n{error_message}")
 
     def _start_theremin(self) -> None:
-        """Aktiviert die Echtzeit-Webcam-Analyse und den Theremin-Modus."""
+        """Ehemaliger Theremin-Start: schaltet jetzt nur noch die visuelle Kameraanalyse ein."""
         if not self.session_context.security_allows("allow_analysis", True):
             messagebox.showwarning(
                 "Sicherheitsmodus",
-                "Die lokale Sicherheitsdiagnose blockiert Theremin derzeit. Im DEV-Modus sollte das nicht mehr auftreten.",
+                "Die lokale Sicherheitsdiagnose blockiert die Kameraanalyse derzeit.",
             )
             return
-        if self.theremin_engine.is_running:
-            self.loading_var.set("Theremin laeuft bereits.")
-            return
-        self._previous_theremin_anchors = []
-        started = self.theremin_engine.start(
-            frame_callback=self._enqueue_theremin_frame,
-            status_callback=self._enqueue_theremin_status,
-            sensitivity_getter=lambda: float(self.sensitivity_var.get()),
-            blend_getter=lambda: float(self.harmony_var.get()),
-        )
-        if started:
-            self.theremin_state_var.set("Theremin: aktiv")
-            self.theremin_label.configure(fg="#7DE8A7")
-        else:
-            self.theremin_state_var.set("Theremin: Start fehlgeschlagen")
-            self.theremin_label.configure(fg="#FFB347")
+        if not self.camera_toggle_var.get():
+            self.camera_toggle_var.set(True)
+            self._toggle_camera_feed()
+        self.theremin_state_var.set("Kamera-Raster: visuell aktiv | Audio deaktiviert")
+        self.theremin_label.configure(fg="#7DE8A7")
+        self.loading_var.set("Kamera-Raster aktiviert. Ton bleibt ausgeschaltet.")
 
     def _stop_theremin(self) -> None:
-        """Stoppt den Theremin-Modus inklusive Audio-Stream."""
-        if not self.theremin_engine.is_running:
-            self.loading_var.set("Theremin ist bereits gestoppt.")
-            return
-        self.theremin_engine.stop()
+        """Beendet den alten Theremin-Einstieg und stoppt optional die Kameraanalyse."""
+        if self.camera_toggle_var.get():
+            self.camera_toggle_var.set(False)
+            self._toggle_camera_feed()
         self._previous_theremin_anchors = []
-        self.theremin_state_var.set("Theremin: inaktiv")
+        self.theremin_state_var.set("Kamera-Raster: bereit | Audio deaktiviert")
         self.theremin_label.configure(fg="#8FD6FF")
+        self.loading_var.set("Kamera-Raster gestoppt. Audio bleibt deaktiviert.")
 
     def _enqueue_theremin_status(self, message: str) -> None:
         """Leitet Statusmeldungen thread-sicher an die GUI weiter."""
@@ -7271,7 +7413,7 @@ class VeiraGUI:
         self.root.after(0, lambda fs=frame_state, fp=fingerprint: self._on_theremin_frame(fs, fp))
 
     def _on_theremin_frame(self, frame_state: ThereminFrameState, fingerprint: AetherFingerprint) -> None:
-        """Aktualisiert GUI, Gitter und Anzeigen fuer einen Theremin-Frame."""
+        """Aktualisiert GUI, Gitter und Anzeigen fuer einen Kamera-Raster-Frame."""
         current_anchors: list[AnchorPoint] = []
         if frame_state.hand_detected:
             current_anchors = [
@@ -7321,7 +7463,7 @@ class VeiraGUI:
 
         prior_cells = self.registry.get_anchor_priors(limit=14)
         live_prior_post = self.bayes_engine.anchor_prior_posterior(prior_cells, current_anchors)
-        self.bayes_anchor_var.set(f"Prior-Posterior {live_prior_post * 100.0:.0f}% | theremin")
+        self.bayes_anchor_var.set(f"Prior-Posterior {live_prior_post * 100.0:.0f}% | kamera")
         confidence_hint = float(current_anchors[0].confidence) if current_anchors else 0.0
         self._set_live_observer_gap(
             entropy_now=float(frame_state.entropy_total),
@@ -7335,13 +7477,17 @@ class VeiraGUI:
         self._update_integrity_monitor(fingerprint)
         self._update_wavelength_indicator(float(frame_state.dominant_wavelength_nm), tuple(frame_state.dominant_color_rgb))
         if frame_state.recursive_state:
-            self.theremin_state_var.set("Theremin: Rekursive Selbstbeobachtung (Goldresonanz)")
+            self.theremin_state_var.set("Kamera-Raster: rekursive Selbstbeobachtung | Audio deaktiviert")
             self.theremin_label.configure(fg="#F2C14E")
         elif frame_state.recursion_collapsed:
-            self.theremin_state_var.set("Theremin: Rekursion kollabiert durch Beobachter")
+            self.theremin_state_var.set("Kamera-Raster: Rekursion kollabiert | Audio deaktiviert")
             self.theremin_label.configure(fg="#FFB347")
         else:
-            self.theremin_state_var.set(f"Theremin aktiv | Bass {frame_state.bass_freq:.1f} Hz | Mitte {frame_state.mid_freq:.0f} Hz | Hoehen {frame_state.high_freq:.0f} Hz")
+            self.theremin_state_var.set(
+                "Kamera-Raster: visuell aktiv | "
+                f"Raster Bass {frame_state.bass_freq:.1f} | Mitte {frame_state.mid_freq:.0f} | Hoehen {frame_state.high_freq:.0f} | "
+                "Audio deaktiviert"
+            )
             self.theremin_label.configure(fg="#7DE8A7")
 
         profile = self.registry.get_session_entropy_profile(self.session_context.session_id)
