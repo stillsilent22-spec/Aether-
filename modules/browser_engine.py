@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import html
 import importlib.util
 import multiprocessing as mp
 import queue
+import re
 import sys
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote_plus
+from urllib.request import Request, urlopen
 
 
 def _normalize_url(url: str) -> str:
@@ -379,6 +382,35 @@ class BrowserEngine:
         self._command_queue.put({"cmd": "navigate", "url": _normalize_url(url)})
 
     @staticmethod
+    def _download_text(url: str, timeout: float = 6.0) -> str:
+        """Laedt schlanken HTML-Text fuer optionale Suchkontexte fail-closed."""
+        request = Request(
+            _normalize_url(url),
+            headers={
+                "User-Agent": "AetherBrowser/1.0 (+local companion)",
+                "Accept-Language": "de-DE,de;q=0.8,en;q=0.6",
+            },
+        )
+        with urlopen(request, timeout=max(1.0, float(timeout))) as response:
+            payload = response.read()
+        return payload.decode("utf-8", errors="replace")
+
+    @staticmethod
+    def strip_html_text(raw_html: str, limit_chars: int = 1200) -> str:
+        """Verdichtet HTML robust zu einem kurzen, lokal weiterverarbeitbaren Text."""
+        markup = str(raw_html or "")
+        if not markup.strip():
+            return ""
+        markup = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", markup)
+        markup = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", markup)
+        markup = re.sub(r"(?is)<[^>]+>", " ", markup)
+        markup = html.unescape(markup)
+        markup = re.sub(r"\s+", " ", markup).strip()
+        if len(markup) <= max(80, int(limit_chars)):
+            return markup
+        return markup[: max(80, int(limit_chars))].rsplit(" ", 1)[0].strip()
+
+    @staticmethod
     def build_search_url(query: str, provider: str = "duckduckgo") -> str:
         """Erzeugt eine schlanke Such-URL fuer lokale Kontextsuche."""
         normalized_query = str(query or "").strip()
@@ -392,11 +424,73 @@ class BrowserEngine:
             return f"https://www.google.com/search?q={encoded}"
         return f"https://duckduckgo.com/?q={encoded}"
 
+    @staticmethod
+    def build_search_fetch_url(query: str, provider: str = "duckduckgo", searx_base_url: str = "") -> str:
+        """Erzeugt eine HTML-taugliche Such-URL fuer schlanke Kontextabrufe."""
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            normalized_query = "file format structure"
+        encoded = quote_plus(normalized_query)
+        selected = str(provider or "duckduckgo").strip().lower()
+        if selected == "searxng":
+            base = str(searx_base_url or "").strip().rstrip("/")
+            if not base:
+                raise ValueError("SearxNG-Provider erfordert eine lokale Basis-URL.")
+            return f"{base}/search?q={encoded}&format=html"
+        return f"https://duckduckgo.com/html/?q={encoded}"
+
     def search(self, query: str, provider: str = "duckduckgo") -> str:
         """Startet eine lokale Websuche im Companion-Browser und liefert die Ziel-URL."""
         url = self.build_search_url(query, provider=provider)
         self.navigate(url)
         return str(url)
+
+    @classmethod
+    def fetch_search_context(
+        cls,
+        query: str,
+        provider: str = "duckduckgo",
+        timeout: float = 6.0,
+        searx_base_url: str = "",
+    ) -> dict[str, Any]:
+        """Laedt einen kurzen Netz-Kontext fuer Shanway ohne Rohdatenpersistenz."""
+        cleaned_query = " ".join(str(query or "").split()).strip()
+        if not cleaned_query:
+            return {
+                "ok": False,
+                "provider": str(provider or "duckduckgo"),
+                "query": "",
+                "url": "",
+                "summary": "",
+                "error": "empty_query",
+            }
+        try:
+            fetch_url = cls.build_search_fetch_url(
+                cleaned_query,
+                provider=provider,
+                searx_base_url=searx_base_url,
+            )
+            raw_html = cls._download_text(fetch_url, timeout=timeout)
+            summary = cls.strip_html_text(raw_html, limit_chars=1200)
+            return {
+                "ok": bool(summary),
+                "provider": str(provider or "duckduckgo"),
+                "query": cleaned_query,
+                "url": str(fetch_url),
+                "summary": str(summary),
+                "search_url": cls.build_search_url(cleaned_query, provider=provider),
+                "error": "" if summary else "empty_summary",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": str(provider or "duckduckgo"),
+                "query": cleaned_query,
+                "url": "",
+                "summary": "",
+                "search_url": cls.build_search_url(cleaned_query, provider=provider),
+                "error": str(exc),
+            }
 
     def back(self) -> None:
         """Geht in der Browserhistorie zurueck."""

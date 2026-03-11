@@ -522,6 +522,24 @@ Beispiel fuer den Consent-Pfad:
 
 Standard ist fail-closed: keine Freigabe ohne explizite Entscheidung.
 
+## Shanway Chat und Netzfreigabe
+
+Die Chat-Oberflaeche ist lokal-first und baut auf denselben Aether-Zustaenden auf wie Analyse, Observer und Vault. Im aktuellen Stand gilt:
+
+- private Chats mit Shanway bleiben lokal verschluesselt
+- Gruppenkanale koennen Shanway gezielt einbeziehen und behalten ihren Verlauf lokal bzw. im consentierten Relay-Sync
+- Spracheingabe kann in Dateipfad, Chat oder den privaten Shanway-Kanal gehen
+- optionale Netz-Kontexte werden nicht still gezogen, sondern nur nach expliziter Freigabe
+
+Der neue Netzpfad ist bewusst begrenzt:
+
+- `Netz-Kontext an` erlaubt nur, dass Shanway bei freien Fragen optional eine Suchverdichtung anfragen darf
+- vor jedem Netzschritt erscheint ein Consent-Dialog `Netz nutzen?`
+- geladen wird nur ein kurzer Such-/HTML-Kontext fuer die Antwortverdichtung
+- Rohdateien, Deltas, private Chatinhalte und Rasterdaten verlassen den Rechner nicht
+
+Dadurch kann Shanway auf Fragen wie `Was ist AGI?` oder browserbezogene Rueckfragen lesbarer antworten, ohne den lokalen, auditierbaren Kern aufzugeben.
+
 ## Verbundenheit und demokratisiertes Lernen
 
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
@@ -540,6 +558,7 @@ Shanway kann dadurch sagen:
 Der zentrale Governance-Punkt bleibt:
 
 - Aether ist kein Cloud-Agent und keine zentrale AGI-Plattform
+- Aether ist kein Baustein fuer fremde Plattformarchitekturen oder zentralisierte AGI-Sammelsysteme
 - Wissen wird lokal getragen, lokal bewertet und nur in consentierten, kompakten Anchor-Formen geteilt
 - das System bleibt source-available, fail-closed und append-only
 

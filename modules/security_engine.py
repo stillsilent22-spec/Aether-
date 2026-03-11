@@ -133,6 +133,28 @@ def self_reflection_share_policy(scope: str = "public_only") -> dict[str, Any]:
     }
 
 
+def network_access_policy(scope: str = "prompt") -> dict[str, Any]:
+    """Normalisiert den lokalen Netzmodus fuer Browser- und Suchfreigaben."""
+    normalized = str(scope or "prompt").strip().lower()
+    if normalized not in {"deny", "prompt", "allow"}:
+        normalized = "prompt"
+    return {
+        "scope": normalized,
+        "consent_required": normalized != "allow",
+        "allow_network": normalized == "allow",
+        "allow_browser_navigation": normalized in {"prompt", "allow"},
+        "allow_search_context": normalized in {"prompt", "allow"},
+        "hash_only_outbound": True,
+        "fail_closed": True,
+    }
+
+
+def pseudonymous_network_identity(session_like: Any | None, purpose: str = "network") -> str:
+    """Leitet eine kurze, lokale Pseudonym-ID fuer Consent- und Audit-Ereignisse ab."""
+    material = build_hardware_seed(session_like=session_like, purpose=purpose, session_salt="network")
+    return hashlib.sha256(material.encode("utf-8", errors="replace")).hexdigest()[:24].upper()
+
+
 @dataclass(frozen=True)
 class SecuritySession:
     """Beschreibt eine authentifizierte Nutzer-Session."""

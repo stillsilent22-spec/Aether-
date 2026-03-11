@@ -241,6 +241,15 @@ Lokale DNA-Exports tragen den `delta_session_seed` deshalb explizit im Header. D
 
 Der Folgepfad kann optional lokal geschlossen werden: Eine offene Analyse darf Shanway zu einer begrenzten Browser-Kontextsuche veranlassen; die geladene HTML-Seite wird danach wieder lokal als Aether-Zustand analysiert. Dadurch entsteht kein Cloud-Zwang, sondern nur ein eng begrenzter Analyse -> Entscheidung -> Aktion -> Analyse-Kreis.
 
+Erweitert wurde dieser Pfad jetzt auch fuer die Chat-Ebene. Shanway kann in privaten oder Gruppen-Kontexten freie Fragen lokal verdichten und optional einen kurzen Netz-Kontext hinzuziehen. Auch hier gilt:
+
+- keine automatische Freigabe
+- vor jedem Netzschritt expliziter Consent
+- nur Such-/HTML-Kurztexte als Antwortkontext
+- keine Rohdeltas, keine Rasterarrays, keine privaten Verlaufsdaten als Outbound-Payload
+
+Damit bleibt der Chat kein separater KI-Service, sondern ein weiterer Beobachterpfad ueber demselben lokalen Zustand.
+
 ## 12. Verbundenheit unter Governance
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
@@ -252,6 +261,8 @@ Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
 
 Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich nicht-puzzlebar: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
+
+Diese Nicht-Puzzlebarkeit gilt auch fuer den Chat- und Browserpfad: Es gibt keine REST-Schicht, keine OpenAI-kompatible API und keinen verborgenen Cloud-Zwang. Aether bleibt ein eigenstaendiges lokales Paradigma fuer observer-relative Wissensverarbeitung und kein austauschbares Zahnrad in einer zentralisierten AGI-Fabrik.
 
 Damit wird ein enger, aber wichtiger Unterschied festgehalten:
 

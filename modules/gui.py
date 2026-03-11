@@ -40,6 +40,7 @@ from .public_anchor import PublicBlockchainAnchor
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
 from .screen_vision_engine import ScreenVisionEngine
+from .security_engine import network_access_policy, pseudonymous_network_identity
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
@@ -243,6 +244,10 @@ class VeiraGUI:
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_browser_mode", False))
         )
         self.shanway_browser_mode_label_var = tk.StringVar(value="Browser-Liveanalyse aus")
+        self.shanway_network_mode_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_network_mode", False))
+        )
+        self.shanway_network_mode_label_var = tk.StringVar(value="Netz-Kontext aus")
         self.shanway_raster_insight_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_raster_insight", False))
         )
@@ -331,6 +336,9 @@ class VeiraGUI:
         self._vault_line_map: dict[int, dict[str, object]] = {}
         self.shanway_browser_mode_label_var.set(
             "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
+        )
+        self.shanway_network_mode_label_var.set(
+            "Netz-Kontext an" if bool(self.shanway_network_mode_var.get()) else "Netz-Kontext aus"
         )
         self._chain_line_map: dict[int, dict[str, object]] = {}
         self._previous_theremin_anchors: list[AnchorPoint] = []
@@ -1428,6 +1436,12 @@ class VeiraGUI:
         ).pack(side="left")
         ttk.Checkbutton(
             shanway_mode_row,
+            textvariable=self.shanway_network_mode_label_var,
+            variable=self.shanway_network_mode_var,
+            command=self._on_shanway_network_toggle,
+        ).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            shanway_mode_row,
             text="Raster-Einsicht",
             variable=self.shanway_raster_insight_var,
             command=self._on_shanway_raster_toggle,
@@ -1509,6 +1523,16 @@ class VeiraGUI:
         shanway_actions = tk.Frame(shanway_compose_card, bg="#10223F")
         shanway_actions.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(shanway_actions, text="An Shanway senden", command=self._send_private_shanway_message).pack(side="left")
+        ttk.Button(
+            shanway_actions,
+            text="Mit Netz",
+            command=lambda: self._send_private_shanway_message(force_network=True),
+        ).pack(side="left", padx=(6, 0))
+        ttk.Button(
+            shanway_actions,
+            text="Mic",
+            command=lambda: self._start_speech_input(target="shanway"),
+        ).pack(side="left", padx=(6, 0))
         ttk.Button(
             shanway_actions,
             text="Leeren",
@@ -1595,6 +1619,12 @@ class VeiraGUI:
             textvariable=self.shanway_browser_mode_label_var,
             variable=self.shanway_browser_mode_var,
             command=self._on_shanway_browser_toggle,
+        ).pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(
+            chat_mode_row,
+            textvariable=self.shanway_network_mode_label_var,
+            variable=self.shanway_network_mode_var,
+            command=self._on_shanway_network_toggle,
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
@@ -1708,6 +1738,16 @@ class VeiraGUI:
         chat_input_row = tk.Frame(chat_input_card, bg="#10223F")
         chat_input_row.pack(fill="x", padx=10, pady=(0, 10))
         ttk.Button(chat_input_row, text="Senden", command=lambda: self._send_chat_message("chat")).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            chat_input_row,
+            text="Mit Netz",
+            command=lambda: self._send_chat_message("chat", force_network=True),
+        ).pack(side="left", padx=(0, 4))
+        ttk.Button(
+            chat_input_row,
+            text="Mic",
+            command=lambda: self._start_speech_input(target="chat"),
+        ).pack(side="left", padx=(0, 4))
         ttk.Button(chat_input_row, text="Aktualisieren", command=self._refresh_chat_view).pack(side="left", padx=(0, 4))
         ttk.Button(chat_input_row, text="Leeren", command=lambda: self._clear_message_input("chat")).pack(side="left")
 
@@ -1752,6 +1792,12 @@ class VeiraGUI:
             textvariable=self.shanway_browser_mode_label_var,
             variable=self.shanway_browser_mode_var,
             command=self._on_shanway_browser_toggle,
+        ).pack(anchor="w", padx=10, pady=(0, 6))
+        ttk.Checkbutton(
+            self.browser_panel,
+            textvariable=self.shanway_network_mode_label_var,
+            variable=self.shanway_network_mode_var,
+            command=self._on_shanway_network_toggle,
         ).pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(
             self.browser_panel,
@@ -1867,7 +1913,7 @@ class VeiraGUI:
         """Es gibt kein separates Zusatzfenster mehr; der rechte Bereich bleibt eingebettet."""
         self._apply_browser_surface()
 
-    def _send_private_shanway_message(self) -> None:
+    def _send_private_shanway_message(self, force_network: bool = False) -> None:
         """Leitet eine Eingabe direkt in den privaten Shanway-Kanal."""
         self._refresh_chat_channels(selected_channel="private:shanway")
         try:
@@ -1877,7 +1923,160 @@ class VeiraGUI:
                     break
         except Exception:
             pass
-        self._send_chat_message("shanway")
+        self._send_chat_message("shanway", force_network=bool(force_network))
+
+    def _chat_recent_history_excerpt(self, descriptor: dict[str, object] | None, limit: int = 4) -> str:
+        """Verdichtet wenige letzte Chateintraege als Shanway-Kontext fuer die Folgeantwort."""
+        if not descriptor:
+            return ""
+        current_username = str(getattr(self.session_context, "username", "local") or "local")
+        channel_name = str(descriptor.get("channel", "global") or "global")
+        try:
+            messages = list(
+                reversed(
+                    self.registry.get_chat_messages(
+                        limit=max(2, int(limit) * 2),
+                        channel=channel_name,
+                        current_user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+                        current_username=current_username,
+                    )
+                )
+            )
+        except Exception:
+            return ""
+        lines: list[dict[str, str]] = []
+        for item in messages[-max(1, int(limit)):]:
+            message_text = " ".join(str(item.get("message_text", "") or "").split()).strip()
+            reply_text = " ".join(str(item.get("reply_text", "") or "").split()).strip()
+            if message_text:
+                lines.append({"speaker": str(item.get("username", "User") or "User"), "text": message_text})
+            if reply_text:
+                lines.append({"speaker": "Shanway", "text": reply_text})
+        return self.shanway_engine.summarize_chat_history(lines, limit=limit)
+
+    def _browser_search_query_from_text(self, text: str) -> str:
+        """Formt eine knappe Suchanfrage aus Nutzerfrage und aktuellem Dateikontext."""
+        cleaned = " ".join(str(text or "").split()).strip()
+        if not cleaned:
+            return ""
+        query = cleaned[:180]
+        fingerprint = self.current_fingerprint
+        source_label = str(getattr(fingerprint, "source_label", "") or "") if fingerprint is not None else ""
+        file_profile = dict(getattr(fingerprint, "file_profile", {}) or {}) if fingerprint is not None else {}
+        suffix = Path(source_label).suffix.lower().strip()
+        if suffix and suffix not in query.lower():
+            query = f"{query} {suffix} file structure"
+        elif file_profile and str(file_profile.get("category", "") or "").strip() and "file structure" not in query.lower():
+            query = f"{query} {str(file_profile.get('category', '')).strip()} structure"
+        return query[:220].strip()
+
+    def _confirm_network_access(
+        self,
+        reason: str,
+        query: str = "",
+        url: str = "",
+        scope: str = "web_lookup",
+    ) -> bool:
+        """Fragt vor jedem Netzschritt explizit nach Freigabe und loggt die Entscheidung lokal."""
+        policy = network_access_policy("prompt")
+        allowed = False
+        if not bool(policy.get("allow_network", False)):
+            message = (
+                f"Netz nutzen fuer {reason}?\n\n"
+                f"Abfrage: {str(query or '--')[:180]}\n"
+                f"Ziel: {str(url or '--')[:180]}\n\n"
+                "Ohne Freigabe bleibt Shanway rein lokal."
+            )
+            try:
+                allowed = bool(
+                    messagebox.askyesno(
+                        "Netz nutzen?",
+                        message,
+                        parent=self.root,
+                    )
+                )
+            except Exception:
+                allowed = False
+        user_id = int(getattr(self.session_context, "user_id", 0) or 0)
+        if user_id > 0:
+            try:
+                self.registry.save_security_event(
+                    user_id=user_id,
+                    username=str(getattr(self.session_context, "username", "local") or "local"),
+                    event_type="network_consent",
+                    severity="info" if allowed else "warning",
+                    payload={
+                        "scope": str(scope or "web_lookup"),
+                        "reason": str(reason or ""),
+                        "allowed": bool(allowed),
+                        "query_preview": str(query or "")[:120],
+                        "query_hash": hashlib.sha256(str(query or "").encode("utf-8", errors="replace")).hexdigest()[:24],
+                        "url": str(url or "")[:180],
+                        "pseudonym": pseudonymous_network_identity(self.session_context, purpose=str(scope or "web_lookup")),
+                    },
+                )
+            except Exception:
+                pass
+        return bool(allowed)
+
+    def _maybe_fetch_chat_web_context(
+        self,
+        text: str,
+        descriptor: dict[str, object] | None,
+        assessment: ShanwayAssessment,
+        assistant_intent: str = "",
+        force_network: bool = False,
+    ) -> dict[str, object]:
+        """Laedt nach Consent einen kompakten Suchkontext fuer freie Shanway-Fragen."""
+        network_mode = bool(self.shanway_network_mode_var.get())
+        if not force_network and not network_mode:
+            return {}
+        if not force_network and not self.shanway_engine.should_request_web_context(text, assistant_intent=assistant_intent):
+            return {}
+        query = self._browser_search_query_from_text(text)
+        if not query:
+            return {}
+        preview_url = BrowserEngine.build_search_url(query)
+        if not self._confirm_network_access(
+            reason="Shanway-Kontextsuche",
+            query=query,
+            url=preview_url,
+            scope="chat_web_context",
+        ):
+            self.chat_status_var.set("Netzfreigabe abgelehnt | Shanway bleibt lokal")
+            return {
+                "declined": True,
+                "provider": "duckduckgo",
+                "query": query,
+                "url": preview_url,
+            }
+        result = BrowserEngine.fetch_search_context(query, provider="duckduckgo")
+        if bool(result.get("ok", False)):
+            try:
+                if bool(self.shanway_browser_mode_var.get()) or bool(self.browser_dock_var.get()) or self._browser_tab_active():
+                    if self._ensure_browser_running():
+                        self.browser_engine.navigate(str(result.get("search_url", preview_url) or preview_url))
+                        self.browser_url_var.set(str(result.get("search_url", preview_url) or preview_url))
+            except Exception:
+                pass
+            summary = str(result.get("summary", "") or "")
+            self.chat_status_var.set("Netzkontext geladen | DuckDuckGo | lokal verdichtet")
+            self.browser_status_var.set("Netzkontext geladen | Shanway bleibt lokal, nur Suchtext wurde verdichtet.")
+            self.loading_var.set(f"Netzkontext aktiv: {query[:72]}")
+            return {
+                "ok": True,
+                "provider": str(result.get("provider", "duckduckgo") or "duckduckgo"),
+                "query": str(result.get("query", query) or query),
+                "url": str(result.get("search_url", preview_url) or preview_url),
+                "summary": summary,
+                "channel": str(descriptor.get("channel", "global") if descriptor else "global"),
+                "classification": str(getattr(assessment, "classification", "") or ""),
+            }
+        self.chat_status_var.set("Netzkontext fehlgeschlagen | Shanway bleibt lokal")
+        self.browser_status_var.set(
+            f"Netzkontext fehlgeschlagen: {str(result.get('error', 'unbekannter Fehler') or 'unbekannter Fehler')}"
+        )
+        return dict(result)
 
     def _current_right_tab_label(self) -> str:
         """Liefert das Label des aktuell aktiven rechten Tabs."""
@@ -2105,28 +2304,62 @@ class VeiraGUI:
 
     def _browser_navigate(self) -> None:
         """Navigiert den getrennten Browser ohne Analysepfad."""
+        target_url = str(self.browser_url_var.get() or "").strip()
+        if not target_url:
+            return
+        if not self._confirm_network_access(
+            reason="manuelle Browser-Navigation",
+            url=target_url,
+            scope="browser_navigation",
+        ):
+            self.browser_status_var.set("Browser-Navigation abgelehnt | Netzwerk bleibt gesperrt")
+            return
         if not self._ensure_browser_running():
             return
         self.browser_ct_var.set("C(t): --")
         self.browser_d_var.set("D: --")
         self.browser_recon_var.set("RECON: ✗")
         self.browser_status_var.set("Seite wird geladen. Browser bleibt rein visuell.")
-        self.browser_engine.navigate(self.browser_url_var.get())
+        self.browser_engine.navigate(target_url)
 
     def _browser_back(self) -> None:
         """Geht im getrennten Browser zurueck."""
+        current_url = str(self.browser_url_var.get() or "").strip()
+        if current_url and not self._confirm_network_access(
+            reason="Browser zurueck",
+            url=current_url,
+            scope="browser_back",
+        ):
+            self.browser_status_var.set("Browser-Zurueck abgelehnt | Netzwerk bleibt gesperrt")
+            return
         if not self._ensure_browser_running():
             return
         self.browser_engine.back()
 
     def _browser_forward(self) -> None:
         """Geht im getrennten Browser vor."""
+        current_url = str(self.browser_url_var.get() or "").strip()
+        if current_url and not self._confirm_network_access(
+            reason="Browser vor",
+            url=current_url,
+            scope="browser_forward",
+        ):
+            self.browser_status_var.set("Browser-Vor abgelehnt | Netzwerk bleibt gesperrt")
+            return
         if not self._ensure_browser_running():
             return
         self.browser_engine.forward()
 
     def _browser_reload(self) -> None:
         """Laedt den getrennten Browser neu."""
+        current_url = str(self.browser_url_var.get() or "").strip()
+        if current_url and not self._confirm_network_access(
+            reason="Browser-Reload",
+            url=current_url,
+            scope="browser_reload",
+        ):
+            self.browser_status_var.set("Browser-Reload abgelehnt | Netzwerk bleibt gesperrt")
+            return
         if not self._ensure_browser_running():
             return
         self.browser_engine.reload()
@@ -2140,6 +2373,13 @@ class VeiraGUI:
         if "://" not in url:
             url = f"https://{url}"
             self.browser_url_var.set(url)
+        if not self._confirm_network_access(
+            reason="externen Systembrowser oeffnen",
+            url=url,
+            scope="browser_external",
+        ):
+            self.browser_status_var.set("Externes Oeffnen abgelehnt | Netzwerk bleibt gesperrt")
+            return
         try:
             webbrowser.open(url)
             self.browser_status_var.set("Seite im klassischen Systembrowser geoeffnet. Shanway bleibt lokal isoliert.")
@@ -2398,6 +2638,15 @@ class VeiraGUI:
         query = str(action_payload.get("query", "") or "").strip()
         if not query:
             return
+        target_url = BrowserEngine.build_search_url(query)
+        if not self._confirm_network_access(
+            reason="Shanway-Folgeanalyse fuer Datei",
+            query=query,
+            url=target_url,
+            scope="browser_followup_file",
+        ):
+            self.browser_status_var.set("Shanway-Folgeanalyse abgelehnt | Netzwerk bleibt gesperrt")
+            return
         url = self.browser_engine.search(query)
         self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
         self._browser_followup_source_key = str(directive.loop_source)
@@ -2430,6 +2679,16 @@ class VeiraGUI:
         query = str(action_payload.get("query", "") or "").strip()
         if not query:
             self._browser_followup_source_key = ""
+            return
+        target_url = BrowserEngine.build_search_url(query)
+        if not self._confirm_network_access(
+            reason=f"rekursiver Browser-Kontextlauf {directive.loop_iteration}",
+            query=query,
+            url=target_url,
+            scope="browser_followup_recursive",
+        ):
+            self._browser_followup_source_key = ""
+            self.browser_status_var.set("Rekursiver Browser-Kontextlauf abgelehnt | Netzwerk bleibt gesperrt")
             return
         url = self.browser_engine.search(query)
         self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
@@ -2808,6 +3067,7 @@ class VeiraGUI:
                 {
                     "shanway_enabled": bool(self.shanway_enabled_var.get()),
                     "shanway_browser_mode": bool(self.shanway_browser_mode_var.get()),
+                    "shanway_network_mode": bool(self.shanway_network_mode_var.get()),
                     "shanway_raster_insight": bool(self.shanway_raster_insight_var.get()),
                 },
             )
@@ -2829,6 +3089,12 @@ class VeiraGUI:
             "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
         )
 
+    def _set_shanway_network_mode_label(self) -> None:
+        """Haelt den Netz-Kontext-Schalter textlich konsistent."""
+        self.shanway_network_mode_label_var.set(
+            "Netz-Kontext an" if bool(self.shanway_network_mode_var.get()) else "Netz-Kontext aus"
+        )
+
     def _on_shanway_browser_toggle(self) -> None:
         """Aktiviert einen begrenzten lokalen Browser-Folgepfad fuer offene Shanway-Befunde."""
         enabled = bool(self.shanway_browser_mode_var.get())
@@ -2843,6 +3109,16 @@ class VeiraGUI:
         else:
             self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Shanway bleibt lokal ohne Web-Folgeschritt.")
             self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse aus")
+
+    def _on_shanway_network_toggle(self) -> None:
+        """Aktiviert oder deaktiviert optionale Netz-Kontexte fuer Shanway-Antworten."""
+        enabled = bool(self.shanway_network_mode_var.get())
+        self._set_shanway_network_mode_label()
+        self._persist_shanway_preferences()
+        if enabled:
+            self.chat_status_var.set("Shanway darf nach Consent optional Netz-Kontext nutzen.")
+        else:
+            self.chat_status_var.set("Shanway bleibt fuer Antworten rein lokal ohne Netz-Kontext.")
 
     def _on_shanway_raster_toggle(self) -> None:
         """Aktualisiert die optionale Raster-Einsicht fuer Shanway."""
@@ -3407,7 +3683,7 @@ class VeiraGUI:
             "tx_hash": str(receipt.get("tx_hash", "")) if isinstance(receipt, dict) else "",
         }
 
-    def _send_chat_message(self, source: str = "auto") -> None:
+    def _send_chat_message(self, source: str = "auto", force_network: bool = False) -> None:
         """Analysiert eine lokale Chatnachricht und laesst Shanway deterministisch antworten."""
         text = self._message_input_text(source)
         if not text:
@@ -3462,12 +3738,12 @@ class VeiraGUI:
                 source_type = "chat_private"
                 source_label = f"chat://private/{current_username}/{partner_name}"
             elif kind == "group":
-                should_reply = bool(descriptor.get("shanway_enabled", False)) and mention_requested
+                should_reply = bool(descriptor.get("shanway_enabled", False)) and (mention_requested or bool(force_network))
                 persist_public_analysis = False
                 source_type = "chat_group"
                 source_label = f"chat://group/{group_id}/{current_username}"
             else:
-                should_reply = bool(self.shanway_enabled_var.get()) or mention_requested
+                should_reply = bool(self.shanway_enabled_var.get()) or mention_requested or bool(force_network)
 
             if kind == "group":
                 self.registry.register_group_consensus_vote(
@@ -3489,6 +3765,8 @@ class VeiraGUI:
             shanway_self_assessment: ShanwayAssessment | None = None
             self_learned_tokens = 0
             detector_dna_path = ""
+            history_excerpt = self._chat_recent_history_excerpt(descriptor)
+            web_context: dict[str, object] = {}
 
             if should_reply:
                 assistant_context = self._assistant_context_for()
@@ -3560,10 +3838,25 @@ class VeiraGUI:
                 )
                 beauty_d = float(shanway_assessment.noether_symmetry)
                 anchors = list(assistant_context.ae_anchor_details or [])
+                web_context = self._maybe_fetch_chat_web_context(
+                    text,
+                    descriptor,
+                    shanway_assessment,
+                    assistant_intent=str(getattr(assistant_response, "intent", "") or ""),
+                    force_network=bool(force_network),
+                )
+                partner_text = self.shanway_engine.compose_chat_partner_reply(
+                    text,
+                    shanway_assessment,
+                    assistant_text=assistant_response.text,
+                    history_excerpt=history_excerpt,
+                    web_context=web_context,
+                    channel_kind=kind,
+                )
 
                 full_reply = self.shanway_engine.render_response(
                     shanway_assessment,
-                    assistant_text=assistant_response.text,
+                    assistant_text=partner_text,
                 )
 
                 if kind == "private_shanway" and shanway_assessment.classification != "toxic":
@@ -3671,6 +3964,8 @@ class VeiraGUI:
                 if shanway_assessment is not None:
                     payload["shanway_assessment"] = shanway_assessment.to_payload()
                     payload["shanway_detector_dna"] = ""
+                if web_context:
+                    payload["web_context"] = dict(web_context)
                 if self.current_fingerprint is not None:
                     payload["screen_vision"] = dict(getattr(self.current_fingerprint, "screen_vision_payload", {}) or {})
                     payload["file_profile"] = dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
@@ -8052,32 +8347,66 @@ class VeiraGUI:
             f"(Samples: {profile['samples']}, Anomalierate: {profile['anomaly_rate']:.2%})"
         )
 
-    def _start_speech_input(self) -> None:
-        """Startet die Spracherkennung asynchron."""
+    @staticmethod
+    def _append_text_widget(widget: tk.Text | None, text: str) -> None:
+        """Fuegt Text robust an eine Chat-/Shanway-Eingabe an."""
+        if widget is None:
+            return
+        fragment = str(text or "").strip()
+        if not fragment:
+            return
+        try:
+            current = widget.get("1.0", tk.END).strip()
+        except Exception:
+            current = ""
+        try:
+            if current:
+                widget.insert(tk.END, ("\n" if not current.endswith("\n") else "") + fragment)
+            else:
+                widget.insert("1.0", fragment)
+        except Exception:
+            return
+
+    def _start_speech_input(self, target: str = "path") -> None:
+        """Startet die Spracherkennung asynchron fuer Pfad-, Chat- oder Shanway-Eingabe."""
         if sr is None:
             self.loading_var.set("Spracherkennung nicht verfuegbar. Manuellen Pfad verwenden.")
             return
         if self.speech_thread is not None and self.speech_thread.is_alive():
             self.loading_var.set("Spracherkennung laeuft bereits.")
             return
-        self.loading_var.set("Spracherkennung aktiv ...")
-        self.speech_thread = threading.Thread(target=self._speech_worker, daemon=True)
+        target_label = {
+            "path": "Dateipfad",
+            "chat": "Chat",
+            "shanway": "Shanway",
+        }.get(str(target or "path"), "Eingabe")
+        self.loading_var.set(f"Spracherkennung aktiv fuer {target_label} ...")
+        self.speech_thread = threading.Thread(target=self._speech_worker, args=(str(target or "path"),), daemon=True)
         self.speech_thread.start()
 
-    def _speech_worker(self) -> None:
-        """Nimmt Sprache auf und wandelt sie in einen Dateipfad um."""
+    def _speech_worker(self, target: str = "path") -> None:
+        """Nimmt Sprache auf und uebergibt sie an den gewaehlten Zielpfad."""
         try:
             recognizer = sr.Recognizer()
             with sr.Microphone() as source:
                 recognizer.adjust_for_ambient_noise(source, duration=0.4)
                 audio = recognizer.listen(source, timeout=5, phrase_time_limit=7)
             text = recognizer.recognize_google(audio, language="de-DE").strip()
-            self.root.after(0, lambda: self._apply_speech_text(text))
+            self.root.after(0, lambda: self._apply_speech_text(text, target=target))
         except Exception:
             self.root.after(0, lambda: self.loading_var.set("Spracherkennung momentan nicht verfuegbar."))
 
-    def _apply_speech_text(self, text: str) -> None:
-        """Uebernimmt erkannten Text in das Pfadfeld und startet ggf. die Analyse."""
+    def _apply_speech_text(self, text: str, target: str = "path") -> None:
+        """Uebernimmt erkannten Text je nach Ziel in Pfad-, Chat- oder Shanway-Eingabe."""
+        normalized_target = str(target or "path").strip().lower()
+        if normalized_target == "chat":
+            self._append_text_widget(getattr(self, "chat_compose_text", None), text)
+            self.loading_var.set("Spracheingabe in den Chat uebernommen.")
+            return
+        if normalized_target == "shanway":
+            self._append_text_widget(getattr(self, "shanway_input_text", None), text)
+            self.loading_var.set("Spracheingabe in Shanway uebernommen.")
+            return
         self.path_var.set(text)
         if Path(text).is_file():
             self._start_analysis(text)

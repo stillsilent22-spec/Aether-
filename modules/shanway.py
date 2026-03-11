@@ -791,6 +791,125 @@ class ShanwayEngine:
             return "Mehr Audiodateien mit klaren Spektralboegen einspeisen"
         return "Weitere strukturverwandte Dateien einspeisen"
 
+    def should_request_web_context(
+        self,
+        user_text: str,
+        assistant_intent: str = "",
+    ) -> bool:
+        """Leitet ab, ob eine freie Nutzerfrage von einem optionalen Web-Kontext profitieren wuerde."""
+        lowered = _normalize_text(user_text)
+        if not lowered:
+            return False
+        if str(assistant_intent or "").strip().lower() == "browser":
+            return True
+        if any(
+            marker in lowered
+            for marker in (
+                "was ist",
+                "wer ist",
+                "wie funktioniert",
+                "erklaer",
+                "erklaere",
+                "definition",
+                "aktuell",
+                "heute",
+                "neueste",
+                "quelle",
+                "quelle?",
+                "website",
+                "such",
+                "recherche",
+                "agi",
+            )
+        ):
+            return True
+        tokens = [token for token in re.findall(r"[0-9a-zA-Z_+-]+", lowered) if token]
+        return "?" in str(user_text or "") and len(tokens) >= 4
+
+    @staticmethod
+    def summarize_chat_history(history_lines: list[dict[str, Any]] | list[str] | None, limit: int = 3) -> str:
+        """Verdichtet wenige letzte Chateintraege zu einem knappen Erinnerungshinweis."""
+        if not history_lines:
+            return ""
+        parts: list[str] = []
+        for item in list(history_lines or [])[-max(1, int(limit)):]:
+            if isinstance(item, dict):
+                speaker = str(item.get("speaker", item.get("username", "Unbekannt")) or "Unbekannt")
+                message = str(item.get("text", item.get("message_text", "")) or "").strip()
+            else:
+                speaker = "Verlauf"
+                message = str(item or "").strip()
+            if not message:
+                continue
+            compact = " ".join(message.split())
+            if len(compact) > 120:
+                compact = compact[:117].rsplit(" ", 1)[0].strip() + "..."
+            parts.append(f"{speaker}: {compact}")
+        return " | ".join(parts[: max(1, int(limit))])
+
+    @staticmethod
+    def _conversation_fallback(user_text: str, assessment: ShanwayAssessment) -> str:
+        """Liefert eine kurze, lokale Shanway-Antwort fuer freie Fragen ohne Web-Kontext."""
+        lowered = _normalize_text(user_text)
+        if "agi" in lowered:
+            return (
+                "AGI lese ich hier nicht als Produkt, sondern als geschlossenen lokalen Kreis "
+                "aus Analyse, Reflexion, Entscheidung und erneuter Analyse."
+            )
+        if "aether" in lowered:
+            return (
+                "Aether bleibt ein lokales Beobachtungs- und Rekonstruktionssystem: "
+                "kein Cloud-Dienst, kein LLM-Frontend, sondern ein struktureller Interpreter."
+            )
+        if "browser" in lowered or "web" in lowered or "netz" in lowered:
+            return (
+                "Ich kann optional Netz-Kontext hinzuziehen, bleibe aber ohne explizite Freigabe "
+                "rein lokal und fail-closed."
+            )
+        if assessment.file_type:
+            return (
+                f"Ich kann die Frage aktuell nur aus der lokalen Struktur von {assessment.file_type} beantworten; "
+                "fuer mehr Kontext brauche ich entweder Verlauf oder explizite Netzfreigabe."
+            )
+        return "Ich bleibe lokal, strukturell und ehrlich: Ohne weiteren Kontext verdichte ich nur das, was bereits im Feld liegt."
+
+    def compose_chat_partner_reply(
+        self,
+        user_text: str,
+        assessment: ShanwayAssessment,
+        assistant_text: str = "",
+        history_excerpt: str = "",
+        web_context: dict[str, Any] | None = None,
+        channel_kind: str = "public",
+    ) -> str:
+        """Formt eine lesbare Shanway-Partnerantwort aus Verlauf, Struktur und optionalem Web-Kontext."""
+        parts: list[str] = []
+        cleaned_assistant = " ".join(str(assistant_text or "").split()).strip()
+        if history_excerpt:
+            parts.append(f"Kontext gehalten: {history_excerpt}.")
+        if cleaned_assistant and cleaned_assistant != "Ich habe noch kein Muster dafÃ¼r gesehen. Zeig es mir.":
+            parts.append(cleaned_assistant)
+        else:
+            parts.append(self._conversation_fallback(user_text, assessment))
+        web_box = dict(web_context or {})
+        if web_box:
+            if bool(web_box.get("ok", False)):
+                provider = str(web_box.get("provider", "web") or "web")
+                summary = " ".join(str(web_box.get("summary", "") or "").split()).strip()
+                if len(summary) > 320:
+                    summary = summary[:317].rsplit(" ", 1)[0].strip() + "..."
+                if summary:
+                    parts.append(f"Netzkontext ({provider}): {summary}")
+            elif bool(web_box.get("declined", False)):
+                parts.append("Netzkontext wurde nicht freigegeben; ich bleibe fuer diese Antwort lokal.")
+            elif str(web_box.get("error", "") or "").strip():
+                parts.append(f"Netzkontext fehlgeschlagen: {str(web_box.get('error', '')).strip()}")
+        if str(getattr(assessment, "learned_insight", "") or "").strip():
+            parts.append(f"Gelernte Insight: {str(assessment.learned_insight).strip()}")
+        if str(channel_kind or "").strip().lower() == "group":
+            parts.append("Gruppenkontext bleibt lokal konsensbasiert und wird nicht extern geteilt.")
+        return " ".join(part.strip() for part in parts if str(part).strip())
+
     def _build_emergence_layers(
         self,
         state: dict[str, Any],

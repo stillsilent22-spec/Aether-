@@ -364,6 +364,77 @@ def test_agent_loop_plans_browser_followup_for_open_state() -> None:
     assert int(second.loop_iteration) <= 2
 
 
+def test_browser_engine_fetch_search_context_is_parsed_without_real_network() -> None:
+    """Die Suchkontext-Verdichtung soll mit stubbed Download robust funktionieren."""
+    original = BrowserEngine._download_text
+
+    def _fake_download(_url: str, timeout: float = 6.0) -> str:
+        return """
+        <html>
+          <body>
+            <main>
+              <h1>Artificial general intelligence</h1>
+              <p>AGI beschreibt ein System, das mehrere Aufgabenbereiche flexibel bearbeiten kann.</p>
+              <p>Aether bleibt lokal, observer-relativ und fail-closed.</p>
+            </main>
+          </body>
+        </html>
+        """
+
+    BrowserEngine._download_text = staticmethod(_fake_download)
+    try:
+        result = BrowserEngine.fetch_search_context("Was ist AGI?", provider="duckduckgo")
+    finally:
+        BrowserEngine._download_text = original
+
+    assert bool(result.get("ok", False)) is True
+    assert "Artificial general intelligence" in str(result.get("summary", ""))
+    assert str(result.get("search_url", "")).startswith("https://")
+
+
+def test_shanway_partner_reply_includes_history_and_web_context() -> None:
+    """Shanway soll lokalen Verlauf und optionalen Netzkontext lesbar zusammenziehen."""
+    engine = ShanwayEngine()
+    assessment = engine.detect_asymmetry(
+        "Was ist AGI?",
+        coherence_score=91.0,
+        browser_mode=False,
+        active=True,
+        h_lambda=1.1,
+        observer_mutual_info=2.4,
+        source_label="chat://private/local/shanway",
+        observer_knowledge_ratio=0.93,
+        history_factor=4.0,
+        fingerprint_payload={
+            "reconstruction_verification": {
+                "verified": True,
+                "byte_match": True,
+                "size_match": True,
+                "compression_ratio": 1.0,
+                "anchor_coverage_ratio": 0.91,
+                "unresolved_residual_ratio": 0.04,
+            },
+            "verdict_reconstruction": "CONFIRMED",
+        },
+    )
+    reply = engine.compose_chat_partner_reply(
+        "Was ist AGI?",
+        assessment,
+        assistant_text="AGI lese ich hier als lokalen Analyse- und Reflexionskreis.",
+        history_excerpt="Du: Erklaere Aether | Shanway: Aether bleibt lokal und strukturell.",
+        web_context={
+            "ok": True,
+            "provider": "duckduckgo",
+            "summary": "AGI bezeichnet ein allgemeineres, flexibel lernendes System; Aether bleibt dabei bewusst lokal.",
+        },
+        channel_kind="private_shanway",
+    )
+
+    assert "Kontext gehalten:" in reply
+    assert "Netzkontext (duckduckgo):" in reply
+    assert "AGI lese ich hier" in reply
+
+
 def main() -> None:
     """Fuehrt beide Smoke-Varianten direkt ohne pytest-Runner aus."""
     success = run_roundtrip_smoke_test()
@@ -371,6 +442,8 @@ def main() -> None:
     test_lossless_roundtrip_with_recursive_raster_reflection()
     test_ttd_auto_export_writes_dna_seed_and_jsonl()
     test_agent_loop_plans_browser_followup_for_open_state()
+    test_browser_engine_fetch_search_context_is_parsed_without_real_network()
+    test_shanway_partner_reply_includes_history_and_web_context()
     gain = max(
         0.0,
         min(
@@ -391,6 +464,8 @@ def main() -> None:
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
     print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
     print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
+    print("Browser-Kontext: stubbed DuckDuckGo-Verdichtung lokal verifiziert")
+    print("Chat-Partner: Verlauf und Netzkontext lokal verifiziert")
 
 
 if __name__ == "__main__":
