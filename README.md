@@ -553,6 +553,8 @@ Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der
 - Anker des lokalen Admin-Erstellers gelten sofort als vertrauenswuerdig und duerfen direkt in globales Lernen einfliessen
 - interne Self-Reflection-Deltas bleiben ohne explizite Vollfreigabe lokal
 - importierte oeffentliche Anker fliessen nur lokal in den Observer-Lernzustand ein
+- optionaler echter Netztransport laeuft ueber einen lokalen IPFS-Knoten oder explizit konfigurierte HTTP-Mirror-URLs
+- ohne konfigurierte Transportziele bleibt der Pool strikt lokal und fail-closed
 
 Shanway kann dadurch sagen:
 

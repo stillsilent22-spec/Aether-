@@ -263,6 +263,7 @@ Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 - Anker des lokalen Admin-Erstellers gelten sofort als vertrauenswuerdig
 - interne Self-Reflection-Deltas bleiben `internal_only`
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
+- optionaler echter Transport erfolgt nur ueber einen lokalen IPFS-HTTP-Knoten oder explizit konfigurierte Mirror-URLs
 
 Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich nicht-puzzlebar: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
 

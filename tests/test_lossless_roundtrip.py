@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import http.server
 import json
 import shutil
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from modules.agent_loop import AgentLoopEngine
 from modules.analysis_engine import AnalysisEngine
 from modules.browser_engine import BrowserEngine
 from modules.observer_engine import ObserverEngine
+from modules.public_ttd_transport import PublicTTDTransport
 from modules.reconstruction_engine import LosslessReconstructionEngine
 from modules.session_engine import SessionContext
 from modules.shanway import ShanwayEngine
@@ -496,6 +499,119 @@ def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
     shutil.rmtree(temp_public_root, ignore_errors=True)
 
 
+def test_public_ttd_transport_http_mirror_roundtrip() -> None:
+    """Der optionale Mirror-Transport muss ein Public-TTD-Bundle ueber HTTP senden und wieder einlesen koennen."""
+    temp_network_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_transport"
+    shutil.rmtree(temp_network_root, ignore_errors=True)
+    temp_network_root.mkdir(parents=True, exist_ok=True)
+
+    context = SessionContext(seed=919191)
+    context.user_role = "admin"
+    context.username = "creator"
+    engine = AnalysisEngine(context)
+    fingerprint = engine.analyze_bytes(
+        _sample_bytes(),
+        source_label="tests::public_ttd_transport",
+        source_type="memory",
+    )
+    augmentor = AetherAugmentor(context, registry=None)
+    observer = ObserverEngine()
+    observer.learning_store_dir = temp_network_root / "observer_learning"
+    transport = PublicTTDTransport(temp_network_root / "network_settings.json")
+
+    reflection_payload = {
+        "residual_after": 0.01,
+        "stability_score": 0.99,
+        "recursive_reflections": [
+            {"level": 1, "delta": 0.04, "mt_shift": 0.30, "residual_before": 0.03, "residual_after": 0.02},
+            {"level": 2, "delta": 0.03, "mt_shift": 0.24, "residual_before": 0.02, "residual_after": 0.01},
+            {"level": 3, "delta": 0.02, "mt_shift": 0.18, "residual_before": 0.01, "residual_after": 0.01},
+        ],
+        "ttd_candidates": [
+            {
+                "hash": hashlib.sha256(b"http-mirror-ttd-anchor").hexdigest(),
+                "delta_stability": 0.99,
+                "symmetry": 0.95,
+                "residual": 0.01,
+                "public_metrics": {
+                    "residual": 0.01,
+                    "symmetry": 0.95,
+                    "i_obs_ratio": 0.96,
+                    "delta_i_obs_percent": 1.4,
+                },
+            }
+        ],
+    }
+    bundle = augmentor.build_public_ttd_anchor_bundle(
+        source_label="tests::public_ttd_transport",
+        reflection_payload=reflection_payload,
+        fingerprint=fingerprint,
+        scope="signed",
+    )
+
+    class _MirrorHandler(http.server.BaseHTTPRequestHandler):
+        posted_bundle: dict[str, Any] = {}
+
+        def do_POST(self) -> None:  # noqa: N802
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            raw = self.rfile.read(length)
+            _MirrorHandler.posted_bundle = json.loads(raw.decode("utf-8"))
+            payload = json.dumps({"ok": True, "received": True}).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def do_GET(self) -> None:  # noqa: N802
+            payload = json.dumps(_MirrorHandler.posted_bundle).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, format: str, *args: object) -> None:  # noqa: A003
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _MirrorHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    transport.save_settings(
+        {
+            "enabled": True,
+            "ipfs_api_url": "",
+            "ipfs_gateway_urls": "",
+            "mirror_publish_url": f"{base_url}/publish",
+            "mirror_pull_urls": f"{base_url}/latest",
+            "tracked_cids": "",
+            "timeout_seconds": "5",
+        }
+    )
+
+    published = transport.publish_bundle(bundle)
+    assert bool(published.get("published", False)) is True
+    assert bool(dict(published.get("mirror", {}) or {}).get("ok", False)) is True
+    assert dict(_MirrorHandler.posted_bundle).get("payload")
+
+    pulled = transport.pull_remote_bundles()
+    assert bool(pulled.get("network_used", False)) is True
+    assert len(list(pulled.get("remote_bundles", []) or [])) >= 1
+    for remote_payload in list(pulled.get("remote_bundles", []) or []):
+        stored = augmentor.append_public_ttd_anchor_bundle(remote_payload, directory=str(temp_network_root / "pool"))
+        assert bool(stored.get("stored", False)) or bool(stored.get("already_present", False))
+    summary = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_network_root / "pool"))
+    assert int(summary.get("trusted_anchor_count", 0) or 0) == 1
+    learning_result = observer.merge_public_anchor_bundle(context, summary)
+    assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
+    assert "Admin-Anker direkt vertrauenswuerdig" in str(learning_result.get("current_insight", "") or "")
+
+    server.shutdown()
+    server.server_close()
+    shutil.rmtree(temp_network_root, ignore_errors=True)
+
+
 def test_agent_loop_plans_browser_followup_for_open_state() -> None:
     """Offene Shanway-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
     loop = AgentLoopEngine()
@@ -621,6 +737,7 @@ def main() -> None:
     test_ttd_auto_export_writes_dna_seed_and_jsonl()
     test_public_ttd_pool_requires_three_peer_validations_for_operator()
     test_public_ttd_pool_admin_anchor_is_trusted_immediately()
+    test_public_ttd_transport_http_mirror_roundtrip()
     test_agent_loop_plans_browser_followup_for_open_state()
     test_browser_engine_fetch_search_context_is_parsed_without_real_network()
     test_shanway_partner_reply_includes_history_and_web_context()
@@ -644,6 +761,7 @@ def main() -> None:
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
     print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
     print("Public TTD Pool: Peer-Quorum und Admin-Autotrust lokal verifiziert")
+    print("Public TTD Transport: HTTP-Mirror lokal verifiziert")
     print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
     print("Browser-Kontext: stubbed DuckDuckGo-Verdichtung lokal verifiziert")
     print("Chat-Partner: Verlauf und Netzkontext lokal verifiziert")

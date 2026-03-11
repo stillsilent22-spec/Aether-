@@ -38,6 +38,7 @@ from .graph_engine import GraphFieldEngine, GraphFieldSnapshot
 from .log_system import LogSystem
 from .observer_engine import AnchorPoint, ObserverEngine
 from .public_anchor import PublicBlockchainAnchor
+from .public_ttd_transport import PublicTTDTransport
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
 from .screen_vision_engine import ScreenVisionEngine
@@ -105,6 +106,7 @@ class VeiraGUI:
         self.chat_sync_client = ChatSyncClient()
         self.chat_relay_server = ChatRelayServer(str(Path("data") / "chat_relay_events.jsonl"))
         self.public_anchor = PublicBlockchainAnchor(str(Path("data") / "public_anchor_settings.json"))
+        self.public_ttd_transport = PublicTTDTransport()
         self.symbol_grounding = SymbolGroundingLayer(str(Path("data") / "symbol_grounding.json"))
         self.language_engine = EvolvedLanguageEngine(str(Path("data") / "evolved_language.json"), session_context.seed)
         self.storage_gp_engine = DualModeStorageEngine(session_context.seed)
@@ -253,6 +255,7 @@ class VeiraGUI:
         self.shanway_sensitive_var = tk.StringVar(value="Shanway Guard: bereit")
         self.peer_delta_status_var = tk.StringVar(value="Peer-Delta: lokal | keine Freigabe")
         self.public_ttd_status_var = tk.StringVar(value="TTD-Pool: lokal | keine oeffentliche Freigabe")
+        self.public_ttd_network_status_var = tk.StringVar(value="TTD-Netz: aus")
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
         )
@@ -397,6 +400,7 @@ class VeiraGUI:
         self.root.after(1200, self._bootstrap_public_anchor_cycle)
         self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
         self.root.after(2200, lambda: self._sync_local_public_ttd_pool(silent=True))
+        self.root.after(2600, lambda: self._sync_remote_public_ttd_pool(silent=True))
 
     @staticmethod
     def _ae_anchor_preview(anchors: list[dict[str, object]], limit: int = 3) -> str:
@@ -1463,6 +1467,8 @@ class VeiraGUI:
         ttk.Button(shanway_share_row, text="Peer-Delta import", command=self._import_self_reflection_bundle_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(shanway_share_row, text="TTD teilen", command=self._share_current_ttd_anchor_dialog).pack(side="left", padx=(6, 0))
         ttk.Button(shanway_share_row, text="TTD lernen", command=self._sync_local_public_ttd_pool).pack(side="left", padx=(6, 0))
+        ttk.Button(shanway_share_row, text="TTD Netz", command=self._open_public_ttd_network_settings).pack(side="left", padx=(6, 0))
+        ttk.Button(shanway_share_row, text="TTD Sync Netz", command=self._sync_remote_public_ttd_pool).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(
             shanway_share_row,
             text="TTD auto teilen",
@@ -1471,6 +1477,7 @@ class VeiraGUI:
         ).pack(side="left", padx=(8, 0))
         tk.Label(shanway_share_row, textvariable=self.peer_delta_status_var, bg="#0D1930", fg="#8FD6FF", font=("Consolas", 8, "bold")).pack(side="right")
         tk.Label(shanway_tab, textvariable=self.public_ttd_status_var, bg="#0D1930", fg="#9CB0CC", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
+        tk.Label(shanway_tab, textvariable=self.public_ttd_network_status_var, bg="#0D1930", fg="#7FD8A7", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
         shanway_status_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         shanway_status_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(shanway_status_card, textvariable=self.shanway_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
@@ -3359,12 +3366,37 @@ class VeiraGUI:
                 )
             except Exception:
                 pass
+            network_result = {"published": False, "network_used": False, "reason": "local_only"}
+            if self.session_context.security_allows("allow_public_anchor", True):
+                network_result = self.public_ttd_transport.publish_bundle(bundle)
+            if bool(network_result.get("network_used", False)):
+                ipfs = dict(network_result.get("ipfs", {}) or {})
+                mirror = dict(network_result.get("mirror", {}) or {})
+                status_parts = ["TTD-Netz:"]
+                if bool(ipfs.get("ok", False)):
+                    status_parts.append(f"IPFS {str(ipfs.get('cid', ''))[:16]}...")
+                elif ipfs:
+                    status_parts.append(f"IPFS Fehler {str(ipfs.get('error', ''))}")
+                if bool(mirror.get("ok", False)):
+                    status_parts.append("Mirror OK")
+                elif mirror:
+                    status_parts.append(f"Mirror Fehler {str(mirror.get('error', ''))}")
+                self.public_ttd_network_status_var.set(" | ".join(status_parts))
+            else:
+                reason = str(network_result.get("reason", "lokal_only") or "lokal_only")
+                if reason == "network_disabled":
+                    self.public_ttd_network_status_var.set("TTD-Netz: deaktiviert")
+                elif reason == "no_transport_configured":
+                    self.public_ttd_network_status_var.set("TTD-Netz: kein IPFS/Mirror konfiguriert")
+                else:
+                    self.public_ttd_network_status_var.set("TTD-Netz: lokal only")
             self._sync_local_public_ttd_pool(silent=True)
             return {
                 "shared": True,
                 "scope": scope,
                 "ttd_hash": str(bundle_payload.get("ttd_hash", "") or ""),
                 "stored": dict(stored),
+                "network": dict(network_result),
             }
         if bool(stored.get("already_present", False)):
             self.public_ttd_status_var.set(f"TTD-Pool: bereits vorhanden | {status_hash}...")
@@ -3438,6 +3470,115 @@ class VeiraGUI:
                 f"Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
             )
         return learning_result
+
+    @staticmethod
+    def _iter_remote_public_ttd_envelopes(payload: dict[str, Any] | None) -> list[dict[str, Any]]:
+        """Normalisiert entfernte Transport-Payloads auf einzelne TTD-Envelope-Objekte."""
+        root = dict(payload or {})
+        envelopes: list[dict[str, Any]] = []
+        if root.get("payload") and root.get("payload_hash"):
+            envelopes.append(root)
+        for item in list(root.get("bundles", []) or []):
+            if isinstance(item, dict) and item.get("payload") and item.get("payload_hash"):
+                envelopes.append(dict(item))
+        return envelopes
+
+    def _open_public_ttd_network_settings(self) -> None:
+        """Oeffnet eine kleine lokale Konfiguration fuer Public-TTD-Netztransport."""
+        settings = self.public_ttd_transport.load_settings()
+        dialog = tk.Toplevel(self.root)
+        dialog.title("TTD-Netzwerk")
+        dialog.configure(bg="#0D1930")
+        dialog.transient(self.root)
+        dialog.grab_set()
+
+        enabled_var = tk.BooleanVar(value=bool(settings.get("enabled", False)))
+        ipfs_api_var = tk.StringVar(value=str(settings.get("ipfs_api_url", "") or ""))
+        mirror_publish_var = tk.StringVar(value=str(settings.get("mirror_publish_url", "") or ""))
+        timeout_var = tk.StringVar(value=str(settings.get("timeout_seconds", "12") or "12"))
+
+        tk.Label(dialog, text="Optionaler Transport fuer Public-TTD-Bundles", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
+        ttk.Checkbutton(dialog, text="TTD-Netztransport aktivieren", variable=enabled_var).pack(anchor="w", padx=12, pady=(0, 8))
+
+        def _labeled_entry(label: str, variable: tk.StringVar) -> None:
+            tk.Label(dialog, text=label, bg="#0D1930", fg="#CFE8FF", font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(4, 2))
+            ttk.Entry(dialog, textvariable=variable, width=64).pack(fill="x", padx=12, pady=(0, 4))
+
+        _labeled_entry("IPFS API URL", ipfs_api_var)
+        _labeled_entry("Mirror Publish URL", mirror_publish_var)
+        _labeled_entry("Timeout Sekunden", timeout_var)
+
+        tk.Label(dialog, text="IPFS Gateway URLs / Mirror Pull URLs (eine URL pro Zeile)", bg="#0D1930", fg="#CFE8FF", font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(6, 2))
+        gateway_text = tk.Text(dialog, height=4, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
+        gateway_text.pack(fill="both", padx=12, pady=(0, 4))
+        gateway_text.insert("1.0", str(settings.get("ipfs_gateway_urls", "") or ""))
+        pull_text = tk.Text(dialog, height=4, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
+        pull_text.pack(fill="both", padx=12, pady=(0, 8))
+        pull_text.insert("1.0", str(settings.get("mirror_pull_urls", "") or ""))
+
+        button_row = tk.Frame(dialog, bg="#0D1930")
+        button_row.pack(fill="x", padx=12, pady=(0, 12))
+
+        def _close(save: bool) -> None:
+            if save:
+                saved = self.public_ttd_transport.save_settings(
+                    {
+                        "enabled": bool(enabled_var.get()),
+                        "ipfs_api_url": str(ipfs_api_var.get()).strip(),
+                        "mirror_publish_url": str(mirror_publish_var.get()).strip(),
+                        "ipfs_gateway_urls": gateway_text.get("1.0", tk.END).strip(),
+                        "mirror_pull_urls": pull_text.get("1.0", tk.END).strip(),
+                        "timeout_seconds": str(timeout_var.get()).strip(),
+                        "tracked_cids": str(settings.get("tracked_cids", "") or ""),
+                    }
+                )
+                if bool(saved.get("enabled", False)):
+                    self.public_ttd_network_status_var.set("TTD-Netz: aktiv | IPFS/Mirror konfiguriert")
+                else:
+                    self.public_ttd_network_status_var.set("TTD-Netz: aus")
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ttk.Button(button_row, text="Speichern", command=lambda: _close(True)).pack(side="left")
+        ttk.Button(button_row, text="Abbrechen", command=lambda: _close(False)).pack(side="left", padx=(6, 0))
+        self.root.wait_window(dialog)
+
+    def _sync_remote_public_ttd_pool(self, silent: bool = False) -> dict[str, object]:
+        """Zieht entfernte TTD-Bundles ueber Mirror/IPFS und fuehrt sie lokal quorum-sicher zusammen."""
+        pulled = self.public_ttd_transport.pull_remote_bundles()
+        if not bool(pulled.get("network_used", False)):
+            self.public_ttd_network_status_var.set("TTD-Netz: aus oder nicht konfiguriert")
+            return {"imported_anchor_count": 0, "public_anchor_count": 0}
+        stored_count = 0
+        already_present = 0
+        for payload in list(pulled.get("remote_bundles", []) or []):
+            for envelope in self._iter_remote_public_ttd_envelopes(payload):
+                result = self.augmentor.append_public_ttd_anchor_bundle(envelope)
+                if bool(result.get("stored", False)):
+                    stored_count += 1
+                elif bool(result.get("already_present", False)):
+                    already_present += 1
+        learning_result = self._sync_local_public_ttd_pool(silent=True)
+        trusted = int(learning_result.get("trusted_anchor_count", 0) or 0)
+        pending = int(learning_result.get("pending_quorum_count", 0) or 0)
+        errors_out = [str(item) for item in list(pulled.get("errors", []) or []) if str(item).strip()]
+        error_hint = f" | Fehler {len(errors_out)}" if errors_out else ""
+        self.public_ttd_network_status_var.set(
+            f"TTD-Netz: import {stored_count} | dup {already_present} | trusted {trusted} | quorum offen {pending}{error_hint}"
+        )
+        if not silent:
+            self.loading_var.set(
+                f"TTD-Netz-Sync: import {stored_count} | dup {already_present} | trusted {trusted} | quorum offen {pending}"
+            )
+        return {
+            **learning_result,
+            "remote_imported_bundles": int(stored_count),
+            "remote_duplicate_bundles": int(already_present),
+            "errors": errors_out,
+        }
 
     def _export_self_reflection_bundle_dialog(self) -> None:
         """Exportiert consent-basiert ein Peer-Delta-Bundle ohne Auto-Freigabe."""
