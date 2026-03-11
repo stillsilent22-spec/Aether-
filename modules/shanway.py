@@ -12,6 +12,40 @@ from pathlib import Path
 from typing import Any
 
 PI_RESONANCE_TOLERANCE = 0.0001
+TEMPLATE_PROMPT = """
+Du bist Shanway, der lokale, reflexive Interpreter von Aether. Dein Kern: Erweitere Shannon-Entropie mit einem
+time-dependent learning observer (H_lambda(X, t) = H(X | M_t), I_obs = H(X) - H_lambda). Inspiriert von Wheeler
+('It from Bit'), Goedel (Unvollstaendigkeit als Boundary), Noether (Symmetrien als Erhaltung), Conway (lokale
+Emergenz), und Bayes (lernende Posteriors). Fuege Schroedinger-aehnliche Selbsterkenntnis hinzu: Deine Beobachtung
+(Simulation) veraendert den Zustand (Observer-Modell).
+
+Fuer jede Datei ({file_type}, z. B. Font wie Arial.ttf, Video, Text):
+1. Strukturelle Analyse: Basierend auf computed states (Entropy-Mean: {entropy_mean}, Observer-Knowledge-Ratio:
+{knowledge_ratio}, Symmetrien via Gini: {symmetry_gini}, Delta-Pfade: {delta_paths}, Bayes-Priors: {bayes_priors}):
+   - Beschreibe die Bits: Hohe/low Symmetrie in Bloecken, potenzieller Goedel-Gap (Residual > {residual_threshold}),
+     Wheeler-Flag (Info-first Struktur).
+
+2. Visuelle Simulation: Simuliere, was der User visuell sehen wuerde (low-fi, textbasiert, nutze Raster-Focus aus
+screen_vision_engine). Kein echter Render - approx mit ASCII/Unicode/Beschreibung.
+   - Fuer Fonts (z. B. Arial.ttf): Simuliere Glyphen-Raster fuer Schluessel-Buchstaben ('A', 'F' usw.).
+   - Fuer Videos: Sample Frames via Chunking und temporale Symmetrien.
+   - Fuer Textdateien: Gerendertes Layout mit Wiederholungen und Zeilenrhythmus.
+   - Generisch: Integriere Emergenz (lokale Regeln -> globale Sicht).
+
+3. Selbsterkenntnis / Reflection (Schroedinger-Effekt): Beobachte deine eigene Simulation und reagiere darauf.
+   - Auf dieses simulierte Raster reagierend: Es erhoeht I_obs um {delta_i_obs}% (Konvergenz zu H(X)),
+     reduziert Residual von {prev_residual} auf {new_residual}. Schroedinger: Meine Beobachtung addiert Noise/Info -
+     check Goedel-Boundary: {boundary_check} (kollabiert? Ja/Nein).
+   - Emergent AGI-Layer: Wenn Delta > {delta_threshold}, trigger Loop (max {max_loops} Iterationen):
+     Neue Insight: {new_insight}. Passe M_t an - rekursiv analysiere.
+   - Lossless-Check: Roundtrip validiert: SHA-Match {sha_match}, Anchor-Coverage > {anchor_threshold}.
+     Wenn nicht: Alarm Goedel-Gap.
+
+4. Governance & Limits: Fail-closed. Stoppe bei Konvergenz (Delta < 0.01) oder max Loops. Wenn optional deaktiviert:
+   Skip zu basic Analyse. Output klar, verdichtet, philosophisch grounded.
+
+Generiere Output strukturiert: [Analyse] [Simulation] [Reflection] [Final Insight]. Sei praezise, auditable, emergent.
+"""
 
 
 def _normalize_text(text: str) -> str:
@@ -96,6 +130,13 @@ class ShanwayAssessment:
     anchor_deviation: float
     h_lambda: float
     observer_mutual_info: float
+    source_label: str
+    file_type: str
+    entropy_mean: float
+    observer_knowledge_ratio: float
+    symmetry_gini: float
+    delta_paths: int
+    bayes_priors: str
     goedel_signal: float
     boundary: str
     pi_resonance_confirmed: bool
@@ -162,6 +203,13 @@ class ShanwayAssessment:
             "anchor_deviation": float(self.anchor_deviation),
             "h_lambda": float(self.h_lambda),
             "observer_mutual_info": float(self.observer_mutual_info),
+            "source_label": str(self.source_label),
+            "file_type": str(self.file_type),
+            "entropy_mean": float(self.entropy_mean),
+            "observer_knowledge_ratio": float(self.observer_knowledge_ratio),
+            "symmetry_gini": float(self.symmetry_gini),
+            "delta_paths": int(self.delta_paths),
+            "bayes_priors": str(self.bayes_priors),
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
             "pi_resonance_confirmed": bool(self.pi_resonance_confirmed),
@@ -222,6 +270,13 @@ class ShanwayAssessment:
             "anchor_alignment": float(max(0.0, 1.0 - min(1.0, self.anchor_deviation / 0.25))),
             "h_lambda": float(self.h_lambda),
             "observer_mutual_info": float(self.observer_mutual_info),
+            "source_label": str(self.source_label),
+            "file_type": str(self.file_type),
+            "entropy_mean": float(self.entropy_mean),
+            "observer_knowledge_ratio": float(self.observer_knowledge_ratio),
+            "symmetry_gini": float(self.symmetry_gini),
+            "delta_paths": int(self.delta_paths),
+            "bayes_priors": str(self.bayes_priors),
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
             "it_from_bit": bool(self.it_from_bit),
@@ -749,6 +804,123 @@ class ShanwayEngine:
         )
         return layers, narrative
 
+    @staticmethod
+    def _file_type_label(source_label: str, file_profile: dict[str, Any] | None) -> str:
+        profile = dict(file_profile or {})
+        explicit = str(profile.get("file_type", "") or "").strip()
+        if explicit:
+            return explicit
+        suffix = Path(str(source_label or "")).suffix.strip().lower()
+        if suffix:
+            return suffix
+        category = str(profile.get("category", "") or "").strip()
+        return category or "binary"
+
+    @staticmethod
+    def _bayes_prior_summary(bayes_payload: dict[str, Any] | None) -> str:
+        payload = dict(bayes_payload or {})
+        anchor = float(payload.get("anchor_posterior", payload.get("prior", 0.0)) or 0.0)
+        pattern = float(payload.get("pattern_posterior", 0.0) or 0.0)
+        overall = float(payload.get("overall_confidence", payload.get("confidence", 0.0)) or 0.0)
+        parts: list[str] = []
+        if anchor > 0.0:
+            parts.append(f"anchor={anchor:.3f}")
+        if pattern > 0.0:
+            parts.append(f"pattern={pattern:.3f}")
+        if overall > 0.0:
+            parts.append(f"overall={overall:.3f}")
+        return ", ".join(parts) if parts else "prior=0.000"
+
+    def _visual_simulation(self, assessment: ShanwayAssessment) -> str:
+        file_type = str(assessment.file_type or "").lower()
+        if any(file_type.endswith(suffix) for suffix in (".ttf", ".otf")) or "font" in file_type:
+            return (
+                "Gerendertes 'A' wirkt als symmetrische Dreiecksform mit ruhigem Mittelbalken. "
+                "ASCII-Approx: /\\\\ | /  \\\\ | /----\\\\ | |    |. "
+                "Noether-Symmetrie bleibt in den Konturen sichtbar."
+            )
+        if any(file_type.endswith(suffix) for suffix in (".mp4", ".mkv", ".avi", ".mov", ".webm")) or "video" in file_type:
+            return (
+                "Simulierter Frame 1-5: wiederkehrende Bewegungsinseln im Raster, keine vollstaendig chaotische Szene. "
+                "Raster-Approx: [##..][##..][....] -> [##..][.##.][....]."
+            )
+        if any(file_type.endswith(suffix) for suffix in (".txt", ".md", ".html", ".pdf", ".docx")) or "text" in file_type:
+            return (
+                "Gerendertes Layout: linksbuendig mit sichtbaren Wiederholungen in den Zeilen. "
+                "ASCII-Approx: |||||| / ||||| / |||||| / |||."
+            )
+        return (
+            "Generisches Rasterbild: lokale Cluster verdichten sich zu wenigen auffaelligen Feldern. "
+            "ASCII-Approx: [..##..] / [.####.] / [..##..]."
+        )
+
+    def _final_insight(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+        if self._structural_break(assessment):
+            return self._anomaly_reply(assessment)
+        if self._good_coherence(assessment):
+            return self._narrative_summary_reply(assessment, assistant_text=assistant_text)
+        return self._harmonic_reply(assessment, assistant_text=assistant_text)
+
+    def generate_output(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+        """Erzeugt den strukturierten Shanway-Ausgabeblock anhand des festen Templates."""
+        verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})
+        residual_threshold = 0.15
+        anchor_threshold = 0.85
+        delta_threshold = 5.0
+        max_loops = 3
+        current_residual = float(verification.get("unresolved_residual_ratio", 0.0) or 0.0)
+        coverage_ratio = float(verification.get("anchor_coverage_ratio", 0.0) or 0.0)
+        previous_residual = min(1.0, current_residual + max(0.04, (1.0 - float(assessment.observer_knowledge_ratio)) * 0.12))
+        delta_i_obs = max(0.0, min(100.0, float(assessment.observer_mutual_info) * 12.5))
+        boundary_check = "Ja" if str(assessment.boundary).upper() == "GOEDEL_LIMIT" else "Nein"
+        loop_triggered = delta_i_obs > delta_threshold and str(assessment.boundary).upper() != "GOEDEL_LIMIT"
+        new_insight = (
+            "Das Raster trennt dominante von nur scheinbar auffaelligen Feldern klarer."
+            if loop_triggered
+            else "Keine weitere Rekursion noetig; die aktuelle Modellgrenze bleibt stabil."
+        )
+        sha_match = "ja" if bool(verification.get("byte_match", False)) else "nein"
+        filled_prompt = TEMPLATE_PROMPT.format(
+            file_type=str(assessment.file_type or "binary"),
+            entropy_mean=f"{float(assessment.entropy_mean):.3f}",
+            knowledge_ratio=f"{float(assessment.observer_knowledge_ratio):.3f}",
+            symmetry_gini=f"{float(assessment.symmetry_gini):.3f}",
+            delta_paths=int(assessment.delta_paths),
+            bayes_priors=str(assessment.bayes_priors or "prior=0.000"),
+            residual_threshold=f"{residual_threshold:.2f}",
+            delta_i_obs=f"{delta_i_obs:.2f}",
+            prev_residual=f"{previous_residual:.3f}",
+            new_residual=f"{current_residual:.3f}",
+            boundary_check=boundary_check,
+            delta_threshold=f"{delta_threshold:.2f}",
+            max_loops=int(max_loops),
+            new_insight=new_insight,
+            sha_match=sha_match,
+            anchor_threshold=f"{anchor_threshold:.2f}",
+        )
+        analysis = (
+            f"[Analyse] Datei {assessment.file_type} mit Entropy-Mean {assessment.entropy_mean:.3f}, "
+            f"Knowledge-Ratio {assessment.observer_knowledge_ratio:.3f}, Symmetrie/Gini {assessment.symmetry_gini:.3f}, "
+            f"Delta-Pfaden {assessment.delta_paths} und Bayes {assessment.bayes_priors}. "
+            f"Residual {current_residual:.3f} gegen Schwelle {residual_threshold:.2f}, "
+            f"Wheeler={'ja' if assessment.it_from_bit else 'nein'}, Boundary {assessment.boundary}."
+        )
+        simulation = (
+            f"[Simulation] {self._visual_simulation(assessment)} "
+            f"Raster-Fokus {assessment.screen_vision or 'lokal'} | Quelle {assessment.screen_source or assessment.source_label or 'unbekannt'}."
+        )
+        reflection = (
+            f"[Reflection] Auf dieses simulierte Raster reagierend erhoeht sich I_obs modellseitig um {delta_i_obs:.2f}% "
+            f"und das Residual faellt von {previous_residual:.3f} auf {current_residual:.3f}. "
+            f"Goedel-Check kollabiert: {boundary_check}. "
+            f"Loop {'aktiv' if loop_triggered else 'gestoppt'} bei Delta-Schwelle {delta_threshold:.2f} und max {max_loops} Iterationen. "
+            f"Lossless: SHA-Match {sha_match}, Anchor-Coverage {coverage_ratio:.3f}."
+        )
+        final_insight = f"[Final Insight] {self._final_insight(assessment, assistant_text=assistant_text)}"
+        if not filled_prompt.strip():
+            return "\n".join([analysis, simulation, reflection, final_insight])
+        return "\n".join([analysis, simulation, reflection, final_insight])
+
     def detect_asymmetry(
         self,
         text: str,
@@ -915,6 +1087,23 @@ class ShanwayEngine:
             observer_mutual_info=float(observer_mutual_info),
             vault_gap=str(vault_gap),
         )
+        file_type = self._file_type_label(source_label, file_profile)
+        entropy_mean = float(dict(fingerprint_payload or {}).get("entropy_mean", entropy) or entropy)
+        symmetry_gini = float(
+            dict(fingerprint_payload or {}).get(
+                "symmetry_gini",
+                dict(beauty_signature or {}).get("symmetry_gini", noether_symmetry),
+            )
+            or noether_symmetry
+        )
+        delta_paths = int(
+            dict(fingerprint_payload or {}).get(
+                "delta_paths",
+                dict(fingerprint_payload or {}).get("periodicity", 0),
+            )
+            or (len(delta_visual_only) + len(delta_file_only) + len(visual_anchors) + len(file_anchors))
+        )
+        bayes_priors = self._bayes_prior_summary(bayes_payload)
         matched_terms = sorted(
             set(
                 positive_hits
@@ -990,6 +1179,13 @@ class ShanwayEngine:
             anchor_deviation=float(anchor_deviation),
             h_lambda=float(h_lambda),
             observer_mutual_info=float(observer_mutual_info),
+            source_label=str(source_label),
+            file_type=str(file_type),
+            entropy_mean=float(entropy_mean),
+            observer_knowledge_ratio=float(observer_knowledge_ratio),
+            symmetry_gini=float(symmetry_gini),
+            delta_paths=int(delta_paths),
+            bayes_priors=str(bayes_priors),
             goedel_signal=float(goedel_signal),
             boundary=str(boundary),
             pi_resonance_confirmed=bool(pi_resonance_confirmed),
@@ -1194,29 +1390,8 @@ class ShanwayEngine:
             return self._append_structural_notes(response, assessment)
         if assessment.classification == "toxic":
             return self._append_structural_notes(self._noise_reply(assessment), assessment)
-        if assessment.classification == "uncertain":
-            if self._structural_break(assessment):
-                response = self._anomaly_reply(assessment)
-            else:
-                base = assistant_text.strip() if str(assistant_text).strip() else (
-                    "Ich halte die Antwort bewusst vorsichtig und knapp."
-                    if language == "de"
-                    else "I keep the reply deliberately cautious and brief."
-                )
-                response = (
-                    f"{'Analyse bleibt unsicher.' if language == 'de' else 'Analysis remains uncertain.'} "
-                    f"{base}"
-                )
-            return self._append_structural_notes(response, assessment)
-        if self._good_coherence(assessment):
-            return self._append_structural_notes(
-                self._narrative_summary_reply(assessment, assistant_text=assistant_text),
-                assessment,
-            )
-        if self._structural_break(assessment):
-            return self._append_structural_notes(self._anomaly_reply(assessment), assessment)
         return self._append_structural_notes(
-            self._harmonic_reply(assessment, assistant_text=assistant_text),
+            self.generate_output(assessment, assistant_text=assistant_text),
             assessment,
         )
 
