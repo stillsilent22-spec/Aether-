@@ -1340,6 +1340,7 @@ class VeiraGUI:
         tk.Label(camera_controls, text="Audio deaktiviert | nur visuelles Raster", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(side="left")
         self.camera_canvas = tk.Canvas(camera_tab, width=400, height=240, bg="#040811", highlightthickness=0)
         self.camera_canvas.pack(fill="x", padx=10, pady=(0, 8))
+        self._draw_camera_raster_placeholder()
         tk.Label(camera_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(camera_tab, textvariable=self.recon_status_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10)
         metrics = tk.Frame(camera_tab, bg="#0D1930")
@@ -1385,7 +1386,7 @@ class VeiraGUI:
 
         tk.Label(live_tab, text="Live-Raster", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         tk.Label(live_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
-        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Ton und Theremin-Steuerung sind entfernt.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Ton ist entfernt, Shanway meldet Funde schriftlich.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
         tk.Label(live_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
         live_metrics = tk.Frame(live_tab, bg="#0D1930")
         live_metrics.pack(fill="x", padx=10, pady=(0, 8))
@@ -3894,6 +3895,8 @@ class VeiraGUI:
                     pass
                 self.conway_job = None
             self.camera_theremin_var.set(False)
+            self.theremin_state_var.set("Kamera-Raster: bereit | Audio deaktiviert")
+            self._draw_camera_raster_placeholder()
 
     def _toggle_camera_theremin(self) -> None:
         """Bleibt aus Governance-Gruenden deaktiviert; Kamera arbeitet rein visuell."""
@@ -4190,14 +4193,85 @@ class VeiraGUI:
             pass
         self.root.after(self._loop_delay_ms("conway"), self._poll_conway_queue)
 
+    def _draw_camera_raster_placeholder(self) -> None:
+        """Zeichnet ein sichtbares Diagnose-Raster auch ohne aktive Kamera."""
+        if not hasattr(self, "camera_canvas"):
+            return
+        width = 400
+        height = 240
+        self.camera_canvas.delete("all")
+        self.camera_canvas.create_rectangle(0, 0, width, height, fill="#06101E", outline="")
+        self._draw_camera_raster_overlay(width=width, height=height, suspicious_cells=[])
+        self.camera_canvas.create_text(
+            width / 2,
+            height / 2,
+            text="Kamera-Raster bereit\nKamera einschalten fuer Live-Diagnose",
+            fill="#CFE8FF",
+            font=("Segoe UI", 12, "bold"),
+            justify="center",
+        )
+
+    def _draw_camera_raster_overlay(
+        self,
+        *,
+        width: int,
+        height: int,
+        suspicious_cells: list[tuple[int, int]],
+    ) -> None:
+        """Zeichnet ein klar sichtbares 16x16-Raster direkt ueber die Kameraansicht."""
+        cols = 16
+        rows = 16
+        cell_w = width / cols
+        cell_h = height / rows
+        for x_idx in range(cols + 1):
+            is_major = x_idx % 4 == 0
+            color = "#A8C9FF" if is_major else "#3656B2"
+            line_w = 2 if is_major else 1
+            x_pos = x_idx * cell_w
+            self.camera_canvas.create_line(x_pos, 0, x_pos, height, fill=color, width=line_w)
+        for y_idx in range(rows + 1):
+            is_major = y_idx % 4 == 0
+            color = "#A8C9FF" if is_major else "#3656B2"
+            line_w = 2 if is_major else 1
+            y_pos = y_idx * cell_h
+            self.camera_canvas.create_line(0, y_pos, width, y_pos, fill=color, width=line_w)
+        for cell_x, cell_y in sorted(set(suspicious_cells)):
+            x0 = cell_x * cell_w
+            y0 = cell_y * cell_h
+            x1 = x0 + cell_w
+            y1 = y0 + cell_h
+            self.camera_canvas.create_rectangle(
+                x0,
+                y0,
+                x1,
+                y1,
+                outline="#FF6B57",
+                width=3,
+            )
+        self.camera_canvas.create_text(
+            8,
+            8,
+            text="Rasterdiagnose",
+            fill="#F6D58E",
+            font=("Segoe UI", 9, "bold"),
+            anchor="nw",
+        )
+
     def _update_camera_canvas(self, snapshot) -> None:
-        """Rendert das Kamerabild mit Anchor-Overlays."""
-        pil = Image.fromarray(snapshot.frame_rgb).resize((280, 210), resample=Image.Resampling.BILINEAR)
+        """Rendert das Kamerabild mit sichtbarem Diagnose-Raster und Anchor-Overlays."""
+        width = 400
+        height = 240
+        pil = Image.fromarray(snapshot.frame_rgb).resize((width, height), resample=Image.Resampling.BILINEAR)
         self.camera_image_ref = ImageTk.PhotoImage(pil)
         self.camera_canvas.delete("all")
         self.camera_canvas.create_image(0, 0, image=self.camera_image_ref, anchor="nw")
-        width = 280
-        height = 210
+        suspicious_cells: list[tuple[int, int]] = []
+        for anchor in list(snapshot.anchors[:20]):
+            x_cell = max(0, min(15, int(float(anchor.x) * 16.0)))
+            y_cell = max(0, min(15, int(float(anchor.y) * 16.0)))
+            if float(getattr(anchor, "strength", 0.0) or 0.0) >= 0.45:
+                suspicious_cells.append((x_cell, y_cell))
+        self._draw_camera_raster_overlay(width=width, height=height, suspicious_cells=suspicious_cells)
         for anchor in snapshot.ghost_anchors:
             x_pos = anchor.x * width
             y_pos = anchor.y * height
@@ -7485,7 +7559,9 @@ class VeiraGUI:
         else:
             self.theremin_state_var.set(
                 "Kamera-Raster: visuell aktiv | "
-                f"Raster Bass {frame_state.bass_freq:.1f} | Mitte {frame_state.mid_freq:.0f} | Hoehen {frame_state.high_freq:.0f} | "
+                f"Kohaerenz {float(frame_state.coherence_score):.0f}% | "
+                f"Delta {float(frame_state.delta_ratio) * 100.0:.0f}% | "
+                f"Anker {len(current_anchors)} | "
                 "Audio deaktiviert"
             )
             self.theremin_label.configure(fg="#7DE8A7")
