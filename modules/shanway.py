@@ -1540,6 +1540,26 @@ class ShanwayEngine:
             "File, screen, and observer signals should be checked directly now."
         )
 
+    def compose_browser_probe_reply(self, probe_payload: dict[str, Any] | None) -> str:
+        """Verdichtet eine lokale URL-/Linkpruefung zu einem auditierbaren Shanway-Hinweis."""
+        probe = dict(probe_payload or {})
+        if not probe or not bool(probe.get("ok", False)):
+            error_text = str(probe.get("error", "") or "kein verwertbarer Netzbefund")
+            return f"URL-Pruefung lokal fehlgeschlagen: {error_text}."
+        title = str(probe.get("title", "") or probe.get("final_url", "") or probe.get("url", "")).strip()
+        risk_label = str(probe.get("risk_label", "CLEAN") or "CLEAN").upper()
+        risk_score = float(probe.get("risk_score", 0.0) or 0.0)
+        category = str(probe.get("category", "binary") or "binary")
+        reasons = [str(item).strip() for item in list(probe.get("risk_reasons", []) or []) if str(item).strip()]
+        reasons_text = "; ".join(reasons[:3]) if reasons else "keine dominante Anomalie"
+        open_hint = "Ja" if bool(probe.get("open_recommended", False)) else "Nein"
+        return (
+            f"URL-Pruefung fuer {title or category}: {risk_label} ({risk_score * 100.0:.0f}%). "
+            f"Frontend: {str(probe.get('frontend_summary', '') or '--')}. "
+            f"Backend: {str(probe.get('backend_summary', '') or '--')}. "
+            f"Bewertung: {reasons_text}. Oeffnen trotzdem: {open_hint}."
+        )
+
     def _reconstruction_reply(self, assessment: ShanwayAssessment) -> str:
         """Formuliert additive Rekonstruktionshinweise aus dem Fingerprint-Payload."""
         verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})

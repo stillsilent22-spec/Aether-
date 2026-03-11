@@ -42,7 +42,12 @@ from .public_ttd_transport import PublicTTDTransport
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
 from .screen_vision_engine import ScreenVisionEngine
-from .security_engine import network_access_policy, pseudonymous_network_identity, public_ttd_quorum_policy
+from .security_engine import (
+    browser_probe_policy,
+    network_access_policy,
+    pseudonymous_network_identity,
+    public_ttd_quorum_policy,
+)
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
@@ -194,6 +199,7 @@ class VeiraGUI:
         self.browser_recon_var = tk.StringVar(value="RECON: ✗")
         self.browser_status_var = tk.StringVar(value="Shanway Browser bereit")
         self.browser_title_var = tk.StringVar(value="Kein Seitentitel")
+        self.browser_probe_var = tk.StringVar(value="URL-Pruefung: bereit | keine lokale Netzprobe aktiv")
         self.browser_dock_var = tk.BooleanVar(value=False)
         self.raw_storage_enabled_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "raw_storage_enabled", False))
@@ -287,6 +293,7 @@ class VeiraGUI:
 
         self.analysis_thread: threading.Thread | None = None
         self.browser_analysis_thread: threading.Thread | None = None
+        self.browser_probe_thread: threading.Thread | None = None
         self.chat_sync_job: str | None = None
         self.chat_sync_connected = False
         self.chat_sync_last_url = ""
@@ -326,6 +333,7 @@ class VeiraGUI:
         self._last_agent_resolved_count = 0
         self._language_job_id = 0
         self._browser_job_id = 0
+        self._browser_probe_job_id = 0
         self._last_browser_snapshot_key = ""
         self._browser_followup_source_key = ""
         self._voice_card_refs: list[tk.Frame] = []
@@ -335,6 +343,9 @@ class VeiraGUI:
         self._selected_chain_block_id: int | None = None
         self.history_entries_cache: list[dict[str, object]] = []
         self.history_index = -1
+        self.local_register_status_var = tk.StringVar(value="Register: keine lokalen Dateieintraege")
+        self._local_register_entries: list[dict[str, object]] = []
+        self._selected_local_register_id: int | None = None
         self._vault_line_map: dict[int, dict[str, object]] = {}
         self.shanway_browser_mode_label_var.set(
             "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
@@ -364,6 +375,7 @@ class VeiraGUI:
         self._delta_ratio_series: list[float] = []
         self.learning_curve_canvas: tk.Canvas | None = None
         self.anomaly_memory_label: tk.Label | None = None
+        self.local_register_listbox: tk.Listbox | None = None
         self.efficiency_text: tk.Text | None = None
         self.efficiency_job: str | None = None
         self._efficiency_log_lines: list[str] = []
@@ -386,6 +398,7 @@ class VeiraGUI:
         self._refresh_history_cache()
         self._setup_drag_and_drop()
         self._build_augment_window()
+        self._refresh_local_register()
         self._refresh_augment_views()
         self._refresh_chat_channels()
         self._refresh_chat_view()
@@ -1220,6 +1233,7 @@ class VeiraGUI:
         ttk.Button(controls, text="→", width=3, command=self._browser_forward).pack(side="left", padx=(4, 0))
         ttk.Button(controls, text="↺", width=3, command=self._browser_reload).pack(side="left", padx=(4, 6))
         ttk.Button(controls, text="Extern", command=self._browser_open_external).pack(side="left", padx=(0, 6))
+        ttk.Button(controls, text="Analyse URL", command=self._browser_probe_current_url).pack(side="left", padx=(0, 6))
         address_frame = tk.Frame(controls, bg="#0E6B2F", bd=1, relief="solid")
         address_frame.pack(side="left", fill="x", expand=True)
         self._browser_address_frames.append(address_frame)
@@ -1241,6 +1255,7 @@ class VeiraGUI:
         )
         entry.pack(side="left", fill="x", expand=True, padx=(0, 6), pady=4)
         entry.bind("<Return>", lambda _event: self._browser_navigate())
+        entry.bind("<Button-3>", self._show_browser_entry_context_menu)
         return controls
 
     def _create_browser_status_bar(self, parent, bg: str) -> tk.Frame:
@@ -1585,6 +1600,39 @@ class VeiraGUI:
         self.vault_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
         self.vault_text.bind("<Button-1>", self._select_vault_entry)
         self.vault_text.bind("<Double-1>", self._rename_token_from_vault)
+        register_card = tk.Frame(verify_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        register_card.pack(fill="x", padx=8, pady=(8, 6))
+        tk.Label(register_card, text="Persoenliches lokales Register", bg="#10223F", fg="#E7F4FF", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(
+            register_card,
+            textvariable=self.local_register_status_var,
+            bg="#10223F",
+            fg="#8FD6FF",
+            wraplength=340,
+            justify="left",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=10, pady=(0, 6))
+        register_row = tk.Frame(register_card, bg="#10223F")
+        register_row.pack(fill="x", padx=10, pady=(0, 8))
+        self.local_register_listbox = tk.Listbox(
+            register_row,
+            height=7,
+            bg="#07111F",
+            fg="#D7E8FF",
+            relief="flat",
+            selectbackground="#1C4B7A",
+            selectforeground="#FFFFFF",
+            font=("Consolas", 9),
+        )
+        self.local_register_listbox.pack(side="left", fill="both", expand=True)
+        self.local_register_listbox.bind("<<ListboxSelect>>", self._on_local_register_select)
+        self.local_register_listbox.bind("<Double-1>", lambda _event: self._load_local_register_entry())
+        register_buttons = tk.Frame(register_row, bg="#10223F")
+        register_buttons.pack(side="left", fill="y", padx=(8, 0))
+        ttk.Button(register_buttons, text="Laden", command=self._load_local_register_entry).pack(fill="x", pady=(0, 4))
+        ttk.Button(register_buttons, text="Original oeffnen", command=self._open_local_register_entry).pack(fill="x", pady=(0, 4))
+        ttk.Button(register_buttons, text="Exportieren", command=self._export_local_register_entry).pack(fill="x", pady=(0, 4))
+        ttk.Button(register_buttons, text="Aktualisieren", command=self._refresh_local_register).pack(fill="x")
         self.verify_text = tk.Text(verify_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
         self.verify_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
 
@@ -1787,6 +1835,15 @@ class VeiraGUI:
             justify="left",
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(
+            self.browser_panel,
+            textvariable=self.browser_probe_var,
+            bg="#07111F",
+            fg="#F2C14E",
+            wraplength=340,
+            justify="left",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=10, pady=(0, 8))
         ttk.Checkbutton(
             self.browser_panel,
             text="Browserfenster sichtbar halten",
@@ -1975,6 +2032,339 @@ class VeiraGUI:
         elif file_profile and str(file_profile.get("category", "") or "").strip() and "file structure" not in query.lower():
             query = f"{query} {str(file_profile.get('category', '')).strip()} structure"
         return query[:220].strip()
+
+    def _show_browser_entry_context_menu(self, event) -> str:
+        """Bietet im Browser-Adressfeld eine kleine Aether-Kontextaktion an."""
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Analyse mit Aether", command=self._browser_probe_current_url)
+        menu.add_command(label="Im Companion laden", command=self._browser_navigate)
+        menu.add_command(label="Extern oeffnen", command=self._browser_open_external)
+        try:
+            menu.tk_popup(int(getattr(event, "x_root", 0) or 0), int(getattr(event, "y_root", 0) or 0))
+        finally:
+            try:
+                menu.grab_release()
+            except Exception:
+                pass
+        return "break"
+
+    def _browser_probe_current_url(self) -> None:
+        """Startet eine lokale URL-/Linkpruefung ueber das Browser-Adressfeld."""
+        target_url = str(self.browser_url_var.get() or "").strip()
+        if not target_url:
+            messagebox.showwarning("Hinweis", "Bitte zuerst eine URL eingeben oder in die Browserleiste einfuegen.")
+            return
+        self._start_browser_url_probe(target_url, reason="lokale URL-Pruefung")
+
+    @staticmethod
+    def _serialize_browser_probe_payload(probe_payload: dict[str, Any] | None) -> dict[str, Any]:
+        """Entfernt transiente Byte-/Bilddaten aus Browser-Probe-Payloads fuer Registry und Logs."""
+        probe = dict(probe_payload or {})
+        probe.pop("raw_bytes", None)
+        probe.pop("miniature_rgb", None)
+        return probe
+
+    def _browser_probe_profile(self, probe_payload: dict[str, Any]) -> dict[str, Any]:
+        """Leitet ein leichtes Dateiprofil fuer entfernte URL-Stichproben ab."""
+        probe = dict(probe_payload or {})
+        category_map = {
+            "html": "document",
+            "text": "text",
+            "image": "image",
+            "video": "video",
+            "audio": "audio",
+            "binary": "binary",
+        }
+        category = str(category_map.get(str(probe.get("category", "binary") or "binary"), "binary"))
+        type_metrics = {
+            "remote_status_code": int(probe.get("status_code", 0) or 0),
+            "remote_entropy": float(probe.get("entropy", 0.0) or 0.0),
+            "remote_script_count": int(probe.get("script_count", 0) or 0),
+            "remote_obfuscation_score": float(probe.get("obfuscation_score", 0.0) or 0.0),
+            "remote_risk_score": float(probe.get("risk_score", 0.0) or 0.0),
+        }
+        return {
+            "category": category,
+            "subtype": f"remote_{str(probe.get('category', 'binary') or 'binary')}",
+            "mime_type": str(probe.get("content_type", "") or "application/octet-stream"),
+            "parser_confidence": 0.82 if bool(probe.get("ok", False)) else 0.0,
+            "summary": {
+                "stream_count": 1,
+                "type_metric_count": int(len(type_metrics)),
+                "content_length": int(probe.get("content_length", 0) or 0),
+            },
+            "type_metrics": type_metrics,
+            "missing_dependencies": [],
+            "missing_data": list(probe.get("missing_data", []) or []),
+        }
+
+    def _browser_probe_text(self, probe_payload: dict[str, Any]) -> str:
+        """Verdichtet die lokale URL-Probe zu Text fuer Shanway und Registry-Kontext."""
+        probe = dict(probe_payload or {})
+        parts = [
+            str(probe.get("title", "") or ""),
+            str(probe.get("summary", "") or ""),
+            str(probe.get("backend_summary", "") or ""),
+            " ".join(str(item) for item in list(probe.get("risk_reasons", []) or [])),
+        ]
+        return " ".join(part for part in parts if str(part).strip()).strip()
+
+    def _log_browser_probe_security_event(
+        self,
+        probe_payload: dict[str, Any],
+        *,
+        opened: bool | None = None,
+        record_id: int = 0,
+    ) -> None:
+        """Persistiert lokale Audit-Spuren fuer URL-Pruefungen."""
+        user_id = int(getattr(self.session_context, "user_id", 0) or 0)
+        if user_id <= 0:
+            return
+        probe = self._serialize_browser_probe_payload(probe_payload)
+        risk_label = str(probe.get("risk_label", "CLEAN") or "CLEAN").upper()
+        severity = "info"
+        if risk_label == "SUSPICIOUS":
+            severity = "warning"
+        elif risk_label == "CRITICAL":
+            severity = "critical"
+        payload = {
+            "url": str(probe.get("final_url", probe.get("url", "")) or ""),
+            "risk_label": risk_label,
+            "risk_score": float(probe.get("risk_score", 0.0) or 0.0),
+            "category": str(probe.get("category", "") or ""),
+            "record_id": int(record_id or 0),
+            "opened": None if opened is None else bool(opened),
+            "pseudonym": pseudonymous_network_identity(self.session_context, purpose="browser_probe"),
+            "risk_reasons": list(probe.get("risk_reasons", []) or [])[:6],
+        }
+        try:
+            self.registry.save_security_event(
+                user_id=user_id,
+                username=str(getattr(self.session_context, "username", "local") or "local"),
+                event_type="browser_probe",
+                severity=severity,
+                payload=payload,
+            )
+        except Exception:
+            pass
+
+    def _start_browser_url_probe(self, target_url: str, reason: str = "lokale URL-Pruefung") -> None:
+        """Stoesst eine fail-closed URL-Pruefung im Hintergrund an."""
+        normalized_url = str(target_url or "").strip()
+        if not normalized_url:
+            return
+        if self.browser_probe_thread is not None and self.browser_probe_thread.is_alive():
+            self.browser_probe_var.set("URL-Pruefung laeuft bereits. Neuer Job wird uebersprungen.")
+            return
+        policy = browser_probe_policy("prompt")
+        if not bool(policy.get("allow_probe", False)):
+            self.browser_probe_var.set("URL-Pruefung lokal blockiert: Netzmodus erlaubt keine Browserprobe.")
+            return
+        if not self._confirm_network_access(
+            reason=reason,
+            url=normalized_url,
+            scope="browser_probe",
+        ):
+            self.browser_probe_var.set("URL-Pruefung abgelehnt | Netzwerk bleibt gesperrt")
+            self.browser_status_var.set("Browser-Probe abgelehnt | keine URL geladen")
+            return
+        self._browser_probe_job_id += 1
+        job_id = int(self._browser_probe_job_id)
+        self.browser_probe_var.set("URL-Pruefung laeuft lokal: Frontend + Backend werden verdichtet.")
+        self.browser_status_var.set("URL-Pruefung aktiv | Seite wird nicht voll geoeffnet.")
+        self.browser_probe_thread = threading.Thread(
+            target=self._browser_probe_worker,
+            args=(job_id, normalized_url, int(policy.get("max_probe_bytes", 524288) or 524288)),
+            daemon=True,
+        )
+        self.browser_probe_thread.start()
+
+    def _browser_probe_worker(self, job_id: int, target_url: str, max_probe_bytes: int) -> None:
+        """Fuehrt eine lokale URL-Stichprobe aus und uebergibt Ergebnis an den GUI-Thread."""
+        try:
+            probe_payload = BrowserEngine.inspect_url(
+                target_url,
+                timeout=6.0,
+                max_bytes=max_probe_bytes,
+            )
+            fingerprint: AetherFingerprint | None = None
+            record_id = 0
+            log_path = ""
+            probe_text = self._browser_probe_text(probe_payload)
+            raw_bytes = bytes(probe_payload.get("raw_bytes", b"") or b"")
+            if bool(probe_payload.get("ok", False)) and raw_bytes:
+                file_profile = self._browser_probe_profile(probe_payload)
+                fingerprint = self.analysis_engine.analyze_bytes(
+                    raw_bytes,
+                    source_label=str(probe_payload.get("final_url", target_url) or target_url),
+                    source_type="browser_probe",
+                    file_profile=file_profile,
+                    low_power=bool(self.low_power_mode_var.get()),
+                )
+                miniature_rgb = probe_payload.get("miniature_rgb")
+                if miniature_rgb is not None:
+                    miniature_payload = self.renderer.summarize_miniature(miniature_rgb, fingerprint=fingerprint)
+                else:
+                    miniature_payload = {}
+                raster_payload: dict[str, Any] = {}
+                if bool(self.shanway_raster_insight_var.get()):
+                    raster_payload = self.renderer.get_current_grid_data(fingerprint=fingerprint)
+                self_reflection_delta = self.observer_engine.summarize_reflection_state(
+                    miniature_payload=miniature_payload,
+                    raster_payload=raster_payload,
+                    fingerprint=fingerprint,
+                    enable_raster_insight=bool(self.shanway_raster_insight_var.get()),
+                    max_depth=5,
+                )
+                learning_state = self.observer_engine.update_learning_state(
+                    self.session_context,
+                    self_reflection_delta,
+                )
+                current_insight = str(dict(learning_state or {}).get("current_insight", "") or "")
+                if current_insight:
+                    self_reflection_delta["learned_insight"] = current_insight
+                observer_payload = dict(getattr(fingerprint, "observer_payload", {}) or {})
+                observer_payload["learning_state"] = dict(learning_state or {})
+                observer_payload["browser_probe"] = self._serialize_browser_probe_payload(probe_payload)
+                fingerprint.observer_payload = dict(observer_payload)
+                fingerprint.miniature_reflection = dict(miniature_payload)
+                fingerprint.raster_self_perception = dict(self_reflection_delta.get("raster_self_perception", {}) or {})
+                fingerprint.self_reflection_delta = dict(self_reflection_delta)
+                if miniature_rgb is not None:
+                    setattr(fingerprint, "_miniature_rgb", np.asarray(miniature_rgb, dtype=np.uint8))
+                payload_update = {
+                    "browser_probe_analysis": self._serialize_browser_probe_payload(probe_payload),
+                    "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
+                    "observer_payload": dict(observer_payload),
+                    "miniature_reflection": dict(miniature_payload),
+                    "self_reflection_delta": dict(self_reflection_delta),
+                    "raster_self_perception": {
+                        key: value
+                        for key, value in dict(self_reflection_delta.get("raster_self_perception", {}) or {}).items()
+                        if key not in {"grid_array", "dynamic_z"}
+                    },
+                }
+                record_id = int(self.registry.save(fingerprint, self.session_context, payload_update=payload_update))
+                log_path = str(self.log_system.write_analysis_log(fingerprint))
+            assistant_text = self.shanway_engine.compose_browser_probe_reply(probe_payload)
+            self.root.after(
+                0,
+                lambda: self._on_browser_probe_complete(
+                    job_id=job_id,
+                    probe_payload=probe_payload,
+                    fingerprint=fingerprint,
+                    record_id=int(record_id),
+                    assistant_text=assistant_text,
+                    log_path=log_path,
+                ),
+            )
+        except Exception as exc:
+            self.root.after(0, lambda: self.browser_probe_var.set(f"URL-Pruefung fehlgeschlagen: {exc}"))
+
+    def _on_browser_probe_complete(
+        self,
+        *,
+        job_id: int,
+        probe_payload: dict[str, Any],
+        fingerprint: AetherFingerprint | None,
+        record_id: int,
+        assistant_text: str,
+        log_path: str,
+    ) -> None:
+        """Uebernimmt eine abgeschlossene URL-Probe in GUI, Shanway und optionales Oeffnen."""
+        if job_id != self._browser_probe_job_id:
+            return
+        probe = dict(probe_payload or {})
+        self.browser_probe_var.set(str(assistant_text or "URL-Pruefung abgeschlossen."))
+        self.browser_title_var.set(str(probe.get("title", "") or probe.get("final_url", probe.get("url", "Ohne Titel"))))
+        self.browser_url_var.set(str(probe.get("final_url", probe.get("url", self.browser_url_var.get())) or self.browser_url_var.get()))
+        self._set_browser_lock(bool(probe.get("secure", False)))
+        risk_label = str(probe.get("risk_label", "CLEAN") or "CLEAN").upper()
+        if fingerprint is not None and record_id > 0:
+            self._register_final_modules(fingerprint, record_id=int(record_id))
+            self._set_scene_from_fingerprint(fingerprint)
+            self._update_miniature_preview(fingerprint)
+            self._update_integrity_monitor(fingerprint)
+            self.state_var.set(self.renderer.get_state_description(fingerprint))
+            self.loading_var.set(
+                f"URL-Pruefung abgeschlossen: {Path(log_path).name if log_path else str(probe.get('final_url', ''))[:72]}"
+            )
+            self._refresh_recent_logs()
+            self._refresh_history_cache(preserve_record_id=int(record_id))
+            assistant_context = self._assistant_context_for(fingerprint)
+            assessment = self.shanway_engine.detect_asymmetry(
+                self._browser_probe_text(probe),
+                coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
+                anchor_details=list(assistant_context.ae_anchor_details or []),
+                browser_mode=True,
+                active=True,
+                h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+                observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+                source_label=str(getattr(fingerprint, "source_label", "") or ""),
+                file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
+                observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
+                beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+                observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
+                history_factor=float(len(self.history_entries_cache)),
+                fingerprint_payload={
+                    "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
+                    "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
+                    "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
+                    "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+                    "browser_probe_analysis": self._serialize_browser_probe_payload(probe),
+                },
+                **self._shanway_visual_payloads(fingerprint),
+            )
+            shanway_text = self.shanway_engine.render_response(assessment, assistant_text=assistant_text)
+            self.chat_status_var.set(f"Shanway URL-Pruefung | {risk_label} | lokal")
+            self.chat_reply_var.set(f"Shanway: {shanway_text}")
+            self.chat_semantic_var.set(
+                f"Semantik: {assessment.classification} | Risiko {float(probe.get('risk_score', 0.0) or 0.0) * 100.0:.0f}% | Boundary: {assessment.boundary}"
+            )
+            try:
+                self.registry.update_fingerprint_payload(
+                    int(record_id),
+                    {
+                        "browser_probe_analysis": self._serialize_browser_probe_payload(probe),
+                        "shanway_assessment": assessment.to_payload(),
+                    },
+                )
+            except Exception:
+                pass
+        else:
+            self.chat_status_var.set(f"Shanway URL-Pruefung | {risk_label} | ohne Fingerprint")
+            self.chat_reply_var.set(f"Shanway: {assistant_text}")
+            self.chat_semantic_var.set(
+                f"Semantik: URL-Probe | Risiko {float(probe.get('risk_score', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+            self.loading_var.set("URL-Pruefung abgeschlossen ohne lokalen Fingerprint.")
+
+        self.browser_ct_var.set(f"C(t): {float(getattr(fingerprint, 'coherence_score', 0.0) or 0.0):.2f}" if fingerprint is not None else "C(t): --")
+        self.browser_d_var.set(f"D: {float(probe.get('obfuscation_score', 0.0) or 0.0):.3f}")
+        self.browser_recon_var.set("RECON: ✗")
+        self.browser_status_var.set(
+            f"URL geprueft | {risk_label} | {str(probe.get('final_url', probe.get('url', '')) or '')[:88]}"
+        )
+        self._log_browser_probe_security_event(probe, opened=None, record_id=int(record_id))
+        if not bool(probe.get("ok", False)):
+            return
+
+        prompt = (
+            f"{assistant_text}\n\n"
+            f"Oeffnen trotzdem?\n"
+            f"Ziel: {str(probe.get('final_url', probe.get('url', '')) or '')[:220]}"
+        )
+        open_anyway = bool(messagebox.askyesno("Analyse mit Aether", prompt, parent=self.root))
+        self._log_browser_probe_security_event(probe, opened=open_anyway, record_id=int(record_id))
+        if open_anyway:
+            if self._ensure_browser_running():
+                final_url = str(probe.get("final_url", probe.get("url", "")) or "")
+                if final_url:
+                    self.browser_engine.navigate(final_url)
+                    self.browser_url_var.set(final_url)
+                self.browser_status_var.set(f"URL nach lokaler Pruefung geladen | {risk_label}")
+        else:
+            self.browser_status_var.set(f"URL nach lokaler Pruefung nicht geoeffnet | {risk_label}")
 
     def _confirm_network_access(
         self,
@@ -8780,12 +9170,136 @@ class VeiraGUI:
         self.restore_status_var.set(f"Original-Open bereit: {source_name} | ID {record['id']} | {mode_label}")
         return record
 
+    def _resolve_record_from_history_entry(self, entry: dict[str, object]) -> dict[str, object] | None:
+        """Loest einen Historieneintrag auf einen rekonstruierbaren Dateidatensatz auf."""
+        if str(entry.get("source_type", "") or "").strip().lower() != "file":
+            return None
+        return self.registry.find_file_record(
+            file_hash=str(entry.get("file_hash", "") or ""),
+            source_label=str(entry.get("source_label", "") or ""),
+            user_id=int(getattr(self.session_context, "user_id", 0) or 0),
+        )
+
+    def _refresh_local_register(self) -> None:
+        """Aktualisiert das sichtbare persoenliche Register rekonstruierbarer und analysierter Datensaetze."""
+        if self.local_register_listbox is None:
+            return
+        self.local_register_listbox.delete(0, tk.END)
+        self._local_register_entries = list(self.history_entries_cache or [])
+        if not self._local_register_entries:
+            self.local_register_status_var.set("Register: noch keine lokalen Analysen")
+            self._selected_local_register_id = None
+            return
+        selected_index = 0
+        for index, entry in enumerate(self._local_register_entries):
+            entry_id = int(entry.get("id", 0) or 0)
+            source_type = str(entry.get("source_type", "") or "")
+            source_name = Path(str(entry.get("source_label", "") or "")).name or str(entry.get("source_label", "") or "")
+            line = f"{entry_id:05d} | {source_type[:12]:12} | {source_name[:44]}"
+            self.local_register_listbox.insert(tk.END, line)
+            if self._selected_local_register_id is not None and entry_id == int(self._selected_local_register_id):
+                selected_index = index
+        try:
+            self.local_register_listbox.selection_clear(0, tk.END)
+            self.local_register_listbox.selection_set(selected_index)
+            self.local_register_listbox.activate(selected_index)
+        except Exception:
+            pass
+        self._selected_local_register_id = int(self._local_register_entries[selected_index].get("id", 0) or 0)
+        selected_entry = self._local_register_entries[selected_index]
+        selected_name = Path(str(selected_entry.get("source_label", "") or "")).name or str(selected_entry.get("source_label", "") or "")
+        self.local_register_status_var.set(
+            f"Register: {len(self._local_register_entries)} Eintraege | aktiv {selected_name} | ID {int(selected_entry.get('id', 0) or 0)}"
+        )
+
+    def _selected_local_register_entry(self) -> dict[str, object] | None:
+        """Liefert den aktuell markierten Registereintrag."""
+        if not self._local_register_entries:
+            return None
+        if self.local_register_listbox is not None:
+            selection = list(self.local_register_listbox.curselection())
+            if selection:
+                index = int(selection[0])
+                if 0 <= index < len(self._local_register_entries):
+                    return self._local_register_entries[index]
+        selected_id = int(self._selected_local_register_id or 0)
+        if selected_id > 0:
+            return next((item for item in self._local_register_entries if int(item.get("id", 0) or 0) == selected_id), None)
+        return self._local_register_entries[0]
+
+    def _on_local_register_select(self, _event=None) -> None:
+        """Merkt die aktive Registerauswahl und aktualisiert den Status."""
+        entry = self._selected_local_register_entry()
+        if entry is None:
+            self.local_register_status_var.set("Register: keine Auswahl")
+            return
+        self._selected_local_register_id = int(entry.get("id", 0) or 0)
+        source_name = Path(str(entry.get("source_label", "") or "")).name or str(entry.get("source_label", "") or "")
+        self.local_register_status_var.set(
+            f"Register-Auswahl: ID {int(entry.get('id', 0) or 0)} | {str(entry.get('source_type', '') or '')} | {source_name}"
+        )
+
+    def _load_local_register_entry(self) -> None:
+        """Laedt den markierten Registereintrag zurueck in Szene und Shanway."""
+        entry = self._selected_local_register_entry()
+        if entry is None:
+            messagebox.showwarning("Hinweis", "Bitte zuerst einen Registereintrag auswaehlen.")
+            return
+        fingerprint = self.registry.load_fingerprint(int(entry.get("id", 0) or 0))
+        if fingerprint is None:
+            messagebox.showwarning("Hinweis", "Der Registereintrag konnte nicht geladen werden.")
+            return
+        self._selected_local_register_id = int(entry.get("id", 0) or 0)
+        self._set_scene_from_fingerprint(fingerprint)
+        self._update_miniature_preview(fingerprint)
+        self._update_integrity_monitor(fingerprint)
+        self._update_semantic_status(fingerprint, source_text=str(entry.get("source_label", "") or ""))
+        self.loading_var.set(
+            f"Register geladen: ID {int(entry.get('id', 0) or 0)} | {Path(str(entry.get('source_label', '') or '')).name or entry.get('source_label', '')}"
+        )
+        self.state_var.set(
+            f"Register geladen | {str(entry.get('source_type', '') or '')} | {self.renderer.get_state_description(fingerprint)}"
+        )
+
+    def _open_local_register_entry(self) -> None:
+        """Oeffnet den markierten Registereintrag nativ, falls rekonstruierbar."""
+        entry = self._selected_local_register_entry()
+        if entry is None:
+            messagebox.showwarning("Hinweis", "Bitte zuerst einen Registereintrag auswaehlen.")
+            return
+        record = self._resolve_record_from_history_entry(entry)
+        if record is None:
+            self._load_local_register_entry()
+            messagebox.showinfo(
+                "Registereintrag",
+                "Dieser Eintrag ist lokal analysierbar, aber nicht als rekonstruierbare Datei vorhanden. "
+                "Er wurde stattdessen in Szene und Shanway geladen.",
+            )
+            return
+        self._open_resolved_record(record)
+
+    def _export_local_register_entry(self) -> None:
+        """Exportiert den markierten Registereintrag, falls eine Datei rekonstruierbar ist."""
+        entry = self._selected_local_register_entry()
+        if entry is None:
+            messagebox.showwarning("Hinweis", "Bitte zuerst einen Registereintrag auswaehlen.")
+            return
+        record = self._resolve_record_from_history_entry(entry)
+        if record is None:
+            messagebox.showwarning(
+                "Hinweis",
+                "Dieser Registereintrag referenziert keine lokal rekonstruierbare Datei.",
+            )
+            return
+        self._export_resolved_record(record)
+
     def _refresh_history_cache(self, preserve_record_id: int | None = None) -> None:
         """Aktualisiert die per-User-Historie ueber alle Logins hinweg."""
         if int(getattr(self.session_context, "user_id", 0) or 0) <= 0:
             self.history_entries_cache = []
             self.history_index = -1
             self.history_status_var.set("Historie: kein lokaler Nutzerkontext")
+            self._refresh_local_register()
             return
         self.history_entries_cache = self.registry.get_user_fingerprint_history(
             user_id=int(self.session_context.user_id),
@@ -8794,6 +9308,7 @@ class VeiraGUI:
         if not self.history_entries_cache:
             self.history_index = -1
             self.history_status_var.set("Historie: noch keine gespeicherten Analysen")
+            self._refresh_local_register()
             return
         target_id = int(preserve_record_id or 0)
         if target_id > 0:
@@ -8809,6 +9324,7 @@ class VeiraGUI:
         elif self.history_index < 0 or self.history_index >= len(self.history_entries_cache):
             self.history_index = 0
         self._update_history_status()
+        self._refresh_local_register()
 
     def _update_history_status(self) -> None:
         """Formatiert den sichtbaren Historienstatus."""

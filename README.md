@@ -540,6 +540,28 @@ Der neue Netzpfad ist bewusst begrenzt:
 
 Dadurch kann Shanway auf Fragen wie `Was ist AGI?` oder browserbezogene Rueckfragen lesbarer antworten, ohne den lokalen, auditierbaren Kern aufzugeben.
 
+## Browser- und URL-Pruefung
+
+Der Browserpfad kann jetzt nicht nur HTML laden, sondern auch eine URL vor dem Oeffnen lokal pruefen:
+
+- ueber `Analyse URL` oder per Rechtsklick im Adressfeld `Analyse mit Aether`
+- die Probe laedt nur eine begrenzte Stichprobe der Ressource, nicht den vollen Interaktionszustand
+- Frontend-Signale werden als kleine Miniatur/Heatmap verdichtet
+- Backend-Signale werten Header, MIME-Typ, Scriptlast, Obfuskation und einfache Sprachmuster aus
+- Shanway schreibt danach eine kurze Verdichtung wie `URL-Pruefung fuer ...: SUSPICIOUS ... Oeffnen trotzdem: Nein.`
+- danach fragt die GUI explizit, ob die Seite trotzdem im Companion-Browser geoeffnet werden soll
+
+Damit bleibt die Analyse lokal, consent-basiert und auditierbar. Es gibt keine stille Browser-Extension und keinen ungefragten Netzverkehr.
+
+## Persoenliches Register
+
+Im `VERIFY`-Tab gibt es jetzt ein persoenliches lokales Register:
+
+- letzte Analysen pro Nutzer sichtbar
+- Eintrag laden -> Szene, Raster, Shanway und Integritaetsstatus werden wiederhergestellt
+- `Original oeffnen` und `Exportieren` greifen auf denselben lokalen Rekonstruktionspfad zu, falls der Eintrag eine echte Datei referenziert
+- Browser-/Probe-Eintraege ohne rekonstruierbare Datei bleiben trotzdem lokal ladbar und auditierbar
+
 ## Verbundenheit und demokratisiertes Lernen
 
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:

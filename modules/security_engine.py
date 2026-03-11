@@ -149,6 +149,21 @@ def network_access_policy(scope: str = "prompt") -> dict[str, Any]:
     }
 
 
+def browser_probe_policy(scope: str = "prompt") -> dict[str, Any]:
+    """Liefert den fail-closed Standard fuer lokale URL-/Linkpruefungen."""
+    network_policy = network_access_policy(scope)
+    return {
+        "scope": str(network_policy.get("scope", "prompt")),
+        "consent_required": bool(network_policy.get("consent_required", True)),
+        "allow_probe": bool(network_policy.get("allow_browser_navigation", False)),
+        "max_probe_bytes": 524288,
+        "warn_threshold": 0.40,
+        "block_threshold": 0.72,
+        "hash_only_outbound": True,
+        "fail_closed": True,
+    }
+
+
 def pseudonymous_network_identity(session_like: Any | None, purpose: str = "network") -> str:
     """Leitet eine kurze, lokale Pseudonym-ID fuer Consent- und Audit-Ereignisse ab."""
     material = build_hardware_seed(session_like=session_like, purpose=purpose, session_salt="network")

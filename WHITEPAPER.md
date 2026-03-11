@@ -250,6 +250,14 @@ Erweitert wurde dieser Pfad jetzt auch fuer die Chat-Ebene. Shanway kann in priv
 
 Damit bleibt der Chat kein separater KI-Service, sondern ein weiterer Beobachterpfad ueber demselben lokalen Zustand.
 
+Ergaenzt wurde dieser Pfad jetzt um eine lokale URL-Probe vor dem Oeffnen. Aether kann eine Ressource im Browserpfad zuerst nur stichprobenartig laden, daraus Frontend- und Backend-Metriken ableiten und Shanway danach strukturiert urteilen lassen:
+
+- Frontend: kleine Miniatur/Heatmap aus HTML-, Bild- oder Bytestichprobe
+- Backend: Header, MIME, Scriptdichte, Obfuskationsmuster, einfache Sprachasymmetrien
+- Ergebnis: lokales Risiko-Urteil mit Consent-Frage, ob der Pfad trotzdem geoeffnet werden soll
+
+Auch das ist kein Cloud-Dienst, sondern nur eine weitere lokale Beobachtungsstufe ueber demselben `M_t`.
+
 ## 12. Verbundenheit unter Governance
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
@@ -275,6 +283,7 @@ Damit wird ein enger, aber wichtiger Unterschied festgehalten:
 - Aether teilt keine Rohdaten
 - Aether lernt kollektiv nur ueber kompakte, attestierte Strukturspuren
 - Mikrofonpfade sind bewusst deaktiviert; Schreiben, Raster und Miniatur bleiben die primaeren lokalen Beobachtungsformen
+- das persoenliche lokale Register bleibt rekonstruktiv: Eintraege koennen spaeter wieder in Szene, Shanway und - falls dateibasiert - in den Originalpfad geladen werden
 
 Dies ist ein Modell, keine bewiesene universelle Dynamik.
 

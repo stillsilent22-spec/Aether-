@@ -686,6 +686,54 @@ def test_browser_engine_fetch_search_context_is_parsed_without_real_network() ->
     assert str(result.get("search_url", "")).startswith("https://")
 
 
+def test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns() -> None:
+    """Die lokale URL-Probe soll HTML-Risiken ohne echten Vollbrowser erkennen."""
+
+    class _ProbeHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            body = """
+            <html>
+              <head>
+                <title>Breaking Truth Mirror</title>
+                <script>eval(atob("YWxlcnQoMSk="));document.write("wallet gift card urgent");</script>
+                <style>body{font-family:monospace;}</style>
+              </head>
+              <body>
+                <main>
+                  <h1>Breaking exclusive leaked news</h1>
+                  <p>Wake up. The media lies. Parasites and vermin must disappear.</p>
+                  <p>Use crypto wallet now. Limited offer.</p>
+                </main>
+              </body>
+            </html>
+            """.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, _format: str, *_args: Any) -> None:  # noqa: A003
+            return
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        url = f"http://127.0.0.1:{server.server_port}/probe"
+        result = BrowserEngine.inspect_url(url, timeout=3.0, max_bytes=65536)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2.0)
+
+    assert bool(result.get("ok", False)) is True
+    assert str(result.get("risk_label", "")) in {"SUSPICIOUS", "CRITICAL"}
+    assert float(result.get("obfuscation_score", 0.0) or 0.0) > 0.0
+    assert float(result.get("hate_risk_score", 0.0) or 0.0) > 0.0
+    assert bool(result.get("open_recommended", True)) is False
+
+
 def test_shanway_partner_reply_includes_history_and_web_context() -> None:
     """Shanway soll lokalen Verlauf und optionalen Netzkontext lesbar zusammenziehen."""
     engine = ShanwayEngine()
@@ -740,6 +788,7 @@ def main() -> None:
     test_public_ttd_transport_http_mirror_roundtrip()
     test_agent_loop_plans_browser_followup_for_open_state()
     test_browser_engine_fetch_search_context_is_parsed_without_real_network()
+    test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns()
     test_shanway_partner_reply_includes_history_and_web_context()
     gain = max(
         0.0,
@@ -764,6 +813,7 @@ def main() -> None:
     print("Public TTD Transport: HTTP-Mirror lokal verifiziert")
     print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
     print("Browser-Kontext: stubbed DuckDuckGo-Verdichtung lokal verifiziert")
+    print("Browser-Probe: lokale URL-Risikoanalyse mit HTML-Stichprobe verifiziert")
     print("Chat-Partner: Verlauf und Netzkontext lokal verifiziert")
 
 

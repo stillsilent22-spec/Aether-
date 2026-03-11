@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import importlib.util
+import math
 import multiprocessing as mp
 import queue
 import re
@@ -12,8 +13,55 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin, urlparse
 from urllib.request import Request, urlopen
+
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    np = None
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    Image = None
+
+
+HATE_PATTERN_TERMS = {
+    "hate",
+    "hass",
+    "vermin",
+    "parasite",
+    "parasiten",
+    "subhuman",
+    "abschaum",
+    "vernichten",
+    "ausrotten",
+}
+SCAM_PATTERN_TERMS = {
+    "wallet",
+    "seed phrase",
+    "urgent",
+    "dringend",
+    "limited offer",
+    "verdienen",
+    "bitcoin",
+    "crypto",
+    "konto",
+    "password",
+    "passwort",
+    "gift card",
+}
+FAKE_PATTERN_TERMS = {
+    "breaking",
+    "schock",
+    "exclusive",
+    "unglaublich",
+    "leaked",
+    "geheime wahrheit",
+    "wake up",
+    "die medien",
+}
 
 
 def _normalize_url(url: str) -> str:
@@ -382,6 +430,40 @@ class BrowserEngine:
         self._command_queue.put({"cmd": "navigate", "url": _normalize_url(url)})
 
     @staticmethod
+    def _download_payload(
+        url: str,
+        timeout: float = 6.0,
+        max_bytes: int = 524288,
+    ) -> dict[str, Any]:
+        """Laedt eine URL fail-closed mit begrenztem Bytebudget fuer lokale Analyse."""
+        request = Request(
+            _normalize_url(url),
+            headers={
+                "User-Agent": "AetherBrowser/1.0 (+local probe)",
+                "Accept-Language": "de-DE,de;q=0.8,en;q=0.6",
+            },
+        )
+        with urlopen(request, timeout=max(1.0, float(timeout))) as response:
+            payload = response.read(max(1024, int(max_bytes)))
+            headers = {str(key).lower(): str(value) for key, value in dict(response.headers).items()}
+            try:
+                status_code = int(getattr(response, "status", 200) or 200)
+            except Exception:
+                status_code = 200
+            final_url = str(getattr(response, "url", url) or url)
+        content_type = str(headers.get("content-type", "") or "").split(";", 1)[0].strip().lower()
+        return {
+            "url": str(url),
+            "final_url": str(final_url),
+            "status_code": int(status_code),
+            "headers": headers,
+            "content_type": str(content_type),
+            "content_length": int(len(payload)),
+            "raw_bytes": bytes(payload),
+            "secure": str(final_url).lower().startswith("https://"),
+        }
+
+    @staticmethod
     def _download_text(url: str, timeout: float = 6.0) -> str:
         """Laedt schlanken HTML-Text fuer optionale Suchkontexte fail-closed."""
         request = Request(
@@ -409,6 +491,340 @@ class BrowserEngine:
         if len(markup) <= max(80, int(limit_chars)):
             return markup
         return markup[: max(80, int(limit_chars))].rsplit(" ", 1)[0].strip()
+
+    @staticmethod
+    def _byte_entropy(raw_bytes: bytes) -> float:
+        """Berechnet eine robuste Shannon-Entropie fuer Bytestichproben."""
+        payload = bytes(raw_bytes or b"")
+        if not payload:
+            return 0.0
+        counts: dict[int, int] = {}
+        for value in payload:
+            counts[int(value)] = int(counts.get(int(value), 0)) + 1
+        total = float(len(payload))
+        entropy = 0.0
+        for count in counts.values():
+            probability = float(count) / total
+            entropy -= probability * math.log2(max(probability, 1e-12))
+        return float(entropy)
+
+    @staticmethod
+    def _categorize_content_type(content_type: str, url: str) -> str:
+        """Leitet eine grobe Kategorie aus MIME-Typ oder URL-Endung ab."""
+        normalized = str(content_type or "").strip().lower()
+        suffix = urlparse(str(url or "")).path.lower()
+        if normalized.startswith("text/html") or suffix.endswith((".html", ".htm", "/")):
+            return "html"
+        if normalized.startswith("image/") or suffix.endswith((".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp")):
+            return "image"
+        if normalized.startswith("video/") or suffix.endswith((".mp4", ".mov", ".mkv", ".webm")):
+            return "video"
+        if normalized.startswith("audio/") or suffix.endswith((".mp3", ".wav", ".ogg", ".flac", ".aac")):
+            return "audio"
+        if normalized.startswith("text/") or suffix.endswith((".txt", ".md", ".json", ".xml", ".css", ".js")):
+            return "text"
+        return "binary"
+
+    @staticmethod
+    def _build_text_preview_rgb(text: str, size: int = 64) -> Any:
+        """Baut eine leichte Layout-Miniatur aus HTML- oder Textinhalt."""
+        target = max(32, int(size))
+        if np is None:
+            return None
+        canvas = np.zeros((target, target, 3), dtype=np.uint8)
+        lines = [str(line).strip() for line in str(text or "").splitlines() if str(line).strip()]
+        if not lines:
+            lines = [BrowserEngine.strip_html_text(str(text or ""), limit_chars=420)]
+        lines = lines[: target]
+        max_length = max(1, max(len(line) for line in lines if line))
+        for index, line in enumerate(lines):
+            row = min(target - 1, int((index / max(1, len(lines))) * target))
+            width = max(1, int((len(line) / max_length) * target))
+            diversity = len(set(line)) / max(1, len(line))
+            blue = int(110 + (90 * diversity))
+            red = int(40 + (155 * min(1.0, sum(1 for char in line if not char.isalnum() and not char.isspace()) / max(1, len(line)))))
+            green = int(70 + (140 * min(1.0, len(line) / max_length)))
+            canvas[row : min(target, row + 2), :width, :] = np.array([red, green, blue], dtype=np.uint8)
+        return canvas
+
+    @staticmethod
+    def _build_entropy_preview_rgb(raw_bytes: bytes, size: int = 64) -> Any:
+        """Baut eine generische Entropie-Miniatur aus Bytestroemen."""
+        target = max(32, int(size))
+        if np is None:
+            return None
+        payload = bytes(raw_bytes or b"")
+        if not payload:
+            return np.zeros((target, target, 3), dtype=np.uint8)
+        chunk_size = max(8, int(math.ceil(len(payload) / float(target * target))))
+        values: list[float] = []
+        for start in range(0, len(payload), chunk_size):
+            chunk = payload[start : start + chunk_size]
+            if not chunk:
+                continue
+            values.append(BrowserEngine._byte_entropy(chunk) / 8.0)
+            if len(values) >= target * target:
+                break
+        if not values:
+            values = [0.0]
+        if len(values) < target * target:
+            values.extend([values[-1]] * ((target * target) - len(values)))
+        array = np.asarray(values[: target * target], dtype=np.float64).reshape(target, target)
+        red = np.clip(array * 255.0, 0.0, 255.0).astype(np.uint8)
+        green = np.clip((1.0 - np.abs(array - 0.5) * 2.0) * 220.0, 0.0, 255.0).astype(np.uint8)
+        blue = np.clip((1.0 - array) * 255.0, 0.0, 255.0).astype(np.uint8)
+        return np.stack([red, green, blue], axis=2)
+
+    @staticmethod
+    def _build_image_preview_rgb(raw_bytes: bytes, size: int = 64) -> Any:
+        """Dekodiert Bilddaten zu einer kleinen RGB-Miniatur."""
+        target = max(32, int(size))
+        if np is None or Image is None:
+            return None
+        try:
+            import io
+
+            image = Image.open(io.BytesIO(bytes(raw_bytes or b""))).convert("RGB")
+            image.thumbnail((target, target))
+            canvas = Image.new("RGB", (target, target), (6, 12, 24))
+            offset = ((target - image.width) // 2, (target - image.height) // 2)
+            canvas.paste(image, offset)
+            return np.asarray(canvas, dtype=np.uint8)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _image_probe(raw_bytes: bytes) -> dict[str, Any]:
+        """Extrahiert leichte Symmetrie-/Kontrastsignale aus Bilddaten."""
+        preview_rgb = BrowserEngine._build_image_preview_rgb(raw_bytes, size=64)
+        if preview_rgb is None or np is None:
+            return {"preview_rgb": None, "symmetry": 0.0, "contrast": 0.0, "mean_intensity": 0.0}
+        image = np.asarray(preview_rgb[:, :, :3], dtype=np.float64)
+        gray = np.mean(image, axis=2)
+        normalized = gray / max(1.0, float(np.max(gray)))
+        symmetry = 1.0 - float(np.mean(np.abs(normalized - np.fliplr(normalized))))
+        contrast = float(np.std(normalized))
+        mean_intensity = float(np.mean(normalized))
+        return {
+            "preview_rgb": preview_rgb,
+            "symmetry": float(max(0.0, min(1.0, symmetry))),
+            "contrast": float(max(0.0, min(1.0, contrast))),
+            "mean_intensity": float(max(0.0, min(1.0, mean_intensity))),
+        }
+
+    @classmethod
+    def inspect_url(
+        cls,
+        url: str,
+        timeout: float = 6.0,
+        max_bytes: int = 524288,
+    ) -> dict[str, Any]:
+        """Analysiert eine Ziel-URL lokal ohne volles Oeffnen auf Struktur- und Risikosignale."""
+        normalized_url = _normalize_url(url)
+        try:
+            download = cls._download_payload(normalized_url, timeout=timeout, max_bytes=max_bytes)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "url": str(normalized_url),
+                "final_url": str(normalized_url),
+                "error": str(exc),
+                "risk_label": "CRITICAL",
+                "risk_score": 1.0,
+                "risk_reasons": [f"Download fehlgeschlagen: {exc}"],
+                "open_recommended": False,
+            }
+
+        raw_bytes = bytes(download.get("raw_bytes", b"") or b"")
+        content_type = str(download.get("content_type", "") or "")
+        category = cls._categorize_content_type(content_type, str(download.get("final_url", normalized_url)))
+        entropy = cls._byte_entropy(raw_bytes)
+        header_blob = "\n".join(f"{key}: {value}" for key, value in sorted(dict(download.get("headers", {})).items()))
+        header_entropy = cls._byte_entropy(header_blob.encode("utf-8", errors="replace"))
+        text_sample = ""
+        title = ""
+        summary = ""
+        script_count = 0
+        style_count = 0
+        inline_base64 = 0
+        eval_hits = 0
+        external_resources = 0
+        suspicious_long_lines = 0
+        preview_rgb = None
+        preview_summary = ""
+        missing_data: list[str] = []
+        risk_reasons: list[str] = []
+
+        if category == "html":
+            html_text = raw_bytes.decode("utf-8", errors="replace")
+            text_sample = cls.strip_html_text(html_text, limit_chars=2000)
+            summary = cls.strip_html_text(html_text, limit_chars=720)
+            title_match = re.search(r"(?is)<title[^>]*>(.*?)</title>", html_text)
+            if title_match:
+                title = re.sub(r"\s+", " ", html.unescape(title_match.group(1))).strip()
+            script_count = len(re.findall(r"(?is)<script\b", html_text))
+            style_count = len(re.findall(r"(?is)<style\b", html_text))
+            inline_base64 = len(re.findall(r"data:[^;]+;base64,", html_text, flags=re.IGNORECASE))
+            eval_hits = len(
+                re.findall(
+                    r"(?i)(?:\beval\s*\(|\batob\s*\(|fromcharcode\s*\(|document\.write\s*\(|unescape\s*\()",
+                    html_text,
+                )
+            )
+            external_resources = len(re.findall(r"""(?i)(?:src|href)\s*=\s*["']https?://""", html_text))
+            suspicious_long_lines = sum(1 for line in html_text.splitlines() if len(line.strip()) > 320)
+            preview_rgb = cls._build_text_preview_rgb(text_sample or summary, size=64)
+            preview_summary = "Layout-Heatmap aus HTML/Textdichte"
+        elif category in {"text", "binary", "audio", "video"}:
+            text_sample = raw_bytes.decode("utf-8", errors="replace") if category == "text" else ""
+            summary = " ".join(text_sample.split())[:720] if text_sample else ""
+            preview_rgb = cls._build_text_preview_rgb(summary, size=64) if summary else cls._build_entropy_preview_rgb(raw_bytes, size=64)
+            preview_summary = "Textlayout" if summary else "Entropie-Map aus Bytestrom"
+            if category == "video":
+                missing_data.append("Temporale Frame-Drift ohne lokalen Decoder nur stichprobenartig bewertbar")
+            if category == "audio":
+                missing_data.append("Audiofront ohne lokalen Decoder nur ueber Header/Bytes bewertet")
+        elif category == "image":
+            image_probe = cls._image_probe(raw_bytes)
+            preview_rgb = image_probe.get("preview_rgb")
+            preview_summary = "Downsample-Miniatur aus Bilddaten"
+        else:
+            preview_rgb = cls._build_entropy_preview_rgb(raw_bytes, size=64)
+            preview_summary = "Generische Entropie-Miniatur"
+
+        if not title:
+            title = urlparse(str(download.get("final_url", normalized_url))).netloc or str(normalized_url)
+
+        lowered_text = f"{title} {summary} {text_sample}".lower()
+        hate_hits = sum(1 for term in HATE_PATTERN_TERMS if term in lowered_text)
+        scam_hits = sum(1 for term in SCAM_PATTERN_TERMS if term in lowered_text)
+        fake_hits = sum(1 for term in FAKE_PATTERN_TERMS if term in lowered_text)
+
+        obfuscation_score = max(
+            0.0,
+            min(
+                1.0,
+                (0.22 * min(1.0, eval_hits / 4.0))
+                + (0.18 * min(1.0, inline_base64 / 3.0))
+                + (0.16 * min(1.0, suspicious_long_lines / 6.0))
+                + (0.14 * min(1.0, max(0.0, entropy - 6.4) / 1.6))
+                + (0.10 * min(1.0, script_count / 12.0))
+            ),
+        )
+        ai_generation_score = 0.0
+        frontend_symmetry = 0.0
+        frontend_entropy = 0.0
+        if preview_rgb is not None and np is not None:
+            image = np.asarray(preview_rgb[:, :, :3], dtype=np.float64)
+            gray = np.mean(image, axis=2)
+            frontend_symmetry = float(max(0.0, min(1.0, 1.0 - np.mean(np.abs((gray / max(1.0, float(np.max(gray)))) - np.fliplr(gray / max(1.0, float(np.max(gray)))))))))
+            histogram = np.histogram(gray, bins=16, range=(0, 255))[0].astype(np.float64)
+            probabilities = histogram[histogram > 0.0] / max(1.0, float(histogram.sum()))
+            frontend_entropy = float(-np.sum(probabilities * np.log2(probabilities))) if probabilities.size > 0 else 0.0
+            ai_generation_score = max(
+                0.0,
+                min(
+                    1.0,
+                    (0.22 * min(1.0, frontend_entropy / 4.0))
+                    + (0.18 * max(0.0, frontend_symmetry - 0.82))
+                    + (0.14 * min(1.0, max(0.0, entropy - 5.8) / 2.0)),
+                ),
+            )
+
+        hate_score = max(0.0, min(1.0, (0.55 * min(1.0, hate_hits / 2.0)) + (0.18 * min(1.0, fake_hits / 3.0))))
+        fake_score = max(
+            0.0,
+            min(
+                1.0,
+                (0.28 * min(1.0, fake_hits / 3.0))
+                + (0.18 * min(1.0, max(0.0, header_entropy - 4.2) / 2.0))
+                + (0.16 * min(1.0, max(0.0, entropy - 5.9) / 1.6))
+                + (0.12 * min(1.0, external_resources / 12.0)),
+            ),
+        )
+        scam_score = max(
+            0.0,
+            min(
+                1.0,
+                (0.42 * min(1.0, scam_hits / 3.0))
+                + (0.28 * obfuscation_score)
+                + (0.10 * min(1.0, eval_hits / 2.0)),
+            ),
+        )
+        risk_score = max(ai_generation_score, hate_score, fake_score, scam_score, obfuscation_score * 0.92)
+
+        if scam_score >= 0.66 or obfuscation_score >= 0.66:
+            risk_reasons.append("Obfuskation oder Script-Verschleierung erkannt")
+        if hate_score >= 0.52:
+            risk_reasons.append("Asymmetrische Sprachmuster mit Hate-Speech-Potenzial erkannt")
+        if fake_score >= 0.50:
+            risk_reasons.append("Inkonsistente oder sensationsgetriebene Struktur erhoeht Fakenews-Risiko")
+        if ai_generation_score >= 0.46:
+            risk_reasons.append("Frontend-Signale wirken stark synthetisch oder uebermaessig glatt")
+        if not risk_reasons:
+            risk_reasons.append("Keine dominante Anomalie erkannt; Struktur bleibt vorlaeufig konsistent")
+
+        if risk_score >= 0.72:
+            risk_label = "CRITICAL"
+        elif risk_score >= 0.40:
+            risk_label = "SUSPICIOUS"
+        else:
+            risk_label = "CLEAN"
+
+        if not bool(download.get("secure", False)):
+            risk_reasons.append("Transport nicht ueber HTTPS gesichert")
+            risk_score = max(risk_score, 0.38)
+            if risk_label == "CLEAN":
+                risk_label = "SUSPICIOUS"
+
+        safe_headers = {
+            key: value
+            for key, value in dict(download.get("headers", {})).items()
+            if key in {"content-type", "content-length", "server", "cache-control", "content-security-policy", "x-frame-options"}
+        }
+        backend_summary = (
+            f"Headers {len(safe_headers)} | MIME {content_type or '--'} | "
+            f"Scripts {script_count} | Styles {style_count} | Obfuskation {obfuscation_score:.2f}"
+        )
+        frontend_summary = (
+            f"{preview_summary or 'keine Miniatur'} | Frontend-Entropie {frontend_entropy:.2f} | "
+            f"Symmetrie {frontend_symmetry * 100.0:.0f}%"
+        )
+        return {
+            "ok": True,
+            "url": str(normalized_url),
+            "final_url": str(download.get("final_url", normalized_url)),
+            "title": str(title or ""),
+            "summary": str(summary or text_sample[:720]),
+            "text_sample": str(text_sample or ""),
+            "content_type": str(content_type or ""),
+            "category": str(category),
+            "status_code": int(download.get("status_code", 200) or 200),
+            "headers": safe_headers,
+            "content_length": int(download.get("content_length", 0) or 0),
+            "secure": bool(download.get("secure", False)),
+            "entropy": float(entropy),
+            "header_entropy": float(header_entropy),
+            "script_count": int(script_count),
+            "style_count": int(style_count),
+            "inline_base64": int(inline_base64),
+            "eval_hits": int(eval_hits),
+            "external_resources": int(external_resources),
+            "obfuscation_score": float(obfuscation_score),
+            "ai_generation_score": float(ai_generation_score),
+            "hate_risk_score": float(hate_score),
+            "fake_risk_score": float(fake_score),
+            "scam_risk_score": float(scam_score),
+            "risk_score": float(max(0.0, min(1.0, risk_score))),
+            "risk_label": str(risk_label),
+            "risk_reasons": list(dict.fromkeys(str(item) for item in risk_reasons if str(item).strip())),
+            "frontend_summary": str(frontend_summary),
+            "backend_summary": str(backend_summary),
+            "missing_data": list(missing_data),
+            "open_recommended": bool(risk_label == "CLEAN"),
+            "raw_bytes": raw_bytes,
+            "miniature_rgb": preview_rgb,
+        }
 
     @staticmethod
     def build_search_url(query: str, provider: str = "duckduckgo") -> str:
