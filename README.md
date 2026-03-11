@@ -505,6 +505,7 @@ Wenn `Raster-Einsicht` aktiviert ist oder `python start.py --shanway-raster-insi
 - rekursive lokale Reflexionsstufen bis zu einer festen Tiefe
 - TTD-Vorschlaege fuer stabile Anker
 - `learned_insight` als verdichtete Schlussfolgerung aus Symmetrie-, Residual- und Rekursionsverlauf
+- optional einen geschlossenen lokalen Folgepfad: Analyse -> Shanway-Befund -> Browser-Kontextsuche -> neue Analyse
 
 Die daraus entstehenden Self-Reflection-Deltas gelten strikt lokal:
 

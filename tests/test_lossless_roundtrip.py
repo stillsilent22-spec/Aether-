@@ -14,7 +14,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.ae_evolution_core import AEAlgorithmVault
+from modules.agent_loop import AgentLoopEngine
 from modules.analysis_engine import AnalysisEngine
+from modules.browser_engine import BrowserEngine
 from modules.observer_engine import ObserverEngine
 from modules.reconstruction_engine import LosslessReconstructionEngine
 from modules.session_engine import SessionContext
@@ -316,12 +318,59 @@ def test_ttd_auto_export_writes_dna_seed_and_jsonl() -> None:
     shutil.rmtree(temp_export_root, ignore_errors=True)
 
 
+def test_agent_loop_plans_browser_followup_for_open_state() -> None:
+    """Offene Shanway-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
+    loop = AgentLoopEngine()
+    assessment_payload = {
+        "classification": "uncertain",
+        "next_action": "Weitere strukturverwandte Dateien einspeisen",
+        "missing_dependencies": [],
+        "missing_data": [],
+        "vault_gap": "",
+        "boundary": "STRUCTURAL_HYPOTHESIS",
+        "narrative_text": "Die Struktur bleibt offen und lernbar.",
+    }
+    directive = loop.plan_browser_followup(
+        source_key="filehash-open-state",
+        source_label="Arial.ttf",
+        file_type=".ttf",
+        h_lambda=5.3,
+        observer_state="OFFEN",
+        assessment_payload=assessment_payload,
+        browser_enabled=True,
+        browser_available=True,
+        current_url="",
+    )
+    assert directive.should_execute is True
+    assert directive.action == "browser_search"
+    action_payload = dict(directive.action_payload or {})
+    query = str(action_payload.get("query", "") or "")
+    assert "ttf" in query.lower() or "font" in query.lower()
+    url = BrowserEngine.build_search_url(query)
+    assert url.startswith("https://")
+    loop.note_browser_navigation("filehash-open-state", url)
+
+    second = loop.plan_browser_followup(
+        source_key="filehash-open-state",
+        source_label="Arial.ttf",
+        file_type=".ttf",
+        h_lambda=5.1,
+        observer_state="OFFEN",
+        assessment_payload=assessment_payload,
+        browser_enabled=True,
+        browser_available=True,
+        current_url=url,
+    )
+    assert int(second.loop_iteration) <= 2
+
+
 def main() -> None:
     """Fuehrt beide Smoke-Varianten direkt ohne pytest-Runner aus."""
     success = run_roundtrip_smoke_test()
     failure = run_roundtrip_failure_smoke_test()
     test_lossless_roundtrip_with_recursive_raster_reflection()
     test_ttd_auto_export_writes_dna_seed_and_jsonl()
+    test_agent_loop_plans_browser_followup_for_open_state()
     gain = max(
         0.0,
         min(
@@ -341,6 +390,7 @@ def main() -> None:
     )
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
     print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
+    print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
 
 
 if __name__ == "__main__":

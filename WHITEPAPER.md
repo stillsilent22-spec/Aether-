@@ -239,6 +239,8 @@ So entsteht kontinuierliches Lernen, ohne den lossless-Pfad zu brechen. `D(S_t, 
 
 Lokale DNA-Exports tragen den `delta_session_seed` deshalb explizit im Header. Der Seed bleibt damit auch dann auditierbar, wenn nur ein DNA-Export und kein Registry-Datensatz vorliegt.
 
+Der Folgepfad kann optional lokal geschlossen werden: Eine offene Analyse darf Shanway zu einer begrenzten Browser-Kontextsuche veranlassen; die geladene HTML-Seite wird danach wieder lokal als Aether-Zustand analysiert. Dadurch entsteht kein Cloud-Zwang, sondern nur ein eng begrenzter Analyse -> Entscheidung -> Aktion -> Analyse-Kreis.
+
 ## 12. Verbundenheit unter Governance
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:

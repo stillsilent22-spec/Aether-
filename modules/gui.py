@@ -239,7 +239,10 @@ class VeiraGUI:
         self.shanway_enabled_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_enabled", False))
         )
-        self.shanway_browser_mode_var = tk.BooleanVar(value=False)
+        self.shanway_browser_mode_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_browser_mode", False))
+        )
+        self.shanway_browser_mode_label_var = tk.StringVar(value="Browser-Liveanalyse aus")
         self.shanway_raster_insight_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_raster_insight", False))
         )
@@ -316,6 +319,8 @@ class VeiraGUI:
         self._last_agent_resolved_count = 0
         self._language_job_id = 0
         self._browser_job_id = 0
+        self._last_browser_snapshot_key = ""
+        self._browser_followup_source_key = ""
         self._voice_card_refs: list[tk.Frame] = []
         self._browser_address_frames: list[tk.Frame] = []
         self._latest_file_record_id: int | None = None
@@ -324,6 +329,9 @@ class VeiraGUI:
         self.history_entries_cache: list[dict[str, object]] = []
         self.history_index = -1
         self._vault_line_map: dict[int, dict[str, object]] = {}
+        self.shanway_browser_mode_label_var.set(
+            "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
+        )
         self._chain_line_map: dict[int, dict[str, object]] = {}
         self._previous_theremin_anchors: list[AnchorPoint] = []
         self._runtime_pressure: RuntimePressure | None = None
@@ -1412,7 +1420,12 @@ class VeiraGUI:
         shanway_mode_row = tk.Frame(shanway_tab, bg="#0D1930")
         shanway_mode_row.pack(fill="x", padx=10, pady=(0, 6))
         ttk.Checkbutton(shanway_mode_row, text="Shanway aktiv", variable=self.shanway_enabled_var, command=self._on_shanway_toggle).pack(side="left", padx=(0, 8))
-        ttk.Checkbutton(shanway_mode_row, text="Browser-Liveanalyse aus", variable=self.shanway_browser_mode_var, command=self._on_shanway_browser_toggle, state="disabled").pack(side="left")
+        ttk.Checkbutton(
+            shanway_mode_row,
+            textvariable=self.shanway_browser_mode_label_var,
+            variable=self.shanway_browser_mode_var,
+            command=self._on_shanway_browser_toggle,
+        ).pack(side="left")
         ttk.Checkbutton(
             shanway_mode_row,
             text="Raster-Einsicht",
@@ -1579,10 +1592,9 @@ class VeiraGUI:
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
-            text="Browser-Liveanalyse aus",
+            textvariable=self.shanway_browser_mode_label_var,
             variable=self.shanway_browser_mode_var,
             command=self._on_shanway_browser_toggle,
-            state="disabled",
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
@@ -1737,10 +1749,9 @@ class VeiraGUI:
         ).pack(anchor="w", padx=10, pady=(0, 8))
         ttk.Checkbutton(
             self.browser_panel,
-            text="Browser-Liveanalyse aus",
+            textvariable=self.shanway_browser_mode_label_var,
             variable=self.shanway_browser_mode_var,
             command=self._on_shanway_browser_toggle,
-            state="disabled",
         ).pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(
             self.browser_panel,
@@ -2076,12 +2087,15 @@ class VeiraGUI:
         self.browser_engine.hide()
 
     def _ensure_browser_running(self) -> bool:
-        """Startet den getrennten pywebview-Browser ohne Aether-Analysepfad."""
+        """Startet den getrennten pywebview-Browser fuer optionale lokale Folgeanalysen."""
         if not self.browser_engine.available:
             self.browser_status_var.set("Browser deaktiviert: pywebview ist nicht installiert.")
             return False
         if self.browser_engine.start():
-            self.browser_status_var.set("Browser aktiv. Nur visuell, ohne Audio und ohne Aether-Liveanalyse.")
+            if bool(self.shanway_browser_mode_var.get()):
+                self.browser_status_var.set("Browser aktiv. Shanway darf lokale Folgeanalysen ohne Audio ausfuehren.")
+            else:
+                self.browser_status_var.set("Browser aktiv. Nur visuell, ohne Audio und ohne Aether-Liveanalyse.")
             if self.browser_poll_job is None:
                 self._poll_browser_events()
             self._apply_browser_surface()
@@ -2132,14 +2146,104 @@ class VeiraGUI:
         except Exception as exc:
             messagebox.showerror("Browserfehler", f"Die Seite konnte extern nicht geoeffnet werden:\n{exc}")
 
+    @staticmethod
+    def _browser_snapshot_key(snapshot: BrowserSnapshot) -> str:
+        """Leitet einen stabilen Schluessel fuer geladene Browserseiten ab."""
+        payload = f"{snapshot.url}|{snapshot.title}|{hashlib.sha256(snapshot.html.encode('utf-8', errors='replace')).hexdigest()}"
+        return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+    @staticmethod
+    def _browser_profile(snapshot: BrowserSnapshot) -> dict[str, object]:
+        """Baut ein kompaktes Dateiprofil fuer HTML-Browseranalysen."""
+        return {
+            "category": "document",
+            "subtype": "browser_html",
+            "mime_type": "text/html",
+            "parser_confidence": 1.0,
+            "summary": {
+                "stream_count": 1,
+                "type_metric_count": 3,
+            },
+            "type_metrics": {
+                "html_length": int(len(snapshot.html)),
+                "title_length": int(len(snapshot.title or "")),
+                "secure_transport": bool(snapshot.secure),
+            },
+            "missing_dependencies": [],
+            "missing_data": [],
+        }
+
+    def _start_browser_snapshot_analysis(self, snapshot: BrowserSnapshot, origin: str = "loaded") -> None:
+        """Analysiert geladene Browserseiten lokal als eigenen Aether-Datensatz."""
+        if not bool(self.shanway_browser_mode_var.get()):
+            return
+        if self.browser_analysis_thread is not None and self.browser_analysis_thread.is_alive():
+            self.browser_status_var.set("Browseranalyse laeuft bereits. Neuer Snapshot wird uebersprungen.")
+            return
+        snapshot_key = self._browser_snapshot_key(snapshot)
+        if snapshot_key == self._last_browser_snapshot_key:
+            return
+        self._last_browser_snapshot_key = snapshot_key
+        self._browser_job_id += 1
+        job_id = int(self._browser_job_id)
+        self.browser_status_var.set(f"Browser-Snapshot wird lokal analysiert ({origin}).")
+        self.browser_analysis_thread = threading.Thread(
+            target=self._browser_analysis_worker,
+            args=(job_id, snapshot),
+            daemon=True,
+        )
+        self.browser_analysis_thread.start()
+
+    def _browser_analysis_worker(self, job_id: int, snapshot: BrowserSnapshot) -> None:
+        """Fuehrt die lokale HTML-Analyse fuer den Companion-Browser aus."""
+        try:
+            html_bytes = snapshot.html.encode("utf-8", errors="replace")
+            fingerprint = self.analysis_engine.analyze_bytes(
+                html_bytes,
+                source_label=str(snapshot.url or snapshot.title or "browser"),
+                source_type="browser_html",
+                file_profile=self._browser_profile(snapshot),
+                low_power=bool(self.low_power_mode_var.get()),
+            )
+            payload_update = {
+                "browser_snapshot": {
+                    "url": str(snapshot.url),
+                    "title": str(snapshot.title),
+                    "secure": bool(snapshot.secure),
+                    "timestamp": float(snapshot.timestamp),
+                },
+                "browser_loop": True,
+            }
+            record_id = self.registry.save(
+                fingerprint,
+                self.session_context,
+                payload_update=payload_update,
+            )
+            log_path = self.log_system.write_analysis_log(fingerprint)
+            self.root.after(
+                0,
+                lambda: self._on_browser_analysis_complete(
+                    job_id=job_id,
+                    snapshot=snapshot,
+                    fingerprint=fingerprint,
+                    record_id=int(record_id),
+                    log_path=str(log_path),
+                ),
+            )
+        except Exception as exc:
+            self.root.after(0, lambda: self.browser_status_var.set(f"Browseranalyse fehlgeschlagen: {exc}"))
+
     def _poll_browser_events(self) -> None:
-        """Liest nur visuelle Browserereignisse ohne Aether-Analyse aus."""
+        """Liest Browserereignisse aus und startet optional lokale Folgeanalysen."""
         for event in self.browser_engine.poll_events(limit=10):
             kind = str(event.get("kind", ""))
             if kind == "ready":
                 self.browser_url_var.set(str(event.get("url", self.browser_url_var.get())))
                 self._set_browser_lock(bool(event.get("secure", False)))
-                self.browser_status_var.set("Browser bereit. Keine Audio- oder Liveanalyse aktiv.")
+                if bool(self.shanway_browser_mode_var.get()):
+                    self.browser_status_var.set("Browser bereit. Shanway-Browser-Liveanalyse ist aktiviert.")
+                else:
+                    self.browser_status_var.set("Browser bereit. Keine Audio- oder Liveanalyse aktiv.")
                 self._apply_browser_surface()
             elif kind == "loaded":
                 snapshot = BrowserSnapshot(
@@ -2159,10 +2263,14 @@ class VeiraGUI:
             self.browser_poll_job = None
 
     def _handle_browser_loaded(self, snapshot: BrowserSnapshot) -> None:
-        """Aktualisiert nur den Browserstatus; der Browser bleibt aus dem Live-Aether-Pfad heraus."""
+        """Aktualisiert den Browserstatus und startet optional die lokale HTML-Analyse."""
         self.browser_url_var.set(snapshot.url)
         self.browser_title_var.set(snapshot.title or "Ohne Seitentitel")
         self._set_browser_lock(snapshot.secure)
+        if bool(self.shanway_browser_mode_var.get()):
+            self.browser_status_var.set("Seite geladen. Shanway startet die lokale Browser-Folgeanalyse.")
+            self._start_browser_snapshot_analysis(snapshot, origin="loaded")
+            return
         self.browser_status_var.set("Seite geladen. Browser bleibt vom Shanway- und Raster-Livepfad getrennt.")
 
     def _on_browser_analysis_complete(
@@ -2192,9 +2300,9 @@ class VeiraGUI:
         self.loading_var.set(f"Browseranalyse abgeschlossen: {Path(log_path).name}")
         self._refresh_recent_logs()
         self._refresh_history_cache(preserve_record_id=int(record_id))
-        if not self._is_text_silent_source(fingerprint):
-            self.audio_engine.play(fingerprint)
-        self._apply_shanway_browser_assessment(snapshot, fingerprint, int(record_id))
+        assessment = self._apply_shanway_browser_assessment(snapshot, fingerprint, int(record_id))
+        if assessment is not None:
+            self._maybe_execute_browser_followup(snapshot, fingerprint, assessment)
 
         if beauty_d < 1.08 or beauty_d > 1.92:
             self._flash_browser_alarm(play_sound=False)
@@ -2204,11 +2312,11 @@ class VeiraGUI:
         snapshot: BrowserSnapshot,
         fingerprint: AetherFingerprint,
         record_id: int,
-    ) -> None:
+    ) -> ShanwayAssessment | None:
         """Bewertet Browsertext explizit nur im aktivierten Shanway-Browsermodus."""
         if not bool(self.shanway_browser_mode_var.get()):
             self._set_shanway_guard("Shanway Guard: Browser-Modus aus")
-            return
+            return None
         context = self._assistant_context_for(fingerprint)
         browser_text = self.shanway_engine.strip_browser_text(snapshot.html)
         assessment = self.shanway_engine.detect_asymmetry(
@@ -2258,13 +2366,76 @@ class VeiraGUI:
             self.browser_status_var.set(
                 f"{snapshot.title or snapshot.url} geladen | Sensible Inhalte erkannt - Analyse gestoppt"
             )
-            return
+            return assessment
         self.browser_status_var.set(
             f"{snapshot.title or snapshot.url} analysiert | Shanway {assessment.classification} | "
             f"Noether {assessment.noether_symmetry * 100.0:.0f}% | tox {assessment.toxicity_score * 100.0:.0f}%"
         )
         if assessment.classification == "toxic":
             self._flash_browser_alarm(play_sound=False)
+        return assessment
+
+    def _maybe_execute_file_followup(self, fingerprint: AetherFingerprint, assessment: ShanwayAssessment | None) -> None:
+        """Startet bei offenen Dateibefunden optional einen lokalen Browser-Kontextlauf."""
+        if assessment is None:
+            return
+        directive = self.agent_loop.plan_browser_followup(
+            source_key=str(getattr(fingerprint, "file_hash", "") or getattr(fingerprint, "scan_hash", "") or getattr(fingerprint, "source_label", "")),
+            source_label=str(getattr(fingerprint, "source_label", "") or ""),
+            file_type=str(getattr(assessment, "file_type", "") or ""),
+            h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+            observer_state=str(getattr(fingerprint, "observer_state", "") or "OFFEN"),
+            assessment_payload=assessment.to_payload(),
+            browser_enabled=bool(self.shanway_browser_mode_var.get()),
+            browser_available=bool(self.browser_engine.available),
+            current_url=str(self.browser_url_var.get() or ""),
+        )
+        if not directive.should_execute:
+            return
+        if not self._ensure_browser_running():
+            return
+        action_payload = dict(directive.action_payload or {})
+        query = str(action_payload.get("query", "") or "").strip()
+        if not query:
+            return
+        url = self.browser_engine.search(query)
+        self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
+        self._browser_followup_source_key = str(directive.loop_source)
+        self.browser_url_var.set(url)
+        self.browser_status_var.set(f"Shanway-Folgeanalyse gestartet | {directive.rationale}")
+        self.loading_var.set(f"Shanway-Loop aktiv: {query}")
+
+    def _maybe_execute_browser_followup(
+        self,
+        snapshot: BrowserSnapshot,
+        fingerprint: AetherFingerprint,
+        assessment: ShanwayAssessment,
+    ) -> None:
+        """Faehrt maximal wenige Browser-Kontextspruenge aus, falls die Struktur offen bleibt."""
+        directive = self.agent_loop.plan_browser_followup(
+            source_key=str(self._browser_followup_source_key or getattr(fingerprint, "file_hash", "") or snapshot.url or snapshot.title),
+            source_label=str(snapshot.url or snapshot.title or ""),
+            file_type=str(getattr(assessment, "file_type", "") or ""),
+            h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+            observer_state=str(getattr(fingerprint, "observer_state", "") or "OFFEN"),
+            assessment_payload=assessment.to_payload(),
+            browser_enabled=bool(self.shanway_browser_mode_var.get()),
+            browser_available=bool(self.browser_engine.available),
+            current_url=str(snapshot.url or ""),
+        )
+        if not directive.should_execute:
+            self._browser_followup_source_key = ""
+            return
+        action_payload = dict(directive.action_payload or {})
+        query = str(action_payload.get("query", "") or "").strip()
+        if not query:
+            self._browser_followup_source_key = ""
+            return
+        url = self.browser_engine.search(query)
+        self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
+        self._browser_followup_source_key = str(directive.loop_source)
+        self.browser_url_var.set(url)
+        self.browser_status_var.set(f"Shanway rekursiver Kontextlauf {directive.loop_iteration}: {directive.rationale}")
 
     def _set_browser_lock(self, secure: bool) -> None:
         """Aktualisiert Symbol und Farbe des Browser-Locks."""
@@ -2652,13 +2823,26 @@ class VeiraGUI:
         self._set_shanway_guard(f"Shanway Guard: {state_text}")
         self.chat_status_var.set(f"Shanway {state_text} | globale Kanaele")
 
+    def _set_shanway_browser_mode_label(self) -> None:
+        """Haelt den Browser-Liveanalyse-Schalter textlich konsistent."""
+        self.shanway_browser_mode_label_var.set(
+            "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
+        )
+
     def _on_shanway_browser_toggle(self) -> None:
-        """Browser-Liveanalyse bleibt bewusst deaktiviert."""
-        enabled = False
-        self.shanway_browser_mode_var.set(False)
+        """Aktiviert einen begrenzten lokalen Browser-Folgepfad fuer offene Shanway-Befunde."""
+        enabled = bool(self.shanway_browser_mode_var.get())
+        if enabled and not self._ensure_browser_running():
+            self.shanway_browser_mode_var.set(False)
+            enabled = False
+        self._set_shanway_browser_mode_label()
         self._persist_shanway_preferences()
-        self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Shanway bleibt privat im Chat.")
-        self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse aus")
+        if enabled:
+            self.browser_status_var.set("Browser-Liveanalyse aktiv. Shanway darf lokale Folgeanalysen im Companion-Browser ausloesen.")
+            self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse an")
+        else:
+            self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Shanway bleibt lokal ohne Web-Folgeschritt.")
+            self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse aus")
 
     def _on_shanway_raster_toggle(self) -> None:
         """Aktualisiert die optionale Raster-Einsicht fuer Shanway."""
@@ -6629,9 +6813,10 @@ class VeiraGUI:
             verify_counts=verify_counts,
         )
 
-    def _update_semantic_status(self, fingerprint: AetherFingerprint, source_text: str = "") -> None:
+    def _update_semantic_status(self, fingerprint: AetherFingerprint, source_text: str = "") -> ShanwayAssessment | None:
         """Aktualisiert die sichtbare strukturelle Semantik fuer den aktuellen Datensatz."""
         reply, beauty_d, anchors = self._structural_reply_for(fingerprint, source_text=source_text)
+        shanway_assessment: ShanwayAssessment | None = None
         security_prefix = ""
         if not self.session_context.security_allows("allow_semantic_promotion", True):
             security_prefix = (
@@ -6704,6 +6889,7 @@ class VeiraGUI:
             )
             shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
             fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]
+            setattr(fingerprint, "_shanway_assessment_payload", shanway_assessment.to_payload())
             latest_record_id = int(getattr(self, "_latest_file_record_id", 0) or 0)
             if latest_record_id > 0 and self.current_fingerprint is fingerprint:
                 self.registry.update_fingerprint_payload(
@@ -6724,9 +6910,10 @@ class VeiraGUI:
                 if self.current_canvas is not None:
                     self.current_canvas.draw_idle()
         except Exception:
-            pass
+            shanway_assessment = None
         self._update_graph_field(fingerprint)
         self._update_bayes_layer(fingerprint, anchors=anchors)
+        return shanway_assessment
 
     def _update_integrity_monitor(self, fingerprint: AetherFingerprint) -> None:
         """Aktualisiert den Integritaets-Monitor fuer aktuelle Analysewerte."""
@@ -7341,6 +7528,9 @@ class VeiraGUI:
         if not file_path or not Path(file_path).is_file():
             messagebox.showwarning("Hinweis", "Bitte einen gueltigen Dateipfad angeben.")
             return
+        self.agent_loop.reset_browser_loop()
+        self._last_browser_snapshot_key = ""
+        self._browser_followup_source_key = ""
         self.voxel_grid.clear()
         self.loading_var.set("Dateianalyse laeuft ...")
         self._set_loading(True, determinate=True)
@@ -7649,7 +7839,8 @@ class VeiraGUI:
         self._set_scene_from_fingerprint(fingerprint)
         self._update_miniature_preview(fingerprint)
         self._update_integrity_monitor(fingerprint)
-        self._update_semantic_status(fingerprint, source_text=str(getattr(fingerprint, "source_label", "")))
+        assessment = self._update_semantic_status(fingerprint, source_text=str(getattr(fingerprint, "source_label", "")))
+        self._maybe_execute_file_followup(fingerprint, assessment)
         ttd_candidates = [
             dict(item)
             for item in list(dict(getattr(fingerprint, "self_reflection_delta", {}) or {}).get("ttd_candidates", []) or [])

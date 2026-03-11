@@ -10,6 +10,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote_plus
 
 
 def _normalize_url(url: str) -> str:
@@ -376,6 +377,26 @@ class BrowserEngine:
         if self._command_queue is None:
             return
         self._command_queue.put({"cmd": "navigate", "url": _normalize_url(url)})
+
+    @staticmethod
+    def build_search_url(query: str, provider: str = "duckduckgo") -> str:
+        """Erzeugt eine schlanke Such-URL fuer lokale Kontextsuche."""
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
+            normalized_query = "file format structure"
+        encoded = quote_plus(normalized_query)
+        selected = str(provider or "duckduckgo").strip().lower()
+        if selected == "bing":
+            return f"https://www.bing.com/search?q={encoded}"
+        if selected == "google":
+            return f"https://www.google.com/search?q={encoded}"
+        return f"https://duckduckgo.com/?q={encoded}"
+
+    def search(self, query: str, provider: str = "duckduckgo") -> str:
+        """Startet eine lokale Websuche im Companion-Browser und liefert die Ziel-URL."""
+        url = self.build_search_url(query, provider=provider)
+        self.navigate(url)
+        return str(url)
 
     def back(self) -> None:
         """Geht in der Browserhistorie zurueck."""
