@@ -127,6 +127,8 @@ class ObserverEngine:
             "learned_insights": [],
             "current_insight": "",
             "public_anchor_count": 0,
+            "trusted_public_anchor_count": 0,
+            "pending_public_anchor_count": 0,
             "public_anchor_hashes": [],
             "last_global_learn_delta": 0.0,
         }
@@ -432,6 +434,10 @@ class ObserverEngine:
             for item in list(payload.get("public_anchors", []) or [])
             if isinstance(item, dict)
         ]
+        trusted_anchor_count = int(payload.get("trusted_anchor_count", len(public_anchors)) or len(public_anchors))
+        pending_quorum_count = int(payload.get("candidate_anchor_count", 0) or 0)
+        quorum_validated_count = int(payload.get("quorum_validated_count", 0) or 0)
+        admin_trusted_count = int(payload.get("admin_trusted_count", 0) or 0)
         previous_state = self.load_learning_state(session_context)
         previous_count = int(len(list(previous_state.get("public_anchor_hashes", []) or [])))
         updated = self.update_learning_state(session_context, reflection_payload={}, imported_public_anchors=public_anchors)
@@ -448,13 +454,38 @@ class ObserverEngine:
         symmetry_gain = round(float(self._rolling_mean(symmetry_values) * 100.0), 12) if symmetry_values else 0.0
         i_obs_gain = round(float(self._rolling_mean(delta_values)), 12) if delta_values else 0.0
         current_count = int(updated.get("public_anchor_count", 0) or 0)
+        imported_count = max(0, current_count - previous_count)
+        current_insight = str(updated.get("current_insight", "") or "")
+        if imported_count > 0 and quorum_validated_count > 0:
+            current_insight = (
+                f"Anker von 3 Peers validiert -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
+                f"I_obs +{i_obs_gain:.2f}%."
+            )
+        elif imported_count > 0 and admin_trusted_count > 0:
+            current_insight = (
+                f"Admin-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
+                f"I_obs +{i_obs_gain:.2f}%."
+            )
+        elif pending_quorum_count > 0 and imported_count <= 0:
+            current_insight = (
+                f"Quorum offen: {pending_quorum_count} Anker warten noch auf unabhaengige Validierungen, "
+                "bevor sie in M_t einfliessen."
+            )
+        updated["current_insight"] = str(current_insight)
+        updated["trusted_public_anchor_count"] = int(trusted_anchor_count)
+        updated["pending_public_anchor_count"] = int(pending_quorum_count)
+        self.save_learning_state(session_context, updated)
         return {
-            "imported_anchor_count": max(0, current_count - previous_count),
+            "imported_anchor_count": imported_count,
             "public_anchor_count": current_count,
+            "trusted_anchor_count": int(trusted_anchor_count),
+            "pending_quorum_count": int(pending_quorum_count),
+            "quorum_validated_count": int(quorum_validated_count),
+            "admin_trusted_count": int(admin_trusted_count),
             "last_global_learn_delta": float(updated.get("last_global_learn_delta", 0.0) or 0.0),
             "symmetry_gain_percent": float(symmetry_gain),
             "i_obs_gain_percent": float(i_obs_gain),
-            "current_insight": str(updated.get("current_insight", "") or ""),
+            "current_insight": str(current_insight),
         }
 
     @staticmethod

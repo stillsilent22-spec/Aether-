@@ -1099,7 +1099,8 @@ class ShanwayEngine:
                 first = dict(ttd_candidates[0] or {})
                 ttd_hint = (
                     f" Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... "
-                    f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%."
+                    f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%. "
+                    "Admin-Anker gelten sofort, sonst wird erst ab drei unabhaengigen Validierungen global gelernt."
                 )
             raster_self_perception = (
                 "[Raster-Self-Perception] "
@@ -1117,7 +1118,8 @@ class ShanwayEngine:
             sections.append(
                 "[Raster-Self-Perception] "
                 f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... "
-                f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%."
+                f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%. "
+                "Admin-Anker gelten sofort, sonst wird erst ab drei unabhaengigen Validierungen global gelernt."
             )
         sections.append(final_insight)
         if not filled_prompt.strip():
@@ -1685,7 +1687,7 @@ class ShanwayEngine:
                 "TTD_SUGGESTION: "
                 f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... | "
                 f"Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}% | "
-                "Consent: Nur anonym (Hash+Metriken) / Mit Signatur / Peer-Deltas separat"
+                "Consent: Nur anonym (Hash+Metriken) / Mit Signatur / Peer-Deltas separat | Quorum: Admin direkt, sonst 3 Peers"
             )
         if assessment.recursive_reflections:
             notes.append(

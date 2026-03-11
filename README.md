@@ -545,9 +545,12 @@ Dadurch kann Shanway auf Fragen wie `Was ist AGI?` oder browserbezogene Rueckfra
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
 
 - stabile TTD-Anker koennen als lokale, metrics-only Public-TTD-Bundles freigegeben werden
+- diese Bundles bleiben transportagnostisch und koennen ueber IPFS/libp2p-kompatible Spiegel verbreitet werden, ohne Rohdaten zu leaken
 - stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `data/export_log.jsonl`-Eintrag aus
 - standardmaessig werden nur oeffentliche Hash-/Metrikdaten geteilt
 - die GUI fragt vor jeder Public-TTD-Freigabe explizit nach `Nein / Nur anonym / Mit Signatur`
+- normale Nutzeranker werden erst nach 3 unabhaengigen Validierungen global vertrauenswuerdig
+- Anker des lokalen Admin-Erstellers gelten sofort als vertrauenswuerdig und duerfen direkt in globales Lernen einfliessen
 - interne Self-Reflection-Deltas bleiben ohne explizite Vollfreigabe lokal
 - importierte oeffentliche Anker fliessen nur lokal in den Observer-Lernzustand ein
 
@@ -555,6 +558,7 @@ Shanway kann dadurch sagen:
 
 - `Gelernte Insight aus vorheriger Session: Symmetrie-Delta verbessert um X%.`
 - `Von globalem Netz gelernt: +Y% Symmetrie-Delta durch importierte öffentliche Anker.`
+- `Anker von 3 Peers validiert -> globales Lernen: +1.2% Symmetrie-Delta, I_obs +0.8%.`
 
 Der zentrale Governance-Punkt bleibt:
 

@@ -319,20 +319,20 @@ def test_ttd_auto_export_writes_dna_seed_and_jsonl() -> None:
     shutil.rmtree(temp_export_root, ignore_errors=True)
 
 
-def test_public_ttd_pool_shares_hash_only_and_updates_learning_state() -> None:
-    """Oeffentliche TTD-Freigaben duerfen nur Hash+Metriken enthalten und muessen lokales Lernen aktualisieren."""
+def test_public_ttd_pool_requires_three_peer_validations_for_operator() -> None:
+    """Normale Nutzer brauchen drei unabhaengige Validierungen, bevor ein oeffentlicher Anker lernwirksam wird."""
     temp_public_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_pool"
     shutil.rmtree(temp_public_root, ignore_errors=True)
     temp_public_root.mkdir(parents=True, exist_ok=True)
 
     context = SessionContext(seed=515151)
+    context.user_role = "operator"
     engine = AnalysisEngine(context)
     fingerprint = engine.analyze_bytes(
         _sample_bytes(),
         source_label="tests::public_ttd_pool",
         source_type="memory",
     )
-    augmentor = AetherAugmentor(context, registry=None)
     observer = ObserverEngine()
     observer.learning_store_dir = temp_public_root / "observer_learning"
 
@@ -360,40 +360,139 @@ def test_public_ttd_pool_shares_hash_only_and_updates_learning_state() -> None:
         ],
     }
 
-    bundle = augmentor.build_public_ttd_anchor_bundle(
-        source_label="tests::public_ttd_pool",
-        reflection_payload=reflection_payload,
-        fingerprint=fingerprint,
-        scope="metrics_only",
-    )
-    assert bool(bundle)
-    assert bool(dict(bundle.get("validation", {}) or {}).get("valid", False)) is True
-    payload = dict(bundle.get("payload", {}) or {})
+    bundles = []
+    for seed in (515151, 616161, 717171):
+        peer_context = SessionContext(seed=seed)
+        peer_context.user_role = "operator"
+        peer_context.username = f"peer_{seed}"
+        peer_augmentor = AetherAugmentor(peer_context, registry=None)
+        bundle = peer_augmentor.build_public_ttd_anchor_bundle(
+            source_label="tests::public_ttd_pool",
+            reflection_payload=reflection_payload,
+            fingerprint=fingerprint,
+            scope="metrics_only",
+        )
+        assert bool(bundle)
+        assert bool(dict(bundle.get("validation", {}) or {}).get("valid", False)) is True
+        bundles.append((peer_augmentor, bundle))
+
+    first_augmentor, first_bundle = bundles[0]
+    payload = dict(first_bundle.get("payload", {}) or {})
     assert payload.get("schema") == "aether.public_ttd_anchor.v1"
     assert bool(payload.get("raw_data_included", True)) is False
     assert bool(payload.get("deltas_included", True)) is False
     assert bool(payload.get("internal_only", True)) is False
+    assert payload.get("uploader_role") == "operator"
     assert "pseudonym" in payload
 
-    stored = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
-    assert bool(stored.get("stored", False)) is True
+    stored_first = first_augmentor.append_public_ttd_anchor_bundle(first_bundle, directory=str(temp_public_root))
+    assert bool(stored_first.get("stored", False)) is True
+    assert int(dict(stored_first.get("record", {}) or {}).get("validation_count", 0) or 0) == 1
+    assert bool(dict(stored_first.get("record", {}) or {}).get("quorum_met", True)) is False
 
-    loaded = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
+    loaded_first = first_augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
+    assert int(loaded_first.get("trusted_anchor_count", 0) or 0) == 0
+    assert int(loaded_first.get("candidate_anchor_count", 0) or 0) == 1
+    learning_first = observer.merge_public_anchor_bundle(context, loaded_first)
+    assert int(learning_first.get("imported_anchor_count", 0) or 0) == 0
+    assert int(learning_first.get("pending_quorum_count", 0) or 0) == 1
+
+    second_augmentor, second_bundle = bundles[1]
+    stored_second = second_augmentor.append_public_ttd_anchor_bundle(second_bundle, directory=str(temp_public_root))
+    assert bool(stored_second.get("stored", False)) is True
+    assert int(dict(stored_second.get("record", {}) or {}).get("validation_count", 0) or 0) == 2
+    assert bool(dict(stored_second.get("record", {}) or {}).get("quorum_met", True)) is False
+
+    third_augmentor, third_bundle = bundles[2]
+    stored_third = third_augmentor.append_public_ttd_anchor_bundle(third_bundle, directory=str(temp_public_root))
+    assert bool(stored_third.get("stored", False)) is True
+    assert int(dict(stored_third.get("record", {}) or {}).get("validation_count", 0) or 0) == 3
+    assert bool(dict(stored_third.get("record", {}) or {}).get("quorum_met", False)) is True
+
+    loaded = third_augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
     public_anchors = [dict(item) for item in list(loaded.get("public_anchors", []) or []) if isinstance(item, dict)]
     assert len(public_anchors) == 1
-    assert "public_metrics" in public_anchors[0]
-    assert "raw_data_included" in public_anchors[0]
-    assert bool(public_anchors[0].get("raw_data_included", True)) is False
-    assert bool(public_anchors[0].get("deltas_included", True)) is False
+    assert int(loaded.get("trusted_anchor_count", 0) or 0) == 1
+    assert int(loaded.get("candidate_anchor_count", 0) or 0) == 0
+    assert int(loaded.get("quorum_validated_count", 0) or 0) == 1
+    assert bool(public_anchors[0].get("quorum_met", False)) is True
+    assert int(public_anchors[0].get("validation_count", 0) or 0) == 3
 
     learning_result = observer.merge_public_anchor_bundle(context, loaded)
     assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
-    assert int(learning_result.get("public_anchor_count", 0) or 0) >= 1
+    assert int(learning_result.get("trusted_anchor_count", 0) or 0) == 1
+    assert int(learning_result.get("pending_quorum_count", 0) or 0) == 0
     assert float(learning_result.get("symmetry_gain_percent", 0.0) or 0.0) > 0.0
-    assert "kollektive Konvergenz" in str(learning_result.get("current_insight", "") or "")
+    assert "Anker von 3 Peers validiert" in str(learning_result.get("current_insight", "") or "")
 
-    duplicate = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
+    duplicate = third_augmentor.append_public_ttd_anchor_bundle(third_bundle, directory=str(temp_public_root))
     assert bool(duplicate.get("already_present", False)) is True
+    shutil.rmtree(temp_public_root, ignore_errors=True)
+
+
+def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
+    """Admin-Anker sind sofort vertrauenswuerdig und brauchen kein Quorum von drei Peers."""
+    temp_public_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_pool_admin"
+    shutil.rmtree(temp_public_root, ignore_errors=True)
+    temp_public_root.mkdir(parents=True, exist_ok=True)
+
+    context = SessionContext(seed=818181)
+    context.user_role = "admin"
+    context.username = "creator"
+    engine = AnalysisEngine(context)
+    fingerprint = engine.analyze_bytes(
+        _sample_bytes(),
+        source_label="tests::public_ttd_pool_admin",
+        source_type="memory",
+    )
+    augmentor = AetherAugmentor(context, registry=None)
+    observer = ObserverEngine()
+    observer.learning_store_dir = temp_public_root / "observer_learning"
+
+    reflection_payload = {
+        "residual_after": 0.01,
+        "stability_score": 0.99,
+        "recursive_reflections": [
+            {"level": 1, "delta": 0.04, "mt_shift": 0.30, "residual_before": 0.03, "residual_after": 0.02},
+            {"level": 2, "delta": 0.03, "mt_shift": 0.24, "residual_before": 0.02, "residual_after": 0.01},
+            {"level": 3, "delta": 0.02, "mt_shift": 0.18, "residual_before": 0.01, "residual_after": 0.01},
+        ],
+        "ttd_candidates": [
+            {
+                "hash": hashlib.sha256(b"admin-public-ttd-anchor").hexdigest(),
+                "delta_stability": 0.99,
+                "symmetry": 0.96,
+                "residual": 0.01,
+                "public_metrics": {
+                    "residual": 0.01,
+                    "symmetry": 0.96,
+                    "i_obs_ratio": 0.97,
+                    "delta_i_obs_percent": 1.5,
+                },
+            }
+        ],
+    }
+
+    bundle = augmentor.build_public_ttd_anchor_bundle(
+        source_label="tests::public_ttd_pool_admin",
+        reflection_payload=reflection_payload,
+        fingerprint=fingerprint,
+        scope="signed",
+    )
+    stored = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
+    record = dict(stored.get("record", {}) or {})
+    assert bool(stored.get("stored", False)) is True
+    assert int(record.get("validation_count", 0) or 0) == 1
+    assert int(record.get("quorum_threshold", 0) or 0) == 1
+    assert bool(record.get("quorum_met", False)) is True
+    assert str(record.get("trust_reason", "") or "") == "admin_auto_trust"
+
+    loaded = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
+    assert int(loaded.get("trusted_anchor_count", 0) or 0) == 1
+    assert int(loaded.get("admin_trusted_count", 0) or 0) == 1
+    learning_result = observer.merge_public_anchor_bundle(context, loaded)
+    assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
+    assert "Admin-Anker direkt vertrauenswuerdig" in str(learning_result.get("current_insight", "") or "")
     shutil.rmtree(temp_public_root, ignore_errors=True)
 
 
@@ -520,7 +619,8 @@ def main() -> None:
     failure = run_roundtrip_failure_smoke_test()
     test_lossless_roundtrip_with_recursive_raster_reflection()
     test_ttd_auto_export_writes_dna_seed_and_jsonl()
-    test_public_ttd_pool_shares_hash_only_and_updates_learning_state()
+    test_public_ttd_pool_requires_three_peer_validations_for_operator()
+    test_public_ttd_pool_admin_anchor_is_trusted_immediately()
     test_agent_loop_plans_browser_followup_for_open_state()
     test_browser_engine_fetch_search_context_is_parsed_without_real_network()
     test_shanway_partner_reply_includes_history_and_web_context()
@@ -543,7 +643,7 @@ def main() -> None:
     )
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
     print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
-    print("Public TTD Pool: Hash+Metriken geteilt und lokales Lernen verifiziert")
+    print("Public TTD Pool: Peer-Quorum und Admin-Autotrust lokal verifiziert")
     print("Agent-Loop: Browser-Folgeschritt fuer offene Struktur lokal verifiziert")
     print("Browser-Kontext: stubbed DuckDuckGo-Verdichtung lokal verifiziert")
     print("Chat-Partner: Verlauf und Netzkontext lokal verifiziert")

@@ -172,6 +172,18 @@ def public_ttd_share_policy(scope: str = "metrics_only") -> dict[str, Any]:
     }
 
 
+def public_ttd_quorum_policy(session_like: Any | None) -> dict[str, Any]:
+    """Leitet Quorum und Trust-Tier fuer oeffentliche TTD-Anker aus dem lokalen Nutzerkontext ab."""
+    role = str(getattr(session_like, "user_role", getattr(session_like, "role", "operator")) or "operator").strip().lower()
+    is_admin = role == "admin"
+    return {
+        "uploader_role": "admin" if is_admin else "operator",
+        "quorum_threshold": 1 if is_admin else 3,
+        "auto_trusted": bool(is_admin),
+        "trust_label": "admin_direct" if is_admin else "peer_quorum",
+    }
+
+
 def validate_public_ttd_candidate(
     candidate: dict[str, Any] | None,
     *,

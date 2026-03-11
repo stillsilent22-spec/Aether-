@@ -255,9 +255,12 @@ Damit bleibt der Chat kein separater KI-Service, sondern ein weiterer Beobachter
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 
 - stabile TTD-Anker koennen als lokale, metrics-only Public-TTD-Bundles freigegeben werden
+- diese Bundles sind transportagnostisch und fuer IPFS/libp2p-kompatible Verteilung vorbereitet
 - stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `export_log.jsonl`-Audit aus
 - standardmaessig nur mit oeffentlichen Hash- und Metrikdaten
 - vor jeder Public-TTD-Freigabe steht ein expliziter Consent-Schritt `Nein / Nur anonym / Mit Signatur`
+- normale Nutzeranker werden erst nach 3 unabhaengigen Validierungen global vertrauenswuerdig
+- Anker des lokalen Admin-Erstellers gelten sofort als vertrauenswuerdig
 - interne Self-Reflection-Deltas bleiben `internal_only`
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
 

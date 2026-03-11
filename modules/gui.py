@@ -41,7 +41,7 @@ from .public_anchor import PublicBlockchainAnchor
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
 from .screen_vision_engine import ScreenVisionEngine
-from .security_engine import network_access_policy, pseudonymous_network_identity
+from .security_engine import network_access_policy, pseudonymous_network_identity, public_ttd_quorum_policy
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
@@ -3264,12 +3264,22 @@ class VeiraGUI:
             self.public_ttd_status_var.set("TTD-Pool: kein stabiler Kandidat fuer oeffentliche Freigabe")
             return {"shared": False, "reason": "no_candidate"}
         first = dict(candidates[0] or {})
+        quorum_policy = public_ttd_quorum_policy(self.session_context)
+        uploader_role = str(quorum_policy.get("uploader_role", "operator"))
+        quorum_threshold = int(quorum_policy.get("quorum_threshold", 3) or 3)
+        quorum_hint = (
+            "Admin-Anker gelten sofort als vertrauenswuerdig."
+            if bool(quorum_policy.get("auto_trusted", False))
+            else f"Normale Anker brauchen {quorum_threshold} unabhaengige Validierungen."
+        )
         prompt = (
             "Anker hochladen? (Nur Hash + Metriken, pseudonym, global sichtbar)\n\n"
             f"Hash: {str(first.get('hash', ''))[:12]}...\n"
             f"Symmetrie: {float(first.get('symmetry', 0.0) or 0.0) * 100.0:.0f}%\n"
             f"Residual: {float(first.get('residual', 0.0) or 0.0):.3f}\n"
-            f"I_obs-Ratio: {float(dict(first.get('public_metrics', {}) or {}).get('i_obs_ratio', 0.0) or 0.0) * 100.0:.0f}%"
+            f"I_obs-Ratio: {float(dict(first.get('public_metrics', {}) or {}).get('i_obs_ratio', 0.0) or 0.0) * 100.0:.0f}%\n"
+            f"Rolle: {uploader_role}\n"
+            f"Quorum: {quorum_hint}"
         )
         scope = self._ask_public_ttd_share_scope("TTD-Anker freigeben", prompt)
         if scope == "deny":
@@ -3308,13 +3318,29 @@ class VeiraGUI:
         bundle_payload = dict(bundle.get("payload", {}) or {})
         status_hash = str(bundle_payload.get("ttd_hash", "") or "")[:12]
         if bool(stored.get("stored", False)):
-            self.public_ttd_status_var.set(
-                f"TTD-Pool: geteilt | {status_hash}... | Count {int(stored.get('public_anchor_count', 0) or 0)}"
-            )
-            self.chat_status_var.set("Shanway: stabiler TTD-Anker lokal in den oeffentlichen Metrik-Pool ueberfuehrt")
-            self.chat_reply_var.set(
-                f"Stabiler TTD-Anker detektiert ({status_hash}...). Freigabe erfolgte nur als Hash + Metriken."
-            )
+            record = dict(stored.get("record", {}) or {})
+            validation_count = int(record.get("validation_count", 0) or 0)
+            quorum_threshold = int(record.get("quorum_threshold", quorum_threshold) or quorum_threshold)
+            quorum_met = bool(record.get("quorum_met", False))
+            if quorum_met:
+                self.public_ttd_status_var.set(
+                    f"TTD-Pool: vertrauenswuerdig | {status_hash}... | Quorum {validation_count}/{quorum_threshold}"
+                )
+                self.chat_status_var.set(
+                    "Shanway: stabiler TTD-Anker ist jetzt vertrauenswuerdig und fuer globales Lernen freigegeben"
+                )
+                self.chat_reply_var.set(
+                    f"Stabiler TTD-Anker detektiert ({status_hash}...). Hash+Metriken wurden freigegeben und als vertrauenswuerdig markiert."
+                )
+            else:
+                self.public_ttd_status_var.set(
+                    f"TTD-Pool: Quorum offen | {status_hash}... | Validierungen {validation_count}/{quorum_threshold}"
+                )
+                self.chat_status_var.set("Shanway: TTD-Anker als Kandidat geteilt, wartet auf unabhaengige Validierungen")
+                self.chat_reply_var.set(
+                    f"Stabiler TTD-Anker detektiert ({status_hash}...). Hash+Metriken wurden geteilt, "
+                    f"aber globales Lernen startet erst nach {quorum_threshold} Validierungen."
+                )
             try:
                 self.registry.save_security_event(
                     user_id=int(getattr(self.session_context, "user_id", 0) or 0),
@@ -3326,6 +3352,9 @@ class VeiraGUI:
                         "ttd_hash": str(bundle_payload.get("ttd_hash", "") or ""),
                         "public_metrics": dict(bundle_payload.get("public_metrics", {}) or {}),
                         "signature_included": bool(bundle.get("signature_included", False)),
+                        "validation_count": int(record.get("validation_count", 0) or 0),
+                        "quorum_threshold": int(record.get("quorum_threshold", 0) or 0),
+                        "quorum_met": bool(record.get("quorum_met", False)),
                     },
                 )
             except Exception:
@@ -3351,19 +3380,23 @@ class VeiraGUI:
     def _sync_local_public_ttd_pool(self, silent: bool = False) -> dict[str, object]:
         """Laedt lokal freigegebene oeffentliche TTD-Anker und ueberfuehrt sie in den Lernzustand."""
         bundle = self.augmentor.load_public_ttd_anchor_bundle()
-        public_anchors = [dict(item) for item in list(bundle.get("public_anchors", []) or []) if isinstance(item, dict)]
-        if not public_anchors:
-            self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentlichen Metriken vorhanden")
-            return {"imported_anchor_count": 0, "public_anchor_count": 0}
         learning_result = self.observer_engine.merge_public_anchor_bundle(self.session_context, bundle)
         imported = int(learning_result.get("imported_anchor_count", 0) or 0)
         total = int(learning_result.get("public_anchor_count", 0) or 0)
+        trusted = int(learning_result.get("trusted_anchor_count", total) or total)
+        pending = int(learning_result.get("pending_quorum_count", 0) or 0)
+        quorum_validated = int(learning_result.get("quorum_validated_count", 0) or 0)
+        admin_trusted = int(learning_result.get("admin_trusted_count", 0) or 0)
         symmetry_gain = float(learning_result.get("symmetry_gain_percent", 0.0) or 0.0)
         i_obs_gain = float(learning_result.get("i_obs_gain_percent", 0.0) or 0.0)
         insight = str(learning_result.get("current_insight", "") or "").strip()
-        self.public_ttd_status_var.set(
-            f"TTD-Pool: gelernt | import {imported} | lokal {total} | dSym {symmetry_gain:.2f}% | dI_obs {i_obs_gain:.2f}%"
-        )
+        if trusted <= 0 and pending <= 0:
+            self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentlichen Metriken vorhanden")
+        else:
+            self.public_ttd_status_var.set(
+                f"TTD-Pool: trusted {trusted} | quorum offen {pending} | import {imported} | "
+                f"dSym {symmetry_gain:.2f}% | dI_obs {i_obs_gain:.2f}%"
+            )
         if self.current_fingerprint is not None:
             observer_payload = dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
             observer_payload["learning_state"] = dict(
@@ -3376,7 +3409,8 @@ class VeiraGUI:
                 reflection_payload["learned_insight"] = insight
                 self.current_fingerprint.self_reflection_delta = reflection_payload
             self.chat_semantic_var.set(
-                f"Semantik: global gelernt | Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
+                f"Semantik: global gelernt | Trusted {trusted} | Quorum {pending} offen | "
+                f"Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
             )
             self.chat_reply_var.set(insight)
         try:
@@ -3388,6 +3422,10 @@ class VeiraGUI:
                 payload={
                     "imported_anchor_count": imported,
                     "public_anchor_count": total,
+                    "trusted_anchor_count": trusted,
+                    "pending_quorum_count": pending,
+                    "quorum_validated_count": quorum_validated,
+                    "admin_trusted_count": admin_trusted,
                     "symmetry_gain_percent": symmetry_gain,
                     "i_obs_gain_percent": i_obs_gain,
                 },
@@ -3396,7 +3434,8 @@ class VeiraGUI:
             pass
         if not silent:
             self.loading_var.set(
-                f"TTD-Lernen aktualisiert: {imported} Anker | Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
+                f"TTD-Lernen aktualisiert: trusted {trusted} | quorum offen {pending} | "
+                f"Symmetrie +{symmetry_gain:.2f}% | I_obs +{i_obs_gain:.2f}%"
             )
         return learning_result
 
@@ -8349,10 +8388,16 @@ class VeiraGUI:
         ttd_export = dict(getattr(fingerprint, "_ttd_auto_export", {}) or {})
         if ttd_candidates:
             first = dict(ttd_candidates[0] or {})
+            quorum_policy = public_ttd_quorum_policy(self.session_context)
+            quorum_hint = (
+                "Admin direkt vertrauenswuerdig"
+                if bool(quorum_policy.get("auto_trusted", False))
+                else f"Quorum {int(quorum_policy.get('quorum_threshold', 3) or 3)} noetig"
+            )
             self.public_ttd_status_var.set(
                 f"TTD-Pool: Vorschlag bereit | {str(first.get('hash', ''))[:12]}... | "
                 f"Sym {float(first.get('symmetry', 0.0) or 0.0) * 100.0:.0f}% | "
-                f"Residual {float(first.get('residual', 0.0) or 0.0):.3f}"
+                f"Residual {float(first.get('residual', 0.0) or 0.0):.3f} | {quorum_hint}"
             )
             if bool(ttd_export.get("exported", False)):
                 self.peer_delta_status_var.set(

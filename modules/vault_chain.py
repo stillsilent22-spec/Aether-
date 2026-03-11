@@ -15,8 +15,20 @@ import numpy as np
 from .analysis_engine import AetherFingerprint
 from .chat_crypto import decrypt_text, derive_fernet_key, encrypt_text, crypto_available
 from .observer_engine import AnchorPoint
+from .p2p_anchor_pool import (
+    build_public_ttd_anchor_record,
+    merge_public_ttd_anchor_record,
+    public_ttd_anchor_view,
+    public_ttd_validator_present,
+    summarize_public_ttd_anchor_records,
+)
 from .registry import GENESIS_HASH, compute_chain_block_hash, legacy_chain_block_hash_candidates
-from .security_engine import pseudonymous_network_identity, public_ttd_share_policy, validate_public_ttd_candidate
+from .security_engine import (
+    pseudonymous_network_identity,
+    public_ttd_quorum_policy,
+    public_ttd_share_policy,
+    validate_public_ttd_candidate,
+)
 from .session_engine import SessionContext
 
 
@@ -589,6 +601,7 @@ class AetherAugmentor:
         policy = public_ttd_share_policy(scope)
         if not bool(policy.get("share_public_anchor", False)):
             return {}
+        quorum_policy = public_ttd_quorum_policy(self.session_context)
         compact = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=False)
         candidates = [dict(item) for item in list(compact.get("ttd_candidates", []) or []) if isinstance(item, dict)]
         if not candidates:
@@ -631,6 +644,10 @@ class AetherAugmentor:
                 "recursive_count": int(metrics.get("recursive_count", 0) or 0),
             },
             "pseudonym": pseudonymous_network_identity(self.session_context, purpose="public_ttd_anchor"),
+            "uploader_role": str(quorum_policy.get("uploader_role", "operator")),
+            "quorum_threshold": int(quorum_policy.get("quorum_threshold", 3) or 3),
+            "auto_trusted": bool(quorum_policy.get("auto_trusted", False)),
+            "transport_hint": "ipfs_libp2p_bundle",
             "raw_data_included": False,
             "deltas_included": False,
             "internal_only": False,
@@ -644,6 +661,21 @@ class AetherAugmentor:
             "validation": dict(validation),
         }
         return envelope
+
+    def _read_public_ttd_history_envelopes(self, target_dir: Path) -> list[dict[str, Any]]:
+        """Laedt alle lokalen Public-TTD-History-Eintraege fail-closed."""
+        history_dir = target_dir / "history"
+        if not history_dir.is_dir():
+            return []
+        envelopes: list[dict[str, Any]] = []
+        for path in sorted(history_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(payload, dict):
+                envelopes.append(dict(payload))
+        return envelopes
 
     def append_public_ttd_anchor_bundle(
         self,
@@ -664,59 +696,150 @@ class AetherAugmentor:
         history_dir.mkdir(parents=True, exist_ok=True)
         latest_path = target_dir / "latest.json"
         history_path = history_dir / f"ttd_anchor_{str(payload.get('timestamp', '')).replace(':', '').replace('-', '')[:15]}_{payload_hash[:12]}.json"
-
-        latest_bundle: dict[str, Any] = {}
-        existing: list[dict[str, Any]] = []
-        if latest_path.is_file():
-            try:
-                latest_bundle = json.loads(latest_path.read_text(encoding="utf-8"))
-                existing = [dict(item) for item in list(latest_bundle.get("public_anchors", []) or []) if isinstance(item, dict)]
-            except Exception:
-                latest_bundle = {}
-                existing = []
-        if any(str(item.get("ttd_hash", "") or "") == str(payload.get("ttd_hash", "") or "") for item in existing):
+        current_summary = self.load_public_ttd_anchor_bundle(directory=str(target_dir))
+        current_records = [dict(item) for item in list(current_summary.get("anchor_records", []) or []) if isinstance(item, dict)]
+        existing_record = next(
+            (
+                dict(item)
+                for item in current_records
+                if str(item.get("ttd_hash", "") or "") == str(payload.get("ttd_hash", "") or "")
+            ),
+            {},
+        )
+        if existing_record and public_ttd_validator_present(existing_record, str(payload.get("pseudonym", "") or "")):
             return {
                 "stored": False,
                 "already_present": True,
                 "bundle_path": str(history_path),
                 "latest_path": str(latest_path),
-                "public_anchor_count": int(len(existing)),
+                "public_anchor_count": int(current_summary.get("trusted_anchor_count", 0) or 0),
+                "candidate_anchor_count": int(current_summary.get("candidate_anchor_count", 0) or 0),
+                "record": existing_record,
             }
         history_path.write_text(json.dumps(envelope, ensure_ascii=True, indent=2), encoding="utf-8")
-        existing.append(dict(payload))
-        public_anchors = existing[-256:]
-        latest_wrapper = {
-            "schema": "aether.public_ttd_anchor.pool.v1",
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-            "public_anchor_count": int(len(public_anchors)),
-            "public_anchors": public_anchors,
-        }
+        latest_wrapper = self.load_public_ttd_anchor_bundle(directory=str(target_dir))
         latest_path.write_text(json.dumps(latest_wrapper, ensure_ascii=True, indent=2), encoding="utf-8")
+        updated_record = next(
+            (
+                dict(item)
+                for item in list(latest_wrapper.get("anchor_records", []) or [])
+                if str(item.get("ttd_hash", "") or "") == str(payload.get("ttd_hash", "") or "")
+            ),
+            build_public_ttd_anchor_record(payload, signature_included=bool(envelope.get("signature_included", False))),
+        )
         return {
             "stored": True,
             "bundle_path": str(history_path),
             "latest_path": str(latest_path),
-            "public_anchor_count": int(len(public_anchors)),
+            "public_anchor_count": int(latest_wrapper.get("trusted_anchor_count", 0) or 0),
+            "candidate_anchor_count": int(latest_wrapper.get("candidate_anchor_count", 0) or 0),
+            "quorum_validated_count": int(latest_wrapper.get("quorum_validated_count", 0) or 0),
+            "admin_trusted_count": int(latest_wrapper.get("admin_trusted_count", 0) or 0),
             "ttd_hash": str(payload.get("ttd_hash", "") or ""),
+            "record": updated_record,
         }
 
     def load_public_ttd_anchor_bundle(self, directory: str | None = None) -> dict[str, Any]:
         """Laedt den lokalen Public-TTD-Pool fail-closed fuer Observer-Lernen."""
         target_dir = Path(directory) if directory is not None else Path("data") / "public_ttd_anchor_pool"
         latest_path = target_dir / "latest.json"
+        history_envelopes = self._read_public_ttd_history_envelopes(target_dir)
+        if history_envelopes:
+            records_by_hash: dict[str, dict[str, Any]] = {}
+            for envelope in history_envelopes:
+                payload = dict(envelope.get("payload", {}) or {})
+                payload_hash = str(envelope.get("payload_hash", "") or "")
+                expected_hash = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest() if payload else ""
+                if not payload or payload_hash != expected_hash:
+                    continue
+                if str(payload.get("schema", "") or "") != "aether.public_ttd_anchor.v1":
+                    continue
+                ttd_hash = str(payload.get("ttd_hash", "") or "")
+                if not ttd_hash:
+                    continue
+                signature_included = bool(envelope.get("signature_included", False))
+                existing = records_by_hash.get(ttd_hash)
+                if existing is None:
+                    records_by_hash[ttd_hash] = build_public_ttd_anchor_record(
+                        payload,
+                        signature_included=signature_included,
+                    )
+                else:
+                    records_by_hash[ttd_hash] = merge_public_ttd_anchor_record(
+                        existing,
+                        payload,
+                        signature_included=signature_included,
+                    )
+            summary = summarize_public_ttd_anchor_records(list(records_by_hash.values()))
+            try:
+                latest_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+            return summary
         if not latest_path.is_file():
-            return {"schema": "aether.public_ttd_anchor.pool.v1", "public_anchors": []}
+            return {
+                "schema": "aether.public_ttd_anchor.pool.v2",
+                "public_anchors": [],
+                "trusted_anchor_count": 0,
+                "candidate_anchor_count": 0,
+                "anchor_records": [],
+            }
         try:
             payload = json.loads(latest_path.read_text(encoding="utf-8"))
         except Exception:
-            return {"schema": "aether.public_ttd_anchor.pool.v1", "public_anchors": []}
-        anchors = [dict(item) for item in list(payload.get("public_anchors", []) or []) if isinstance(item, dict)]
-        return {
-            "schema": "aether.public_ttd_anchor.pool.v1",
-            "public_anchors": anchors,
-            "public_anchor_count": int(len(anchors)),
-            "updated_at": str(payload.get("updated_at", "") or ""),
-        }
+            return {
+                "schema": "aether.public_ttd_anchor.pool.v2",
+                "public_anchors": [],
+                "trusted_anchor_count": 0,
+                "candidate_anchor_count": 0,
+                "anchor_records": [],
+            }
+        if str(payload.get("schema", "") or "") == "aether.public_ttd_anchor.pool.v2":
+            return {
+                "schema": "aether.public_ttd_anchor.pool.v2",
+                "updated_at": str(payload.get("updated_at", "") or ""),
+                "anchor_records": [dict(item) for item in list(payload.get("anchor_records", []) or []) if isinstance(item, dict)],
+                "anchor_record_count": int(payload.get("anchor_record_count", 0) or 0),
+                "public_anchors": [dict(item) for item in list(payload.get("public_anchors", []) or []) if isinstance(item, dict)],
+                "trusted_anchor_count": int(payload.get("trusted_anchor_count", 0) or 0),
+                "candidate_anchors": [dict(item) for item in list(payload.get("candidate_anchors", []) or []) if isinstance(item, dict)],
+                "candidate_anchor_count": int(payload.get("candidate_anchor_count", 0) or 0),
+                "quorum_validated_count": int(payload.get("quorum_validated_count", 0) or 0),
+                "admin_trusted_count": int(payload.get("admin_trusted_count", 0) or 0),
+            }
+        legacy_anchors = [dict(item) for item in list(payload.get("public_anchors", []) or []) if isinstance(item, dict)]
+        legacy_records = []
+        for item in legacy_anchors:
+            legacy_record = build_public_ttd_anchor_record(
+                {
+                    **public_ttd_anchor_view(
+                        {
+                            "ttd_hash": str(item.get("ttd_hash", item.get("hash", "")) or ""),
+                            "source_label": str(item.get("source_label", "") or ""),
+                            "public_metrics": dict(item.get("public_metrics", {}) or {}),
+                            "uploader_role": str(item.get("uploader_role", "admin") or "admin"),
+                            "pseudonym": str(item.get("pseudonym", "LEGACY") or "LEGACY"),
+                        }
+                    ),
+                    "timestamp": str(payload.get("updated_at", "") or datetime.now(timezone.utc).isoformat()),
+                    "uploader_role": str(item.get("uploader_role", "admin") or "admin"),
+                    "pseudonym": str(item.get("pseudonym", "LEGACY") or "LEGACY"),
+                    "ttd_hash": str(item.get("ttd_hash", item.get("hash", "")) or ""),
+                    "source_label": str(item.get("source_label", "") or ""),
+                    "public_metrics": dict(item.get("public_metrics", {}) or {}),
+                },
+                signature_included=bool(item.get("signature_included", False)),
+            )
+            legacy_record["quorum_met"] = True
+            legacy_record["trust_state"] = "trusted"
+            legacy_record["trust_reason"] = "legacy_trusted"
+            legacy_records.append(legacy_record)
+        summary = summarize_public_ttd_anchor_records(legacy_records)
+        try:
+            latest_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return summary
 
     def export_signed_json(self, kind: str, file_path: str) -> int:
         """Exportiert Vault- oder Delta-Daten als signiertes JSON."""
