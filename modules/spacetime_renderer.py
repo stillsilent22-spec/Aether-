@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import hashlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -10,6 +12,16 @@ import numpy as np
 from matplotlib import cm, pyplot as plt
 from matplotlib.figure import Figure
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+
+try:
+    import cv2
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    cv2 = None
+
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
+    Image = None
 
 from .analysis_engine import AetherFingerprint
 
@@ -91,6 +103,7 @@ class SpacetimeRenderer:
     def __init__(self) -> None:
         """Initialisiert den Renderer mit Farb- und Stilprofilen."""
         self.storage_layer = "Heatmap"
+        self._last_grid_snapshot: dict[str, Any] = {}
         self.verdict_colors = {
             "CLEAN": "#2DE2E6",
             "SUSPICIOUS": "#FF8C42",
@@ -147,6 +160,269 @@ class SpacetimeRenderer:
         else:
             entropy_norm = (entropy_grid - min_entropy) / span
         return grid_x, grid_y, base_z, entropy_norm
+
+    def _resize_rgb(self, rgb: np.ndarray, size: int) -> np.ndarray:
+        """Skaliert RGB-Arrays robust auf eine kleine Zielkante."""
+        target = max(32, int(size))
+        image = np.asarray(rgb, dtype=np.uint8)
+        if image.ndim == 2:
+            image = np.stack([image, image, image], axis=-1)
+        if image.ndim != 3 or image.shape[2] < 3:
+            return np.zeros((target, target, 3), dtype=np.uint8)
+        if cv2 is not None:
+            resized = cv2.resize(image[:, :, :3], (target, target), interpolation=cv2.INTER_AREA)
+            return np.asarray(resized, dtype=np.uint8)
+        if Image is not None:
+            try:
+                pil_image = Image.fromarray(image[:, :, :3], mode="RGB")
+                pil_image = pil_image.resize((target, target), Image.Resampling.BILINEAR)
+                return np.asarray(pil_image, dtype=np.uint8)
+            except Exception:
+                pass
+        y_idx = np.linspace(0, max(0, image.shape[0] - 1), target).astype(int)
+        x_idx = np.linspace(0, max(0, image.shape[1] - 1), target).astype(int)
+        return np.asarray(image[np.ix_(y_idx, x_idx)], dtype=np.uint8)
+
+    @staticmethod
+    def _safe_text_bytes(file_path: Path, limit: int = 65536) -> bytes:
+        """Liest fuer Text-/Code-/Binary-Miniaturen eine kleine Stichprobe."""
+        try:
+            return file_path.read_bytes()[: max(1024, int(limit))]
+        except Exception:
+            return b""
+
+    @staticmethod
+    def _decode_text_preview(raw: bytes) -> list[str]:
+        """Dekodiert Vorschautext robust fuer Layout-Miniaturen."""
+        for encoding in ("utf-8", "utf-16", "latin-1"):
+            try:
+                text = bytes(raw).decode(encoding)
+                break
+            except Exception:
+                text = ""
+        lines = [str(line).rstrip() for line in str(text).splitlines()[:64]]
+        return lines or ["Aether", "Miniaturvorschau"]
+
+    def _layout_heatmap_miniature(self, file_path: Path, size: int, *, code_mode: bool = False) -> np.ndarray:
+        """Erzeugt eine kleine Layout-/Textdichtekarte."""
+        target = max(32, int(size))
+        canvas = np.zeros((target, target, 3), dtype=np.uint8)
+        lines = self._decode_text_preview(self._safe_text_bytes(file_path))
+        max_lines = max(1, min(len(lines), target))
+        max_length = max(1, max(len(line) for line in lines))
+        base_color = np.array([76, 214, 255], dtype=np.uint8)
+        accent_color = np.array([255, 180, 71], dtype=np.uint8) if code_mode else np.array([160, 240, 194], dtype=np.uint8)
+        for index, line in enumerate(lines[:max_lines]):
+            row = int((index / max_lines) * target)
+            bar_length = max(1, int((len(line) / max_length) * target))
+            intensity = min(1.0, 0.28 + (len(set(line)) / max(1, len(line))) * 0.72) if line else 0.12
+            color = (base_color * (1.0 - intensity)) + (accent_color * intensity)
+            canvas[row : min(target, row + 2), :bar_length, :] = color.astype(np.uint8)
+            if code_mode and line:
+                punctuation = sum(1 for char in line if not char.isalnum() and not char.isspace())
+                if punctuation > 0:
+                    punct_bar = min(target, max(1, int((punctuation / max(1, len(line))) * target)))
+                    canvas[row : min(target, row + 1), target - punct_bar :, :] = np.array([255, 107, 87], dtype=np.uint8)
+        return canvas
+
+    def _waveform_miniature(self, file_path: Path, fingerprint: AetherFingerprint | None, size: int) -> np.ndarray:
+        """Reduziert Audio auf eine ruhige Waveform-/Spektral-Miniatur."""
+        target = max(32, int(size))
+        canvas = np.zeros((target, target, 3), dtype=np.uint8)
+        raw = self._safe_text_bytes(file_path, limit=131072)
+        if not raw and fingerprint is not None:
+            raw = bytes(getattr(fingerprint, "delta", b"")[:131072] or b"")
+        if not raw:
+            return canvas
+        values = np.frombuffer(raw[: min(len(raw), 32768)], dtype=np.uint8).astype(np.float32)
+        if values.size <= 0:
+            return canvas
+        columns = np.linspace(0, values.size - 1, target).astype(int)
+        sample = values[columns]
+        center = target // 2
+        for x_pos, value in enumerate(sample.tolist()):
+            amplitude = int((float(value) / 255.0) * max(1, target // 2 - 2))
+            canvas[max(0, center - amplitude) : min(target, center + amplitude + 1), x_pos : x_pos + 1, :] = np.array(
+                [90, 220, 255],
+                dtype=np.uint8,
+            )
+        return canvas
+
+    def _entropy_map_miniature(self, file_path: Path, fingerprint: AetherFingerprint | None, size: int) -> np.ndarray:
+        """Bildet beliebige Bytestroeme als kleine Entropie-/Stabilitaetskarte ab."""
+        target = max(32, int(size))
+        raw = self._safe_text_bytes(file_path, limit=target * target * 4)
+        if not raw and fingerprint is not None:
+            raw = bytes(getattr(fingerprint, "delta", b"")[: target * target * 4] or b"")
+        if not raw:
+            return np.zeros((target, target, 3), dtype=np.uint8)
+        chunk_size = max(8, int(math.ceil(len(raw) / float(target * target))))
+        values: list[float] = []
+        for offset in range(0, len(raw), chunk_size):
+            block = raw[offset : offset + chunk_size]
+            if not block:
+                continue
+            histogram = np.bincount(np.frombuffer(block, dtype=np.uint8), minlength=256).astype(np.float64)
+            probabilities = histogram[histogram > 0.0] / float(len(block))
+            entropy = float(-np.sum(probabilities * np.log2(probabilities))) if probabilities.size > 0 else 0.0
+            values.append(max(0.0, min(8.0, entropy)))
+            if len(values) >= target * target:
+                break
+        while len(values) < target * target:
+            values.append(values[-1] if values else 0.0)
+        matrix = (np.array(values, dtype=np.float64).reshape(target, target) / 8.0)
+        rgb = np.zeros((target, target, 3), dtype=np.uint8)
+        rgb[:, :, 0] = np.clip(matrix * 255.0, 0.0, 255.0).astype(np.uint8)
+        rgb[:, :, 1] = np.clip((1.0 - np.abs(matrix - 0.5) * 2.0) * 200.0, 0.0, 255.0).astype(np.uint8)
+        rgb[:, :, 2] = np.clip((1.0 - matrix) * 255.0, 0.0, 255.0).astype(np.uint8)
+        return rgb
+
+    def _font_grid_miniature(self, fingerprint: AetherFingerprint | None, size: int) -> np.ndarray:
+        """Erzeugt eine einfache Glyphen-Grid-Approximation fuer Fonts."""
+        target = max(32, int(size))
+        canvas = np.zeros((target, target, 3), dtype=np.uint8)
+        units = float(dict(getattr(fingerprint, "file_profile", {}) or {}).get("summary", {}).get("units_per_em", 1000) or 1000)
+        stroke = max(1, int(target * min(0.12, max(0.04, units / 10000.0))))
+        canvas[:, :, :] = np.array([8, 18, 32], dtype=np.uint8)
+        for offset in range(target // 6, target - target // 6):
+            left = int(target * 0.22 + (offset * 0.18))
+            right = int(target * 0.78 - (offset * 0.18))
+            if 0 <= left < target:
+                canvas[offset : min(target, offset + stroke), max(0, left - stroke) : min(target, left + stroke), :] = np.array([225, 240, 255], dtype=np.uint8)
+            if 0 <= right < target:
+                canvas[offset : min(target, offset + stroke), max(0, right - stroke) : min(target, right + stroke), :] = np.array([225, 240, 255], dtype=np.uint8)
+        bar_y = int(target * 0.58)
+        canvas[max(0, bar_y - stroke) : min(target, bar_y + stroke), int(target * 0.28) : int(target * 0.72), :] = np.array([130, 220, 255], dtype=np.uint8)
+        return canvas
+
+    def build_low_res_miniature(
+        self,
+        file_path: str,
+        fingerprint: AetherFingerprint | None = None,
+        size: int = 64,
+    ) -> np.ndarray:
+        """Erzeugt eine separate headless Miniaturansicht unabhaengig vom 4D-Raster."""
+        path = Path(str(file_path))
+        profile = dict(getattr(fingerprint, "file_profile", {}) or {})
+        category = str(profile.get("category", "binary") or "binary")
+        target = max(32, int(size))
+
+        if category == "image" and Image is not None and path.is_file():
+            try:
+                image = Image.open(path).convert("RGB")
+                image.thumbnail((target, target))
+                canvas = Image.new("RGB", (target, target), (6, 12, 24))
+                offset = ((target - image.width) // 2, (target - image.height) // 2)
+                canvas.paste(image, offset)
+                return np.asarray(canvas, dtype=np.uint8)
+            except Exception:
+                pass
+
+        if category == "video" and cv2 is not None and path.is_file():
+            capture = cv2.VideoCapture(str(path))
+            try:
+                frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                if frame_count > 1:
+                    capture.set(cv2.CAP_PROP_POS_FRAMES, float(frame_count // 2))
+                ok, frame = capture.read()
+                if ok and frame is not None:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    return self._resize_rgb(rgb, target)
+            except Exception:
+                pass
+            finally:
+                try:
+                    capture.release()
+                except Exception:
+                    pass
+
+        if category == "font":
+            return self._font_grid_miniature(fingerprint, target)
+        if category == "audio":
+            return self._waveform_miniature(path, fingerprint, target)
+        if category in {"document", "text"}:
+            return self._layout_heatmap_miniature(path, target, code_mode=False)
+        if category == "code":
+            return self._layout_heatmap_miniature(path, target, code_mode=True)
+        if category in {"archive", "data"}:
+            return self._entropy_map_miniature(path, fingerprint, target)
+        return self._entropy_map_miniature(path, fingerprint, target)
+
+    def summarize_miniature(
+        self,
+        miniature_rgb: np.ndarray,
+        fingerprint: AetherFingerprint | None = None,
+    ) -> dict[str, Any]:
+        """Verdichtet eine Miniatur auf stabile lokale Metriken fuer Shanway."""
+        image = self._resize_rgb(np.asarray(miniature_rgb, dtype=np.uint8), max(32, int(np.asarray(miniature_rgb).shape[0] or 64)))
+        gray = np.mean(image[:, :, :3].astype(np.float64), axis=2)
+        max_value = max(1.0, float(np.max(gray)))
+        normalized = gray / max_value
+        mirror = np.fliplr(normalized)
+        symmetry = 1.0 - float(np.mean(np.abs(normalized - mirror)))
+        hotspot_threshold = float(np.quantile(normalized, 0.90)) if normalized.size else 1.0
+        hotspot_count = int(np.sum(normalized >= hotspot_threshold)) if normalized.size else 0
+        histogram = np.histogram(gray, bins=16, range=(0, 255))[0].astype(np.float64)
+        probabilities = histogram[histogram > 0.0] / max(1.0, float(histogram.sum()))
+        entropy = float(-np.sum(probabilities * np.log2(probabilities))) if probabilities.size > 0 else 0.0
+        invariant_ratio = float(max(0.0, min(1.0, 1.0 - float(np.std(np.abs(normalized - mirror))))))
+        return {
+            "shape": [int(image.shape[0]), int(image.shape[1]), int(image.shape[2])],
+            "local_entropy": round(float(entropy), 12),
+            "symmetry": round(float(max(0.0, min(1.0, symmetry))), 12),
+            "emergence_spots": int(hotspot_count),
+            "noether_invariant_ratio": round(float(invariant_ratio), 12),
+            "mean_intensity": round(float(np.mean(normalized)), 12),
+            "hash": hashlib.sha256(image.tobytes()).hexdigest(),
+            "file_hash": str(getattr(fingerprint, "file_hash", "") or ""),
+        }
+
+    def get_current_grid_data(
+        self,
+        scene: RenderScene | None = None,
+        fingerprint: AetherFingerprint | None = None,
+    ) -> dict[str, Any]:
+        """Liefert das aktuelle Raster als temporaeren Analysepuffer ohne Serialisierungspfad."""
+        active_scene = scene
+        if active_scene is None and fingerprint is not None:
+            grid_x, grid_y, base_z, entropy_norm = self._prepare_grid(fingerprint)
+            active_scene = RenderScene(
+                figure=plt.Figure(figsize=(1, 1)),
+                ax=None,
+                grid_x=grid_x,
+                grid_y=grid_y,
+                base_z=base_z,
+                entropy_norm=entropy_norm,
+                anomaly_coordinates=list(getattr(fingerprint, "anomaly_coordinates", []) or []),
+                verdict=str(getattr(fingerprint, "verdict", "CLEAN") or "CLEAN"),
+                raw_points=self._prepare_raw_points(fingerprint),
+                storage_layer=self.storage_layer,
+                fingerprint=fingerprint,
+            )
+        if active_scene is None:
+            return {}
+        dynamic_z = self._dynamic_z(active_scene, phase=float(active_scene.frame_index) * 0.09)
+        entropy_grid = np.asarray(active_scene.entropy_norm, dtype=np.float64)
+        mirrored = np.fliplr(entropy_grid)
+        symmetry = 1.0 - float(np.mean(np.abs(entropy_grid - mirrored)))
+        hotspot_threshold = float(np.quantile(entropy_grid, 0.88)) if entropy_grid.size else 1.0
+        hotspot_count = int(np.sum(entropy_grid >= hotspot_threshold)) if entropy_grid.size else 0
+        snapshot = {
+            "grid_array": np.asarray(entropy_grid, dtype=np.float64),
+            "dynamic_z": np.asarray(dynamic_z, dtype=np.float64),
+            "symmetry": round(float(max(0.0, min(1.0, symmetry))), 12),
+            "entropy_mean": round(float(np.mean(entropy_grid)) if entropy_grid.size else 0.0, 12),
+            "hotspot_count": int(hotspot_count),
+            "anomaly_coordinates": [[int(x_pos), int(y_pos)] for x_pos, y_pos in list(active_scene.anomaly_coordinates or [])[:32]],
+            "verdict": str(active_scene.verdict),
+            "hash": hashlib.sha256(entropy_grid.tobytes()).hexdigest(),
+        }
+        self._last_grid_snapshot = {
+            key: value
+            for key, value in snapshot.items()
+            if key not in {"grid_array", "dynamic_z"}
+        }
+        return snapshot
 
     def _prepare_raw_points(self, fingerprint: AetherFingerprint) -> np.ndarray | None:
         """Bereitet rohe 4D-Voxel-Deltas fuer die Weltlinienansicht auf."""

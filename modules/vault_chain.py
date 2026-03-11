@@ -13,6 +13,7 @@ from typing import Any, Sequence
 import numpy as np
 
 from .analysis_engine import AetherFingerprint
+from .chat_crypto import decrypt_text, derive_fernet_key, encrypt_text, crypto_available
 from .observer_engine import AnchorPoint
 from .registry import GENESIS_HASH, compute_chain_block_hash, legacy_chain_block_hash_candidates
 from .session_engine import SessionContext
@@ -101,6 +102,69 @@ def _compact_emergence_layers(layers: Sequence[dict[str, Any]] | None) -> list[d
                 "confidence": float(item.get("confidence", 0.0) or 0.0),
             }
         )
+    return compact
+
+
+def _compact_self_reflection_payload(
+    payload: dict[str, Any] | None,
+    *,
+    include_internal: bool = False,
+) -> dict[str, Any]:
+    """Verdichtet Miniatur-/Raster-Selbstdeltas ohne Roharrays fuer Vault und Sharing."""
+    reflection = dict(payload or {})
+    miniature = dict(reflection.get("miniature_reflection", {}) or {})
+    raster = dict(reflection.get("raster_self_perception", {}) or {})
+    recursive = [dict(item) for item in list(reflection.get("recursive_reflections", []) or []) if isinstance(item, dict)]
+    ttd_candidates = [dict(item) for item in list(reflection.get("ttd_candidates", []) or []) if isinstance(item, dict)]
+    compact = {
+        "internal_only": bool(reflection.get("internal_only", True)),
+        "miniature_reflection": {
+            "hash": str(miniature.get("hash", "") or ""),
+            "local_entropy": float(miniature.get("local_entropy", 0.0) or 0.0),
+            "symmetry": float(miniature.get("symmetry", 0.0) or 0.0),
+            "emergence_spots": int(miniature.get("emergence_spots", 0) or 0),
+            "noether_invariant_ratio": float(miniature.get("noether_invariant_ratio", 0.0) or 0.0),
+        },
+        "raster_self_perception": {
+            "enabled": bool(raster.get("enabled", False)),
+            "hash": str(raster.get("hash", "") or ""),
+            "symmetry": float(raster.get("symmetry", 0.0) or 0.0),
+            "entropy_mean": float(raster.get("entropy_mean", 0.0) or 0.0),
+            "hotspot_count": int(raster.get("hotspot_count", 0) or 0),
+            "verdict": str(raster.get("verdict", "") or ""),
+        },
+        "delta_i_obs_percent": float(reflection.get("delta_i_obs_percent", 0.0) or 0.0),
+        "residual_before": float(reflection.get("residual_before", 0.0) or 0.0),
+        "residual_after": float(reflection.get("residual_after", 0.0) or 0.0),
+        "stability_score": float(reflection.get("stability_score", 0.0) or 0.0),
+        "recursive_reflections": [
+            {
+                "level": int(item.get("level", 0) or 0),
+                "delta": float(item.get("delta", 0.0) or 0.0),
+                "mt_shift": float(item.get("mt_shift", 0.0) or 0.0),
+                "residual_before": float(item.get("residual_before", 0.0) or 0.0),
+                "residual_after": float(item.get("residual_after", 0.0) or 0.0),
+                "emergence_detected": bool(item.get("emergence_detected", False)),
+            }
+            for item in recursive[:7]
+        ],
+        "ttd_candidates": [
+            {
+                "hash": str(item.get("hash", "") or ""),
+                "delta_stability": float(item.get("delta_stability", 0.0) or 0.0),
+                "symmetry": float(item.get("symmetry", 0.0) or 0.0),
+                "residual": float(item.get("residual", 0.0) or 0.0),
+                "public_metrics": dict(item.get("public_metrics", {}) or {}),
+            }
+            for item in ttd_candidates[:12]
+        ],
+        "learned_insight": str(reflection.get("learned_insight", "") or ""),
+    }
+    if include_internal:
+        compact["internal_self_reflection"] = {
+            "recursive_reflections": list(compact["recursive_reflections"]),
+            "ttd_candidates": list(compact["ttd_candidates"]),
+        }
     return compact
 
 
@@ -236,6 +300,10 @@ class AetherAugmentor:
             "file_profile": _compact_file_profile(dict(getattr(fingerprint, "file_profile", {}) or {})),
             "observer_payload": _compact_observer_payload(dict(getattr(fingerprint, "observer_payload", {}) or {})),
             "emergence_layers": _compact_emergence_layers(list(getattr(fingerprint, "emergence_layers", []) or [])),
+            "self_reflection_delta": _compact_self_reflection_payload(
+                dict(getattr(fingerprint, "self_reflection_delta", {}) or {}),
+                include_internal=False,
+            ),
         }
         signature = self.sign_payload(payload)
         self.registry.save_vault_entry(
@@ -403,6 +471,107 @@ class AetherAugmentor:
             payload=payload,
             signature=signature,
         )
+
+    def record_self_reflection_delta(
+        self,
+        source_label: str,
+        reflection_payload: dict[str, Any] | None,
+    ) -> None:
+        """Persistiert lokale Self-Reflection-Deltas strikt internal-only in der Delta-Chain."""
+        compact = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=True)
+        delta_ops = [
+            {
+                "op": "self_reflection",
+                "offset": 0,
+                "length": int(len(json.dumps(compact, ensure_ascii=True))),
+                "hash": str(hashlib.sha256(json.dumps(compact, ensure_ascii=True, sort_keys=True).encode("utf-8")).hexdigest()),
+            }
+        ]
+        self.record_delta_log(
+            source_label=str(source_label),
+            delta_ops=delta_ops,
+            metadata={
+                "internal_only": True,
+                "self_reflection_delta": compact,
+                "scope": "local_only",
+                "auto_export": False,
+            },
+        )
+
+    def build_peer_delta_share_bundle(
+        self,
+        source_label: str,
+        reflection_payload: dict[str, Any] | None,
+        *,
+        scope: str = "public_only",
+        shared_secret: str = "",
+    ) -> dict[str, Any]:
+        """Erzeugt ein signiertes Peer-Bundle fuer manuelles oder LAN-nahes Delta-Sharing."""
+        normalized_scope = str(scope or "public_only").strip().lower()
+        include_internal = normalized_scope == "all"
+        compact_public = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=False)
+        bundle_payload: dict[str, Any] = {
+            "kind": "aether_peer_delta_bundle",
+            "session_id": str(self.session_context.session_id),
+            "source_label": str(source_label or "shared_delta"),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "scope": normalized_scope,
+            "public_anchors": [
+                dict(item)
+                for item in list(compact_public.get("ttd_candidates", []) or [])
+            ],
+            "public_metrics": {
+                "delta_i_obs_percent": float(compact_public.get("delta_i_obs_percent", 0.0) or 0.0),
+                "residual_after": float(compact_public.get("residual_after", 0.0) or 0.0),
+                "stability_score": float(compact_public.get("stability_score", 0.0) or 0.0),
+            },
+            "self_reflection_public": compact_public,
+        }
+        if include_internal:
+            internal_payload = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=True)
+            if shared_secret and crypto_available():
+                secret_key = derive_fernet_key(f"{shared_secret}|{self.session_context.session_id}|peer_delta")
+                token = encrypt_text(json.dumps(internal_payload, ensure_ascii=False, sort_keys=True), secret_key)
+                bundle_payload["internal_payload_encrypted"] = True
+                bundle_payload["internal_payload"] = str(token)
+            else:
+                bundle_payload["internal_payload_encrypted"] = False
+                bundle_payload["internal_payload"] = internal_payload
+        signature = self.sign_payload(bundle_payload)
+        payload_hash = hashlib.sha256(_canonical_json(bundle_payload).encode("utf-8")).hexdigest()
+        return {
+            "payload": bundle_payload,
+            "signature": signature,
+            "payload_hash": payload_hash,
+            "key_fingerprint": self.key_fingerprint,
+        }
+
+    def decode_peer_delta_share_bundle(
+        self,
+        bundle: dict[str, Any] | None,
+        *,
+        shared_secret: str = "",
+    ) -> dict[str, Any]:
+        """Entschluesselt und validiert ein importiertes Peer-Bundle fail-closed."""
+        envelope = dict(bundle or {})
+        payload = dict(envelope.get("payload", {}) or {})
+        signature = str(envelope.get("signature", "") or "")
+        payload_hash = str(envelope.get("payload_hash", "") or "")
+        expected_hash = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest() if payload else ""
+        if not payload or payload_hash != expected_hash:
+            return {}
+        result = dict(payload)
+        result["sender_signature"] = signature
+        if bool(payload.get("internal_payload_encrypted", False)):
+            token = str(payload.get("internal_payload", "") or "")
+            if not token or not shared_secret or not crypto_available():
+                return {}
+            try:
+                secret_key = derive_fernet_key(f"{shared_secret}|{self.session_context.session_id}|peer_delta")
+                result["internal_payload"] = json.loads(decrypt_text(token, secret_key))
+            except Exception:
+                return {}
+        return result
 
     def export_signed_json(self, kind: str, file_path: str) -> int:
         """Exportiert Vault- oder Delta-Daten als signiertes JSON."""

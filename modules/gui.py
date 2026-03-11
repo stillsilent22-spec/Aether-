@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import math
 import os
@@ -239,7 +240,11 @@ class VeiraGUI:
             value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_enabled", False))
         )
         self.shanway_browser_mode_var = tk.BooleanVar(value=False)
+        self.shanway_raster_insight_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_raster_insight", False))
+        )
         self.shanway_sensitive_var = tk.StringVar(value="Shanway Guard: bereit")
+        self.peer_delta_status_var = tk.StringVar(value="Peer-Delta: lokal | keine Freigabe")
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
         )
@@ -298,6 +303,7 @@ class VeiraGUI:
         self.browser_host_sync_job: str | None = None
         self.camera_image_ref = None
         self.conway_image_ref = None
+        self.miniature_image_ref = None
         self.current_h_obs = 0.0
         self.current_phi = 0.0
         self.last_observer_metrics = None
@@ -533,6 +539,7 @@ class VeiraGUI:
                 beauty_signature=dict(getattr(current, "beauty_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(current, "observer_knowledge_ratio", 0.0) or 0.0),
                 fingerprint_payload=current.to_payload() if hasattr(current, "to_payload") else {},
+                **self._shanway_visual_payloads(current),
             )
             return self.shanway_engine.render_response(assessment, assistant_text=details)
         except Exception:
@@ -1406,6 +1413,12 @@ class VeiraGUI:
         shanway_mode_row.pack(fill="x", padx=10, pady=(0, 6))
         ttk.Checkbutton(shanway_mode_row, text="Shanway aktiv", variable=self.shanway_enabled_var, command=self._on_shanway_toggle).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(shanway_mode_row, text="Browser-Liveanalyse aus", variable=self.shanway_browser_mode_var, command=self._on_shanway_browser_toggle, state="disabled").pack(side="left")
+        ttk.Checkbutton(
+            shanway_mode_row,
+            text="Raster-Einsicht",
+            variable=self.shanway_raster_insight_var,
+            command=self._on_shanway_raster_toggle,
+        ).pack(side="left", padx=(8, 0))
         shanway_corpus_row = tk.Frame(shanway_tab, bg="#0D1930")
         shanway_corpus_row.pack(fill="x", padx=10, pady=(0, 8))
         ttk.Button(shanway_corpus_row, text="Corpus einlesen", command=self._import_shanway_corpus).pack(side="left")
@@ -1417,6 +1430,11 @@ class VeiraGUI:
             fg="#8FD6FF",
             font=("Consolas", 9, "bold"),
         ).pack(side="right")
+        shanway_share_row = tk.Frame(shanway_tab, bg="#0D1930")
+        shanway_share_row.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(shanway_share_row, text="Peer-Delta export", command=self._export_self_reflection_bundle_dialog).pack(side="left")
+        ttk.Button(shanway_share_row, text="Peer-Delta import", command=self._import_self_reflection_bundle_dialog).pack(side="left", padx=(6, 0))
+        tk.Label(shanway_share_row, textvariable=self.peer_delta_status_var, bg="#0D1930", fg="#8FD6FF", font=("Consolas", 8, "bold")).pack(side="right")
         shanway_status_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         shanway_status_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(shanway_status_card, textvariable=self.shanway_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
@@ -1424,6 +1442,20 @@ class VeiraGUI:
         tk.Label(shanway_status_card, textvariable=self.shanway_vault_watch_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_reply_var, bg="#10223F", fg="#F6E7A7", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
+        miniature_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        miniature_card.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(miniature_card, text="Miniatur", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        self.shanway_miniature_label = tk.Label(miniature_card, bg="#07111F", width=128, height=128)
+        self.shanway_miniature_label.pack(anchor="w", padx=10, pady=(0, 6))
+        tk.Label(
+            miniature_card,
+            text="Die Miniatur bleibt getrennt vom 4D-Raster und dient nur der lokalen Shanway-Reflexion.",
+            bg="#10223F",
+            fg="#CFE8FF",
+            wraplength=400,
+            justify="left",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=10, pady=(0, 10))
         tk.Label(shanway_tab, text="Privater Verlauf mit Shanway", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
         self.shanway_text = tk.Text(
             shanway_tab,
@@ -2207,6 +2239,7 @@ class VeiraGUI:
                 "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
                 "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
             },
+            **self._shanway_visual_payloads(fingerprint),
         )
         try:
             self.registry.update_fingerprint_payload(
@@ -2604,6 +2637,7 @@ class VeiraGUI:
                 {
                     "shanway_enabled": bool(self.shanway_enabled_var.get()),
                     "shanway_browser_mode": bool(self.shanway_browser_mode_var.get()),
+                    "shanway_raster_insight": bool(self.shanway_raster_insight_var.get()),
                 },
             )
             self.session_context.user_settings = dict(settings)
@@ -2626,9 +2660,153 @@ class VeiraGUI:
         self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Shanway bleibt privat im Chat.")
         self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse aus")
 
+    def _on_shanway_raster_toggle(self) -> None:
+        """Aktualisiert die optionale Raster-Einsicht fuer Shanway."""
+        enabled = bool(self.shanway_raster_insight_var.get())
+        self._persist_shanway_preferences()
+        if enabled:
+            self.chat_status_var.set("Shanway aktiv | Raster-Einsicht lokal zugeschaltet")
+        else:
+            self.chat_status_var.set("Shanway aktiv | Raster-Einsicht aus")
+
     def _set_shanway_guard(self, message: str) -> None:
         """Aktualisiert die sichtbare Shanway-Schutzmeldung."""
         self.shanway_sensitive_var.set(str(message or "Shanway Guard: bereit"))
+
+    def _shanway_visual_payloads(self, fingerprint: AetherFingerprint | None = None) -> dict[str, Any]:
+        """Sammelt Miniatur-, Raster- und Self-Reflection-Zusatzdaten fuer Shanway."""
+        active = fingerprint if fingerprint is not None else self.current_fingerprint
+        self_reflection = dict(getattr(active, "self_reflection_delta", {}) or {}) if active is not None else {}
+        miniature = dict(getattr(active, "miniature_reflection", {}) or self_reflection.get("miniature_reflection", {}) or {})
+        raster = dict(getattr(active, "raster_self_perception", {}) or self_reflection.get("raster_self_perception", {}) or {})
+        return {
+            "miniature_payload": miniature,
+            "raster_payload": raster,
+            "self_reflection_payload": self_reflection,
+        }
+
+    def _update_miniature_preview(self, fingerprint: AetherFingerprint | None) -> None:
+        """Aktualisiert die sichtbare Miniaturvorschau im Shanway-Tab."""
+        if getattr(self, "shanway_miniature_label", None) is None:
+            return
+        miniature_rgb = getattr(fingerprint, "_miniature_rgb", None) if fingerprint is not None else None
+        if miniature_rgb is None:
+            self.shanway_miniature_label.configure(image="", text="Keine Miniatur")
+            self.miniature_image_ref = None
+            return
+        try:
+            image = Image.fromarray(np.asarray(miniature_rgb, dtype=np.uint8), mode="RGB")
+            image = image.resize((128, 128), Image.Resampling.NEAREST)
+            photo = ImageTk.PhotoImage(image=image)
+            self.shanway_miniature_label.configure(image=photo, text="")
+            self.miniature_image_ref = photo
+        except Exception:
+            self.shanway_miniature_label.configure(image="", text="Miniatur konnte nicht angezeigt werden")
+            self.miniature_image_ref = None
+
+    def _ask_self_reflection_share_scope(self, title: str, prompt: str) -> str:
+        """Fragt fail-closed nach dem Freigabebereich fuer Peer-/Self-Delta-Sharing."""
+        dialog = tk.Toplevel(self.root)
+        dialog.title(title)
+        dialog.configure(bg="#0D1930")
+        dialog.transient(self.root)
+        dialog.grab_set()
+        result = {"scope": "deny"}
+        tk.Label(dialog, text=prompt, bg="#0D1930", fg="#E7F4FF", wraplength=360, justify="left", font=("Segoe UI", 10)).pack(padx=14, pady=(14, 10))
+        button_row = tk.Frame(dialog, bg="#0D1930")
+        button_row.pack(fill="x", padx=14, pady=(0, 14))
+
+        def _close(scope: str) -> None:
+            result["scope"] = str(scope or "deny")
+            try:
+                dialog.grab_release()
+            except Exception:
+                pass
+            dialog.destroy()
+
+        ttk.Button(button_row, text="Nein", command=lambda: _close("deny")).pack(side="left")
+        ttk.Button(button_row, text="Nur öffentliche Anker", command=lambda: _close("public_only")).pack(side="left", padx=(6, 0))
+        ttk.Button(button_row, text="Alle inkl. Self-Deltas", command=lambda: _close("all")).pack(side="left", padx=(6, 0))
+        self.root.wait_window(dialog)
+        return str(result["scope"])
+
+    def _export_self_reflection_bundle_dialog(self) -> None:
+        """Exportiert consent-basiert ein Peer-Delta-Bundle ohne Auto-Freigabe."""
+        fingerprint = self.current_fingerprint
+        if fingerprint is None:
+            messagebox.showinfo("Peer-Delta", "Es ist noch kein aktiver Datensatz geladen.")
+            return
+        reflection_payload = dict(getattr(fingerprint, "self_reflection_delta", {}) or {})
+        if not reflection_payload:
+            messagebox.showinfo("Peer-Delta", "Zu diesem Datensatz liegen noch keine Self-Reflection-Deltas vor.")
+            return
+        scope = self._ask_self_reflection_share_scope(
+            "Peer-Delta-Freigabe",
+            "Deltas enthalten gelernte Beobachtungen (Selbstwahrnehmung). Wirklich freigeben?",
+        )
+        if scope == "deny":
+            self.peer_delta_status_var.set("Peer-Delta: Freigabe abgebrochen")
+            return
+        shared_secret = ""
+        if scope == "all":
+            shared_secret = str(
+                simpledialog.askstring(
+                    "Peer-Delta-Schlüssel",
+                    "Optionales Shared Secret für vollständige Bundles:",
+                    parent=self.root,
+                    show="*",
+                )
+                or ""
+            )
+        bundle = self.augmentor.build_peer_delta_share_bundle(
+            source_label=str(getattr(fingerprint, "source_label", "") or "shared_delta"),
+            reflection_payload=reflection_payload,
+            scope=scope,
+            shared_secret=shared_secret,
+        )
+        file_path = filedialog.asksaveasfilename(
+            title="Peer-Delta exportieren",
+            defaultextension=".json",
+            filetypes=[("JSON-Dateien", "*.json"), ("Alle Dateien", "*.*")],
+        )
+        if not file_path:
+            return
+        Path(file_path).write_text(json.dumps(bundle, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.peer_delta_status_var.set(f"Peer-Delta: exportiert | Scope {scope}")
+
+    def _import_self_reflection_bundle_dialog(self) -> None:
+        """Importiert ein Peer-Delta-Bundle fail-closed und lernt nur lokal daraus."""
+        file_path = filedialog.askopenfilename(
+            title="Peer-Delta importieren",
+            filetypes=[("JSON-Dateien", "*.json"), ("Alle Dateien", "*.*")],
+        )
+        if not file_path:
+            return
+        try:
+            bundle = json.loads(Path(file_path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            messagebox.showerror("Peer-Delta", f"Import fehlgeschlagen:\n{exc}")
+            return
+        payload = dict(bundle.get("payload", {}) or {})
+        shared_secret = ""
+        if bool(payload.get("internal_payload_encrypted", False)):
+            shared_secret = str(
+                simpledialog.askstring(
+                    "Peer-Delta-Schlüssel",
+                    "Shared Secret für internes Bundle eingeben:",
+                    parent=self.root,
+                    show="*",
+                )
+                or ""
+            )
+        decoded = self.augmentor.decode_peer_delta_share_bundle(bundle, shared_secret=shared_secret)
+        if not decoded:
+            messagebox.showwarning("Peer-Delta", "Bundle konnte nicht validiert oder entschlüsselt werden.")
+            return
+        learning_result = self.observer_engine.merge_public_anchor_bundle(self.session_context, decoded)
+        self.peer_delta_status_var.set(
+            f"Peer-Delta: importiert | +{int(learning_result.get('imported_anchor_count', 0) or 0)} öffentliche Anker"
+        )
 
     @staticmethod
     def _is_direct_shanway_invocation(text: str) -> bool:
@@ -3167,6 +3345,7 @@ class VeiraGUI:
                         "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
                         "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
                     } if self.current_fingerprint is not None else {},
+                    **self._shanway_visual_payloads(self.current_fingerprint),
                 )
                 if shanway_assessment.sensitive:
                     blocked_sensitive = True
@@ -3254,6 +3433,7 @@ class VeiraGUI:
                         "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
                         "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
                     } if self.current_fingerprint is not None else {},
+                    **self._shanway_visual_payloads(self.current_fingerprint),
                 )
                 if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
                     self_learned_tokens = int(
@@ -6487,6 +6667,7 @@ class VeiraGUI:
                     "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
                     "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
                 },
+                **self._shanway_visual_payloads(fingerprint),
             )
             shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
             fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]
@@ -6669,6 +6850,7 @@ class VeiraGUI:
         self._sync_chat_analysis_state()
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
         self._refresh_current_dna_share_status(fingerprint)
+        self._update_miniature_preview(fingerprint)
         scene = self.renderer.create_dynamic_scene(fingerprint)
         self._set_figure(scene.figure)
         self.animation_scene = scene
@@ -6681,6 +6863,7 @@ class VeiraGUI:
         self._sync_chat_analysis_state()
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
         self._refresh_current_dna_share_status(fingerprint)
+        self._update_miniature_preview(fingerprint)
         if self.animation_scene is None or self.current_canvas is None:
             self._set_scene_from_fingerprint(fingerprint)
             return
@@ -7222,7 +7405,33 @@ class VeiraGUI:
                 fingerprint=fingerprint,
                 scoped_screen_payload=screen_vision_payload,
             )
+            miniature_size = 64 if low_power else 128
+            miniature_rgb = self.renderer.build_low_res_miniature(
+                file_path=str(source_path),
+                fingerprint=fingerprint,
+                size=miniature_size,
+            )
+            miniature_payload = self.renderer.summarize_miniature(miniature_rgb, fingerprint=fingerprint)
+            raster_payload: dict[str, Any] = {}
+            if bool(self.shanway_raster_insight_var.get()):
+                raster_payload = self.renderer.get_current_grid_data(fingerprint=fingerprint)
+            self_reflection_delta = self.observer_engine.summarize_reflection_state(
+                miniature_payload=miniature_payload,
+                raster_payload=raster_payload,
+                fingerprint=fingerprint,
+                enable_raster_insight=bool(self.shanway_raster_insight_var.get()),
+                max_depth=5,
+            )
+            learning_state = self.observer_engine.update_learning_state(
+                self.session_context,
+                self_reflection_delta,
+            )
+            observer_payload["learning_state"] = dict(learning_state)
             fingerprint.observer_payload = dict(observer_payload)
+            fingerprint.miniature_reflection = dict(miniature_payload)
+            fingerprint.raster_self_perception = dict(self_reflection_delta.get("raster_self_perception", {}) or {})
+            fingerprint.self_reflection_delta = dict(self_reflection_delta)
+            setattr(fingerprint, "_miniature_rgb", np.asarray(miniature_rgb, dtype=np.uint8))
             storage_decision = self.storage_gp_engine.evaluate(fingerprint)
             progress("persist", 0.97, "Datensatz speichern")
             raw_saved = False
@@ -7240,6 +7449,13 @@ class VeiraGUI:
             local_payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
             local_payload["observer_payload"] = dict(observer_payload)
             local_payload["emergence_layers"] = [dict(item) for item in list(getattr(fingerprint, "emergence_layers", []) or [])]
+            local_payload["miniature_reflection"] = dict(miniature_payload)
+            local_payload["self_reflection_delta"] = dict(self_reflection_delta)
+            local_payload["raster_self_perception"] = {
+                key: value
+                for key, value in dict(self_reflection_delta.get("raster_self_perception", {}) or {}).items()
+                if key not in {"grid_array", "dynamic_z"}
+            }
             record_id = self.registry.save(
                 fingerprint,
                 self.session_context,
@@ -7290,6 +7506,15 @@ class VeiraGUI:
             setattr(fingerprint, "_storage_gp_decision", storage_decision.to_dict())
             setattr(fingerprint, "_raw_storage_available", bool(raw_saved))
             setattr(fingerprint, "_raw_storage_requested", bool(save_raw))
+            self.augmentor.record_self_reflection_delta(
+                source_label=str(source_path.name),
+                reflection_payload=dict(self_reflection_delta),
+            )
+            if isinstance(raster_payload, dict):
+                raster_payload.pop("grid_array", None)
+                raster_payload.pop("dynamic_z", None)
+            del raster_payload
+            gc.collect()
             log_path = self.log_system.write_analysis_log(fingerprint)
             screenshot_figure = self.renderer.render(fingerprint)
             self.log_system.save_screenshot(screenshot_figure)
@@ -7384,8 +7609,21 @@ class VeiraGUI:
         self._refresh_restore_status()
         self._refresh_history_cache(preserve_record_id=int(record_id))
         self._set_scene_from_fingerprint(fingerprint)
+        self._update_miniature_preview(fingerprint)
         self._update_integrity_monitor(fingerprint)
         self._update_semantic_status(fingerprint, source_text=str(getattr(fingerprint, "source_label", "")))
+        ttd_candidates = [
+            dict(item)
+            for item in list(dict(getattr(fingerprint, "self_reflection_delta", {}) or {}).get("ttd_candidates", []) or [])
+            if isinstance(item, dict)
+        ]
+        if ttd_candidates:
+            first = dict(ttd_candidates[0] or {})
+            self.peer_delta_status_var.set(
+                f"Peer-Delta: TTD bereit | {str(first.get('hash', ''))[:12]}... | {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+        else:
+            self.peer_delta_status_var.set("Peer-Delta: lokal | keine stabile TTD-Freigabe")
         self.state_var.set(self.renderer.get_state_description(fingerprint))
         if honeypot_hit:
             self.honeypot_var.set("Diagnostik: Aktivitaet erkannt")

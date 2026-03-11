@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
+import platform
 import secrets
 import tkinter as tk
 from dataclasses import dataclass
@@ -10,6 +13,8 @@ from datetime import datetime, timedelta, timezone
 from tkinter import messagebox, ttk
 from typing import Any
 from uuid import uuid4
+
+from .chat_crypto import crypto_available, decrypt_text, derive_fernet_key, encrypt_text
 
 
 PASSWORD_ITERATIONS = 240_000
@@ -24,6 +29,108 @@ def _xor_bytes(left: bytes, right: bytes) -> bytes:
     """XORt zwei Bytepuffer gleicher Laenge."""
     size = min(len(left), len(right))
     return bytes(left[index] ^ right[index] for index in range(size))
+
+
+def build_hardware_seed(session_like: Any | None = None, purpose: str = "", session_salt: str = "") -> str:
+    """Leitet einen robusten, lokalen Device-Seed fuer verschluesselte Zusatzpfade ab."""
+    node_name = str(platform.node() or "")
+    machine = str(platform.machine() or "")
+    platform_label = str(platform.platform() or "")
+    mac_hash = hashlib.sha256(str(hex(int(__import__("uuid").getnode()))).encode("utf-8")).hexdigest()
+    session_id = str(getattr(session_like, "session_id", "") or "")
+    live_fingerprint = str(getattr(session_like, "live_session_fingerprint", "") or "")
+    if hasattr(session_like, "get_seed") and callable(getattr(session_like, "get_seed")):
+        session_seed = int(session_like.get_seed())
+    else:
+        session_seed = int(getattr(session_like, "session_seed", 0) or 0)
+    payload = "|".join(
+        [
+            node_name,
+            machine,
+            platform_label,
+            mac_hash,
+            session_id,
+            live_fingerprint,
+            str(session_seed),
+            str(purpose or ""),
+            str(session_salt or ""),
+            str(os.environ.get("PROCESSOR_IDENTIFIER", "") or ""),
+        ]
+    )
+    return hashlib.sha256(payload.encode("utf-8", errors="replace")).hexdigest()
+
+
+def derive_device_scoped_fernet_key(
+    session_like: Any | None,
+    purpose: str,
+    session_salt: str = "",
+) -> str:
+    """Leitet einen lokalen Fernet-Key aus Device-Merkmalen plus Session-Kontext ab."""
+    material = build_hardware_seed(session_like=session_like, purpose=purpose, session_salt=session_salt)
+    return derive_fernet_key(material)
+
+
+def encrypt_device_scoped_payload(
+    payload: dict[str, Any],
+    session_like: Any | None,
+    purpose: str,
+    session_salt: str = "",
+) -> dict[str, Any]:
+    """Verschluesselt lokale Zusatzdaten fail-closed mit Device- und Session-Bezug."""
+    normalized_payload = dict(payload or {})
+    if not crypto_available():
+        return {
+            "encrypted": False,
+            "payload": normalized_payload,
+            "purpose": str(purpose),
+            "device_fingerprint": build_hardware_seed(session_like, purpose, session_salt)[:24],
+            "reason": "cryptography_unavailable",
+        }
+    raw = json.dumps(normalized_payload, ensure_ascii=False, sort_keys=True)
+    key = derive_device_scoped_fernet_key(session_like, purpose=purpose, session_salt=session_salt)
+    token = encrypt_text(raw, key)
+    return {
+        "encrypted": True,
+        "token": str(token),
+        "purpose": str(purpose),
+        "device_fingerprint": build_hardware_seed(session_like, purpose, session_salt)[:24],
+    }
+
+
+def decrypt_device_scoped_payload(
+    envelope: dict[str, Any] | None,
+    session_like: Any | None,
+    purpose: str,
+    session_salt: str = "",
+) -> dict[str, Any]:
+    """Entschluesselt lokale Zusatzdaten wieder in ein Dictionary."""
+    payload = dict(envelope or {})
+    if not bool(payload.get("encrypted", False)):
+        raw_payload = payload.get("payload", {})
+        return dict(raw_payload or {}) if isinstance(raw_payload, dict) else {}
+    token = str(payload.get("token", "") or "")
+    if not token or not crypto_available():
+        return {}
+    try:
+        key = derive_device_scoped_fernet_key(session_like, purpose=purpose, session_salt=session_salt)
+        return dict(json.loads(decrypt_text(token, key)))
+    except Exception:
+        return {}
+
+
+def self_reflection_share_policy(scope: str = "public_only") -> dict[str, Any]:
+    """Normalisiert Consent-Scope fuer Self-Reflection- und Peer-Delta-Sharing."""
+    normalized = str(scope or "public_only").strip().lower()
+    if normalized not in {"deny", "public_only", "all"}:
+        normalized = "public_only"
+    return {
+        "scope": normalized,
+        "consent_required": True,
+        "internal_only": normalized != "all",
+        "allow_public_anchors": normalized in {"public_only", "all"},
+        "allow_self_reflection": normalized == "all",
+        "share_hash_only": normalized == "public_only",
+    }
 
 
 @dataclass(frozen=True)

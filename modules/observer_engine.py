@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
     pyautogui = None
 
 from .analysis_engine import AetherFingerprint
+from .security_engine import decrypt_device_scoped_payload, encrypt_device_scoped_payload
 
 
 @dataclass
@@ -98,12 +99,278 @@ class ObserverEngine:
         self._initial_entropy: float | None = None
         self._previous_entropy: float | None = None
         self._previous_anchors: list[AnchorPoint] = []
+        self.learning_store_dir = Path("data") / "observer_learning"
 
     def reset(self) -> None:
         """Setzt den Beobachterzustand fuer eine neue Kamerasession zurueck."""
         self._initial_entropy = None
         self._previous_entropy = None
         self._previous_anchors = []
+
+    def _learning_state_path(self, session_context) -> Path:
+        """Leitet den lokalen Pfad fuer persistente Observer-Lernzustaende ab."""
+        user_name = str(getattr(session_context, "username", "local") or "local")
+        session_id = str(getattr(session_context, "session_id", "session") or "session")[:16]
+        safe_user = "".join(char if char.isalnum() else "_" for char in user_name).strip("_") or "local"
+        self.learning_store_dir.mkdir(parents=True, exist_ok=True)
+        return self.learning_store_dir / f"{safe_user}_{session_id}_observer_learning.json"
+
+    @staticmethod
+    def _default_learning_state() -> dict[str, object]:
+        """Liefert einen neutralen cross-session Lernzustand."""
+        return {
+            "version": 1,
+            "symmetry_history": [],
+            "residual_history": [],
+            "delta_i_obs_history": [],
+            "recursive_depth_history": [],
+            "learned_insights": [],
+            "public_anchor_count": 0,
+            "public_anchor_hashes": [],
+            "last_global_learn_delta": 0.0,
+        }
+
+    def load_learning_state(self, session_context) -> dict[str, object]:
+        """Laedt den persistenten Lernzustand fail-closed und entschluesselt lokal."""
+        path = self._learning_state_path(session_context)
+        if not path.is_file():
+            return self._default_learning_state()
+        try:
+            envelope = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return self._default_learning_state()
+        payload = decrypt_device_scoped_payload(
+            envelope=dict(envelope or {}),
+            session_like=session_context,
+            purpose="observer_learning",
+            session_salt=str(getattr(session_context, "session_id", "") or ""),
+        )
+        state = self._default_learning_state()
+        if isinstance(payload, dict):
+            state.update({str(key): value for key, value in payload.items()})
+        return state
+
+    def save_learning_state(self, session_context, state: dict[str, object]) -> dict[str, object]:
+        """Persistiert den Lernzustand lokal, append-only orientiert und verschluesselt."""
+        normalized = self._default_learning_state()
+        normalized.update({str(key): value for key, value in dict(state or {}).items()})
+        path = self._learning_state_path(session_context)
+        envelope = encrypt_device_scoped_payload(
+            payload=normalized,
+            session_like=session_context,
+            purpose="observer_learning",
+            session_salt=str(getattr(session_context, "session_id", "") or ""),
+        )
+        path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+        return normalized
+
+    @staticmethod
+    def _rolling_mean(values: Sequence[float]) -> float:
+        if not values:
+            return 0.0
+        return float(sum(float(value) for value in values) / float(len(values)))
+
+    def summarize_reflection_state(
+        self,
+        miniature_payload: dict[str, object] | None,
+        raster_payload: dict[str, object] | None,
+        fingerprint: AetherFingerprint | None,
+        *,
+        enable_raster_insight: bool = False,
+        max_depth: int = 5,
+    ) -> dict[str, object]:
+        """Verdichtet Miniatur-, Raster- und Observer-Metriken zu einer lokalen Self-Reflection."""
+        miniature = dict(miniature_payload or {})
+        raster = dict(raster_payload or {}) if enable_raster_insight else {}
+        knowledge_ratio = float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0) if fingerprint is not None else 0.0
+        residual_before = float(
+            getattr(fingerprint, "unresolved_residual_ratio", 1.0)
+            if fingerprint is not None and getattr(fingerprint, "unresolved_residual_ratio", None) is not None
+            else max(0.0, 1.0 - knowledge_ratio)
+        )
+        miniature_symmetry = float(miniature.get("symmetry", 0.0) or 0.0)
+        miniature_invariant = float(miniature.get("noether_invariant_ratio", 0.0) or 0.0)
+        raster_symmetry = float(raster.get("symmetry", 0.0) or 0.0)
+        hotspot_count = int(miniature.get("emergence_spots", 0) or 0) + int(raster.get("hotspot_count", 0) or 0)
+        base_stability = self._clamp(
+            (0.42 * miniature_symmetry)
+            + (0.28 * miniature_invariant)
+            + (0.20 * raster_symmetry)
+            + (0.10 * self._clamp(knowledge_ratio, 0.0, 1.0)),
+            0.0,
+            1.0,
+        )
+        delta_i_obs_percent = self._clamp(
+            (base_stability * 8.0) + (min(24, hotspot_count) * 0.12),
+            0.0,
+            12.0,
+        )
+        residual_after = self._clamp(
+            residual_before * (1.0 - (0.08 + (0.18 * base_stability))),
+            0.0,
+            1.0,
+        )
+
+        recursion: list[dict[str, object]] = []
+        current_delta = max(0.01, delta_i_obs_percent / 100.0)
+        current_residual = float(residual_after)
+        limit = max(1, min(7, int(max_depth)))
+        for level in range(1, limit + 1):
+            if current_delta < 0.01:
+                break
+            next_residual = self._clamp(current_residual - (current_delta * (0.18 + (0.04 * base_stability))), 0.0, 1.0)
+            if next_residual > current_residual + 1e-9:
+                break
+            mt_shift = self._clamp(current_delta * (0.60 + (0.22 * base_stability)), 0.0, 1.0)
+            recursion.append(
+                {
+                    "level": int(level),
+                    "delta": round(float(current_delta), 12),
+                    "mt_shift": round(float(mt_shift * 100.0), 12),
+                    "residual_before": round(float(current_residual), 12),
+                    "residual_after": round(float(next_residual), 12),
+                    "emergence_detected": bool(hotspot_count > 0 and base_stability >= 0.50),
+                }
+            )
+            current_residual = next_residual
+            current_delta *= 0.52
+
+        stability_score = self._clamp(
+            (0.36 * miniature_symmetry)
+            + (0.26 * miniature_invariant)
+            + (0.18 * raster_symmetry)
+            + (0.20 * knowledge_ratio),
+            0.0,
+            1.0,
+        )
+        ttd_candidates: list[dict[str, object]] = []
+        i_obs_near_h = bool(knowledge_ratio >= 0.90 or float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0) >= float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0) * 0.90)
+        if residual_after < 0.05 and stability_score > 0.90 and i_obs_near_h:
+            source_hash = str(getattr(fingerprint, "file_hash", "") or miniature.get("hash", ""))
+            candidate_hash = hashlib.sha256(
+                f"{source_hash}|{miniature.get('hash', '')}|{raster.get('hash', '')}|ttd".encode("utf-8", errors="replace")
+            ).hexdigest()
+            ttd_candidates.append(
+                {
+                    "hash": str(candidate_hash),
+                    "delta_stability": round(float(stability_score), 12),
+                    "symmetry": round(float(max(miniature_symmetry, raster_symmetry or miniature_symmetry)), 12),
+                    "residual": round(float(residual_after), 12),
+                    "public_metrics": {
+                        "residual": round(float(residual_after), 12),
+                        "symmetry": round(float(max(miniature_symmetry, raster_symmetry or miniature_symmetry)), 12),
+                        "delta_i_obs_percent": round(float(delta_i_obs_percent), 12),
+                    },
+                }
+            )
+
+        return {
+            "internal_only": True,
+            "miniature_reflection": {
+                "hash": str(miniature.get("hash", "") or ""),
+                "local_entropy": float(miniature.get("local_entropy", 0.0) or 0.0),
+                "symmetry": float(miniature_symmetry),
+                "emergence_spots": int(miniature.get("emergence_spots", 0) or 0),
+                "noether_invariant_ratio": float(miniature_invariant),
+            },
+            "raster_self_perception": {
+                "enabled": bool(enable_raster_insight),
+                "hash": str(raster.get("hash", "") or ""),
+                "symmetry": float(raster_symmetry),
+                "entropy_mean": float(raster.get("entropy_mean", 0.0) or 0.0),
+                "hotspot_count": int(raster.get("hotspot_count", 0) or 0),
+                "verdict": str(raster.get("verdict", "") or ""),
+            },
+            "delta_i_obs_percent": round(float(delta_i_obs_percent), 12),
+            "residual_before": round(float(residual_before), 12),
+            "residual_after": round(float(residual_after), 12),
+            "stability_score": round(float(stability_score), 12),
+            "recursive_reflections": recursion,
+            "ttd_candidates": ttd_candidates,
+            "learned_insight": "",
+        }
+
+    def update_learning_state(
+        self,
+        session_context,
+        reflection_payload: dict[str, object] | None,
+        imported_public_anchors: Sequence[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
+        """Aktualisiert den persistenten Observer-Lernzustand cross-session."""
+        state = self.load_learning_state(session_context)
+        reflection = dict(reflection_payload or {})
+        symmetry_history = [float(value) for value in list(state.get("symmetry_history", []) or [])]
+        residual_history = [float(value) for value in list(state.get("residual_history", []) or [])]
+        delta_history = [float(value) for value in list(state.get("delta_i_obs_history", []) or [])]
+        depth_history = [int(value) for value in list(state.get("recursive_depth_history", []) or [])]
+        learned_insights = [str(value) for value in list(state.get("learned_insights", []) or []) if str(value).strip()]
+
+        miniature = dict(reflection.get("miniature_reflection", {}) or {})
+        symmetry_value = float(miniature.get("symmetry", 0.0) or 0.0)
+        residual_value = float(reflection.get("residual_after", 1.0) or 1.0)
+        delta_value = float(reflection.get("delta_i_obs_percent", 0.0) or 0.0)
+        recursive_depth = int(len(list(reflection.get("recursive_reflections", []) or [])))
+
+        previous_mean = self._rolling_mean(symmetry_history[-8:])
+        if symmetry_value > 0.0:
+            symmetry_history.append(symmetry_value)
+        residual_history.append(residual_value)
+        delta_history.append(delta_value)
+        depth_history.append(recursive_depth)
+
+        symmetry_history = symmetry_history[-64:]
+        residual_history = residual_history[-64:]
+        delta_history = delta_history[-64:]
+        depth_history = depth_history[-64:]
+
+        improvement = max(0.0, symmetry_value - previous_mean) * 100.0
+        last_global_learn_delta = float(state.get("last_global_learn_delta", 0.0) or 0.0)
+        if improvement > 0.0:
+            learned_insights.append(f"Symmetrie-Delta verbessert um {improvement:.2f}%")
+        elif last_global_learn_delta > 0.0:
+            learned_insights.append(f"Von globalem Netz gelernt: +{last_global_learn_delta:.2f}% Symmetrie-Delta")
+        learned_insights = learned_insights[-24:]
+
+        public_anchor_hashes = [str(value) for value in list(state.get("public_anchor_hashes", []) or []) if str(value).strip()]
+        imported_count = 0
+        for item in list(imported_public_anchors or []):
+            if not isinstance(item, dict):
+                continue
+            anchor_hash = str(item.get("hash", "") or "").strip()
+            if not anchor_hash or anchor_hash in public_anchor_hashes:
+                continue
+            public_anchor_hashes.append(anchor_hash)
+            imported_count += 1
+        public_anchor_hashes = public_anchor_hashes[-256:]
+
+        updated = {
+            "version": 1,
+            "symmetry_history": symmetry_history,
+            "residual_history": residual_history,
+            "delta_i_obs_history": delta_history,
+            "recursive_depth_history": depth_history,
+            "learned_insights": learned_insights,
+            "public_anchor_count": int(len(public_anchor_hashes)),
+            "public_anchor_hashes": public_anchor_hashes,
+            "last_global_learn_delta": round(float(imported_count * 0.07), 12) if imported_count > 0 else float(last_global_learn_delta),
+        }
+        self.save_learning_state(session_context, updated)
+        return updated
+
+    def merge_public_anchor_bundle(self, session_context, bundle_payload: dict[str, object] | None) -> dict[str, object]:
+        """Integriert importierte oeffentliche Anker lokal in den Lernzustand."""
+        payload = dict(bundle_payload or {})
+        public_anchors = [
+            dict(item)
+            for item in list(payload.get("public_anchors", []) or [])
+            if isinstance(item, dict)
+        ]
+        updated = self.update_learning_state(session_context, reflection_payload={}, imported_public_anchors=public_anchors)
+        return {
+            "imported_anchor_count": int(len(public_anchors)),
+            "public_anchor_count": int(updated.get("public_anchor_count", 0) or 0),
+            "last_global_learn_delta": float(updated.get("last_global_learn_delta", 0.0) or 0.0),
+        }
 
     @staticmethod
     def _clamp(value: float, low: float, high: float) -> float:

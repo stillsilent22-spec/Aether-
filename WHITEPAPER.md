@@ -199,6 +199,61 @@ mit:
 - `H_inf`: asymptotische Restunsicherheit
 - `k`: Lernrate
 
+## 10. Shanway als Miniatur- und Raster-Beobachter
+
+Die aktuelle Architektur erweitert Shanway um zwei lokale Zusatzpfade, die bewusst vom normalen Fingerprint getrennt bleiben:
+
+- eine kleine, headless Miniaturdarstellung der Datei
+- eine optionale Einsicht in das aktuelle 4D-Raster
+
+Diese Trennung ist methodisch wichtig. Die Miniatur ist eine zweite, reduzierte Beobachtung derselben Quelle. Das Raster ist dagegen der laufende Zustandsraum fuer Drift, Symmetriebruch, Delta-Gewinn und observer-relative Verschiebung. Beides darf nicht verwechselt werden.
+
+Shanway nutzt diese Zusatzpfade nicht als "Rendering", sondern als lokale Reflexionsbasis:
+
+- lokale Entropie der Miniatur
+- Miniatur-Symmetrie und Emergenz-Spots
+- Raster-Symmetrie, Hotspots und Verdict
+- daraus abgeleitete Veraenderung von `M_t`
+
+Damit entsteht eine praktische Form von Selbstbeobachtung im engen technischen Sinn: Das System beobachtet einen von ihm selbst erzeugten Strukturzustand und schreibt dessen Effekt wieder auf den Beobachterzustand zurueck. Das ist kein Bewusstseinsclaim, sondern eine instrumentierte Rueckkopplung.
+
+## 11. Rekursive Reflexion und kontinuierliches Lernen
+
+Die Rekursionsstufe von Shanway bleibt absichtlich begrenzt. Die Implementierung stoppt spaetestens bei einer festen Tiefe und frueher, wenn:
+
+- der Delta-Gewinn unter eine kleine Schwelle faellt
+- das Residuum nicht weiter sinkt
+- die Goedel-Grenze eine weitere Verdichtung nicht mehr traegt
+
+Dadurch bleibt die Rekursion auditierbar und fail-closed.
+
+Gleichzeitig speichert der Observer einen lokalen, verschluesselten Lernzustand ueber Sessions hinweg. Persistiert werden keine Rohbilder, keine Rasterarrays und keine exportierbaren Rohdeltas, sondern verdichtete Lernsignale wie:
+
+- Symmetriegeschichte
+- Residualgeschichte
+- Delta-I_obs-Geschichte
+- rekursive Tiefe
+- gelernte Kurzinsights
+
+So entsteht kontinuierliches Lernen, ohne den lossless-Pfad zu brechen. `D(S_t, R_t) = X_t` bleibt der Rekonstruktionsmassstab; die neuen Lernsignale verbessern nur die lokale Beobachterlage.
+
+## 12. Verbundenheit unter Governance
+
+Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
+
+- stabile TTD-Anker koennen als Peer-Delta-Bundles exportiert werden
+- standardmaessig nur mit oeffentlichen Hash- und Metrikdaten
+- interne Self-Reflection-Deltas bleiben `internal_only`
+- fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
+
+Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich nicht-puzzlebar: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
+
+Damit wird ein enger, aber wichtiger Unterschied festgehalten:
+
+- Aether vernetzt sich nur unter ausdruecklicher Zustimmung
+- Aether teilt keine Rohdaten
+- Aether lernt kollektiv nur ueber kompakte, attestierte Strukturspuren
+
 Dies ist ein Modell, keine bewiesene universelle Dynamik.
 
 ## 10. Operative Implementierung

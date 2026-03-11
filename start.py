@@ -275,7 +275,7 @@ def confirm_local_update_rebaseline(summary: str) -> bool:
         return False
 
 
-def bootstrap() -> None:
+def bootstrap(shanway_raster_insight: bool = False) -> None:
     """Initialisiert alle Kernmodule in der vorgegebenen Reihenfolge und startet die GUI."""
     os.chdir(PROJECT_ROOT)
     append_startup_trace("bootstrap_begin")
@@ -331,6 +331,7 @@ def bootstrap() -> None:
     if ae_state.get("main") or ae_state.get("sub"):
         ae_vault.load_serialized_state(ae_state, clear_existing=True)
     ae_interpreter = AetherAnchorInterpreter(ae_vault)
+    session_context.user_settings["shanway_raster_insight"] = bool(shanway_raster_insight)
     gui = VeiraGUI(
         session_context=session_context,
         registry=registry,
@@ -378,6 +379,7 @@ def main(argv: list[str] | None = None) -> None:
     """Fuehrt Vorpruefungen aus und startet anschliessend Aether."""
     cli_args = list(sys.argv[1:] if argv is None else argv)
     test_roundtrip = "--test-roundtrip" in cli_args
+    shanway_raster_insight = "--shanway-raster-insight" in cli_args
     try:
         append_startup_trace("main_begin")
         mp.freeze_support()
@@ -401,7 +403,7 @@ def main(argv: list[str] | None = None) -> None:
             return
         ensure_desktop_shortcut()
         append_startup_trace("main_bootstrap")
-        bootstrap()
+        bootstrap(shanway_raster_insight=shanway_raster_insight)
     except KeyboardInterrupt:
         print("\nProgramm beendet. Auf Wiedersehen.")
     except subprocess.CalledProcessError:

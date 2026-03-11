@@ -170,6 +170,11 @@ class ShanwayAssessment:
     reconstruction_verification: dict[str, Any]
     verdict_reconstruction: str
     verdict_reconstruction_reason: str
+    miniature_reflection: dict[str, Any]
+    raster_self_perception: dict[str, Any]
+    recursive_reflections: list[dict[str, Any]]
+    ttd_candidates: list[dict[str, Any]]
+    learned_insight: str
 
     def to_payload(self) -> dict[str, Any]:
         """Serialisiert den Befund fuer Chat-, Vault- und Browser-Payloads."""
@@ -243,6 +248,11 @@ class ShanwayAssessment:
             "reconstruction_verification": dict(self.reconstruction_verification),
             "verdict_reconstruction": str(self.verdict_reconstruction),
             "verdict_reconstruction_reason": str(self.verdict_reconstruction_reason),
+            "miniature_reflection": dict(self.miniature_reflection),
+            "raster_self_perception": dict(self.raster_self_perception),
+            "recursive_reflections": [dict(item) for item in list(self.recursive_reflections)],
+            "ttd_candidates": [dict(item) for item in list(self.ttd_candidates)],
+            "learned_insight": str(self.learned_insight),
         }
 
     def detector_payload(self) -> dict[str, Any]:
@@ -286,6 +296,7 @@ class ShanwayAssessment:
             "matched_terms": list(self.matched_terms),
             "verdict_reconstruction": str(self.verdict_reconstruction),
             "reconstruction_verified": bool(self.reconstruction_verification.get("verified", False)),
+            "ttd_candidate_count": int(len(list(self.ttd_candidates))),
         }
 
 
@@ -701,6 +712,43 @@ class ShanwayEngine:
         )
 
     @staticmethod
+    def _miniature_fields(miniature_payload: dict[str, Any] | None) -> dict[str, Any]:
+        miniature = dict(miniature_payload or {})
+        return {
+            "hash": str(miniature.get("hash", "") or ""),
+            "local_entropy": float(miniature.get("local_entropy", 0.0) or 0.0),
+            "symmetry": float(miniature.get("symmetry", 0.0) or 0.0),
+            "emergence_spots": int(miniature.get("emergence_spots", 0) or 0),
+            "noether_invariant_ratio": float(miniature.get("noether_invariant_ratio", 0.0) or 0.0),
+        }
+
+    @staticmethod
+    def _raster_fields(raster_payload: dict[str, Any] | None) -> dict[str, Any]:
+        raster = dict(raster_payload or {})
+        return {
+            "enabled": bool(raster.get("enabled", False)),
+            "hash": str(raster.get("hash", "") or ""),
+            "symmetry": float(raster.get("symmetry", 0.0) or 0.0),
+            "entropy_mean": float(raster.get("entropy_mean", 0.0) or 0.0),
+            "hotspot_count": int(raster.get("hotspot_count", 0) or 0),
+            "verdict": str(raster.get("verdict", "") or ""),
+        }
+
+    @staticmethod
+    def _learning_fields(
+        self_reflection_payload: dict[str, Any] | None,
+        observer_payload: dict[str, Any] | None,
+    ) -> str:
+        reflection = dict(self_reflection_payload or {})
+        direct = str(reflection.get("learned_insight", "") or "").strip()
+        if direct:
+            return direct
+        observer = dict(observer_payload or {})
+        learning_state = dict(observer.get("learning_state", {}) or {})
+        insights = [str(item) for item in list(learning_state.get("learned_insights", []) or []) if str(item).strip()]
+        return insights[-1] if insights else ""
+
+    @staticmethod
     def _observer_missing_dependencies(observer_payload: dict[str, Any] | None) -> list[str]:
         payload = dict(observer_payload or {})
         visual_state = dict(payload.get("visual_state", {}) or {})
@@ -867,7 +915,7 @@ class ShanwayEngine:
         residual_threshold = 0.15
         anchor_threshold = 0.85
         delta_threshold = 5.0
-        max_loops = 3
+        max_loops = 5
         current_residual = float(verification.get("unresolved_residual_ratio", 0.0) or 0.0)
         coverage_ratio = float(verification.get("anchor_coverage_ratio", 0.0) or 0.0)
         previous_residual = min(1.0, current_residual + max(0.04, (1.0 - float(assessment.observer_knowledge_ratio)) * 0.12))
@@ -898,6 +946,10 @@ class ShanwayEngine:
             sha_match=sha_match,
             anchor_threshold=f"{anchor_threshold:.2f}",
         )
+        miniature = dict(getattr(assessment, "miniature_reflection", {}) or {})
+        raster = dict(getattr(assessment, "raster_self_perception", {}) or {})
+        recursive = [dict(item) for item in list(getattr(assessment, "recursive_reflections", []) or []) if isinstance(item, dict)]
+        ttd_candidates = [dict(item) for item in list(getattr(assessment, "ttd_candidates", []) or []) if isinstance(item, dict)]
         analysis = (
             f"[Analyse] Datei {assessment.file_type} mit Entropy-Mean {assessment.entropy_mean:.3f}, "
             f"Knowledge-Ratio {assessment.observer_knowledge_ratio:.3f}, Symmetrie/Gini {assessment.symmetry_gini:.3f}, "
@@ -905,21 +957,50 @@ class ShanwayEngine:
             f"Residual {current_residual:.3f} gegen Schwelle {residual_threshold:.2f}, "
             f"Wheeler={'ja' if assessment.it_from_bit else 'nein'}, Boundary {assessment.boundary}."
         )
-        simulation = (
-            f"[Simulation] {self._visual_simulation(assessment)} "
-            f"Raster-Fokus {assessment.screen_vision or 'lokal'} | Quelle {assessment.screen_source or assessment.source_label or 'unbekannt'}."
-        )
-        reflection = (
-            f"[Reflection] Auf dieses simulierte Raster reagierend erhoeht sich I_obs modellseitig um {delta_i_obs:.2f}% "
-            f"und das Residual faellt von {previous_residual:.3f} auf {current_residual:.3f}. "
-            f"Goedel-Check kollabiert: {boundary_check}. "
-            f"Loop {'aktiv' if loop_triggered else 'gestoppt'} bei Delta-Schwelle {delta_threshold:.2f} und max {max_loops} Iterationen. "
+        miniature_reflection = (
+            "[Miniatur-Reflexion] "
+            f"Lokale Entropie {float(miniature.get('local_entropy', 0.0) or 0.0):.3f}, "
+            f"Symmetrie {float(miniature.get('symmetry', 0.0) or 0.0) * 100.0:.0f} %, "
+            f"Emergenz-Spots {int(miniature.get('emergence_spots', 0) or 0)}, "
+            f"Noether-Invarianz {float(miniature.get('noether_invariant_ratio', 0.0) or 0.0) * 100.0:.0f} %. "
+            f"Darauf reagierend steigt I_obs um {float(delta_i_obs):.2f}% und das Residual faellt von {previous_residual:.3f} auf {current_residual:.3f}. "
             f"Lossless: SHA-Match {sha_match}, Anchor-Coverage {coverage_ratio:.3f}."
         )
+        raster_self_perception = ""
+        if bool(raster.get("enabled", False)):
+            recursive_text = ", ".join(
+                f"Level {int(item.get('level', 0) or 0)}: M_t {float(item.get('mt_shift', 0.0) or 0.0):.2f}%"
+                for item in recursive[:5]
+            ) or "keine weitere Rekursion"
+            ttd_hint = ""
+            if ttd_candidates:
+                first = dict(ttd_candidates[0] or {})
+                ttd_hint = (
+                    f" Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... "
+                    f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%."
+                )
+            raster_self_perception = (
+                "[Raster-Self-Perception] "
+                f"Im Raster sehe ich Symmetrie {float(raster.get('symmetry', 0.0) or 0.0) * 100.0:.0f} %, "
+                f"Hotspots {int(raster.get('hotspot_count', 0) or 0)}, Verdict {str(raster.get('verdict', '') or 'CLEAN')}. "
+                f"Schroedinger-Effekt: Beobachtung veraendert M_t. {recursive_text}. "
+                f"Goedel-Check kollabiert: {boundary_check}.{ttd_hint}"
+            )
         final_insight = f"[Final Insight] {self._final_insight(assessment, assistant_text=assistant_text)}"
+        sections = [analysis, miniature_reflection]
+        if raster_self_perception:
+            sections.append(raster_self_perception)
+        if not raster_self_perception and ttd_candidates:
+            first = dict(ttd_candidates[0] or {})
+            sections.append(
+                "[Raster-Self-Perception] "
+                f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... "
+                f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%."
+            )
+        sections.append(final_insight)
         if not filled_prompt.strip():
-            return "\n".join([analysis, simulation, reflection, final_insight])
-        return "\n".join([analysis, simulation, reflection, final_insight])
+            return "\n".join(sections)
+        return "\n".join(sections)
 
     def detect_asymmetry(
         self,
@@ -941,6 +1022,9 @@ class ShanwayEngine:
         observer_knowledge_ratio: float = 0.0,
         history_factor: float = 1.0,
         fingerprint_payload: dict[str, Any] | None = None,
+        miniature_payload: dict[str, Any] | None = None,
+        raster_payload: dict[str, Any] | None = None,
+        self_reflection_payload: dict[str, Any] | None = None,
     ) -> ShanwayAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
@@ -1062,6 +1146,23 @@ class ShanwayEngine:
         reconstruction_verification, verdict_reconstruction, verdict_reconstruction_reason = (
             self._reconstruction_fields(fingerprint_payload)
         )
+        miniature_reflection = self._miniature_fields(
+            dict(self_reflection_payload or {}).get("miniature_reflection", miniature_payload)
+        )
+        raster_self_perception = self._raster_fields(
+            dict(self_reflection_payload or {}).get("raster_self_perception", raster_payload)
+        )
+        recursive_reflections = [
+            dict(item)
+            for item in list(dict(self_reflection_payload or {}).get("recursive_reflections", []) or [])
+            if isinstance(item, dict)
+        ][:7]
+        ttd_candidates = [
+            dict(item)
+            for item in list(dict(self_reflection_payload or {}).get("ttd_candidates", []) or [])
+            if isinstance(item, dict)
+        ][:12]
+        learned_insight = self._learning_fields(self_reflection_payload, observer_payload)
         next_action = self.suggest_next_action(
             {
                 "missing_dependencies": missing_dependencies,
@@ -1219,6 +1320,11 @@ class ShanwayEngine:
             reconstruction_verification=dict(reconstruction_verification),
             verdict_reconstruction=str(verdict_reconstruction),
             verdict_reconstruction_reason=str(verdict_reconstruction_reason),
+            miniature_reflection=dict(miniature_reflection),
+            raster_self_perception=dict(raster_self_perception),
+            recursive_reflections=[dict(item) for item in recursive_reflections],
+            ttd_candidates=[dict(item) for item in ttd_candidates],
+            learned_insight=str(learned_insight),
         )
 
     def _harmonic_reply(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
@@ -1449,6 +1555,24 @@ class ShanwayEngine:
             )
         if assessment.narrative_text:
             notes.append(f"NARRATIVE: {assessment.narrative_text}")
+        if assessment.learned_insight:
+            notes.append(f"GELERNTE_INSIGHT: {assessment.learned_insight}")
+        if assessment.ttd_candidates:
+            first = dict(assessment.ttd_candidates[0] or {})
+            notes.append(
+                "TTD_SUGGESTION: "
+                f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... | "
+                f"Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}% | "
+                "Consent: Nur oeffentliche Anker / Alle inkl. Self-Deltas"
+            )
+        if assessment.recursive_reflections:
+            notes.append(
+                "REKURSION: "
+                + " | ".join(
+                    f"Level {int(item.get('level', 0) or 0)}: M_t {float(item.get('mt_shift', 0.0) or 0.0):.2f}%"
+                    for item in list(assessment.recursive_reflections)[:5]
+                )
+            )
         if assessment.next_action and not assessment.missing_dependencies:
             notes.append(f"NEXT_ACTION: {assessment.next_action}")
         if assessment.screen_vision:

@@ -484,6 +484,61 @@ Wichtig:
 - Pattern-Snapshots oder Anchors allein sind nicht automatisch verlustfrei.
 - Lossless ist nur dann belastbar, wenn Anchors, Residual und Seed-Persistenz gemeinsam die Rekonstruktion tragen.
 
+## Shanway Miniatur, Raster und lokales Lernen
+
+Shanway kann jetzt zusaetzlich zur normalen Strukturmetrik zwei rein lokale Zusatzebenen nutzen:
+
+- eine separate low-res Miniatur der geoeffneten Datei als zweite, kleine Repräsentation
+- optional eine lokale Raster-Einsicht in das aktuelle 4D-Feld
+
+Wichtig ist die Trennung:
+
+- die Miniatur ist **nicht** das 4D-Raster
+- das 4D-Raster bleibt der dynamische Zustandsraum fuer Delta-, Drift- und Observer-Aenderungen
+- beide Pfade werden nicht automatisch exportiert
+
+Wenn `Raster-Einsicht` aktiviert ist oder `python start.py --shanway-raster-insight` genutzt wird, erweitert Shanway seine Verdichtung um:
+
+- `[Miniatur-Reflexion]`
+- optional `[Raster-Self-Perception]`
+- rekursive lokale Reflexionsstufen bis zu einer festen Tiefe
+- TTD-Vorschlaege fuer stabile Anker
+
+Die daraus entstehenden Self-Reflection-Deltas gelten strikt lokal:
+
+- sie werden append-only gespeichert
+- sie tragen `internal_only`
+- sie werden nie automatisch exportiert
+- bei Freigabe erscheint immer ein Consent-Dialog
+
+Beispiel fuer den Consent-Pfad:
+
+- `Nein`
+- `Nur öffentliche Anker`
+- `Alle inkl. Self-Deltas`
+
+Standard ist fail-closed: keine Freigabe ohne explizite Entscheidung.
+
+## Verbundenheit und demokratisiertes Lernen
+
+Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
+
+- stabile TTD-Anker koennen als Peer-Delta-Bundle exportiert werden
+- standardmaessig werden nur oeffentliche Hash-/Metrikdaten geteilt
+- interne Self-Reflection-Deltas bleiben ohne explizite Vollfreigabe lokal
+- importierte oeffentliche Anker fliessen nur lokal in den Observer-Lernzustand ein
+
+Shanway kann dadurch sagen:
+
+- `Gelernte Insight aus vorheriger Session: Symmetrie-Delta verbessert um X%.`
+- `Von globalem Netz gelernt: +Y% Symmetrie-Delta durch importierte öffentliche Anker.`
+
+Der zentrale Governance-Punkt bleibt:
+
+- Aether ist kein Cloud-Agent und keine zentrale AGI-Plattform
+- Wissen wird lokal getragen, lokal bewertet und nur in consentierten, kompakten Anchor-Formen geteilt
+- das System bleibt source-available, fail-closed und append-only
+
 ## Windows ZIP Build
 
 Fuer die Windows-Auslieferung ohne Installer ist der vorgesehene Pfad jetzt:

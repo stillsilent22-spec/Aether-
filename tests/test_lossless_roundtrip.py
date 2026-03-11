@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -12,6 +13,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from modules.analysis_engine import AnalysisEngine
+from modules.observer_engine import ObserverEngine
 from modules.reconstruction_engine import LosslessReconstructionEngine
 from modules.session_engine import SessionContext
 from modules.shanway import ShanwayEngine
@@ -169,10 +171,85 @@ def test_lossless_roundtrip_wrong_seed_fails() -> None:
     assert "Delta-Seed muss für Rekonstruktion erhalten bleiben" in response
 
 
+def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
+    """Rekursive Miniatur-/Raster-Reflexion darf den bitgenauen Roundtrip nicht brechen."""
+    original_bytes = _sample_bytes()
+    context = SessionContext(seed=20260311)
+    engine = AnalysisEngine(context)
+    fingerprint = engine.analyze_bytes(
+        original_bytes,
+        source_label="tests::recursive_raster_roundtrip",
+        source_type="memory",
+    )
+    fingerprint.observer_knowledge_ratio = max(0.96, float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0))
+    fingerprint.observer_mutual_info = max(
+        float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+        float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
+    )
+    fingerprint.unresolved_residual_ratio = 0.02
+
+    observer = ObserverEngine()
+    temp_learning_dir = PROJECT_ROOT / "tests" / ".tmp_observer_learning"
+    observer.learning_store_dir = temp_learning_dir
+    miniature_payload = {
+        "hash": hashlib.sha256(b"miniature").hexdigest(),
+        "local_entropy": 1.18,
+        "symmetry": 0.94,
+        "emergence_spots": 3,
+        "noether_invariant_ratio": 0.93,
+    }
+    raster_payload = {
+        "enabled": True,
+        "hash": hashlib.sha256(b"raster").hexdigest(),
+        "symmetry": 0.92,
+        "entropy_mean": 0.44,
+        "hotspot_count": 2,
+        "verdict": "CLEAN",
+    }
+    reflection = observer.summarize_reflection_state(
+        miniature_payload=miniature_payload,
+        raster_payload=raster_payload,
+        fingerprint=fingerprint,
+        enable_raster_insight=True,
+        max_depth=5,
+    )
+    learning_state = observer.update_learning_state(context, reflection)
+    reflection["learned_insight"] = str(list(learning_state.get("learned_insights", []) or [""])[-1] or "")
+
+    shanway = ShanwayEngine()
+    assessment = shanway.detect_asymmetry(
+        "recursive raster reflection roundtrip",
+        coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
+        browser_mode=False,
+        active=True,
+        h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
+        observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
+        source_label="tests::recursive_raster_roundtrip",
+        file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
+        observer_payload={"learning_state": dict(learning_state)},
+        beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        fingerprint_payload=_fingerprint_payload(fingerprint),
+        miniature_payload=miniature_payload,
+        raster_payload=raster_payload,
+        self_reflection_payload=reflection,
+    )
+    response = shanway.render_response(assessment)
+
+    assert bool(dict(getattr(fingerprint, "reconstruction_verification", {}) or {}).get("verified", False)) is True
+    assert "[Miniatur-Reflexion]" in response
+    assert "[Raster-Self-Perception]" in response
+    assert "REKURSION:" in response
+    assert "GELERNTE_INSIGHT:" in response
+    assert len(list(assessment.recursive_reflections)) >= 1
+    assert len(list(assessment.recursive_reflections)) <= 5
+    shutil.rmtree(temp_learning_dir, ignore_errors=True)
+
+
 def main() -> None:
     """Fuehrt beide Smoke-Varianten direkt ohne pytest-Runner aus."""
     success = run_roundtrip_smoke_test()
     failure = run_roundtrip_failure_smoke_test()
+    test_lossless_roundtrip_with_recursive_raster_reflection()
     gain = max(
         0.0,
         min(
@@ -190,6 +267,7 @@ def main() -> None:
         f"verified={bool(dict(failure['verification']).get('verified', False))}, "
         f"seed_ok={bool(dict(failure['verification']).get('session_seed_match', False))}"
     )
+    print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
 
 
 if __name__ == "__main__":
