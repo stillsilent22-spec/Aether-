@@ -4695,6 +4695,39 @@ class VeiraGUI:
             ),
         )
 
+    def _auto_export_ttd_dna(self, fingerprint: AetherFingerprint, source_path: Path) -> dict[str, object]:
+        """Reagiert auf stabile TTD-Kandidaten mit lokalem DNA-Export und Audit."""
+        reflection_payload = dict(getattr(fingerprint, "self_reflection_delta", {}) or {})
+        source_payload = {
+            "scan_hash": str(getattr(fingerprint, "scan_hash", "") or ""),
+            "file_hash": str(getattr(fingerprint, "file_hash", "") or ""),
+            "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+            "scan_anchor_entries": [
+                dict(item)
+                for item in list(dict(getattr(fingerprint, "scan_payload", {}) or {}).get("scan_anchor_entries", []) or [])
+                if isinstance(item, dict)
+            ],
+        }
+        result = self.ae_vault.auto_export_ttd_snapshot(
+            reflection_payload=reflection_payload,
+            source_payload=source_payload,
+            export_anchors=list(source_payload["scan_anchor_entries"]),
+            source_label=str(source_path.name),
+        )
+        if bool(result.get("exported", False)) and str(result.get("export_path", "") or "").strip():
+            record = dict(result.get("record", {}) or {})
+            self._append_export_audit(
+                "ttd_auto_dna",
+                str(result.get("export_path", "") or ""),
+                {
+                    "ttd_hash": str(result.get("ttd_hash", "") or ""),
+                    "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+                    "auto_export": True,
+                    **record,
+                },
+            )
+        return {str(key): value for key, value in dict(result or {}).items()}
+
     def _collective_trust_weight(self) -> float:
         """Leitet ein konservatives Trust-Gewicht fuer Snapshot-Austausch ab."""
         trust_state = str(getattr(self.session_context, "trust_state", "TRUSTED") or "TRUSTED").upper()
@@ -7426,6 +7459,9 @@ class VeiraGUI:
                 self.session_context,
                 self_reflection_delta,
             )
+            current_insight = str(dict(learning_state or {}).get("current_insight", "") or "")
+            if current_insight:
+                self_reflection_delta["learned_insight"] = current_insight
             observer_payload["learning_state"] = dict(learning_state)
             fingerprint.observer_payload = dict(observer_payload)
             fingerprint.miniature_reflection = dict(miniature_payload)
@@ -7510,6 +7546,8 @@ class VeiraGUI:
                 source_label=str(source_path.name),
                 reflection_payload=dict(self_reflection_delta),
             )
+            ttd_export = self._auto_export_ttd_dna(fingerprint, source_path)
+            setattr(fingerprint, "_ttd_auto_export", dict(ttd_export))
             if isinstance(raster_payload, dict):
                 raster_payload.pop("grid_array", None)
                 raster_payload.pop("dynamic_z", None)
@@ -7617,11 +7655,21 @@ class VeiraGUI:
             for item in list(dict(getattr(fingerprint, "self_reflection_delta", {}) or {}).get("ttd_candidates", []) or [])
             if isinstance(item, dict)
         ]
+        ttd_export = dict(getattr(fingerprint, "_ttd_auto_export", {}) or {})
         if ttd_candidates:
             first = dict(ttd_candidates[0] or {})
-            self.peer_delta_status_var.set(
-                f"Peer-Delta: TTD bereit | {str(first.get('hash', ''))[:12]}... | {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
-            )
+            if bool(ttd_export.get("exported", False)):
+                self.peer_delta_status_var.set(
+                    f"Peer-Delta: TTD auto-exportiert | {str(first.get('hash', ''))[:12]}... | DNA {Path(str(ttd_export.get('export_path', '') or '')).name}"
+                )
+            elif bool(ttd_export.get("already_exported", False)):
+                self.peer_delta_status_var.set(
+                    f"Peer-Delta: TTD bereits exportiert | {str(first.get('hash', ''))[:12]}..."
+                )
+            else:
+                self.peer_delta_status_var.set(
+                    f"Peer-Delta: TTD bereit | {str(first.get('hash', ''))[:12]}... | {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
+                )
         else:
             self.peer_delta_status_var.set("Peer-Delta: lokal | keine stabile TTD-Freigabe")
         self.state_var.set(self.renderer.get_state_description(fingerprint))

@@ -745,6 +745,9 @@ class ShanwayEngine:
             return direct
         observer = dict(observer_payload or {})
         learning_state = dict(observer.get("learning_state", {}) or {})
+        current = str(learning_state.get("current_insight", "") or "").strip()
+        if current:
+            return current
         insights = [str(item) for item in list(learning_state.get("learned_insights", []) or []) if str(item).strip()]
         return insights[-1] if insights else ""
 

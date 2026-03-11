@@ -39,6 +39,7 @@ class DNARecord:
     dna_id: str
     header_fields: list[str]
     anchors: list[float]
+    delta_session_seed: int = 0
 
     @property
     def unique_anchor_keys(self) -> list[str]:
@@ -93,6 +94,16 @@ def parse_dna_file(file_path: Path) -> DNARecord:
     format_tag = str(header[0]).strip().upper()
     version = int(float(header[1]))
     dna_id = str(header[2])
+    header_fields = [str(field) for field in header[3:]]
+    delta_session_seed = 0
+    for field in header_fields:
+        token = str(field).strip()
+        if token.startswith("delta_session_seed="):
+            try:
+                delta_session_seed = int(token.split("=", 1)[1] or 0)
+            except Exception:
+                delta_session_seed = 0
+            break
     anchors: list[float] = []
     for line in lines[1:]:
         for value in _line_anchor_values(format_tag, line):
@@ -104,8 +115,9 @@ def parse_dna_file(file_path: Path) -> DNARecord:
         format_tag=format_tag,
         version=version,
         dna_id=dna_id,
-        header_fields=[str(field) for field in header[3:]],
+        header_fields=header_fields,
         anchors=anchors,
+        delta_session_seed=int(delta_session_seed),
     )
 
 

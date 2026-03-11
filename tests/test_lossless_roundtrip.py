@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import sys
 from pathlib import Path
@@ -12,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from modules.ae_evolution_core import AEAlgorithmVault
 from modules.analysis_engine import AnalysisEngine
 from modules.observer_engine import ObserverEngine
 from modules.reconstruction_engine import LosslessReconstructionEngine
@@ -240,9 +242,78 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
     assert "[Raster-Self-Perception]" in response
     assert "REKURSION:" in response
     assert "GELERNTE_INSIGHT:" in response
+    assert str(reflection.get("learned_insight", "") or "").strip()
+    assert str(dict(learning_state).get("current_insight", "") or "").strip()
     assert len(list(assessment.recursive_reflections)) >= 1
     assert len(list(assessment.recursive_reflections)) <= 5
     shutil.rmtree(temp_learning_dir, ignore_errors=True)
+
+
+def test_ttd_auto_export_writes_dna_seed_and_jsonl() -> None:
+    """Stabile TTD-Kandidaten muessen einen lokalen DNA-Export mit Seed und JSONL-Audit ausloesen."""
+    temp_export_root = PROJECT_ROOT / "tests" / ".tmp_ttd_export"
+    shutil.rmtree(temp_export_root, ignore_errors=True)
+    temp_export_root.mkdir(parents=True, exist_ok=True)
+    vault = AEAlgorithmVault(export_dir=temp_export_root / "aelab_vault")
+
+    context = SessionContext(seed=424242)
+    engine = AnalysisEngine(context)
+    fingerprint = engine.analyze_bytes(
+        _sample_bytes(),
+        source_label="tests::ttd_auto_export",
+        source_type="memory",
+    )
+    reflection_payload = {
+        "ttd_candidates": [
+            {
+                "hash": hashlib.sha256(b"ttd-auto-export").hexdigest(),
+                "delta_stability": 0.98,
+                "symmetry": 0.94,
+                "residual": 0.02,
+                "public_metrics": {
+                    "residual": 0.02,
+                    "symmetry": 0.94,
+                    "delta_i_obs_percent": 7.8,
+                },
+            }
+        ]
+    }
+    source_payload = {
+        "scan_hash": str(getattr(fingerprint, "scan_hash", "") or ""),
+        "file_hash": str(getattr(fingerprint, "file_hash", "") or ""),
+        "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
+        "scan_anchor_entries": [
+            dict(item)
+            for item in list(dict(getattr(fingerprint, "scan_payload", {}) or {}).get("scan_anchor_entries", []) or [])
+            if isinstance(item, dict)
+        ],
+    }
+    result = vault.auto_export_ttd_snapshot(
+        reflection_payload,
+        source_payload=source_payload,
+        export_anchors=list(source_payload["scan_anchor_entries"]),
+        source_label="tests::ttd_auto_export",
+    )
+
+    export_path = Path(str(result.get("export_path", "") or ""))
+    assert bool(result.get("exported", False)) is True
+    assert export_path.is_file()
+    header = export_path.read_text(encoding="utf-8", errors="replace").splitlines()[0]
+    assert f"delta_session_seed={int(getattr(fingerprint, 'delta_session_seed', 0) or 0)}" in header
+
+    export_log_path = Path(str(result.get("export_log_path", "") or ""))
+    assert export_log_path.is_file()
+    export_logs = [json.loads(line) for line in export_log_path.read_text(encoding="utf-8", errors="replace").splitlines() if line.strip()]
+    assert any(str(item.get("ttd_hash", "") or "") == str(result.get("ttd_hash", "") or "") for item in export_logs)
+
+    duplicate = vault.auto_export_ttd_snapshot(
+        reflection_payload,
+        source_payload=source_payload,
+        export_anchors=list(source_payload["scan_anchor_entries"]),
+        source_label="tests::ttd_auto_export",
+    )
+    assert bool(duplicate.get("already_exported", False)) is True
+    shutil.rmtree(temp_export_root, ignore_errors=True)
 
 
 def main() -> None:
@@ -250,6 +321,7 @@ def main() -> None:
     success = run_roundtrip_smoke_test()
     failure = run_roundtrip_failure_smoke_test()
     test_lossless_roundtrip_with_recursive_raster_reflection()
+    test_ttd_auto_export_writes_dna_seed_and_jsonl()
     gain = max(
         0.0,
         min(
@@ -268,6 +340,7 @@ def main() -> None:
         f"seed_ok={bool(dict(failure['verification']).get('session_seed_match', False))}"
     )
     print("Roundtrip Rekursion: erfolgreich | Raster-Einsicht lokal verifiziert")
+    print("TTD Autoexport: DNA mit Seed und export_log.jsonl lokal verifiziert")
 
 
 if __name__ == "__main__":

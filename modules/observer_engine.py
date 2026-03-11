@@ -125,6 +125,7 @@ class ObserverEngine:
             "delta_i_obs_history": [],
             "recursive_depth_history": [],
             "learned_insights": [],
+            "current_insight": "",
             "public_anchor_count": 0,
             "public_anchor_hashes": [],
             "last_global_learn_delta": 0.0,
@@ -169,6 +170,51 @@ class ObserverEngine:
         if not values:
             return 0.0
         return float(sum(float(value) for value in values) / float(len(values)))
+
+    def _derive_learned_insight(
+        self,
+        *,
+        symmetry_history: Sequence[float],
+        residual_history: Sequence[float],
+        delta_history: Sequence[float],
+        depth_history: Sequence[int],
+        imported_count: int = 0,
+    ) -> str:
+        """Verdichtet Observer-Lernen zu einer kurzen auditierbaren Schlussfolgerung."""
+        sym_values = [float(value) for value in list(symmetry_history or [])]
+        residual_values = [float(value) for value in list(residual_history or [])]
+        delta_values = [float(value) for value in list(delta_history or [])]
+        depth_values = [int(value) for value in list(depth_history or [])]
+        if imported_count > 0:
+            return (
+                f"Gelernte Insight aus vorheriger Session: +{imported_count} oeffentliche Anker integriert, "
+                f"Symmetrie-Basis jetzt {self._rolling_mean(sym_values[-8:]) * 100.0:.2f}%."
+            )
+        if sym_values and residual_values:
+            current_symmetry = float(sym_values[-1])
+            current_residual = float(residual_values[-1])
+            previous_symmetry = self._rolling_mean(sym_values[-5:-1])
+            previous_residual = self._rolling_mean(residual_values[-5:-1])
+            symmetry_delta = (current_symmetry - previous_symmetry) * 100.0 if len(sym_values) > 1 else current_symmetry * 100.0
+            residual_delta = (previous_residual - current_residual) * 100.0 if len(residual_values) > 1 else (1.0 - current_residual) * 100.0
+            if current_residual <= 0.05 and current_symmetry >= 0.90:
+                return (
+                    "Gelernte Insight aus vorheriger Session: Stabiler TTD-Pfad sichtbar, "
+                    f"Symmetrie {current_symmetry * 100.0:.2f}% und Residual nur {current_residual * 100.0:.2f}%."
+                )
+            if symmetry_delta > 0.0 and residual_delta > 0.0:
+                return (
+                    "Gelernte Insight aus vorheriger Session: "
+                    f"Symmetrie-Delta {symmetry_delta:.2f}% verbessert und Residual um {residual_delta:.2f}% gesenkt."
+                )
+        if delta_values:
+            current_delta = float(delta_values[-1])
+            current_depth = int(depth_values[-1]) if depth_values else 0
+            return (
+                "Gelernte Insight aus vorheriger Session: "
+                f"Observer-Delta zuletzt {current_delta:.2f}% bei Rekursionstiefe {current_depth}."
+            )
+        return "Gelernte Insight aus vorheriger Session: Lernhistorie angelegt, aber noch keine stabile Schlussfolgerung."
 
     def summarize_reflection_state(
         self,
@@ -287,7 +333,12 @@ class ObserverEngine:
             "stability_score": round(float(stability_score), 12),
             "recursive_reflections": recursion,
             "ttd_candidates": ttd_candidates,
-            "learned_insight": "",
+            "learned_insight": self._derive_learned_insight(
+                symmetry_history=[miniature_symmetry, raster_symmetry or miniature_symmetry],
+                residual_history=[residual_before, residual_after],
+                delta_history=[delta_i_obs_percent],
+                depth_history=[len(recursion)],
+            ),
         }
 
     def update_learning_state(
@@ -342,6 +393,21 @@ class ObserverEngine:
             public_anchor_hashes.append(anchor_hash)
             imported_count += 1
         public_anchor_hashes = public_anchor_hashes[-256:]
+        current_insight = self._derive_learned_insight(
+            symmetry_history=symmetry_history,
+            residual_history=residual_history,
+            delta_history=delta_history,
+            depth_history=depth_history,
+            imported_count=int(imported_count),
+        )
+        if current_insight:
+            learned_insights.append(current_insight)
+        deduped_insights: list[str] = []
+        for item in learned_insights:
+            text = str(item).strip()
+            if text and text not in deduped_insights:
+                deduped_insights.append(text)
+        learned_insights = deduped_insights[-24:]
 
         updated = {
             "version": 1,
@@ -350,6 +416,7 @@ class ObserverEngine:
             "delta_i_obs_history": delta_history,
             "recursive_depth_history": depth_history,
             "learned_insights": learned_insights,
+            "current_insight": str(current_insight),
             "public_anchor_count": int(len(public_anchor_hashes)),
             "public_anchor_hashes": public_anchor_hashes,
             "last_global_learn_delta": round(float(imported_count * 0.07), 12) if imported_count > 0 else float(last_global_learn_delta),

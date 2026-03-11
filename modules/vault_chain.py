@@ -479,6 +479,7 @@ class AetherAugmentor:
     ) -> None:
         """Persistiert lokale Self-Reflection-Deltas strikt internal-only in der Delta-Chain."""
         compact = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=True)
+        ttd_candidates = [dict(item) for item in list(compact.get("ttd_candidates", []) or []) if isinstance(item, dict)]
         delta_ops = [
             {
                 "op": "self_reflection",
@@ -495,6 +496,8 @@ class AetherAugmentor:
                 "self_reflection_delta": compact,
                 "scope": "local_only",
                 "auto_export": False,
+                "auto_export_candidate": bool(ttd_candidates),
+                "ttd_candidate_count": int(len(ttd_candidates)),
             },
         )
 

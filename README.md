@@ -472,6 +472,7 @@ Der Test fuehrt bewusst einen kleinen End-to-End-Pfad aus:
 - ein neuer `SessionContext` simuliert den Reload
 - Delta plus persistierter Seed werden erneut zu Bytes dekodiert
 - SHA-256 und Dateigroesse muessen danach exakt mit dem Original uebereinstimmen
+- lokale DNA-Exports tragen den verwendeten `delta_session_seed` jetzt direkt im Header (`delta_session_seed=...`)
 
 Erwartetes Verhalten:
 
@@ -503,6 +504,7 @@ Wenn `Raster-Einsicht` aktiviert ist oder `python start.py --shanway-raster-insi
 - optional `[Raster-Self-Perception]`
 - rekursive lokale Reflexionsstufen bis zu einer festen Tiefe
 - TTD-Vorschlaege fuer stabile Anker
+- `learned_insight` als verdichtete Schlussfolgerung aus Symmetrie-, Residual- und Rekursionsverlauf
 
 Die daraus entstehenden Self-Reflection-Deltas gelten strikt lokal:
 
@@ -524,6 +526,7 @@ Standard ist fail-closed: keine Freigabe ohne explizite Entscheidung.
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
 
 - stabile TTD-Anker koennen als Peer-Delta-Bundle exportiert werden
+- stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `data/export_log.jsonl`-Eintrag aus
 - standardmaessig werden nur oeffentliche Hash-/Metrikdaten geteilt
 - interne Self-Reflection-Deltas bleiben ohne explizite Vollfreigabe lokal
 - importierte oeffentliche Anker fliessen nur lokal in den Observer-Lernzustand ein

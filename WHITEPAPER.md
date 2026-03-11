@@ -237,11 +237,14 @@ Gleichzeitig speichert der Observer einen lokalen, verschluesselten Lernzustand 
 
 So entsteht kontinuierliches Lernen, ohne den lossless-Pfad zu brechen. `D(S_t, R_t) = X_t` bleibt der Rekonstruktionsmassstab; die neuen Lernsignale verbessern nur die lokale Beobachterlage.
 
+Lokale DNA-Exports tragen den `delta_session_seed` deshalb explizit im Header. Der Seed bleibt damit auch dann auditierbar, wenn nur ein DNA-Export und kein Registry-Datensatz vorliegt.
+
 ## 12. Verbundenheit unter Governance
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 
 - stabile TTD-Anker koennen als Peer-Delta-Bundles exportiert werden
+- stabile TTD-Kandidaten loesen lokal automatisch einen DNA-Export plus `export_log.jsonl`-Audit aus
 - standardmaessig nur mit oeffentlichen Hash- und Metrikdaten
 - interne Self-Reflection-Deltas bleiben `internal_only`
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig

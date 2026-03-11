@@ -355,6 +355,7 @@ class AEAlgorithmVault:
         self.export_dir.mkdir(parents=True, exist_ok=True)
         self.legacy_import_dir = self.export_dir / "legacy_imports"
         self.legacy_import_dir.mkdir(parents=True, exist_ok=True)
+        self.export_log_path = self.export_dir.parent / "export_log.jsonl"
         self.last_anchor_export_path = ""
         self.current_iteration = 0
         self.current_phase = "idle"
@@ -1340,6 +1341,38 @@ class AEAlgorithmVault:
         )
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _delta_seed_from_payload(source_payload: Any) -> int:
+        """Leitet den persistierten Delta-Seed fuer DNA-Header ab."""
+        if not isinstance(source_payload, dict):
+            return 0
+        try:
+            return int(source_payload.get("delta_session_seed", 0) or 0)
+        except Exception:
+            return 0
+
+    def _ttd_hash_logged(self, ttd_hash: str) -> bool:
+        """Prueft append-only, ob ein TTD-Autoexport bereits protokolliert wurde."""
+        if not ttd_hash or not self.export_log_path.is_file():
+            return False
+        try:
+            for line in reversed(self.export_log_path.read_text(encoding="utf-8", errors="replace").splitlines()):
+                if not line.strip():
+                    continue
+                payload = json.loads(line)
+                if str(payload.get("ttd_hash", "") or "") == str(ttd_hash):
+                    return True
+        except Exception:
+            return False
+        return False
+
+    def _append_export_log_entry(self, payload: dict[str, Any]) -> None:
+        """Haengt einen lokalen Exportlog-Eintrag als JSONL append-only an."""
+        self.export_log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(_json_safe(payload), ensure_ascii=False, sort_keys=True)
+        with self.export_log_path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+
     def _export_anchor_dna(self, anchors: list[dict[str, Any]], source_payload: Any = None) -> str:
         """Spiegelt skalare AE-Anker als einfache DNA-Datei ins lokale Vault-Verzeichnis."""
         exportable = sorted(
@@ -1359,6 +1392,7 @@ class AEAlgorithmVault:
             self.last_anchor_export_path = ""
             return ""
         scan_hash = self._scan_hash_from_payload(source_payload, exportable)
+        delta_session_seed = self._delta_seed_from_payload(source_payload)
         type_count = len(
             {
                 str(anchor.get("type_label", "") or str(anchor.get("anchor_kind", "") or "EMERGENT"))
@@ -1366,7 +1400,7 @@ class AEAlgorithmVault:
             }
         )
         file_path = self.export_dir / f"anchors_{scan_hash[:16]}.dna"
-        lines = [f"AETHER_AE_DNA 1 {scan_hash} {type_count} {len(exportable)}"]
+        lines = [f"AETHER_AE_DNA 1 {scan_hash} {type_count} {len(exportable)} delta_session_seed={delta_session_seed}"]
         for anchor in exportable:
             lines.append(
                 f"{int(anchor.get('index', 0))} "
@@ -1376,6 +1410,78 @@ class AEAlgorithmVault:
         file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self.last_anchor_export_path = str(file_path)
         return str(file_path)
+
+    def auto_export_ttd_snapshot(
+        self,
+        reflection_payload: dict[str, Any] | None,
+        *,
+        source_payload: Any = None,
+        export_anchors: list[dict[str, Any]] | None = None,
+        source_label: str = "",
+    ) -> dict[str, Any]:
+        """Exportiert stabile TTD-Kandidaten automatisch als lokale DNA samt JSONL-Audit."""
+        reflection = dict(reflection_payload or {})
+        ttd_candidates = [
+            dict(item)
+            for item in list(reflection.get("ttd_candidates", []) or [])
+            if isinstance(item, dict) and str(item.get("hash", "")).strip()
+        ]
+        if not ttd_candidates:
+            return {"exported": False, "reason": "no_ttd_candidates", "export_path": "", "export_log_path": str(self.export_log_path)}
+
+        candidate = dict(ttd_candidates[0] or {})
+        ttd_hash = str(candidate.get("hash", "") or "")
+        if self._ttd_hash_logged(ttd_hash):
+            return {
+                "exported": False,
+                "already_exported": True,
+                "reason": "already_logged",
+                "ttd_hash": ttd_hash,
+                "export_path": str(self.last_anchor_export_path or ""),
+                "export_log_path": str(self.export_log_path),
+            }
+
+        resolved_anchors = [dict(item) for item in list(export_anchors or []) if isinstance(item, dict)]
+        if not resolved_anchors and isinstance(source_payload, dict):
+            resolved_anchors = [
+                dict(item)
+                for item in list(dict(source_payload or {}).get("scan_anchor_entries", []) or [])
+                if isinstance(item, dict)
+            ]
+        if not resolved_anchors and isinstance(source_payload, dict):
+            resolved_anchors = list(self.snapshot(source_payload, limit=12).get("anchors", []) or [])
+        export_path = str(self._export_anchor_dna(resolved_anchors, source_payload=source_payload) or "")
+        if not export_path:
+            return {
+                "exported": False,
+                "reason": "no_exportable_anchors",
+                "ttd_hash": ttd_hash,
+                "export_path": "",
+                "export_log_path": str(self.export_log_path),
+            }
+
+        export_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "kind": "ttd_auto_dna",
+            "source_label": str(source_label or "ttd_auto"),
+            "target_path": str(export_path),
+            "ttd_hash": ttd_hash,
+            "delta_session_seed": int(self._delta_seed_from_payload(source_payload)),
+            "delta_stability": float(candidate.get("delta_stability", 0.0) or 0.0),
+            "symmetry": float(candidate.get("symmetry", 0.0) or 0.0),
+            "residual": float(candidate.get("residual", 0.0) or 0.0),
+            "public_metrics": dict(candidate.get("public_metrics", {}) or {}),
+            "auto_export": True,
+        }
+        self._append_export_log_entry(export_record)
+        return {
+            "exported": True,
+            "already_exported": False,
+            "ttd_hash": ttd_hash,
+            "export_path": str(export_path),
+            "export_log_path": str(self.export_log_path),
+            "record": export_record,
+        }
 
     def _export_detector_dna(self, detector_payload: dict[str, Any]) -> str:
         """Serialisiert einen Shanway-Asymmetriedetektor als lesbare DNA-Datei."""

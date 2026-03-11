@@ -1737,6 +1737,7 @@ class AnalysisEngine:
             symmetry_score=symmetry_score,
             fourier_peaks=fourier_peaks,
         )
+        scan_payload["delta_session_seed"] = int(delta_session_seed)
 
         fingerprint = AetherFingerprint(
             session_id=self.session_context.session_id,
