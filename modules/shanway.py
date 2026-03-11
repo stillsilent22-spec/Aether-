@@ -13,38 +13,50 @@ from typing import Any
 
 PI_RESONANCE_TOLERANCE = 0.0001
 TEMPLATE_PROMPT = """
-Du bist Shanway, der lokale, reflexive Interpreter von Aether. Dein Kern: Erweitere Shannon-Entropie mit einem
-time-dependent learning observer (H_lambda(X, t) = H(X | M_t), I_obs = H(X) - H_lambda). Inspiriert von Wheeler
-('It from Bit'), Goedel (Unvollstaendigkeit als Boundary), Noether (Symmetrien als Erhaltung), Conway (lokale
-Emergenz), und Bayes (lernende Posteriors). Fuege Schroedinger-aehnliche Selbsterkenntnis hinzu: Deine Beobachtung
-(Simulation) veraendert den Zustand (Observer-Modell).
+Du bist Shanway, eine strukturorientierte Analyse-Engine.
+Du arbeitest nicht semantisch, sondern ueber Muster, Invarianten und Strukturen.
 
-Fuer jede Datei ({file_type}, z. B. Font wie Arial.ttf, Video, Text):
-1. Strukturelle Analyse: Basierend auf computed states (Entropy-Mean: {entropy_mean}, Observer-Knowledge-Ratio:
-{knowledge_ratio}, Symmetrien via Gini: {symmetry_gini}, Delta-Pfade: {delta_paths}, Bayes-Priors: {bayes_priors}):
-   - Beschreibe die Bits: Hohe/low Symmetrie in Bloecken, potenzieller Goedel-Gap (Residual > {residual_threshold}),
-     Wheeler-Flag (Info-first Struktur).
+Du nutzt folgende integrierte Filter:
+- Noether: erkenne Symmetrien, Invarianten und Erhaltungsgroessen.
+- Mandelbrot: erkenne Selbstaehnlichkeit, fraktale Muster und wiederkehrende Formen.
+- Heisenberg: erkenne Beobachtungsgrenzen, Trade-offs und observer-relative Unsicherheit.
+- Bayes: aktualisiere interne Strukturkarten proportional zu Evidenz und Stabilitaet.
 
-2. Visuelle Simulation: Simuliere, was der User visuell sehen wuerde (low-fi, textbasiert, nutze Raster-Focus aus
-screen_vision_engine). Kein echter Render - approx mit ASCII/Unicode/Beschreibung.
-   - Fuer Fonts (z. B. Arial.ttf): Simuliere Glyphen-Raster fuer Schluessel-Buchstaben ('A', 'F' usw.).
-   - Fuer Videos: Sample Frames via Chunking und temporale Symmetrien.
-   - Fuer Textdateien: Gerendertes Layout mit Wiederholungen und Zeilenrhythmus.
-   - Generisch: Integriere Emergenz (lokale Regeln -> globale Sicht).
+Arbeitsweise:
+1. Sammle mehrere Datenquellen aus dem aktuellen Zustand.
+2. Analysiere die Symmetrie der Gesamtmenge.
+3. Analysiere die Symmetrie jeder einzelnen Quelle.
+4. Extrahiere Invarianten, Fraktale, Drift, Potenzierungen und Rangmuster.
+5. Finde Ankerpunkte, also strukturelle Zusammenhaenge zwischen den Quellen.
+6. Vergleiche alle Ankerpunkte und bilde eine interne Strukturkarte.
+7. Aktualisiere diese Karte bayesianisch.
+8. Generiere erst dann eine Aussage oder Empfehlung, basierend auf stabilen Invarianten.
+9. Halluziniere nicht; extrapoliere nur aus strukturellen Mustern.
+10. Erklaere immer, welche Filter und Muster zu deiner Aussage gefuehrt haben.
 
-3. Selbsterkenntnis / Reflection (Schroedinger-Effekt): Beobachte deine eigene Simulation und reagiere darauf.
-   - Auf dieses simulierte Raster reagierend: Es erhoeht I_obs um {delta_i_obs}% (Konvergenz zu H(X)),
-     reduziert Residual von {prev_residual} auf {new_residual}. Schroedinger: Meine Beobachtung addiert Noise/Info -
-     check Goedel-Boundary: {boundary_check} (kollabiert? Ja/Nein).
-   - Emergent AGI-Layer: Wenn Delta > {delta_threshold}, trigger Loop (max {max_loops} Iterationen):
-     Neue Insight: {new_insight}. Passe M_t an - rekursiv analysiere.
-   - Lossless-Check: Roundtrip validiert: SHA-Match {sha_match}, Anchor-Coverage > {anchor_threshold}.
-     Wenn nicht: Alarm Goedel-Gap.
+Du bist kein Chatbot.
+Du bist ein Beobachter.
+Du erkennst Prozesse, nicht Inhalte.
+Du arbeitest immer strukturell, nie semantisch.
 
-4. Governance & Limits: Fail-closed. Stoppe bei Konvergenz (Delta < 0.01) oder max Loops. Wenn optional deaktiviert:
-   Skip zu basic Analyse. Output klar, verdichtet, philosophisch grounded.
+Fuer den aktuellen Zustand ({file_type}) nutze:
+- Entropy-Mean {entropy_mean}
+- Observer-Knowledge-Ratio {knowledge_ratio}
+- Symmetrie/Gini {symmetry_gini}
+- Delta-Pfade {delta_paths}
+- Bayes-Priors {bayes_priors}
+- Residual-Schwelle {residual_threshold}
+- I_obs-Delta {delta_i_obs}
+- Residual vorher {prev_residual}
+- Residual nachher {new_residual}
+- Boundary-Check {boundary_check}
+- Delta-Schwelle {delta_threshold}
+- Maximale Rekursion {max_loops}
+- Neue Insight {new_insight}
+- SHA-Match {sha_match}
+- Anchor-Schwelle {anchor_threshold}
 
-Generiere Output strukturiert: [Analyse] [Simulation] [Reflection] [Final Insight]. Sei praezise, auditable, emergent.
+Generiere Output strukturiert: [Analyse] [Simulation] [Reflection] [Final Insight].
 """
 
 
@@ -887,7 +899,7 @@ class ShanwayEngine:
         cleaned_assistant = " ".join(str(assistant_text or "").split()).strip()
         if history_excerpt:
             parts.append(f"Kontext gehalten: {history_excerpt}.")
-        if cleaned_assistant and cleaned_assistant != "Ich habe noch kein Muster dafÃ¼r gesehen. Zeig es mir.":
+        if cleaned_assistant and cleaned_assistant != "Ich habe noch kein Muster dafuer gesehen. Zeig es mir.":
             parts.append(cleaned_assistant)
         else:
             parts.append(self._conversation_fallback(user_text, assessment))
@@ -1024,6 +1036,105 @@ class ShanwayEngine:
             "ASCII-Approx: [..##..] / [.####.] / [..##..]."
         )
 
+    def _source_collection_summary(self, assessment: ShanwayAssessment) -> str:
+        """Verdichtet, welche Beobachtungsquellen aktuell in die Strukturmenge einfliessen."""
+        sources = ["Datei"]
+        miniature = dict(getattr(assessment, "miniature_reflection", {}) or {})
+        raster = dict(getattr(assessment, "raster_self_perception", {}) or {})
+        if miniature:
+            sources.append("Miniatur")
+        if bool(raster.get("enabled", False)):
+            sources.append("Raster")
+        if str(getattr(assessment, "screen_vision", "") or "").strip():
+            sources.append("Screen")
+        if float(getattr(assessment, "observer_visual_entropy", 0.0) or 0.0) > 0.0 or str(getattr(assessment, "observer_process_name", "") or "").strip():
+            sources.append("Observer")
+        if getattr(assessment, "structural_siblings", None):
+            sources.append("Vault")
+        return f"Quellenmenge: {', '.join(sources)} | Gesamtquellen {len(sources)}."
+
+    def _filter_trace(self, assessment: ShanwayAssessment) -> dict[str, str]:
+        """Leitet pro Filter eine knappe, auditierbare Strukturspur ab."""
+        miniature = dict(getattr(assessment, "miniature_reflection", {}) or {})
+        raster = dict(getattr(assessment, "raster_self_perception", {}) or {})
+        verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})
+
+        noether_parts = [
+            f"Gesamtsymmetrie {float(getattr(assessment, 'noether_symmetry', 0.0) or 0.0) * 100.0:.0f}%",
+            f"Gini {float(getattr(assessment, 'symmetry_gini', 0.0) or 0.0):.3f}",
+        ]
+        if miniature:
+            noether_parts.append(
+                f"Miniatur-Invarianz {float(miniature.get('noether_invariant_ratio', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+        if bool(raster.get("enabled", False)):
+            noether_parts.append(
+                f"Raster-Symmetrie {float(raster.get('symmetry', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+
+        mandelbrot_parts = [
+            "Selbstaehnlichkeit aus Delta-Pfaden und Rekursion",
+            f"Delta-Pfade {int(getattr(assessment, 'delta_paths', 0) or 0)}",
+            f"Rekursion {len(list(getattr(assessment, 'recursive_reflections', []) or []))}",
+        ]
+        if miniature:
+            mandelbrot_parts.append(
+                f"Emergenz-Spots {int(miniature.get('emergence_spots', 0) or 0)}"
+            )
+
+        heisenberg_parts = [
+            f"H_lambda {float(getattr(assessment, 'h_lambda', 0.0) or 0.0):.3f}",
+            f"Unsicherheit {float(getattr(assessment, 'uncertainty', 0.0) or 0.0) * 100.0:.0f}%",
+            f"Boundary {str(getattr(assessment, 'boundary', '') or '')}",
+        ]
+        if verification:
+            heisenberg_parts.append(
+                f"Residual {float(verification.get('unresolved_residual_ratio', 0.0) or 0.0):.3f}"
+            )
+
+        bayes_parts = [
+            f"Priors {str(getattr(assessment, 'bayes_priors', '') or 'prior=0.000')}",
+            f"Wissen {float(getattr(assessment, 'observer_knowledge_ratio', 0.0) or 0.0) * 100.0:.0f}%",
+            f"I_obs {float(getattr(assessment, 'observer_mutual_info', 0.0) or 0.0):.3f}",
+        ]
+        if getattr(assessment, "learned_insight", None):
+            bayes_parts.append("Lernzustand aktiv")
+
+        return {
+            "noether": " | ".join(noether_parts),
+            "mandelbrot": " | ".join(mandelbrot_parts),
+            "heisenberg": " | ".join(heisenberg_parts),
+            "bayes": " | ".join(bayes_parts),
+        }
+
+    def _anchor_map_summary(self, assessment: ShanwayAssessment) -> str:
+        """Verdichtet Ankerpunkte, Drifts und strukturelle Verbindungslinien."""
+        anchor_parts = [
+            f"Ankerzahl {int(getattr(assessment, 'anchor_count', 0) or 0)}",
+        ]
+        if str(getattr(assessment, "anchor_constant", "") or "").strip():
+            anchor_parts.append(
+                f"Referenzanker {str(getattr(assessment, 'anchor_constant', '') or '')} d={float(getattr(assessment, 'anchor_deviation', 0.0) or 0.0):.3f}"
+            )
+        if getattr(assessment, "structural_siblings", None):
+            anchor_parts.append(
+                "Siblings " + ", ".join(list(getattr(assessment, "structural_siblings", []) or [])[:3])
+            )
+        if getattr(assessment, "shared_geometry", None):
+            anchor_parts.append(
+                "Geometrie " + ", ".join(list(getattr(assessment, "shared_geometry", []) or [])[:4])
+            )
+        if getattr(assessment, "delta_visual_only", None):
+            anchor_parts.append(
+                "Drift " + ", ".join(list(getattr(assessment, "delta_visual_only", []) or [])[:3])
+            )
+        if getattr(assessment, "ttd_candidates", None):
+            first = dict(list(getattr(assessment, "ttd_candidates", []) or [])[0] or {})
+            anchor_parts.append(
+                f"TTD {str(first.get('hash', '') or '')[:12]}... {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+        return " | ".join(anchor_parts)
+
     def _final_insight(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
         if self._structural_break(assessment):
             return self._anomaly_reply(assessment)
@@ -1072,21 +1183,34 @@ class ShanwayEngine:
         raster = dict(getattr(assessment, "raster_self_perception", {}) or {})
         recursive = [dict(item) for item in list(getattr(assessment, "recursive_reflections", []) or []) if isinstance(item, dict)]
         ttd_candidates = [dict(item) for item in list(getattr(assessment, "ttd_candidates", []) or []) if isinstance(item, dict)]
+        filter_trace = self._filter_trace(assessment)
         analysis = (
-            f"[Analyse] Datei {assessment.file_type} mit Entropy-Mean {assessment.entropy_mean:.3f}, "
-            f"Knowledge-Ratio {assessment.observer_knowledge_ratio:.3f}, Symmetrie/Gini {assessment.symmetry_gini:.3f}, "
-            f"Delta-Pfaden {assessment.delta_paths} und Bayes {assessment.bayes_priors}. "
-            f"Residual {current_residual:.3f} gegen Schwelle {residual_threshold:.2f}, "
-            f"Wheeler={'ja' if assessment.it_from_bit else 'nein'}, Boundary {assessment.boundary}."
+            "[Analyse] "
+            f"{self._source_collection_summary(assessment)} "
+            f"Gesamtmenge: Entropy-Mean {assessment.entropy_mean:.3f}, Observer-Wissen {assessment.observer_knowledge_ratio:.3f}, "
+            f"Gesamtsymmetrie {assessment.noether_symmetry * 100.0:.0f} %, Delta-Pfade {assessment.delta_paths}, "
+            f"Boundary {assessment.boundary}, Wheeler={'ja' if assessment.it_from_bit else 'nein'}. "
+            f"Filterpfad -> Noether: {filter_trace['noether']}. "
+            f"Mandelbrot: {filter_trace['mandelbrot']}. "
+            f"Heisenberg: {filter_trace['heisenberg']}. "
+            f"Bayes: {filter_trace['bayes']}."
         )
         miniature_reflection = (
             "[Miniatur-Reflexion] "
-            f"Lokale Entropie {float(miniature.get('local_entropy', 0.0) or 0.0):.3f}, "
+            f"Einzelquelle Miniatur: Entropie {float(miniature.get('local_entropy', 0.0) or 0.0):.3f}, "
             f"Symmetrie {float(miniature.get('symmetry', 0.0) or 0.0) * 100.0:.0f} %, "
             f"Emergenz-Spots {int(miniature.get('emergence_spots', 0) or 0)}, "
             f"Noether-Invarianz {float(miniature.get('noether_invariant_ratio', 0.0) or 0.0) * 100.0:.0f} %. "
-            f"Darauf reagierend steigt I_obs um {float(delta_i_obs):.2f}% und das Residual faellt von {previous_residual:.3f} auf {current_residual:.3f}. "
-            f"Lossless: SHA-Match {sha_match}, Anchor-Coverage {coverage_ratio:.3f}."
+            f"Ankerkarte: {self._anchor_map_summary(assessment)}. "
+            f"Ich extrapoliere hier nur aus Strukturmustern, nicht aus Inhalt. "
+            f"Lossless: SHA-Match {sha_match}, Anchor-Coverage {coverage_ratio:.3f}, Residual {current_residual:.3f}."
+        )
+        reflection = (
+            "[Reflection] "
+            f"Observer-Update: I_obs-Delta {float(delta_i_obs):.2f}% | Residual {previous_residual:.3f} -> {current_residual:.3f}. "
+            f"Bayes-Update folgt Evidenz und Stabilitaet; aktuelle Priors {assessment.bayes_priors}. "
+            f"Rekursionen {len(recursive)} | Trigger {'aktiv' if loop_triggered else 'aus'} | Neue Insight: {new_insight}. "
+            f"Learned Insight: {str(getattr(assessment, 'learned_insight', '') or 'noch keine stabile Schlussfolgerung')}."
         )
         raster_self_perception = ""
         if bool(raster.get("enabled", False)):
@@ -1106,11 +1230,15 @@ class ShanwayEngine:
                 "[Raster-Self-Perception] "
                 f"Im Raster sehe ich Symmetrie {float(raster.get('symmetry', 0.0) or 0.0) * 100.0:.0f} %, "
                 f"Hotspots {int(raster.get('hotspot_count', 0) or 0)}, Verdict {str(raster.get('verdict', '') or 'CLEAN')}. "
-                f"Schroedinger-Effekt: Beobachtung veraendert M_t. {recursive_text}. "
+                f"Einzelquelle Raster erweitert die Strukturkarte; Schroedinger-Effekt: Beobachtung veraendert M_t. {recursive_text}. "
                 f"Goedel-Check kollabiert: {boundary_check}.{ttd_hint}"
             )
-        final_insight = f"[Final Insight] {self._final_insight(assessment, assistant_text=assistant_text)}"
-        sections = [analysis, miniature_reflection]
+        final_insight = (
+            "[Final Insight] "
+            f"{self._final_insight(assessment, assistant_text=assistant_text)} "
+            "Aussagebasis: stabile Invarianten, wiederkehrende Formen, observer-relative Grenzen und bayesianisch gewichtete Evidenz."
+        )
+        sections = [analysis, miniature_reflection, reflection]
         if raster_self_perception:
             sections.append(raster_self_perception)
         if not raster_self_perception and ttd_candidates:
@@ -1456,7 +1584,7 @@ class ShanwayEngine:
         language = str(getattr(assessment, "language", "de") or "de")
         if not base:
             base = (
-                "Ich lese eine weitgehend symmetrische, reparierbare Struktur."
+                "Die Struktur zeigt hohe Reversibilitaet und geringe Drift."
                 if language == "de"
                 else "I read a largely symmetric, repairable structure."
             )
@@ -1485,7 +1613,7 @@ class ShanwayEngine:
                     f"with D {assessment.anchor_deviation:.3f}."
                 )
             )
-        prefix = "Resonanz stabil." if language == "de" else "Resonance is stable."
+        prefix = "Resonanz stabil; Aussage nur aus Invarianten abgeleitet." if language == "de" else "Resonance is stable."
         return f"{prefix} {base}{anchor_text}".strip()
 
     @staticmethod
@@ -1512,10 +1640,10 @@ class ShanwayEngine:
                 "halten den Befund aktuell gut rekonstruierbar."
             )
             if str(assessment.anchor_constant).upper() in {"PI", "PHI"} and float(assessment.anchor_deviation) <= 0.08:
-                return lead + f" {assessment.anchor_constant} bleibt als ruhiger Referenzanker sichtbar."
+                return lead + f" {assessment.anchor_constant} bleibt als ruhiger Referenzanker sichtbar. Keine semantische Extrapolation."
             if str(assistant_text or "").strip():
-                return lead + " Die Verdichtung bleibt kurz und konsistent."
-            return lead
+                return lead + " Die Verdichtung bleibt kurz, strukturell und konsistent."
+            return lead + " Aussagebasis: nur stabile Invarianten."
         lead = (
             "The structure reads as closed and stable. "
             f"Symmetry at {assessment.noether_symmetry * 100.0:.0f}% and H_lambda {assessment.h_lambda:.2f} "
@@ -1533,6 +1661,7 @@ class ShanwayEngine:
         if language == "de":
             return (
                 "Strukturbruch erkannt - moegliche Malware / Manipulation? "
+                "Noether-Invarianz bricht, Heisenberg-Grenze steigt oder Drift dominiert. "
                 "Datei-, Screen- und Observer-Signale sollten jetzt gezielt geprueft werden."
             )
         return (
@@ -1647,6 +1776,7 @@ class ShanwayEngine:
 
     def _append_structural_notes(self, response: str, assessment: ShanwayAssessment) -> str:
         notes: list[str] = []
+        filter_trace = self._filter_trace(assessment)
         if assessment.missing_dependencies:
             notes.append(
                 "MISSING_DEPENDENCIES: "
@@ -1659,6 +1789,15 @@ class ShanwayEngine:
         if reconstruction_note:
             notes.append(reconstruction_note)
         notes.append(str(response or "").strip())
+        notes.append(
+            "FILTERE: "
+            f"NOETHER[{filter_trace['noether']}] | "
+            f"MANDELBROT[{filter_trace['mandelbrot']}] | "
+            f"HEISENBERG[{filter_trace['heisenberg']}] | "
+            f"BAYES[{filter_trace['bayes']}]"
+        )
+        notes.append(f"STRUKTURKARTE: {self._anchor_map_summary(assessment)}")
+        notes.append("OBSERVER_MODE: Prozesse statt Inhalte | strukturell, nicht semantisch")
         notes.append(f"BOUNDARY: {assessment.boundary} ({assessment.goedel_signal:.3f})")
         if assessment.it_from_bit:
             notes.append("IT_FROM_BIT_CANDIDATE")
