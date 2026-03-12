@@ -243,6 +243,13 @@ impl VaultStore {
         self.entries.len()
     }
 
+    pub(crate) fn all_serialized_entries(&self) -> Vec<Vec<u8>> {
+        self.entries
+            .iter()
+            .filter_map(|entry| hex_decode(&entry.data_hex).ok())
+            .collect()
+    }
+
     pub fn contains(&self, vault_ref: &[u8; 32]) -> bool {
         let target = hex_encode(vault_ref);
         self.entries.iter().any(|entry| entry.vault_ref_hex == target)
@@ -270,6 +277,18 @@ impl VaultStore {
             self.save()?;
         }
         Ok(vault_ref)
+    }
+
+    pub fn remove(&mut self, vault_ref: &[u8; 32]) -> Result<bool, AefError> {
+        let target = hex_encode(vault_ref);
+        let before = self.entries.len();
+        self.entries.retain(|entry| entry.vault_ref_hex != target);
+        let removed = self.entries.len() != before;
+        if removed {
+            self.version += 1;
+            self.save()?;
+        }
+        Ok(removed)
     }
 }
 

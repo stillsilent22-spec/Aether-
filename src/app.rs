@@ -1,7 +1,9 @@
-use crate::aef::{AefEncoder, AefInspector, AefReport, EnginePipeline, VaultStore};
+use crate::aef::{AefEncoder, AefInspector, AefReport, EnginePipeline, SignalType, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
-use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput};
+use crate::pack::{PackRegistry, ShanwayPackAdvisor, UsageProfile};
+use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput, ShanwayObserverContext, ShanwayPackHint};
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
+use crate::theory_of_mind::{ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope, ProcessedSignal, ToMOutputAdapter};
 use eframe::egui::{self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2};
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -9,6 +11,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopTab {
@@ -68,6 +71,10 @@ pub struct AetherRustShell {
     group_message_input: String,
     shanway_message_input: String,
     last_drop_token: Option<String>,
+    observer_id: Uuid,
+    mind_model: MindModelEngine,
+    pack_registry: Arc<RwLock<PackRegistry>>,
+    pack_advisor: ShanwayPackAdvisor,
 }
 
 impl AetherRustShell {
@@ -75,6 +82,16 @@ impl AetherRustShell {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
         let aef_vault = Arc::new(RwLock::new(load_local_vault_store()));
         let aef_engine = Arc::new(EnginePipeline::new());
+        let observer_id = Uuid::new_v4();
+        let mut mind_model = MindModelEngine::new(ObserverModelScope::SessionOnly);
+        mind_model.ensure_observer(observer_id);
+        let pack_registry = Arc::new(RwLock::new(PackRegistry::load_default().unwrap_or(PackRegistry {
+            index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
+            local_cache: PathBuf::from("data").join("rust_shell").join("packs").join("pack_registry.json"),
+            last_updated: 0,
+            entries: Vec::new(),
+        })));
+        let pack_advisor = ShanwayPackAdvisor::new(Arc::clone(&pack_registry));
         Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -101,6 +118,10 @@ impl AetherRustShell {
             group_message_input: String::new(),
             shanway_message_input: String::new(),
             last_drop_token: None,
+            observer_id,
+            mind_model,
+            pack_registry,
+            pack_advisor,
         }
     }
 
@@ -117,10 +138,26 @@ impl AetherRustShell {
         AefInspector::inspect(&output_path).map_err(|err| format!("AEF-Inspektion fehlgeschlagen: {err}"))
     }
 
-    fn current_shanway_input(&self) -> Option<ShanwayInput> {
-        self.current_file.as_ref().map(|file| ShanwayInput {
-            file_name: file.file_name.clone(),
-            file_type: file.source_kind.clone(),
+    fn current_shanway_input(&mut self) -> Option<ShanwayInput> {
+        let file = self.current_file.as_ref()?.clone();
+        let signal = build_processed_signal(&file);
+        let observer_delta = self.mind_model.calculate_observer_delta(&signal, self.observer_id);
+        let usage_profile = build_usage_profile(&file, self.current_hit_rate());
+        let pack_hints = self
+            .pack_advisor
+            .evaluate_and_recommend(&usage_profile)
+            .into_iter()
+            .take(2)
+            .map(|hint| ShanwayPackHint {
+                title: hint.title,
+                message: hint.message,
+                estimated_hit_rate_improvement: hint.estimated_hit_rate_improvement,
+                estimated_compression_improvement: hint.estimated_compression_improvement,
+            })
+            .collect::<Vec<_>>();
+        Some(ShanwayInput {
+            file_name: file.file_name,
+            file_type: file.source_kind,
             entropy_mean: file.entropy,
             knowledge_ratio: (1.0 - file.drift / 255.0).clamp(0.0, 1.0),
             symmetry_gini: (1.0 - file.symmetry).clamp(0.0, 1.0),
@@ -141,9 +178,27 @@ impl AetherRustShell {
             } else {
                 "RECONSTRUCTABLE".to_owned()
             },
-            anchor_summary: file.anchor_summary.clone(),
-            process_summary: file.process_summary.clone(),
+            anchor_summary: file.anchor_summary,
+            process_summary: file.process_summary,
+            observer_context: Some(ShanwayObserverContext {
+                o1_knowledge: observer_delta.o1_knowledge,
+                o2_estimated_knowledge: observer_delta.o2_estimated_knowledge,
+                delta: observer_delta.delta,
+                confidence: observer_delta.confidence,
+                recommended_depth: observer_delta.recommended_depth,
+                bridge_anchor_count: observer_delta.recommended_anchors.len(),
+            }),
+            pack_hints,
         })
+    }
+
+    fn current_hit_rate(&self) -> f32 {
+        let count = self
+            .aef_vault
+            .read()
+            .map(|vault| vault.entry_count() as f32)
+            .unwrap_or(0.0);
+        (count / (count + 24.0)).clamp(0.0, 1.0)
     }
 
     fn append_log(&mut self, message: impl Into<String>) {
@@ -223,6 +278,13 @@ impl AetherRustShell {
             ui.label("Struktureller Beobachter. Dateien werden nur per Drag and Drop eingefuehrt.");
             ui.label(RichText::new("Sicherheitsfilter: aktiv").color(Color32::LIGHT_GREEN));
             ui.label(RichText::new("Netzpfad: standardmaessig aus").color(Color32::LIGHT_YELLOW));
+            ui.label(self.mind_model.observer_status(self.observer_id));
+            let pack_count = self
+                .pack_registry
+                .read()
+                .map(|registry| registry.entries.len())
+                .unwrap_or(0);
+            ui.label(format!("Pack-Registry: {pack_count} optionale Pack-Metadaten lokal gecacht."));
             ui.separator();
             if let Some(file) = &self.current_file {
                 ui.label(RichText::new("Aktive Datei").strong());
@@ -661,8 +723,33 @@ impl AetherRustShell {
         if ui.button("An Shanway senden").clicked() {
             let prompt = self.shanway_message_input.trim().to_owned();
             if !prompt.is_empty() {
+                let active_signal = self.current_file.as_ref().map(build_processed_signal);
+                if let Some(signal) = active_signal.as_ref() {
+                    self.mind_model.learn_from_user_prompt(self.observer_id, signal, &prompt);
+                }
                 let shanway_input = self.current_shanway_input();
-                let reply = render_shanway_reply(shanway_input.as_ref(), &prompt);
+                let raw_reply = render_shanway_reply(shanway_input.as_ref(), &prompt);
+                let reply = if let Some(signal) = active_signal.as_ref() {
+                    let observer_delta = self.mind_model.calculate_observer_delta(signal, self.observer_id);
+                    let adapted = ToMOutputAdapter::adapt_output(
+                        &raw_reply,
+                        &observer_delta,
+                        self.mind_model.observer_model(self.observer_id),
+                    );
+                    self.mind_model.record_interaction(
+                        self.observer_id,
+                        signal.signal_hash,
+                        adapted.depth_used,
+                        map_text_signal_to_comprehension(&prompt),
+                    );
+                    if let Some(bridge_note) = adapted.bridge_note {
+                        format!("{}\n[Observer Bridge] {}", adapted.content, bridge_note)
+                    } else {
+                        adapted.content
+                    }
+                } else {
+                    raw_reply
+                };
                 let shanway_thread = self.state_store.private_thread(&username, "Shanway");
                 shanway_thread.messages.push(ChatMessage {
                     author: username.clone(),
@@ -775,6 +862,62 @@ impl eframe::App for AetherRustShell {
             TopTab::Chats => self.ui_chats_tab(ui),
             TopTab::Register => self.ui_register_tab(ui, ctx),
         });
+    }
+}
+
+fn build_processed_signal(file: &ProcessedFile) -> ProcessedSignal {
+    ProcessedSignal::from_summary(
+        format!("{} | {} | {}", file.file_name, file.anchor_summary, file.process_summary),
+        vec![domain_from_source_kind(&file.source_kind)],
+    )
+}
+
+fn build_usage_profile(file: &ProcessedFile, current_hit_rate: f32) -> UsageProfile {
+    UsageProfile {
+        dominant_domains: vec![(domain_from_source_kind(&file.source_kind), 1.0)],
+        active_signal_types: vec![signal_type_from_source_kind(&file.source_kind)],
+        current_hit_rate,
+    }
+}
+
+fn domain_from_source_kind(source_kind: &str) -> String {
+    let normalized = source_kind.to_ascii_lowercase();
+    if normalized.contains("text") || normalized.contains("code") || normalized.contains("pdf") {
+        "language_german".to_owned()
+    } else if normalized.contains("bild") {
+        "image_editing".to_owned()
+    } else if normalized.contains("audio") {
+        "audio_production".to_owned()
+    } else if normalized.contains("video") {
+        "video_editing".to_owned()
+    } else {
+        "security".to_owned()
+    }
+}
+
+fn signal_type_from_source_kind(source_kind: &str) -> SignalType {
+    let normalized = source_kind.to_ascii_lowercase();
+    if normalized.contains("pdf") {
+        SignalType::Pdf
+    } else if normalized.contains("html") || normalized.contains("browser") {
+        SignalType::Html
+    } else if normalized.contains("audio") {
+        SignalType::AudioTranscript
+    } else if normalized.contains("code") {
+        SignalType::Code
+    } else if normalized.contains("text") {
+        SignalType::PlainText
+    } else {
+        SignalType::Unknown
+    }
+}
+
+fn map_text_signal_to_comprehension(prompt: &str) -> ComprehensionSignal {
+    match ComprehensionDetector::detect_text_signal(prompt) {
+        crate::theory_of_mind::TextSignal::Confusion => ComprehensionSignal::NotUnderstood,
+        crate::theory_of_mind::TextSignal::AlreadyFamiliar => ComprehensionSignal::AlreadyKnew,
+        crate::theory_of_mind::TextSignal::Understood => ComprehensionSignal::Understood,
+        crate::theory_of_mind::TextSignal::Neutral => ComprehensionSignal::Unknown,
     }
 }
 

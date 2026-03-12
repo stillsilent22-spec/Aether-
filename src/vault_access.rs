@@ -225,6 +225,54 @@ impl VaultAccessLayer {
         }))
     }
 
+    pub fn list_records(&self) -> Result<Vec<PublicAnchorRecord>, VaultAccessError> {
+        let vault = self
+            .db
+            .read()
+            .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+        let records = vault
+            .all_serialized_entries()
+            .into_iter()
+            .filter_map(|raw| serde_json::from_slice::<PublicAnchorRecord>(&raw).ok())
+            .collect();
+        Ok(records)
+    }
+
+    pub fn public_anchor_count(&self) -> Result<usize, VaultAccessError> {
+        Ok(self.list_records()?.len())
+    }
+
+    pub fn current_hit_rate(&self) -> Result<f32, VaultAccessError> {
+        let count = self.public_anchor_count()? as f32;
+        Ok((count / (count + 24.0)).clamp(0.0, 1.0))
+    }
+
+    pub fn get_anchors_by_domain(&self, domain: &str) -> Result<Vec<PublicAnchorRecord>, VaultAccessError> {
+        let needle = sanitize_domain(domain);
+        Ok(self
+            .list_records()?
+            .into_iter()
+            .filter(|record| sanitize_domain(&record.domain) == needle)
+            .collect())
+    }
+
+    pub fn remove_anchor_record(&self, anchor_id: Uuid) -> Result<bool, VaultAccessError> {
+        let records = self.list_records()?;
+        let Some(record) = records.into_iter().find(|record| record.anchor_id == anchor_id) else {
+            return Ok(false);
+        };
+        let Some(vault_ref) = parse_hex_32(&record.vault_ref) else {
+            return Err(VaultAccessError::DatabaseError("Vault-Ref des Ankers ist ungueltig".to_owned()));
+        };
+        let mut vault = self
+            .db
+            .write()
+            .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht geschrieben werden".to_owned()))?;
+        vault
+            .remove(&vault_ref)
+            .map_err(|err| VaultAccessError::DatabaseError(err.to_string()))
+    }
+
     pub fn enqueue_github_push_sync(&self, commit: &AnchorCommitResult) -> Result<(), PushError> {
         let queue_dir = PathBuf::from("data").join("rust_shell").join("public_push_queue");
         fs::create_dir_all(&queue_dir).map_err(|err| PushError::Io(err.to_string()))?;
@@ -517,6 +565,18 @@ fn walk_json_files(root: &Path) -> Vec<PathBuf> {
 
 fn canonical_anchor_bytes(anchor: &RawAnchorSubmission) -> Vec<u8> {
     serde_json::to_vec(anchor).unwrap_or_default()
+}
+
+fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut output = [0u8; 32];
+    for (index, chunk) in value.as_bytes().chunks(2).enumerate() {
+        let text = std::str::from_utf8(chunk).ok()?;
+        output[index] = u8::from_str_radix(text, 16).ok()?;
+    }
+    Some(output)
 }
 
 fn derive_symmetry_index(anchor: &RawAnchorSubmission) -> f32 {

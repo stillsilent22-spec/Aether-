@@ -470,3 +470,61 @@ Damit wird die Trennung weiter geschaerft:
 - Quarantaene-Layer: Beobachtungswissen ohne reproduzierbaren Inhalt
 
 Die Richtung bleibt dieselbe: Lernen ja, aber nicht um den Preis offener Rohinhalte oder unkontrollierter Ausgabe.
+
+### Rust-Weiterfuehrung: Anchor Packs
+
+Der neue Pack-Layer fuehrt eine weitere, optionale Beschleunigung ein:
+
+- `PackRegistry` haelt nur Metadaten ueber verfuegbare Packs
+- `.aep`-Packs enthalten nur bestaetigte `PublicAnchorRecord`s
+- `PackManager` installiert nie automatisch, sondern nur nach explizitem Nutzerentscheid
+- auch signierte Pack-Anker muessen lokal erneut durch die Vault-Pruefung
+- `AutoPackGenerator` kann aus lokal bestaetigten Domaanenankern wieder einen Pack erzeugen
+
+Dadurch entsteht ein zusaetzlicher Beschleuniger zwischen normalem Online-Vault und rein lokalem Delta-Pfad:
+
+- Online-Vault: lebender, wachsender gemeinsamer Anchorraum
+- Anchor Packs: kuratierte oder automatisch generierte Schnappschuesse fuer bestimmte Domaenen
+- lokales Delta: weiterhin alleinige Traegerschicht fuer Rekonstruktion
+
+Diese Schichtung ist wichtig, weil sie eine praktische Antwort auf Bandbreite und Verfuegbarkeit gibt, ohne das Zero-Knowledge-Prinzip zu verletzen. Packs transportieren Strukturwissen, aber nie den privaten Rest.
+
+### Rust-Weiterfuehrung: Theory of Mind
+
+Parallel dazu fuehrt der Rust-Shell-Schnitt einen observer-relativen Kommunikationslayer ein. Die mathematische Lesart verschiebt sich von:
+
+`H_lambda(X, t) = H(X | M_t)`
+
+zu einer lokalen Kommunikationsfrage:
+
+`Welche Luecke besteht zwischen Shanways Strukturwissen und dem geschaetzten Wissen des Gegenuebers?`
+
+Implementiert wird das ueber:
+
+- `MindModelEngine`
+- `ObserverModel`
+- `ComprehensionDetector`
+- `ToMOutputAdapter`
+
+Methodisch bleibt der Eingriff additiv:
+
+- die bestehenden Trust- und Sicherheitsengines bleiben unberuehrt
+- Theory of Mind aendert nicht die Faktenbasis
+- angepasst werden nur Tiefe, Brueckenanker und Erklaerlaenge
+
+Privacy-by-default bleibt erhalten:
+
+- Default-Scope ist `SessionOnly`
+- keine Namen, keine Demographie, keine externen Identitaeten
+- nur lokale Familiarity-Schaetzungen fuer Anchors und Domaenen
+
+Damit wird Shanway nicht zu einem Profiling-System, sondern zu einem lokalen Beobachter, der die kommunikative Luecke zwischen `O1` und `O2` klein haelt, ohne dafuer mehr Daten zu sammeln als noetig.
+
+### Anti-Puzzle Grenze
+
+Mit Packs und Theory of Mind wird Aether nicht zu einem generischen Baukasten fuer fremde Plattformen. Die Architektur bleibt absichtlich nicht-puzzlebar:
+
+- keine offene System-API als Fremd-Backend
+- keine automatische Integration in andere AGI-Orchestrierungen
+- keine Rohdatenuebergabe ueber Packs, Observer-Modelle oder Quarantaene-Pfade
+- nur lokale, auditierbare und fail-closed Erweiterung des bestehenden Paradigmas

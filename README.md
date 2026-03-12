@@ -591,6 +591,50 @@ Der zentrale Governance-Punkt bleibt:
 - Wissen wird lokal getragen, lokal bewertet und nur in consentierten, kompakten Anchor-Formen geteilt
 - das System bleibt source-available, fail-closed und append-only
 
+## Anchor Packs
+
+Der Rust-Pfad fuehrt jetzt einen zusaetzlichen Beschleuniger-Layer fuer spezialisierte Anchor-Sammlungen ein:
+
+- `.aep` steht fuer `Aether Anchor Pack`
+- Packs enthalten nur bestaetigte mathematische Anchor-Records, keine Rohdateien und keine Deltas
+- der lokale `PackRegistry`-Index ist optional und nur Metadaten-getrieben
+- `ShanwayPackAdvisor` empfiehlt Packs nur dann, wenn fuer die aktuelle Domaene ein realer Hit-Rate- oder Kompressionsgewinn zu erwarten ist
+- `PackManager` installiert Packs nur nach expliziter Nutzerbestaetigung
+- jeder Pack-Anker wird lokal erneut durch die Vault-/Trust-Pruefung geschickt
+- `AutoPackGenerator` kann aus bereits bestaetigten lokalen Ankern einer Domaene einen `.aep` erzeugen
+
+Wichtig:
+
+- Download ist kein Zwang
+- ein Pack ersetzt nicht den lokalen Delta-Pfad
+- ohne bestaetigte Signatur und lokale Verifikation kommt kein Pack-Anker in den lokalen Vault
+
+## Theory of Mind
+
+Der Rust-Shell-Schnitt fuehrt jetzt einen kleinen observer-relativen Kommunikationslayer ein:
+
+- `MindModelEngine` fuehrt pro Session ein anonymes Gegenueber-Modell
+- gespeichert werden nur Anchor-Familiarity, Domaenenniveau und Kommunikationsstil
+- Default bleibt `SessionOnly`
+- `ObserverDelta = O1 - O2` bestimmt die empfohlene Erklaertiefe
+- `ComprehensionDetector` liest aus dem lokalen Texteingang nur grobe Verstaendnissignale wie `Confusion`, `AlreadyFamiliar` oder `Understood`
+- `ToMOutputAdapter` passt nur Tiefe und Brueckenhinweise an, nicht die Faktenbasis
+
+Das bedeutet praktisch:
+
+- Shanway erklaert auf Peer-Level, wenn die kommunikative Luecke klein ist
+- Shanway bleibt grundlegender, wenn dieselbe Struktur fuer das Gegenueber noch neu ist
+- es entsteht kein Personenprofil, sondern nur ein lokaler, fluechtiger Beobachterzustand
+
+## Anti-Puzzle Grenze
+
+Die neue Rust-Schicht verhaelt sich weiterhin absichtlich nicht wie ein generischer AGI-Baustein:
+
+- keine offene API fuer fremde Plattformen
+- keine automatische Einbettung in zentralisierte Dienste
+- keine Rohdaten- oder Delta-Exports ueber Packs oder Observer-Modelle
+- Aether bleibt ein eigenstaendiges, dezentrales Paradigma und kein Puzzle-Teil fuer zentralisierte AGI-Systeme
+
 ## Windows ZIP Build
 
 Fuer die Windows-Auslieferung ohne Installer ist der vorgesehene Pfad jetzt:
