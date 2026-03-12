@@ -531,3 +531,14 @@ Mit Packs und Theory of Mind wird Aether nicht zu einem generischen Baukasten fu
 - keine automatische Integration in andere AGI-Orchestrierungen
 - keine Rohdatenuebergabe ueber Packs, Observer-Modelle oder Quarantaene-Pfade
 - nur lokale, auditierbare und fail-closed Erweiterung des bestehenden Paradigmas
+
+### Rust-Erweiterung: Browser-Probe und Public-TTD
+
+Der Rust-Pfad erweitert die Shell nun auch an der Grenze zwischen lokalem Wissen und oeffentlicher Strukturweitergabe:
+
+- `browser.rs` analysiert Webziele lokal mit kleinem Bytebudget und bewertet Frontend-/Backend-Struktur auf Risiko, ohne Vollnavigation oder Rohdatenpersistenz.
+- `public_ttd.rs` fuehrt einen append-only Pool fuer oeffentliche TTD-Anker ein. Geteilt werden ausschliesslich Hash und Metriken; Deltas bleiben lokal.
+- Consent bleibt vorgelagert. Ohne explizite Zustimmung gibt es weder Netzprobe noch Public-TTD-Sync.
+- Quorum bleibt lokal nachvollziehbar: Operator-Anker brauchen Peer-Validierungen, Admin-Anker koennen direkt vertrauenswuerdig werden.
+
+Damit bleibt der Demokratisierungspfad technisch offen, ohne den Zero-Knowledge- und fail-closed-Kern preiszugeben.

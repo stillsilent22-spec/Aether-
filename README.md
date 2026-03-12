@@ -771,3 +771,23 @@ Der Rust-Schnitt enthaelt jetzt zusaetzlich zwei eigene Binaries:
 Fuer Pull Requests auf `vault/anchors/**` gibt es zusaetzlich den Workflow
 `.github/workflows/vault-pr-check.yml`, der Signaturen und Trust-Pipeline
 ueber `aether-cli` prueft.
+
+## Rust-Pfad: Browser-Probe und Public-TTD-Pool
+
+Der aktuelle Rust-Schnitt fuehrt zwei weitere lokale-first Pfade ein:
+
+- `src/browser.rs`
+  - lokale URL-Probe mit begrenztem Bytebudget
+  - strukturelle Risikoheuristiken fuer Obfuskation, Scam-, Fake- und Hate-Muster
+  - kurzer Suchkontext fuer Shanway, ohne Rohdatenpersistenz
+- `src/public_ttd.rs`
+  - fail-closed Public-TTD-Pool fuer Hash-und-Metrik-Anker
+  - Quorum-Logik fuer `candidate` vs. `trusted`
+  - optionaler IPFS-/Mirror-Transport mit lokaler Cache- und Summary-Datei
+
+Die Rust-Shell zeigt damit jetzt:
+
+- Consent vor Browser-Probe und Suchkontext
+- lokalen Public-TTD-Poolstatus
+- TTD-Kandidatenpruefung gegen Residual-, Symmetrie-, I_obs- und Rekursionsschwellen
+- metrics-only Sharing ohne Rohdaten oder Deltas

@@ -1,12 +1,21 @@
 use crate::aef::{AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
+use crate::browser::{BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext};
 use crate::pack::{AutoPackGenerator, OfflineCacheManager, OfflinePrepRequest, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
-use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput, ShanwayObserverContext, ShanwayPackHint};
+use crate::public_ttd::{
+    pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation, PublicTtdMetrics,
+    PublicTtdPoolStore, PublicTtdSubmission, PublicTtdTransport,
+};
+use crate::shanway::{
+    render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput, ShanwayObserverContext, ShanwayPackHint,
+};
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
 use crate::theory_of_mind::{ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope, ProcessedSignal, ToMOutputAdapter};
 use eframe::egui::{self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2};
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -29,9 +38,25 @@ enum ChatTab {
 }
 
 #[derive(Debug, Clone)]
+enum ConsentAction {
+    BrowserProbe { url: String },
+    BrowserSearch { query: String },
+    ShareStableTtd { signed: bool },
+    SyncPublicTtd,
+}
+
+#[derive(Debug, Clone)]
+struct ConsentDialogState {
+    title: String,
+    body: String,
+    action: ConsentAction,
+}
+
+#[derive(Debug, Clone)]
 struct ProcessedFile {
     file_name: String,
     full_path: String,
+    fingerprint_hash: String,
     source_kind: String,
     original_size: u64,
     delta_size: u64,
@@ -57,6 +82,9 @@ pub struct AetherRustShell {
     chat_tab: ChatTab,
     browser_address: String,
     browser_note: String,
+    browser_probe: Option<BrowserProbeResult>,
+    browser_search_context: Option<BrowserSearchContext>,
+    browser_probe_policy: BrowserProbePolicy,
     preview_texture: Option<TextureHandle>,
     current_file: Option<ProcessedFile>,
     last_aef_report: Option<AefReport>,
@@ -79,6 +107,9 @@ pub struct AetherRustShell {
     pack_advisor: ShanwayPackAdvisor,
     pack_generator: AutoPackGenerator,
     offline_cache_manager: OfflineCacheManager,
+    public_ttd_pool: PublicTtdPoolStore,
+    public_ttd_transport: PublicTtdTransport,
+    consent_dialog: Option<ConsentDialogState>,
 }
 
 impl AetherRustShell {
@@ -100,6 +131,8 @@ impl AetherRustShell {
         let pack_advisor = ShanwayPackAdvisor::new(Arc::clone(&pack_registry));
         let pack_generator = AutoPackGenerator::new(Arc::clone(&vault_access));
         let offline_cache_manager = OfflineCacheManager::new();
+        let public_ttd_pool = PublicTtdPoolStore::new_default();
+        let public_ttd_transport = PublicTtdTransport::new_default();
         Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -111,7 +144,10 @@ impl AetherRustShell {
             top_tab: TopTab::Analyse,
             chat_tab: ChatTab::Shanway,
             browser_address: "https://".to_owned(),
-            browser_note: "Browser-Tab ist vorbereitet. Netzpfade bleiben fail-closed, bis der Transport portiert ist.".to_owned(),
+            browser_note: "Browser-Probe arbeitet lokal und fail-closed. Netzschritte laufen nur nach explizitem Consent.".to_owned(),
+            browser_probe: None,
+            browser_search_context: None,
+            browser_probe_policy: BrowserProbePolicy::default(),
             preview_texture: None,
             current_file: None,
             last_aef_report: None,
@@ -134,6 +170,9 @@ impl AetherRustShell {
             pack_advisor,
             pack_generator,
             offline_cache_manager,
+            public_ttd_pool,
+            public_ttd_transport,
+            consent_dialog: None,
         }
     }
 
@@ -164,7 +203,12 @@ impl AetherRustShell {
     }
 
     fn current_shanway_input(&mut self) -> Option<ShanwayInput> {
-        let file = self.current_file.as_ref()?.clone();
+        let synthetic_browser_file = self.current_file.is_none() && self.browser_probe.is_some();
+        let file = if let Some(file) = self.current_file.as_ref() {
+            file.clone()
+        } else {
+            build_browser_processed_file(self.browser_probe.as_ref()?)
+        };
         let signal = build_processed_signal(&file);
         let observer_delta = self.mind_model.calculate_observer_delta(&signal, self.observer_id);
         let usage_profile = build_usage_profile(&file, self.current_hit_rate());
@@ -180,9 +224,26 @@ impl AetherRustShell {
                 estimated_compression_improvement: hint.estimated_compression_improvement,
             })
             .collect::<Vec<_>>();
+        let browser_context = self.browser_probe.as_ref().map(|probe| ShanwayBrowserContext {
+            url: probe.final_url.clone(),
+            risk_label: probe.risk_label.clone(),
+            risk_score: probe.risk_score,
+            reasons: probe.risk_reasons.clone(),
+            frontend_summary: probe.frontend_summary.clone(),
+            backend_summary: probe.backend_summary.clone(),
+            search_context_summary: self
+                .browser_search_context
+                .as_ref()
+                .map(|context| trimmed_at_boundary(&context.summary, 240))
+                .unwrap_or_default(),
+        });
         Some(ShanwayInput {
             file_name: file.file_name,
-            file_type: file.source_kind,
+            file_type: if synthetic_browser_file {
+                format!("browser_{}", file.source_kind)
+            } else {
+                file.source_kind
+            },
             entropy_mean: file.entropy,
             knowledge_ratio: (1.0 - file.drift / 255.0).clamp(0.0, 1.0),
             symmetry_gini: (1.0 - file.symmetry).clamp(0.0, 1.0),
@@ -214,6 +275,8 @@ impl AetherRustShell {
                 bridge_anchor_count: observer_delta.recommended_anchors.len(),
             }),
             pack_hints,
+            browser_context,
+            public_ttd_status: Some(self.public_ttd_pool.summary_line()),
         })
     }
 
@@ -234,6 +297,162 @@ impl AetherRustShell {
 
     fn current_domain_key(&self) -> Option<String> {
         self.current_file.as_ref().map(|file| domain_from_source_kind(&file.source_kind))
+    }
+
+    fn current_ttd_candidate(&self) -> Option<(PublicTtdSubmission, PublicTtdCandidateValidation)> {
+        let file = self.current_file.as_ref()?;
+        if file.fingerprint_hash.trim().is_empty() {
+            return None;
+        }
+        let interaction_count = self
+            .mind_model
+            .observer_model(self.observer_id)
+            .map(|model| model.interaction_history.len() as u32)
+            .unwrap_or(0);
+        let residual = (file.delta_size as f32 / file.original_size.max(1) as f32).clamp(0.0, 1.0);
+        let knowledge_ratio = (1.0 - file.drift / 255.0).clamp(0.0, 1.0);
+        let metrics = PublicTtdMetrics {
+            residual,
+            symmetry: file.symmetry.clamp(0.0, 1.0),
+            i_obs_ratio: knowledge_ratio,
+            delta_stability: (file.symmetry * knowledge_ratio * (1.0 - residual)).clamp(0.0, 1.0),
+            delta_i_obs_percent: (knowledge_ratio * 100.0).clamp(0.0, 100.0),
+            recursive_count: interaction_count.max(1).min(7),
+        };
+        let boundary = if file.symmetry < 0.58 {
+            "GOEDEL_LIMIT"
+        } else if file.symmetry < 0.76 {
+            "STRUCTURAL_HYPOTHESIS"
+        } else {
+            "RECONSTRUCTABLE"
+        };
+        let anomaly_count = u32::from(file.symmetry < 0.50)
+            + u32::from(self.browser_probe.as_ref().map(|probe| probe.risk_label == "CRITICAL").unwrap_or(false));
+        let lossless_verified = self
+            .last_aef_report
+            .as_ref()
+            .map(|report| report.lossless_confirmed)
+            .unwrap_or(false);
+        let validation = validate_public_ttd_candidate(metrics.clone(), anomaly_count, boundary, lossless_verified);
+        let user = self.current_user.as_ref()?;
+        let submission = PublicTtdSubmission {
+            ttd_hash: file.fingerprint_hash.clone(),
+            source_label: file.source_kind.clone(),
+            public_metrics: metrics,
+            pseudonym: pseudonymous_network_identity(
+                &format!("{}|{}|{}", user.username, self.observer_id, file.fingerprint_hash),
+                "public_ttd",
+            ),
+            uploader_role: user.role.clone(),
+            signature_included: false,
+        };
+        Some((submission, validation))
+    }
+
+    fn queue_consent(&mut self, title: impl Into<String>, body: impl Into<String>, action: ConsentAction) {
+        self.consent_dialog = Some(ConsentDialogState {
+            title: title.into(),
+            body: body.into(),
+            action,
+        });
+    }
+
+    fn run_browser_probe(&mut self, url: &str) {
+        let probe = BrowserInspector::inspect_url(url, &self.browser_probe_policy);
+        self.browser_probe = Some(probe.clone());
+        self.browser_note = format!(
+            "{} | Risiko {} {:.0}% | {}",
+            probe.final_url,
+            probe.risk_label,
+            probe.risk_score * 100.0,
+            probe.risk_reasons.first().cloned().unwrap_or_else(|| "keine dominante Anomalie".to_owned())
+        );
+        self.status_line = format!("Browser-Probe abgeschlossen: {} {:.0}%", probe.risk_label, probe.risk_score * 100.0);
+        self.append_log(format!("Browser-Probe: {} | {}", probe.final_url, probe.risk_label));
+    }
+
+    fn run_browser_search(&mut self, query: &str) {
+        let context = BrowserInspector::fetch_search_context(query, "duckduckgo", 6.0, "");
+        self.browser_search_context = Some(context.clone());
+        if context.ok {
+            self.status_line = format!("Suchkontext geladen: {}", context.search_url);
+            self.append_log(format!("Suchkontext geladen fuer '{}'", context.query));
+        } else {
+            self.status_line = format!("Suchkontext fehlgeschlagen: {}", context.error);
+        }
+    }
+
+    fn share_current_ttd(&mut self, signed: bool) {
+        let Some((mut submission, validation)) = self.current_ttd_candidate() else {
+            self.status_line = "Es gibt aktuell keinen teilbaren TTD-Kandidaten.".to_owned();
+            return;
+        };
+        if !validation.valid {
+            self.status_line = format!("TTD-Kandidat abgelehnt: {}", validation.reasons.join(" | "));
+            self.append_log(self.status_line.clone());
+            return;
+        }
+        submission.signature_included = signed;
+        match self.public_ttd_pool.submit_validation(&submission) {
+            Ok(summary) => {
+                let record = summary
+                    .anchor_records
+                    .iter()
+                    .find(|record| record.ttd_hash == submission.ttd_hash)
+                    .cloned();
+                let transport_result = if let Some(record) = &record {
+                    self.public_ttd_transport.publish_bundle(&json!({
+                        "schema": "aether.public_ttd_anchor.bundle.v1",
+                        "anchor_records": [record],
+                    }))
+                } else {
+                    Default::default()
+                };
+                let network_suffix = if transport_result.published {
+                    " und ins Netz gereicht"
+                } else if transport_result.network_used {
+                    " lokal behalten, Netzpfad fehlgeschlagen"
+                } else {
+                    " lokal gespeichert"
+                };
+                self.status_line = format!(
+                    "Stabiler TTD-Anker geteilt: {} | Pool trusted {}{}",
+                    &submission.ttd_hash[..submission.ttd_hash.len().min(12)],
+                    summary.trusted_anchor_count,
+                    network_suffix
+                );
+                self.append_log(self.status_line.clone());
+            }
+            Err(err) => {
+                self.status_line = format!("TTD-Share fehlgeschlagen: {err}");
+            }
+        }
+    }
+
+    fn sync_public_ttd(&mut self) {
+        let pulled = self.public_ttd_transport.pull_remote_bundles();
+        if pulled.remote_bundles.is_empty() {
+            self.status_line = if pulled.network_used {
+                format!("Kein neuer Public-TTD-Bundle geladen. {}", pulled.errors.join(" | "))
+            } else {
+                "Public-TTD-Sync bleibt fail-closed deaktiviert.".to_owned()
+            };
+            return;
+        }
+        match self.public_ttd_pool.ingest_remote_bundles(&pulled.remote_bundles) {
+            Ok(summary) => {
+                self.status_line = format!(
+                    "Public-TTD-Sync: {} Bundles | trusted {} | candidate {}",
+                    pulled.remote_bundles.len(),
+                    summary.trusted_anchor_count,
+                    summary.candidate_anchor_count
+                );
+                self.append_log(self.status_line.clone());
+            }
+            Err(err) => {
+                self.status_line = format!("Public-TTD-Sync fehlgeschlagen: {err}");
+            }
+        }
     }
 
     fn append_log(&mut self, message: impl Into<String>) {
@@ -328,6 +547,11 @@ impl AetherRustShell {
                     ObserverModelScope::NeverStore => "NeverStore",
                 }
             ));
+            ui.label(self.public_ttd_pool.summary_line());
+            ui.label(format!(
+                "Public-TTD-Netz: {}",
+                if self.public_ttd_transport.is_enabled() { "aktiv" } else { "aus / fail-closed" }
+            ));
             ui.separator();
             if let Some(file) = &self.current_file {
                 ui.label(RichText::new("Aktive Datei").strong());
@@ -346,6 +570,21 @@ impl AetherRustShell {
                 }
             } else {
                 ui.label("Noch keine Datei aktiv.");
+            }
+            if let Some((submission, validation)) = self.current_ttd_candidate() {
+                ui.label(RichText::new("TTD-Kandidat").strong());
+                ui.label(format!(
+                    "Hash: {} | Symmetrie {:.0}% | I_obs {:.0}% | Residual {:.2}%",
+                    &submission.ttd_hash[..submission.ttd_hash.len().min(12)],
+                    validation.metrics.symmetry * 100.0,
+                    validation.metrics.i_obs_ratio * 100.0,
+                    validation.metrics.residual * 100.0
+                ));
+                if validation.valid {
+                    ui.label(RichText::new("Stabiler TTD-Kandidat erkannt").color(Color32::LIGHT_GREEN));
+                } else {
+                    ui.label(format!("Noch nicht teilbar: {}", validation.reasons.join(" | ")));
+                }
             }
             ui.separator();
             if ui.button("Register neu laden").clicked() {
@@ -455,6 +694,52 @@ impl AetherRustShell {
                     }
                 }
             }
+            if ui.button("Stabilen TTD-Anker teilen").clicked() {
+                if let Some((submission, validation)) = self.current_ttd_candidate() {
+                    if validation.valid {
+                        self.queue_consent(
+                            "Stabilen TTD-Anker teilen",
+                            format!(
+                                "Nur Hash und Metriken werden freigegeben.\nHash: {}\nSymmetrie {:.0}% | I_obs {:.0}% | Residual {:.2}%\nDefault bleibt Nein.",
+                                &submission.ttd_hash[..submission.ttd_hash.len().min(12)],
+                                validation.metrics.symmetry * 100.0,
+                                validation.metrics.i_obs_ratio * 100.0,
+                                validation.metrics.residual * 100.0
+                            ),
+                            ConsentAction::ShareStableTtd { signed: false },
+                        );
+                    } else {
+                        self.status_line = format!("TTD-Kandidat noch nicht stabil: {}", validation.reasons.join(" | "));
+                    }
+                } else {
+                    self.status_line = "Ohne aktive Datei gibt es keinen TTD-Kandidaten.".to_owned();
+                }
+            }
+            if ui.button("Stabilen TTD-Anker signiert teilen").clicked() {
+                if let Some((submission, validation)) = self.current_ttd_candidate() {
+                    if validation.valid {
+                        self.queue_consent(
+                            "TTD-Anker mit Signatur teilen",
+                            format!(
+                                "Nur Hash und Metriken werden freigegeben, zusaetzlich mit lokaler Signatur.\nHash: {}\nDefault bleibt Nein.",
+                                &submission.ttd_hash[..submission.ttd_hash.len().min(12)]
+                            ),
+                            ConsentAction::ShareStableTtd { signed: true },
+                        );
+                    } else {
+                        self.status_line = format!("TTD-Kandidat noch nicht stabil: {}", validation.reasons.join(" | "));
+                    }
+                } else {
+                    self.status_line = "Ohne aktive Datei gibt es keinen TTD-Kandidaten.".to_owned();
+                }
+            }
+            if ui.button("Oeffentliche Anker syncen").clicked() {
+                self.queue_consent(
+                    "Oeffentliche Anker syncen",
+                    "Neue oeffentliche Hash-und-Metrik-Bundles lokal laden und in den Public-TTD-Pool integrieren? Default bleibt Nein.",
+                    ConsentAction::SyncPublicTtd,
+                );
+            }
             ui.separator();
             egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
                 for line in self.activity_log.iter().rev() {
@@ -521,6 +806,7 @@ impl AetherRustShell {
     ) -> Result<ProcessedFile, String> {
         let bytes = fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
         let metadata = fs::metadata(path).map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
+        let fingerprint_hash = sha256_hex(&bytes);
         let original_size = metadata.len();
         let delta_size = estimate_compressed_size(&bytes)?;
         let ratio = if original_size == 0 { 0.0 } else { delta_size as f32 / original_size as f32 };
@@ -552,6 +838,7 @@ impl AetherRustShell {
         let mut processed = ProcessedFile {
             file_name: file_name.clone(),
             full_path: path.to_string_lossy().to_string(),
+            fingerprint_hash,
             source_kind: source_kind.clone(),
             original_size,
             delta_size,
@@ -615,6 +902,7 @@ impl AetherRustShell {
         self.current_file = Some(ProcessedFile {
             file_name: entry.file_name.clone(),
             full_path: entry.full_path.clone(),
+            fingerprint_hash: String::new(),
             source_kind: entry.source_kind.clone(),
             original_size: entry.original_size,
             delta_size: entry.delta_size,
@@ -728,10 +1016,31 @@ impl AetherRustShell {
     fn ui_browser_tab(&mut self, ui: &mut egui::Ui) {
         ui.group(|ui| {
             ui.label(RichText::new("Browser-Arbeitsflaeche").strong());
-            ui.label("Tabs sind vorbereitet. Netzpfade bleiben fail-closed, bis der Rust-Transportport steht.");
+            ui.label("Lokale URL-Probe und Suchkontext bleiben fail-closed und laufen nur nach Consent.");
             ui.horizontal(|ui| {
                 ui.label("Adresse");
                 ui.add(TextEdit::singleline(&mut self.browser_address).desired_width(520.0));
+                if ui.button("URL pruefen").clicked() {
+                    self.queue_consent(
+                        "Lokale URL-Probe",
+                        format!(
+                            "Die Ziel-URL wird mit begrenztem Bytebudget lokal gelesen und strukturell bewertet.\n{}\nDefault bleibt Nein.",
+                            BrowserInspector::normalize_url(&self.browser_address)
+                        ),
+                        ConsentAction::BrowserProbe {
+                            url: self.browser_address.clone(),
+                        },
+                    );
+                }
+                if ui.button("Suchkontext holen").clicked() {
+                    self.queue_consent(
+                        "Web-Suchkontext laden",
+                        "Ein kurzer Suchkontext wird fuer Shanway geladen. Keine Rohdatenpersistenz, nur lokaler Kurzkontext. Default bleibt Nein.",
+                        ConsentAction::BrowserSearch {
+                            query: self.browser_address.clone(),
+                        },
+                    );
+                }
                 if ui.button("An Shanway uebergeben").clicked() {
                     self.top_tab = TopTab::Chats;
                     self.chat_tab = ChatTab::Shanway;
@@ -740,7 +1049,64 @@ impl AetherRustShell {
             });
             ui.add_space(8.0);
             ui.label(&self.browser_note);
+            if let Some(probe) = &self.browser_probe {
+                ui.separator();
+                ui.label(RichText::new("Lokale Probe").strong());
+                ui.label(format!("Titel: {}", probe.title));
+                ui.label(format!("URL: {}", probe.final_url));
+                ui.label(format!(
+                    "Risiko: {} {:.0}% | Kategorie {} | Status {}",
+                    probe.risk_label,
+                    probe.risk_score * 100.0,
+                    probe.category,
+                    probe.status_code
+                ));
+                ui.label(&probe.frontend_summary);
+                ui.label(&probe.backend_summary);
+                if !probe.summary.trim().is_empty() {
+                    ui.label(trimmed_at_boundary(&probe.summary, 240));
+                }
+                for reason in probe.risk_reasons.iter().take(4) {
+                    ui.label(format!("• {}", reason));
+                }
+            }
+            if let Some(context) = &self.browser_search_context {
+                ui.separator();
+                ui.label(RichText::new("Suchkontext").strong());
+                ui.label(format!("Quelle: {}", context.search_url));
+                ui.label(trimmed_at_boundary(&context.summary, 280));
+            }
         });
+    }
+
+    fn ui_consent_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = self.consent_dialog.clone() else {
+            return;
+        };
+        egui::Window::new(dialog.title.clone())
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(dialog.body.clone());
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Nein").clicked() {
+                        self.status_line = "Aktion abgebrochen.".to_owned();
+                        self.consent_dialog = None;
+                    }
+                    if ui.button("Ja").clicked() {
+                        let action = dialog.action.clone();
+                        self.consent_dialog = None;
+                        match action {
+                            ConsentAction::BrowserProbe { url } => self.run_browser_probe(&url),
+                            ConsentAction::BrowserSearch { query } => self.run_browser_search(&query),
+                            ConsentAction::ShareStableTtd { signed } => self.share_current_ttd(signed),
+                            ConsentAction::SyncPublicTtd => self.sync_public_ttd(),
+                        }
+                    }
+                });
+            });
     }
 
     fn ui_chats_tab(&mut self, ui: &mut egui::Ui) {
@@ -887,7 +1253,12 @@ impl AetherRustShell {
         if ui.button("An Shanway senden").clicked() {
             let prompt = self.shanway_message_input.trim().to_owned();
             if !prompt.is_empty() {
-                let active_signal = self.current_file.as_ref().map(build_processed_signal);
+                let active_signal = self
+                    .current_file
+                    .as_ref()
+                    .cloned()
+                    .or_else(|| self.browser_probe.as_ref().map(build_browser_processed_file))
+                    .map(|file| build_processed_signal(&file));
                 if let Some(signal) = active_signal.as_ref() {
                     self.mind_model.learn_from_user_prompt(self.observer_id, signal, &prompt);
                 }
@@ -932,6 +1303,7 @@ impl AetherRustShell {
     fn preview_existing_file(&mut self, path: &Path, ctx: &egui::Context) -> Result<ProcessedFile, String> {
         let bytes = fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
         let metadata = fs::metadata(path).map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
+        let fingerprint_hash = sha256_hex(&bytes);
         let original_size = metadata.len();
         let delta_size = estimate_compressed_size(&bytes)?;
         let ratio = if original_size == 0 { 0.0 } else { delta_size as f32 / original_size as f32 };
@@ -962,6 +1334,7 @@ impl AetherRustShell {
         Ok(ProcessedFile {
             file_name,
             full_path: path.to_string_lossy().to_string(),
+            fingerprint_hash,
             source_kind,
             original_size,
             delta_size,
@@ -1026,6 +1399,7 @@ impl eframe::App for AetherRustShell {
             TopTab::Chats => self.ui_chats_tab(ui),
             TopTab::Register => self.ui_register_tab(ui, ctx),
         });
+        self.ui_consent_dialog(ctx);
     }
 }
 
@@ -1034,6 +1408,35 @@ fn build_processed_signal(file: &ProcessedFile) -> ProcessedSignal {
         format!("{} | {} | {}", file.file_name, file.anchor_summary, file.process_summary),
         vec![domain_from_source_kind(&file.source_kind)],
     )
+}
+
+fn build_browser_processed_file(probe: &BrowserProbeResult) -> ProcessedFile {
+    let file_name = if probe.title.trim().is_empty() {
+        probe.final_url.clone()
+    } else {
+        probe.title.clone()
+    };
+    let summary = if probe.summary.trim().is_empty() {
+        trimmed_at_boundary(&probe.text_sample, 240)
+    } else {
+        trimmed_at_boundary(&probe.summary, 240)
+    };
+    ProcessedFile {
+        file_name,
+        full_path: probe.final_url.clone(),
+        fingerprint_hash: sha256_hex(probe.final_url.as_bytes()),
+        source_kind: format!("Browser {}", probe.category),
+        original_size: probe.content_length as u64,
+        delta_size: (probe.content_length as f32 * probe.risk_score.clamp(0.0, 1.0)) as u64,
+        compression_gain_percent: ((1.0 - probe.risk_score.clamp(0.0, 1.0)) * 100.0).clamp(0.0, 100.0),
+        entropy: probe.entropy,
+        symmetry: probe.frontend_symmetry.clamp(0.0, 1.0),
+        drift: (probe.risk_score * 255.0).clamp(0.0, 255.0),
+        anchor_summary: probe.risk_reasons.join(" | "),
+        process_summary: format!("{} | {}", probe.frontend_summary, probe.backend_summary),
+        preview_note: summary.clone(),
+        excerpt: summary,
+    }
 }
 
 fn build_usage_profile(file: &ProcessedFile, current_hit_rate: f32) -> UsageProfile {
@@ -1074,6 +1477,12 @@ fn signal_type_from_source_kind(source_kind: &str) -> SignalType {
     } else {
         SignalType::Unknown
     }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn map_text_signal_to_comprehension(prompt: &str) -> ComprehensionSignal {

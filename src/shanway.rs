@@ -19,6 +19,17 @@ pub struct ShanwayPackHint {
 }
 
 #[derive(Debug, Clone)]
+pub struct ShanwayBrowserContext {
+    pub url: String,
+    pub risk_label: String,
+    pub risk_score: f32,
+    pub reasons: Vec<String>,
+    pub frontend_summary: String,
+    pub backend_summary: String,
+    pub search_context_summary: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ShanwayInput {
     pub file_name: String,
     pub file_type: String,
@@ -35,6 +46,8 @@ pub struct ShanwayInput {
     pub process_summary: String,
     pub observer_context: Option<ShanwayObserverContext>,
     pub pack_hints: Vec<ShanwayPackHint>,
+    pub browser_context: Option<ShanwayBrowserContext>,
+    pub public_ttd_status: Option<String>,
 }
 
 pub const MASTER_SYSTEM_PROMPT: &str = r#"
@@ -81,11 +94,13 @@ pub fn render_reply(input: Option<&ShanwayInput>, user_text: &str) -> String {
     let simulation = simulate_view(file);
     let observer_line = render_observer_line(file);
     let pack_line = render_pack_line(file);
+    let browser_line = render_browser_line(file);
+    let public_ttd_line = render_public_ttd_line(file);
 
     format!(
         "[Analyse] Datei {file_name} ({file_type}) | H_lambda {h_lambda:.3} | I_obs {i_obs:.3} | Entropie {entropy:.3} | Wissen {knowledge:.1}% | Symmetrie {symmetry:.1}% | Delta-Pfade {delta_paths} | Boundary {boundary}. Noether, Mandelbrot, Heisenberg und Bayes wurden gemeinsam ausgewertet.\n\
 [Simulation] {simulation}\n\
-[Reflection] Modus {mode} | Trust Score {trust:.3} | Residual {residual:.3}. Bayes-Priors {priors}. {observer_line} {pack_line}\n\
+[Reflection] Modus {mode} | Trust Score {trust:.3} | Residual {residual:.3}. Bayes-Priors {priors}. {observer_line} {pack_line} {browser_line} {public_ttd_line}\n\
 [Final Insight] {final_insight}\n\
 [Status] Vault-first aktiv | keine Halluzination | strukturell, nicht semantisch.",
         file_name = file.file_name,
@@ -152,7 +167,55 @@ fn render_pack_line(file: &ShanwayInput) -> String {
     )
 }
 
+fn render_browser_line(file: &ShanwayInput) -> String {
+    let Some(browser) = &file.browser_context else {
+        return "Browser-Layer: kein lokaler URL-Probe-Kontext aktiv.".to_owned();
+    };
+    let reasons = if browser.reasons.is_empty() {
+        "keine dominante Anomalie".to_owned()
+    } else {
+        browser.reasons.join(" | ")
+    };
+    let search = if browser.search_context_summary.trim().is_empty() {
+        "ohne Suchkontext".to_owned()
+    } else {
+        format!("Suchkontext {}", browser.search_context_summary)
+    };
+    format!(
+        "Browser-Layer: {} | Risiko {} {:.0}% | {} | {} | {}.",
+        browser.url,
+        browser.risk_label,
+        browser.risk_score * 100.0,
+        reasons,
+        browser.frontend_summary,
+        search
+    )
+}
+
+fn render_public_ttd_line(file: &ShanwayInput) -> String {
+    file.public_ttd_status
+        .as_ref()
+        .map(|line| format!("Public-TTD: {line}."))
+        .unwrap_or_else(|| "Public-TTD: kein oeffentlicher Poolstatus aktiv.".to_owned())
+}
+
 fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> String {
+    if normalized.contains("browser") || normalized.contains("web") || normalized.contains("url") || normalized.contains("seite") {
+        if let Some(browser) = &file.browser_context {
+            if browser.risk_label == "CRITICAL" {
+                return format!(
+                    "Browser-Kontext bleibt blocknah. {}. Oeffnen ist strukturell nicht empfohlen.",
+                    browser.reasons.join(" | ")
+                );
+            }
+            return format!(
+                "Browser-Kontext ist lokal kalibriert: {} {:.0}%. Oeffnen bleibt {}.",
+                browser.risk_label,
+                browser.risk_score * 100.0,
+                if browser.risk_label == "CLEAN" { "vertretbar" } else { "mit Vorsicht" }
+            );
+        }
+    }
     if normalized.contains("pack") {
         if file.pack_hints.is_empty() {
             return "Keine Pack-Empfehlung ueber der Relevanzschwelle. Der aktuelle Pfad bleibt ohne Zusatzdownload tragfaehig.".to_owned();
@@ -170,6 +233,11 @@ fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> Str
             );
         }
         return "Observer-Delta ist vorbereitet, aber ohne stabile Interaktionshistorie noch konservativ.".to_owned();
+    }
+    if normalized.contains("ttd") || normalized.contains("anker") || normalized.contains("global") {
+        if let Some(status) = &file.public_ttd_status {
+            return format!("Oeffentlicher Ankerpfad: {status}. Rohdaten und Deltas bleiben lokal.");
+        }
     }
     if trust_score >= 0.65 {
         return format!("Stabile Aussage: {} | {}", file.anchor_summary, file.process_summary);
