@@ -6,6 +6,8 @@ description = "Rust shell migration for Aether"
 license = "LicenseRef-Aether-Source-Available"
 
 [dependencies]
+aes-gcm = "0.10"
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 crc32fast = "1.4"
 ed25519-dalek = "2"
@@ -13,7 +15,12 @@ eframe = "0.30"
 egui_extras = "0.30"
 flate2 = "1.0"
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+interprocess = "2.2"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = "1.8"

@@ -432,3 +432,25 @@ Die entscheidende Struktur des Projekts ist:
 - Erst spaet wurde klar, dass das koharente System aus beiden Ebenen als Ganzes entsteht: Aether als Hauptsystem, AELAB als begrenzter Hintergrundpfad.
 
 Damit ist Aether weder eine grosse Weltformel noch ein blosses Softwarepaket ohne theoretischen Anspruch. Es ist ein offenes technisches System zur pruefbaren Untersuchung von Regeln, Beobachtung, Restunsicherheit, Rekonstruktion und Governance.
+
+## 18. Rust-Architekturpfad: oeffentlicher Vault, Bus, Observation
+
+Parallel zum Python-Hauptpfad entsteht ein Rust-Schnitt, der drei harte Trennungen explizit macht:
+
+1. `VaultAccessLayer`
+   Der Vault ist kein frei ansprechbarer Datenspeicher. Oeffentliche Anker laufen durch eine signierende, trust-basierte Zugriffsschicht. Die exportierte Form enthaelt nur mathematische Struktur, keine Originaldaten und keinen privaten Delta-Kontext.
+
+2. `LocalDeltaVault`
+   Der private Delta-Layer bleibt physisch und logisch getrennt. Er dient ausschliesslich der lokalen Rekonstruktion. Selbst wenn ein kollektiver Anchor-Vault waechst, bleibt ohne lokalen Delta-Kontext keine Fremdreproduktion moeglich.
+
+3. `Inter-Layer-Bus` + `ObservationOnlyEngine`
+   Aether entwickelt sich in Richtung eines Ereignisraums, in dem statische Analyse, Laufzeitsignale, Sprachcluster und Vault-Zustaende ueber einen Bus koordiniert werden. Gleichzeitig wird gefaehrliches Strukturwissen in einen isolierten Beobachtungspfad verschoben, so dass Klassifikation moeglich bleibt, ohne reproduzierbare Inhalte auszugeben.
+
+Methodisch bedeutet das:
+
+- oeffentliches Lernen ueber mathematische Signaturen
+- private Rekonstruktion ueber lokale Deltas
+- koordiniertes Systemverhalten ueber Ereignisse statt direkte Layer-Kopplung
+- Gefahrenwissen nur als strukturierte Beobachtung, nicht als ausgabefaehiger Inhalt
+
+Damit bleibt die Grundlinie erhalten: Wissen teilen, ohne Rohinhalte preiszugeben; lernen, ohne die Sicherheitsgrenzen des Systems aufzugeben.

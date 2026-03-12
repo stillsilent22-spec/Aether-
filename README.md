@@ -689,3 +689,20 @@ Das Hauptmotiv dieses Projekts ist einfach:
 
 Nicht zuerst eine grosse Weltformel behaupten.
 Sondern ein System bauen, in dem man lokal, messbar und nachvollziehbar untersuchen kann, wie Regeln, Invarianten, Beobachtung, Lernen und Rekonstruktion zusammen globale Ordnung erzeugen.
+
+## Rust-Pfad: Public Vault, Inter-Layer-Bus, Observation
+
+Der aktuelle Rust-Schnitt erweitert Aether um drei technische Bausteine, ohne den lokalen Sicherheitskern aufzugeben:
+
+- `src/vault_access.rs` fuehrt einen `VaultAccessLayer` ein. Der Vault bleibt intern; Schreiben und Lesen laufen ueber eine signierende Shanway-Pipeline. Oeffentliche Records enthalten nur mathematische Signaturen und Trust-Metadaten, keine Rohdaten.
+- `src/delta_vault.rs` trennt den privaten Delta-Layer physisch vom oeffentlichen Ankerpfad. Deltas werden lokal AES-basiert abgelegt; `.gitignore` blockiert versehentliche Commits.
+- `src/inter_layer_bus.rs`, `src/runtime_signal.rs` und `src/observation.rs` bilden den begonnenen Echtzeitpfad: Event-Bus, Laufzeit-Signalrahmen und Observation-Quarantaene fuer strukturell gefaehrliche Signale.
+
+Diese Rust-Module sind bewusst lokal-first:
+
+- oeffentliche Anchor-Exporte enthalten nur Hashes, mathematische Signaturen und Trust-Felder
+- private Deltas bleiben lokal
+- Observation lernt gefaehrliche Muster nur als 16-dimensionale Strukturvektoren
+- kein Rohinhalt aus dem Quarantaenepfad verlaesst den lokalen Speicher
+
+Der Rust-Pfad ist damit architektonisch vorhanden, auch wenn der eigentliche Toolchain-Build auf diesem Rechner separat abgeschlossen werden muss.

@@ -182,7 +182,7 @@ struct StoredVaultState {
 }
 
 #[derive(Debug, Clone)]
-pub struct VaultStore {
+pub(crate) struct VaultStore {
     path: PathBuf,
     version: u64,
     entries: Vec<StoredVaultEntry>,
@@ -241,6 +241,11 @@ impl VaultStore {
 
     pub fn entry_count(&self) -> usize {
         self.entries.len()
+    }
+
+    pub fn contains(&self, vault_ref: &[u8; 32]) -> bool {
+        let target = hex_encode(vault_ref);
+        self.entries.iter().any(|entry| entry.vault_ref_hex == target)
     }
 
     pub fn get(&self, vault_ref: &[u8; 32]) -> Option<Vec<u8>> {

@@ -7,6 +7,11 @@ target/
 .rustup-home/
 rustup-init.exe
 rustup-init-local.exe
+deltas/
+keys/
+*.delta
+*.delta.enc
+*.key
 __pycache__/
 *.pyc
 *.pyo
