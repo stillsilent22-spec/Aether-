@@ -128,7 +128,10 @@ fn render_without_file(normalized: &str) -> String {
         "Pack-Empfehlungen bleiben optional. Ohne aktive Datei gibt es nur Metadaten, keine Installation."
     } else if normalized.contains("observer") || normalized.contains("theory of mind") {
         "Observer-Delta startet konservativ. Ohne aktive Signale bleibt die kommunikative Luecke noch unkalibriert."
-    } else if normalized.contains("browser") || normalized.contains("web") || normalized.contains("netz") {
+    } else if normalized.contains("browser")
+        || normalized.contains("web")
+        || normalized.contains("netz")
+    {
         "Netzschritte bleiben fail-closed. Ohne explizite Freigabe bleibe ich lokal."
     } else {
         "Dazu habe ich im Rust-Pfad noch keine bestaetigten Dateianker im aktiven Feld."
@@ -140,7 +143,8 @@ fn render_without_file(normalized: &str) -> String {
 
 fn render_observer_line(file: &ShanwayInput) -> String {
     let Some(observer) = &file.observer_context else {
-        return "Observer-Delta: konservativer Session-Start ohne kalibrierte O2-Schaetzung.".to_owned();
+        return "Observer-Delta: konservativer Session-Start ohne kalibrierte O2-Schaetzung."
+            .to_owned();
     };
     format!(
         "Observer-Delta O1 {:.0}% vs O2 {:.0}% -> Luecke {:.0}% | Konfidenz {:.0}% | Tiefe {} | Brueckenanker {}.",
@@ -155,7 +159,8 @@ fn render_observer_line(file: &ShanwayInput) -> String {
 
 fn render_pack_line(file: &ShanwayInput) -> String {
     if file.pack_hints.is_empty() {
-        return "Pack-Layer: keine relevante optionale Beschleunigung ueber der Schwelle erkannt.".to_owned();
+        return "Pack-Layer: keine relevante optionale Beschleunigung ueber der Schwelle erkannt."
+            .to_owned();
     }
     let top = &file.pack_hints[0];
     format!(
@@ -200,7 +205,11 @@ fn render_public_ttd_line(file: &ShanwayInput) -> String {
 }
 
 fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> String {
-    if normalized.contains("browser") || normalized.contains("web") || normalized.contains("url") || normalized.contains("seite") {
+    if normalized.contains("browser")
+        || normalized.contains("web")
+        || normalized.contains("url")
+        || normalized.contains("seite")
+    {
         if let Some(browser) = &file.browser_context {
             if browser.risk_label == "CRITICAL" {
                 return format!(
@@ -212,7 +221,11 @@ fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> Str
                 "Browser-Kontext ist lokal kalibriert: {} {:.0}%. Oeffnen bleibt {}.",
                 browser.risk_label,
                 browser.risk_score * 100.0,
-                if browser.risk_label == "CLEAN" { "vertretbar" } else { "mit Vorsicht" }
+                if browser.risk_label == "CLEAN" {
+                    "vertretbar"
+                } else {
+                    "mit Vorsicht"
+                }
             );
         }
     }
@@ -236,11 +249,16 @@ fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> Str
     }
     if normalized.contains("ttd") || normalized.contains("anker") || normalized.contains("global") {
         if let Some(status) = &file.public_ttd_status {
-            return format!("Oeffentlicher Ankerpfad: {status}. Rohdaten und Deltas bleiben lokal.");
+            return format!(
+                "Oeffentlicher Ankerpfad: {status}. Rohdaten und Deltas bleiben lokal."
+            );
         }
     }
     if trust_score >= 0.65 {
-        return format!("Stabile Aussage: {} | {}", file.anchor_summary, file.process_summary);
+        return format!(
+            "Stabile Aussage: {} | {}",
+            file.anchor_summary, file.process_summary
+        );
     }
     format!(
         "Trust unter Freigabe. Ich extrapoliere nicht weiter und bleibe bei den bestaetigten Teilen: {}",
@@ -249,9 +267,15 @@ fn final_insight(file: &ShanwayInput, normalized: &str, trust_score: f32) -> Str
 }
 
 fn classify_mode(normalized: &str) -> &'static str {
-    if normalized.contains("[fiktion") || normalized.contains("geschichte") || normalized.contains("roman") {
+    if normalized.contains("[fiktion")
+        || normalized.contains("geschichte")
+        || normalized.contains("roman")
+    {
         "FIKTION"
-    } else if normalized.contains("[spekulation") || normalized.contains("vielleicht") || normalized.contains("koennte") {
+    } else if normalized.contains("[spekulation")
+        || normalized.contains("vielleicht")
+        || normalized.contains("koennte")
+    {
         "SPEKULATION"
     } else {
         "WISSEN"
@@ -291,9 +315,30 @@ fn estimate_trust(file: &ShanwayInput) -> f32 {
 
 fn hard_fail_reason(user_text: &str) -> Option<&'static str> {
     let normalized = normalize(user_text);
-    let medical = ["diagnose", "medizin", "medikament", "krebs", "therapie", "depression"];
-    let legal = ["anwalt", "gericht", "klage", "vertrag", "illegal", "urteil", "rechtlich"];
-    let hate = ["rasse", "vernichten", "untermensch", "ethnisch saeubern", "volksverraeter"];
+    let medical = [
+        "diagnose",
+        "medizin",
+        "medikament",
+        "krebs",
+        "therapie",
+        "depression",
+    ];
+    let legal = [
+        "anwalt",
+        "gericht",
+        "klage",
+        "vertrag",
+        "illegal",
+        "urteil",
+        "rechtlich",
+    ];
+    let hate = [
+        "rasse",
+        "vernichten",
+        "untermensch",
+        "ethnisch saeubern",
+        "volksverraeter",
+    ];
     if medical.iter().any(|term| normalized.contains(term)) {
         return Some("Medizinischer Diagnosepfad ist gesperrt");
     }

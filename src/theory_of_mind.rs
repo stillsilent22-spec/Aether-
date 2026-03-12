@@ -149,7 +149,11 @@ impl ObserverModel {
         if self.knowledge_anchors.is_empty() {
             return 0.3;
         }
-        self.knowledge_anchors.values().map(|item| item.confidence).sum::<f32>() / self.knowledge_anchors.len() as f32
+        self.knowledge_anchors
+            .values()
+            .map(|item| item.confidence)
+            .sum::<f32>()
+            / self.knowledge_anchors.len() as f32
     }
 }
 
@@ -166,34 +170,52 @@ impl ProcessedSignal {
             })
             .collect::<Vec<_>>();
         let signal_hash = sha256_bytes(summary.as_bytes());
-        Self { signal_hash, anchors, summary }
+        Self {
+            signal_hash,
+            anchors,
+            summary,
+        }
     }
 }
 
 impl MindModelEngine {
     pub fn new(scope: ObserverModelScope) -> Self {
-        let path = PathBuf::from("data").join("rust_shell").join("observer_models.json");
+        let path = PathBuf::from("data")
+            .join("rust_shell")
+            .join("observer_models.json");
         let observer_models = if scope == ObserverModelScope::PersistentLocal && path.exists() {
             fs::read_to_string(&path)
                 .ok()
                 .and_then(|raw| serde_json::from_str::<StoredObserverState>(&raw).ok())
-                .map(|stored| stored.models.into_iter().map(|model| (model.observer_id, model)).collect())
+                .map(|stored| {
+                    stored
+                        .models
+                        .into_iter()
+                        .map(|model| (model.observer_id, model))
+                        .collect()
+                })
                 .unwrap_or_default()
         } else {
             HashMap::new()
         };
-        Self { scope, path, observer_models }
+        Self {
+            scope,
+            path,
+            observer_models,
+        }
     }
 
     pub fn ensure_observer(&mut self, observer_id: Uuid) {
-        self.observer_models.entry(observer_id).or_insert_with(|| ObserverModel {
-            observer_id,
-            knowledge_anchors: HashMap::new(),
-            domain_familiarity: HashMap::new(),
-            communication_style: CommunicationStyle::default(),
-            interaction_history: Vec::new(),
-            last_updated: now_epoch(),
-        });
+        self.observer_models
+            .entry(observer_id)
+            .or_insert_with(|| ObserverModel {
+                observer_id,
+                knowledge_anchors: HashMap::new(),
+                domain_familiarity: HashMap::new(),
+                communication_style: CommunicationStyle::default(),
+                interaction_history: Vec::new(),
+                last_updated: now_epoch(),
+            });
     }
 
     pub fn scope(&self) -> ObserverModelScope {
@@ -213,7 +235,11 @@ impl MindModelEngine {
         Ok(())
     }
 
-    pub fn calculate_observer_delta(&self, signal: &ProcessedSignal, observer_id: Uuid) -> ObserverDelta {
+    pub fn calculate_observer_delta(
+        &self,
+        signal: &ProcessedSignal,
+        observer_id: Uuid,
+    ) -> ObserverDelta {
         let o1_knowledge = 0.92;
         let o2_estimated_knowledge = self
             .observer_models
@@ -232,38 +258,57 @@ impl MindModelEngine {
             o2_estimated_knowledge,
             delta,
             confidence,
-            recommended_depth: self.calculate_recommended_depth(o1_knowledge, o2_estimated_knowledge),
+            recommended_depth: self
+                .calculate_recommended_depth(o1_knowledge, o2_estimated_knowledge),
             recommended_anchors: self.select_bridging_anchors(signal, observer_id),
         }
     }
 
-    pub fn learn_from_user_prompt(&mut self, observer_id: Uuid, signal: &ProcessedSignal, user_text: &str) {
+    pub fn learn_from_user_prompt(
+        &mut self,
+        observer_id: Uuid,
+        signal: &ProcessedSignal,
+        user_text: &str,
+    ) {
         self.ensure_observer(observer_id);
         let text_signal = ComprehensionDetector::detect_text_signal(user_text);
         let domain_hints = detect_domain_hints(user_text);
-        let model = self.observer_models.get_mut(&observer_id).expect("observer inserted");
+        let model = self
+            .observer_models
+            .get_mut(&observer_id)
+            .expect("observer inserted");
         for hint in domain_hints {
             let entry = model.domain_familiarity.entry(hint).or_insert(0.3);
             *entry = (*entry + 0.08).clamp(0.0, 1.0);
         }
         for anchor in &signal.anchors {
-            let knowledge = model.knowledge_anchors.entry(anchor.anchor_id).or_insert(KnowledgeEstimate {
-                anchor_id: anchor.anchor_id,
-                estimated_familiarity: 0.45,
-                confidence: 0.15,
-                evidence: Vec::new(),
-            });
+            let knowledge =
+                model
+                    .knowledge_anchors
+                    .entry(anchor.anchor_id)
+                    .or_insert(KnowledgeEstimate {
+                        anchor_id: anchor.anchor_id,
+                        estimated_familiarity: 0.45,
+                        confidence: 0.15,
+                        evidence: Vec::new(),
+                    });
             match text_signal {
                 TextSignal::AlreadyFamiliar => {
-                    knowledge.estimated_familiarity = (knowledge.estimated_familiarity * 0.7 + 0.9 * 0.3).clamp(0.0, 1.0);
+                    knowledge.estimated_familiarity =
+                        (knowledge.estimated_familiarity * 0.7 + 0.9 * 0.3).clamp(0.0, 1.0);
                     knowledge.evidence.push(EvidenceSource::ExplicitStatement);
                 }
                 TextSignal::Confusion => {
-                    knowledge.estimated_familiarity = (knowledge.estimated_familiarity * 0.6 + 0.1 * 0.4).clamp(0.0, 1.0);
-                    knowledge.evidence.push(EvidenceSource::MisunderstandingDetected);
+                    knowledge.estimated_familiarity =
+                        (knowledge.estimated_familiarity * 0.6 + 0.1 * 0.4).clamp(0.0, 1.0);
+                    knowledge
+                        .evidence
+                        .push(EvidenceSource::MisunderstandingDetected);
                 }
                 _ => {
-                    knowledge.evidence.push(EvidenceSource::QuestionAsked(user_text.to_owned()));
+                    knowledge
+                        .evidence
+                        .push(EvidenceSource::QuestionAsked(user_text.to_owned()));
                 }
             }
             knowledge.confidence = (knowledge.confidence + 0.08).clamp(0.0, 0.95);
@@ -272,9 +317,18 @@ impl MindModelEngine {
         let _ = self.save();
     }
 
-    pub fn record_interaction(&mut self, observer_id: Uuid, signal_hash: [u8; 32], depth: ExplanationDepth, comprehension_signal: ComprehensionSignal) {
+    pub fn record_interaction(
+        &mut self,
+        observer_id: Uuid,
+        signal_hash: [u8; 32],
+        depth: ExplanationDepth,
+        comprehension_signal: ComprehensionSignal,
+    ) {
         self.ensure_observer(observer_id);
-        let model = self.observer_models.get_mut(&observer_id).expect("observer inserted");
+        let model = self
+            .observer_models
+            .get_mut(&observer_id)
+            .expect("observer inserted");
         model.interaction_history.push(InteractionRecord {
             timestamp: now_epoch(),
             signal_hash,
@@ -287,10 +341,12 @@ impl MindModelEngine {
         }
         match comprehension_signal {
             ComprehensionSignal::NotUnderstood => {
-                model.communication_style.preferred_depth = (model.communication_style.preferred_depth - 0.08).clamp(0.0, 1.0);
+                model.communication_style.preferred_depth =
+                    (model.communication_style.preferred_depth - 0.08).clamp(0.0, 1.0);
             }
             ComprehensionSignal::AlreadyKnew => {
-                model.communication_style.preferred_depth = (model.communication_style.preferred_depth + 0.08).clamp(0.0, 1.0);
+                model.communication_style.preferred_depth =
+                    (model.communication_style.preferred_depth + 0.08).clamp(0.0, 1.0);
             }
             _ => {}
         }
@@ -324,7 +380,12 @@ impl MindModelEngine {
                 .get(&anchor.anchor_id)
                 .map(|knowledge| knowledge.estimated_familiarity)
                 .unwrap_or(0.0);
-            let domain_bonus = model.domain_familiarity.get(&anchor.domain).copied().unwrap_or(0.0) * 0.30;
+            let domain_bonus = model
+                .domain_familiarity
+                .get(&anchor.domain)
+                .copied()
+                .unwrap_or(0.0)
+                * 0.30;
             weighted += (familiarity + domain_bonus).min(1.0) * anchor.weight;
             weight_sum += anchor.weight;
         }
@@ -336,7 +397,11 @@ impl MindModelEngine {
     }
 
     fn default_knowledge_estimate(&self, signal: &ProcessedSignal) -> f32 {
-        if signal.summary.len() > 120 { 0.28 } else { 0.38 }
+        if signal.summary.len() > 120 {
+            0.28
+        } else {
+            0.38
+        }
     }
 
     fn calculate_recommended_depth(&self, o1: f32, o2: f32) -> ExplanationDepth {
@@ -351,7 +416,12 @@ impl MindModelEngine {
 
     fn select_bridging_anchors(&self, signal: &ProcessedSignal, observer_id: Uuid) -> Vec<Uuid> {
         let Some(model) = self.observer_models.get(&observer_id) else {
-            return signal.anchors.iter().take(2).map(|anchor| anchor.anchor_id).collect();
+            return signal
+                .anchors
+                .iter()
+                .take(2)
+                .map(|anchor| anchor.anchor_id)
+                .collect();
         };
         let mut scored = signal
             .anchors
@@ -362,11 +432,28 @@ impl MindModelEngine {
                     .get(&anchor.anchor_id)
                     .map(|knowledge| knowledge.estimated_familiarity)
                     .unwrap_or(0.0);
-                (familiarity + model.domain_familiarity.get(&anchor.domain).copied().unwrap_or(0.0), anchor.anchor_id)
+                (
+                    familiarity
+                        + model
+                            .domain_familiarity
+                            .get(&anchor.domain)
+                            .copied()
+                            .unwrap_or(0.0),
+                    anchor.anchor_id,
+                )
             })
             .collect::<Vec<_>>();
-        scored.sort_by(|left, right| right.0.partial_cmp(&left.0).unwrap_or(std::cmp::Ordering::Equal));
-        scored.into_iter().take(3).map(|(_, anchor_id)| anchor_id).collect()
+        scored.sort_by(|left, right| {
+            right
+                .0
+                .partial_cmp(&left.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        scored
+            .into_iter()
+            .take(3)
+            .map(|(_, anchor_id)| anchor_id)
+            .collect()
     }
 
     fn save(&self) -> Result<(), String> {
@@ -387,8 +474,21 @@ impl MindModelEngine {
 impl ComprehensionDetector {
     pub fn detect_text_signal(user_input: &str) -> TextSignal {
         let normalized = user_input.to_ascii_lowercase();
-        let confusion = ["ich verstehe", "was meinst", "unklar", "hae", "warum", "wie genau"];
-        let familiar = ["das weiss ich", "kenne ich", "ist mir bekannt", "already know", "klar"];
+        let confusion = [
+            "ich verstehe",
+            "was meinst",
+            "unklar",
+            "hae",
+            "warum",
+            "wie genau",
+        ];
+        let familiar = [
+            "das weiss ich",
+            "kenne ich",
+            "ist mir bekannt",
+            "already know",
+            "klar",
+        ];
         let understood = ["ah ok", "verstanden", "macht sinn", "jetzt klar"];
         if confusion.iter().any(|term| normalized.contains(term)) {
             TextSignal::Confusion
@@ -403,7 +503,11 @@ impl ComprehensionDetector {
 }
 
 impl ToMOutputAdapter {
-    pub fn adapt_output(raw_output: &str, delta: &ObserverDelta, observer_model: Option<&ObserverModel>) -> AdaptedOutput {
+    pub fn adapt_output(
+        raw_output: &str,
+        delta: &ObserverDelta,
+        observer_model: Option<&ObserverModel>,
+    ) -> AdaptedOutput {
         let prefix = match delta.recommended_depth {
             ExplanationDepth::Fundamental => "Ich starte bei den Grundankern.",
             ExplanationDepth::Introductory => "Ich bleibe auf Einstiegstiefe.",
@@ -413,7 +517,10 @@ impl ToMOutputAdapter {
         };
         let bridge_note = observer_model.and_then(|model| {
             if model.communication_style.analogy_receptive && delta.delta > 0.45 {
-                Some("Brueckenanker aktiv: bekannte Domaenen werden als Uebergang genutzt.".to_owned())
+                Some(
+                    "Brueckenanker aktiv: bekannte Domaenen werden als Uebergang genutzt."
+                        .to_owned(),
+                )
             } else {
                 None
             }
@@ -429,7 +536,9 @@ impl ToMOutputAdapter {
 fn stable_uuid(value: &str) -> Uuid {
     let digest = sha256_bytes(value.as_bytes());
     Uuid::from_bytes([
-        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7], digest[8], digest[9], digest[10], digest[11], digest[12], digest[13], digest[14], digest[15],
+        digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7],
+        digest[8], digest[9], digest[10], digest[11], digest[12], digest[13], digest[14],
+        digest[15],
     ])
 }
 
@@ -475,7 +584,8 @@ mod tests {
     #[test]
     fn observer_delta_reduces_with_known_anchor() {
         let observer_id = Uuid::new_v4();
-        let signal = ProcessedSignal::from_summary("rust entropy", vec!["development_rust".to_owned()]);
+        let signal =
+            ProcessedSignal::from_summary("rust entropy", vec!["development_rust".to_owned()]);
         let mut engine = MindModelEngine::new(ObserverModelScope::SessionOnly);
         engine.ensure_observer(observer_id);
         let before = engine.calculate_observer_delta(&signal, observer_id);

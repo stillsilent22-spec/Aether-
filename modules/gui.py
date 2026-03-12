@@ -41,7 +41,7 @@ from .public_anchor import PublicBlockchainAnchor
 from .public_ttd_transport import PublicTTDTransport
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
-from .screen_vision_engine import ScreenVisionEngine
+from .screen_vision_engine import ScreenVisionEngine, ShanwayAetherVision
 from .security_engine import (
     browser_probe_policy,
     network_access_policy,
@@ -394,6 +394,11 @@ class VeiraGUI:
         self.chat_channel_map: dict[str, dict[str, object]] = {}
         self._last_dual_storage_decision: dict[str, object] = {}
         self._updating_security_mode = False
+        self._aether_vision_state: dict[str, Any] = {}
+        self.aether_vision = ShanwayAetherVision(
+            analysis_engine=self.analysis_engine,
+            bus_publish_fn=self._publish_aether_vision_event,
+        )
 
         self._configure_styles()
         self.renderer.set_storage_layer(self.storage_layer_var.get())
@@ -424,6 +429,7 @@ class VeiraGUI:
         self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
         self.root.after(2200, lambda: self._sync_local_public_ttd_pool(silent=True))
         self.root.after(2600, lambda: self._sync_remote_public_ttd_pool(silent=True))
+        self.aether_vision.start()
 
     @staticmethod
     def _ae_anchor_preview(anchors: list[dict[str, object]], limit: int = 3) -> str:
@@ -5454,7 +5460,11 @@ class VeiraGUI:
         if fingerprint is None:
             self.preview_title_var.set("Keine Datei geladen")
             self.preview_context_var.set("Dateivorschau: warte auf Drag & Drop")
-            self.preview_relation_var.set("Screen / Hintergrund: noch kein Bezug aktiv")
+            vision_title = str(self._aether_vision_state.get("window_title", "") or "")
+            if vision_title:
+                self.preview_relation_var.set(f"Aether Vision aktiv | Fenster {vision_title}")
+            else:
+                self.preview_relation_var.set("Screen / Hintergrund: noch kein Bezug aktiv")
             self.preview_register_var.set("Register: keine Auswahl")
             self._set_text_widget(self.center_file_text, "Noch keine aktive Analyse.")
             self._set_text_widget(self.center_process_text, "Noch keine Prozess- oder Screen-Daten.")
@@ -5533,6 +5543,22 @@ class VeiraGUI:
         self._set_text_widget(self.center_file_text, "\n".join(file_lines))
         self._set_text_widget(self.center_process_text, "\n".join(process_lines))
         self._set_text_widget(self.center_anchor_text, "\n".join(anchor_lines))
+
+    def _publish_aether_vision_event(self, payload: dict[str, Any]) -> None:
+        """Nimmt Vision-Events aus dem Background-Thread thread-sicher an."""
+        try:
+            self.root.after(0, lambda data=dict(payload): self._apply_aether_vision_event(data))
+        except Exception:
+            pass
+
+    def _apply_aether_vision_event(self, payload: dict[str, Any]) -> None:
+        """Aktualisiert den lokalen Vision-Status ohne fremde Inhalte zu speichern."""
+        self._aether_vision_state = dict(payload or {})
+        title = str(self._aether_vision_state.get("window_title", "") or "")
+        if title:
+            self.shanway_vault_watch_var.set(f"AELAB Watch: Vision aktiv | {title}")
+            if self.current_fingerprint is None:
+                self.preview_relation_var.set(f"Aether Vision aktiv | Fenster {title}")
 
     def _create_integrity_row(
         self,
@@ -9501,6 +9527,10 @@ class VeiraGUI:
             pass
         self.browser_engine.stop()
         self.chat_relay_server.stop()
+        try:
+            self.aether_vision.stop()
+        except Exception:
+            pass
         self.audio_engine.stop_audiovisual_stream()
         self.audio_engine.stop_aether_oscillator()
         if self.theremin_engine.is_running:

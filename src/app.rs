@@ -1,27 +1,45 @@
-use crate::aef::{AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore};
+use crate::aef::{
+    AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore,
+};
 use crate::auth::{AuthStore, UserRecord};
-use crate::browser::{BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext};
+use crate::browser::{
+    BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
+};
 use crate::chat_sync::{ChatRelayClient, ChatRelayConfig, ChatRelayEnvelope, ChatRelayStateStore};
-use crate::pack::{AutoPackGenerator, OfflineCacheManager, OfflinePrepRequest, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
+use crate::gfx::AetherGfx;
+use crate::inter_layer_bus::{BusEvent, BusPublisher, InterLayerBus, PackInstalledEvent};
+use crate::offline_cache::{CacheTarget, OfflineCacheManager, OfflinePrepRequest};
+use crate::pack::{AutoPackGenerator, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
 use crate::public_ttd::{
-    pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation, PublicTtdMetrics,
-    PublicTtdPoolStore, PublicTtdSubmission, PublicTtdTransport,
+    pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation,
+    PublicTtdMetrics, PublicTtdPoolStore, PublicTtdSubmission, PublicTtdTransport,
 };
 use crate::shanway::{
-    render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput, ShanwayObserverContext, ShanwayPackHint,
+    render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput,
+    ShanwayObserverContext, ShanwayPackHint,
 };
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
-use crate::theory_of_mind::{ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope, ProcessedSignal, ToMOutputAdapter};
+use crate::theory_of_mind::{
+    ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope,
+    ProcessedSignal, ToMOutputAdapter,
+};
+use crate::vault_access::VaultAccessLayer;
+use crate::workflow_anchor::WorkflowSignalCollector;
 use chrono::Utc;
-use eframe::egui::{self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2};
+use eframe::egui::{
+    self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2,
+};
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use tokio::runtime::Builder;
+use tokio::sync::broadcast::{error::TryRecvError, Receiver};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,11 +132,16 @@ pub struct AetherRustShell {
     last_drop_token: Option<String>,
     observer_id: Uuid,
     mind_model: MindModelEngine,
+    vault_access: Arc<VaultAccessLayer>,
     pack_registry: Arc<RwLock<PackRegistry>>,
     pack_manager: PackManager,
     pack_advisor: ShanwayPackAdvisor,
     pack_generator: AutoPackGenerator,
     offline_cache_manager: OfflineCacheManager,
+    workflow_collector: WorkflowSignalCollector,
+    gfx: AetherGfx,
+    bus_publisher: BusPublisher,
+    bus_receiver: Receiver<BusEvent>,
     public_ttd_pool: PublicTtdPoolStore,
     public_ttd_transport: PublicTtdTransport,
     chat_relay_store: ChatRelayStateStore,
@@ -139,17 +162,38 @@ impl AetherRustShell {
         let observer_id = Uuid::new_v4();
         let mut mind_model = MindModelEngine::new(ObserverModelScope::SessionOnly);
         mind_model.ensure_observer(observer_id);
-        let pack_registry = Arc::new(RwLock::new(PackRegistry::load_default().unwrap_or(PackRegistry {
-            index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
-            local_cache: PathBuf::from("data").join("rust_shell").join("packs").join("pack_registry.json"),
-            last_updated: 0,
-            entries: Vec::new(),
-        })));
-        let vault_access = Arc::new(crate::vault_access::VaultAccessLayer::new(Arc::clone(&aef_vault), Arc::clone(&aef_engine)));
+        let inter_layer_bus = InterLayerBus::new(128);
+        let bus_publisher = inter_layer_bus.publisher();
+        let bus_receiver = inter_layer_bus.subscriber();
+        let pack_registry = Arc::new(RwLock::new(
+            PackRegistry::load_default().unwrap_or(PackRegistry {
+                index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
+                local_cache: PathBuf::from("data")
+                    .join("rust_shell")
+                    .join("packs")
+                    .join("pack_registry.json"),
+                last_updated: 0,
+                entries: Vec::new(),
+            }),
+        ));
+        let vault_access = Arc::new(VaultAccessLayer::new(
+            Arc::clone(&aef_vault),
+            Arc::clone(&aef_engine),
+        ));
         let pack_manager = PackManager::new(Arc::clone(&vault_access), Arc::clone(&pack_registry));
-        let pack_advisor = ShanwayPackAdvisor::new(Arc::clone(&pack_registry));
+        let pack_advisor =
+            ShanwayPackAdvisor::with_bus(Arc::clone(&pack_registry), bus_publisher.clone());
         let pack_generator = AutoPackGenerator::new(Arc::clone(&vault_access));
-        let offline_cache_manager = OfflineCacheManager::new();
+        let offline_cache_manager = OfflineCacheManager::new(
+            Arc::clone(&vault_access),
+            PathBuf::from("data")
+                .join("rust_shell")
+                .join("offline_cache"),
+            bus_publisher.clone(),
+        );
+        let workflow_collector =
+            WorkflowSignalCollector::new(Arc::clone(&vault_access), bus_publisher.clone());
+        let gfx = AetherGfx::new_auto(Arc::clone(&vault_access), bus_publisher.clone());
         let public_ttd_pool = PublicTtdPoolStore::new_default();
         let public_ttd_transport = PublicTtdTransport::new_default();
         let chat_relay_store = ChatRelayStateStore::new_default();
@@ -197,11 +241,16 @@ impl AetherRustShell {
             last_drop_token: None,
             observer_id,
             mind_model,
+            vault_access,
             pack_registry,
             pack_manager,
             pack_advisor,
             pack_generator,
             offline_cache_manager,
+            workflow_collector,
+            gfx,
+            bus_publisher,
+            bus_receiver,
             public_ttd_pool,
             public_ttd_transport,
             chat_relay_store,
@@ -225,19 +274,21 @@ impl AetherRustShell {
         encoder
             .encode_sync(path, &output_path)
             .map_err(|err| format!("AEF-Encoding fehlgeschlagen: {err}"))?;
-        AefInspector::inspect(&output_path).map_err(|err| format!("AEF-Inspektion fehlgeschlagen: {err}"))
+        AefInspector::inspect(&output_path)
+            .map_err(|err| format!("AEF-Inspektion fehlgeschlagen: {err}"))
     }
 
     fn refresh_projection_for_path(&mut self, path: &Path) {
         let output_path = aef_output_path(path);
-        let projection = self
-            .aef_vault
-            .read()
+        let projection = self.aef_vault.read().ok().and_then(|vault| {
+            let projected_vault_size = vault.entry_count().saturating_mul(2).max(32);
+            AefInspector::project_future_compression_sync(
+                &output_path,
+                &vault,
+                projected_vault_size,
+            )
             .ok()
-            .and_then(|vault| {
-                let projected_vault_size = vault.entry_count().saturating_mul(2).max(32);
-                AefInspector::project_future_compression_sync(&output_path, &vault, projected_vault_size).ok()
-            });
+        });
         self.last_aef_projection = projection;
     }
 
@@ -249,7 +300,9 @@ impl AetherRustShell {
             build_browser_processed_file(self.browser_probe.as_ref()?)
         };
         let signal = build_processed_signal(&file);
-        let observer_delta = self.mind_model.calculate_observer_delta(&signal, self.observer_id);
+        let observer_delta = self
+            .mind_model
+            .calculate_observer_delta(&signal, self.observer_id);
         let usage_profile = build_usage_profile(&file, self.current_hit_rate());
         let pack_hints = self
             .pack_advisor
@@ -263,19 +316,22 @@ impl AetherRustShell {
                 estimated_compression_improvement: hint.estimated_compression_improvement,
             })
             .collect::<Vec<_>>();
-        let browser_context = self.browser_probe.as_ref().map(|probe| ShanwayBrowserContext {
-            url: probe.final_url.clone(),
-            risk_label: probe.risk_label.clone(),
-            risk_score: probe.risk_score,
-            reasons: probe.risk_reasons.clone(),
-            frontend_summary: probe.frontend_summary.clone(),
-            backend_summary: probe.backend_summary.clone(),
-            search_context_summary: self
-                .browser_search_context
-                .as_ref()
-                .map(|context| trimmed_at_boundary(&context.summary, 240))
-                .unwrap_or_default(),
-        });
+        let browser_context = self
+            .browser_probe
+            .as_ref()
+            .map(|probe| ShanwayBrowserContext {
+                url: probe.final_url.clone(),
+                risk_label: probe.risk_label.clone(),
+                risk_score: probe.risk_score,
+                reasons: probe.risk_reasons.clone(),
+                frontend_summary: probe.frontend_summary.clone(),
+                backend_summary: probe.backend_summary.clone(),
+                search_context_summary: self
+                    .browser_search_context
+                    .as_ref()
+                    .map(|context| trimmed_at_boundary(&context.summary, 240))
+                    .unwrap_or_default(),
+            });
         Some(ShanwayInput {
             file_name: file.file_name,
             file_type: if synthetic_browser_file {
@@ -293,8 +349,10 @@ impl AetherRustShell {
                 file.entropy,
                 (file.compression_gain_percent / 100.0).clamp(0.0, 1.0)
             ),
-            residual_ratio: (file.delta_size as f32 / file.original_size.max(1) as f32).clamp(0.0, 1.0),
-            observer_mutual_info: (file.symmetry * (1.0 - (file.drift / 255.0).clamp(0.0, 1.0))).clamp(0.0, 1.0),
+            residual_ratio: (file.delta_size as f32 / file.original_size.max(1) as f32)
+                .clamp(0.0, 1.0),
+            observer_mutual_info: (file.symmetry * (1.0 - (file.drift / 255.0).clamp(0.0, 1.0)))
+                .clamp(0.0, 1.0),
             h_lambda: (file.entropy * (1.0 - file.symmetry).clamp(0.0, 1.0)).max(0.0),
             boundary: if file.symmetry < 0.58 {
                 "GOEDEL_LIMIT".to_owned()
@@ -320,12 +378,14 @@ impl AetherRustShell {
     }
 
     fn current_hit_rate(&self) -> f32 {
-        let count = self
-            .aef_vault
-            .read()
-            .map(|vault| vault.entry_count() as f32)
-            .unwrap_or(0.0);
-        (count / (count + 24.0)).clamp(0.0, 1.0)
+        self.vault_access.current_hit_rate().unwrap_or_else(|_| {
+            let count = self
+                .aef_vault
+                .read()
+                .map(|vault| vault.entry_count() as f32)
+                .unwrap_or(0.0);
+            (count / (count + 24.0)).clamp(0.0, 1.0)
+        })
     }
 
     fn current_usage_profile(&self) -> Option<UsageProfile> {
@@ -335,7 +395,9 @@ impl AetherRustShell {
     }
 
     fn current_domain_key(&self) -> Option<String> {
-        self.current_file.as_ref().map(|file| domain_from_source_kind(&file.source_kind))
+        self.current_file
+            .as_ref()
+            .map(|file| domain_from_source_kind(&file.source_kind))
     }
 
     fn current_ttd_candidate(&self) -> Option<(PublicTtdSubmission, PublicTtdCandidateValidation)> {
@@ -366,20 +428,33 @@ impl AetherRustShell {
             "RECONSTRUCTABLE"
         };
         let anomaly_count = u32::from(file.symmetry < 0.50)
-            + u32::from(self.browser_probe.as_ref().map(|probe| probe.risk_label == "CRITICAL").unwrap_or(false));
+            + u32::from(
+                self.browser_probe
+                    .as_ref()
+                    .map(|probe| probe.risk_label == "CRITICAL")
+                    .unwrap_or(false),
+            );
         let lossless_verified = self
             .last_aef_report
             .as_ref()
             .map(|report| report.lossless_confirmed)
             .unwrap_or(false);
-        let validation = validate_public_ttd_candidate(metrics.clone(), anomaly_count, boundary, lossless_verified);
+        let validation = validate_public_ttd_candidate(
+            metrics.clone(),
+            anomaly_count,
+            boundary,
+            lossless_verified,
+        );
         let user = self.current_user.as_ref()?;
         let submission = PublicTtdSubmission {
             ttd_hash: file.fingerprint_hash.clone(),
             source_label: file.source_kind.clone(),
             public_metrics: metrics,
             pseudonym: pseudonymous_network_identity(
-                &format!("{}|{}|{}", user.username, self.observer_id, file.fingerprint_hash),
+                &format!(
+                    "{}|{}|{}",
+                    user.username, self.observer_id, file.fingerprint_hash
+                ),
                 "public_ttd",
             ),
             uploader_role: user.role.clone(),
@@ -388,7 +463,12 @@ impl AetherRustShell {
         Some((submission, validation))
     }
 
-    fn queue_consent(&mut self, title: impl Into<String>, body: impl Into<String>, action: ConsentAction) {
+    fn queue_consent(
+        &mut self,
+        title: impl Into<String>,
+        body: impl Into<String>,
+        action: ConsentAction,
+    ) {
         self.consent_dialog = Some(ConsentDialogState {
             title: title.into(),
             body: body.into(),
@@ -404,10 +484,21 @@ impl AetherRustShell {
             probe.final_url,
             probe.risk_label,
             probe.risk_score * 100.0,
-            probe.risk_reasons.first().cloned().unwrap_or_else(|| "keine dominante Anomalie".to_owned())
+            probe
+                .risk_reasons
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "keine dominante Anomalie".to_owned())
         );
-        self.status_line = format!("Browser-Probe abgeschlossen: {} {:.0}%", probe.risk_label, probe.risk_score * 100.0);
-        self.append_log(format!("Browser-Probe: {} | {}", probe.final_url, probe.risk_label));
+        self.status_line = format!(
+            "Browser-Probe abgeschlossen: {} {:.0}%",
+            probe.risk_label,
+            probe.risk_score * 100.0
+        );
+        self.append_log(format!(
+            "Browser-Probe: {} | {}",
+            probe.final_url, probe.risk_label
+        ));
     }
 
     fn run_browser_search(&mut self, query: &str) {
@@ -427,7 +518,8 @@ impl AetherRustShell {
             return;
         };
         if !validation.valid {
-            self.status_line = format!("TTD-Kandidat abgelehnt: {}", validation.reasons.join(" | "));
+            self.status_line =
+                format!("TTD-Kandidat abgelehnt: {}", validation.reasons.join(" | "));
             self.append_log(self.status_line.clone());
             return;
         }
@@ -472,13 +564,19 @@ impl AetherRustShell {
         let pulled = self.public_ttd_transport.pull_remote_bundles();
         if pulled.remote_bundles.is_empty() {
             self.status_line = if pulled.network_used {
-                format!("Kein neuer Public-TTD-Bundle geladen. {}", pulled.errors.join(" | "))
+                format!(
+                    "Kein neuer Public-TTD-Bundle geladen. {}",
+                    pulled.errors.join(" | ")
+                )
             } else {
                 "Public-TTD-Sync bleibt fail-closed deaktiviert.".to_owned()
             };
             return;
         }
-        match self.public_ttd_pool.ingest_remote_bundles(&pulled.remote_bundles) {
+        match self
+            .public_ttd_pool
+            .ingest_remote_bundles(&pulled.remote_bundles)
+        {
             Ok(summary) => {
                 self.status_line = format!(
                     "Public-TTD-Sync: {} Bundles | trusted {} | candidate {}",
@@ -523,14 +621,19 @@ impl AetherRustShell {
 
     fn probe_chat_relay_health(&mut self) {
         if let Err(err) = self.persist_chat_relay_config() {
-            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            self.status_line =
+                format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
             return;
         }
         if self.chat_relay_config.base_url.trim().is_empty() {
-            self.relay_status_line = "Chat-Relay bleibt lokal / fail-closed. Keine URL gesetzt.".to_owned();
+            self.relay_status_line =
+                "Chat-Relay bleibt lokal / fail-closed. Keine URL gesetzt.".to_owned();
             return;
         }
-        match self.chat_relay_client.health(&self.chat_relay_config.base_url) {
+        match self
+            .chat_relay_client
+            .health(&self.chat_relay_config.base_url)
+        {
             Ok(payload) => {
                 let status = payload
                     .get("status")
@@ -554,10 +657,13 @@ impl AetherRustShell {
             return;
         }
         if let Err(err) = self.persist_chat_relay_config() {
-            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            self.status_line =
+                format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
             return;
         }
-        if self.chat_relay_config.base_url.trim().is_empty() || self.chat_relay_config.shared_secret.trim().is_empty() {
+        if self.chat_relay_config.base_url.trim().is_empty()
+            || self.chat_relay_config.shared_secret.trim().is_empty()
+        {
             self.status_line = "Chat-Relay bleibt fail-closed: URL oder Secret fehlt.".to_owned();
             return;
         }
@@ -572,7 +678,10 @@ impl AetherRustShell {
                 body: draft.body,
                 created_at: Utc::now().to_rfc3339(),
             };
-            match self.chat_relay_client.publish(&self.chat_relay_config, &envelope) {
+            match self
+                .chat_relay_client
+                .publish(&self.chat_relay_config, &envelope)
+            {
                 Ok(event_id) => {
                     sent += 1;
                     last_event_id = last_event_id.max(event_id);
@@ -601,10 +710,13 @@ impl AetherRustShell {
 
     fn sync_chat_relay(&mut self) {
         if let Err(err) = self.persist_chat_relay_config() {
-            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            self.status_line =
+                format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
             return;
         }
-        if self.chat_relay_config.base_url.trim().is_empty() || self.chat_relay_config.shared_secret.trim().is_empty() {
+        if self.chat_relay_config.base_url.trim().is_empty()
+            || self.chat_relay_config.shared_secret.trim().is_empty()
+        {
             self.status_line = "Chat-Relay bleibt fail-closed: URL oder Secret fehlt.".to_owned();
             return;
         }
@@ -687,16 +799,171 @@ impl AetherRustShell {
         }
     }
 
+    fn run_async<T>(future: impl Future<Output = T>) -> Result<T, String> {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| format!("Tokio-Runtime konnte nicht erstellt werden: {err}"))?;
+        Ok(runtime.block_on(future))
+    }
+
+    fn drain_bus_events(&mut self) {
+        loop {
+            match self.bus_receiver.try_recv() {
+                Ok(event) => self.handle_bus_event(event),
+                Err(TryRecvError::Empty) | Err(TryRecvError::Closed) => break,
+                Err(TryRecvError::Lagged(skipped)) => {
+                    self.append_log(format!("Bus: {skipped} Ereignisse uebersprungen."));
+                }
+            }
+        }
+    }
+
+    fn handle_bus_event(&mut self, event: BusEvent) {
+        match event {
+            BusEvent::PackRecommended(payload) => {
+                self.append_log(format!(
+                    "Pack-Empfehlung: {} | {} | +{:.0}% Hit-Rate",
+                    payload.pack_name,
+                    payload.domain,
+                    payload.estimated_hit_rate_improvement * 100.0
+                ));
+            }
+            BusEvent::PackDownloadConfirmed(payload) => {
+                self.append_log(format!("Pack-Download bestaetigt: {}", payload.pack_id));
+            }
+            BusEvent::PackInstalled(payload) => {
+                self.status_line = format!(
+                    "Pack installiert: {} | {} neue Anker",
+                    payload.pack_name, payload.installed_anchor_count
+                );
+                self.append_log(self.status_line.clone());
+            }
+            BusEvent::OfflineCachePrepared(payload) => {
+                self.status_line = format!(
+                    "Offline-Cache bereit: {} Aktivitaeten | {} Anker | {:.1} MB",
+                    payload.activities.len(),
+                    payload.anchor_count,
+                    payload.cache_size_mb
+                );
+                self.append_log(self.status_line.clone());
+            }
+            BusEvent::ShanwayUserMessage(payload) => {
+                self.status_line = payload.message.clone();
+                self.append_log(payload.message);
+            }
+            BusEvent::WorkflowAnchorHit(payload) => {
+                self.append_log(format!(
+                    "Workflow-Hit: {} | {} | {:.0}% Vertrauen",
+                    payload.program_id,
+                    payload.optimization_type,
+                    payload.confidence * 100.0
+                ));
+            }
+            BusEvent::WorkflowAnchorLearned(payload) => {
+                self.append_log(format!(
+                    "Workflow gelernt: {} | {} Ereignisse",
+                    payload.program_id, payload.event_count
+                ));
+            }
+            BusEvent::CrossProgramVramReuse(payload) => {
+                self.append_log(format!(
+                    "Cross-Program-Reuse: {} -> {} | {:.1} MB",
+                    payload.source_program, payload.target_program, payload.vram_saved_mb
+                ));
+            }
+            BusEvent::VramOptimized(payload) => {
+                self.append_log(format!(
+                    "VRAM optimiert: {} | {:.2} MB -> {:.2} MB | Hit {:.0}%",
+                    payload.texture_label,
+                    payload.original_mb,
+                    payload.compressed_mb,
+                    payload.vault_hit_rate * 100.0
+                ));
+            }
+            BusEvent::TextureUploadCompleted(payload) => {
+                self.append_log(format!(
+                    "Texture-Upload: {} | Handle {} | Delta-Pfad {}",
+                    payload.texture_label,
+                    payload.handle,
+                    if payload.used_delta_path {
+                        "ja"
+                    } else {
+                        "nein"
+                    }
+                ));
+            }
+            BusEvent::ShaderCacheHit(payload) => {
+                self.append_log(format!(
+                    "Shader-Cache-Hit: {} | {}",
+                    payload.program_id, payload.shader_hash
+                ));
+            }
+            BusEvent::VramPressureChanged(payload) => {
+                self.append_log(format!(
+                    "VRAM-Druck: {:?} | {:.0}% von {:.0} MB",
+                    payload.pressure_level,
+                    payload.pressure_ratio * 100.0,
+                    payload.total_mb
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    fn record_file_workflow(&mut self, source_kind: &str, file_name: &str, aef_verified: bool) {
+        let program_id = format!("rust_shell::{}", domain_from_source_kind(source_kind));
+        let base_ts = Utc::now().timestamp_millis().max(0) as u64;
+        let mut steps = vec![
+            "file_drop".to_owned(),
+            format!("source::{source_kind}"),
+            "preview_ready".to_owned(),
+        ];
+        if aef_verified {
+            steps.push("aef_lossless".to_owned());
+        }
+        steps.push("register_saved".to_owned());
+        for (index, step) in steps.iter().enumerate() {
+            if let Err(err) = Self::run_async(self.workflow_collector.ingest_event(
+                &program_id,
+                step,
+                base_ts + index as u64,
+            )) {
+                self.append_log(format!("Workflow-Erfassung fehlgeschlagen: {err}"));
+                return;
+            }
+        }
+        if let Err(err) = Self::run_async(self.workflow_collector.complete_program(&program_id)) {
+            self.append_log(format!("Workflow-Abschluss fehlgeschlagen: {err}"));
+        }
+        self.append_log(format!("Workflow erfasst: {file_name} | {program_id}"));
+    }
+
     fn draw_shanway_face(&self, ui: &mut egui::Ui) {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(220.0, 220.0), Sense::hover());
         let painter = ui.painter_at(rect);
         let center = rect.center();
         painter.circle_filled(center, 82.0, Color32::from_rgb(35, 46, 70));
-        painter.circle_stroke(center, 82.0, Stroke::new(2.0, Color32::from_rgb(120, 180, 255)));
-        painter.circle_filled(egui::pos2(center.x - 28.0, center.y - 16.0), 10.0, Color32::LIGHT_BLUE);
-        painter.circle_filled(egui::pos2(center.x + 28.0, center.y - 16.0), 10.0, Color32::LIGHT_BLUE);
+        painter.circle_stroke(
+            center,
+            82.0,
+            Stroke::new(2.0, Color32::from_rgb(120, 180, 255)),
+        );
+        painter.circle_filled(
+            egui::pos2(center.x - 28.0, center.y - 16.0),
+            10.0,
+            Color32::LIGHT_BLUE,
+        );
+        painter.circle_filled(
+            egui::pos2(center.x + 28.0, center.y - 16.0),
+            10.0,
+            Color32::LIGHT_BLUE,
+        );
         painter.line_segment(
-            [egui::pos2(center.x - 34.0, center.y + 30.0), egui::pos2(center.x + 34.0, center.y + 30.0)],
+            [
+                egui::pos2(center.x - 34.0, center.y + 30.0),
+                egui::pos2(center.x + 34.0, center.y + 30.0),
+            ],
             Stroke::new(3.0, Color32::from_rgb(120, 180, 255)),
         );
     }
@@ -714,10 +981,17 @@ impl AetherRustShell {
                     ui.label("Benutzername");
                     ui.add(TextEdit::singleline(&mut self.login_username).desired_width(320.0));
                     ui.label("Passwort");
-                    ui.add(TextEdit::singleline(&mut self.login_password).password(true).desired_width(320.0));
+                    ui.add(
+                        TextEdit::singleline(&mut self.login_password)
+                            .password(true)
+                            .desired_width(320.0),
+                    );
                     ui.horizontal(|ui| {
                         if ui.button("Anmelden").clicked() {
-                            match self.auth_store.authenticate(&self.login_username, &self.login_password) {
+                            match self
+                                .auth_store
+                                .authenticate(&self.login_username, &self.login_password)
+                            {
                                 Ok(user) => {
                                     self.current_user = Some(user);
                                     self.status_line = "Anmeldung erfolgreich.".to_owned();
@@ -730,9 +1004,13 @@ impl AetherRustShell {
                             }
                         }
                         if ui.button("Registrieren").clicked() {
-                            match self.auth_store.register(&self.login_username, &self.login_password) {
+                            match self
+                                .auth_store
+                                .register(&self.login_username, &self.login_password)
+                            {
                                 Ok(()) => {
-                                    self.status_line = "Registrierung erfolgreich. Bitte anmelden.".to_owned();
+                                    self.status_line =
+                                        "Registrierung erfolgreich. Bitte anmelden.".to_owned();
                                     self.append_log("Registrierung erfolgreich.");
                                 }
                                 Err(err) => {
@@ -858,6 +1136,12 @@ impl AetherRustShell {
                     if let Some(top_pack) = top_pack {
                         match self.pack_manager.download_and_install_sync(top_pack.pack_id, true) {
                             Ok(result) => {
+                                self.bus_publisher.publish(BusEvent::PackInstalled(PackInstalledEvent {
+                                    pack_id: result.pack_id.to_string(),
+                                    pack_name: result.pack_name.clone(),
+                                    installed_anchor_count: result.anchors_added,
+                                    hit_rate_delta: (result.hit_rate_after - result.hit_rate_before).max(0.0),
+                                }));
                                 self.status_line = format!(
                                     "Pack installiert: {} | Hit-Rate {:.0}% -> {:.0}%",
                                     result.pack_name,
@@ -903,21 +1187,17 @@ impl AetherRustShell {
                     .current_domain_key()
                     .map(|domain| vec![domain])
                     .unwrap_or_else(|| vec!["language_german".to_owned()]);
-                match self.offline_cache_manager.prepare_offline_cache(
+                match Self::run_async(self.offline_cache_manager.prepare_offline_cache(
                     OfflinePrepRequest {
                         planned_activities: activities,
                         available_cache_mb: 64,
+                        target: CacheTarget::LocalCache,
                     },
-                    self.pack_manager.installed_packs(),
                     true,
-                ) {
-                    Ok(result) => {
-                        self.status_line = format!(
-                            "Offline-Cache bereit: {} Anker | {} B | Abdeckung {}",
-                            result.anchors_cached,
-                            result.cache_size_bytes,
-                            if result.coverage.covered.is_empty() { "niedrig" } else { "teilweise" }
-                        );
+                ))
+                .and_then(|result| result) {
+                    Ok(()) => {
+                        self.status_line = "Offline-Cache vorbereitet.".to_owned();
                         self.append_log(self.status_line.clone());
                     }
                     Err(err) => {
@@ -1035,19 +1315,30 @@ impl AetherRustShell {
         ctx: &egui::Context,
         username: &str,
     ) -> Result<ProcessedFile, String> {
-        let bytes = fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
-        let metadata = fs::metadata(path).map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
+        let bytes =
+            fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
+        let metadata = fs::metadata(path)
+            .map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
         let fingerprint_hash = sha256_hex(&bytes);
         let original_size = metadata.len();
         let delta_size = estimate_compressed_size(&bytes)?;
-        let ratio = if original_size == 0 { 0.0 } else { delta_size as f32 / original_size as f32 };
+        let ratio = if original_size == 0 {
+            0.0
+        } else {
+            delta_size as f32 / original_size as f32
+        };
         let compression_gain_percent = ((1.0 - ratio).clamp(0.0, 1.0) * 10000.0).round() / 100.0;
         let entropy = shannon_entropy(&bytes);
         let preview = build_preview_image(path, &bytes);
         let symmetry = preview_symmetry(&preview);
         let drift = byte_drift(&bytes);
         let source_kind = detect_source_kind(path, &bytes);
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("unbekannt").to_owned();
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unbekannt")
+            .to_owned();
+        let preview_bytes = color_image_rgba_bytes(&preview);
         let preview_note = format!(
             "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Drift {:.2}",
             source_kind,
@@ -1056,15 +1347,28 @@ impl AetherRustShell {
             drift
         );
         let anchor_summary = build_anchor_summary(entropy, symmetry, drift);
-        let process_summary = build_process_summary(entropy, symmetry, compression_gain_percent, &source_kind);
+        let process_summary =
+            build_process_summary(entropy, symmetry, compression_gain_percent, &source_kind);
         let excerpt = build_excerpt(&source_kind, &bytes);
-        self.preview_texture = Some(
-            ctx.load_texture(
-                format!("preview::{file_name}"),
-                preview,
-                egui::TextureOptions::LINEAR,
-            ),
+        self.preview_texture = Some(ctx.load_texture(
+            format!("preview::{file_name}"),
+            preview,
+            egui::TextureOptions::LINEAR,
+        ));
+        match Self::run_async(self.gfx.upload_texture(
+            &format!("preview::{source_kind}::{file_name}"),
+            &preview_bytes,
+        )) {
+            Ok(handle) => self.append_log(format!("Vorschau-Textur vorbereitet: Handle {handle}")),
+            Err(err) => self.append_log(format!("Vorschau-Texturpfad fehlgeschlagen: {err}")),
+        }
+        let shader_handle = self.gfx.compile_shader_cached(
+            "rust_shell_preview",
+            &format!("preview::{source_kind}"),
+            "fragment",
         );
+        self.append_log(format!("Preview-Shader bereit: Handle {shader_handle}"));
+        self.gfx.check_vram_pressure();
 
         let mut processed = ProcessedFile {
             file_name: file_name.clone(),
@@ -1082,40 +1386,51 @@ impl AetherRustShell {
             preview_note: preview_note.clone(),
             excerpt,
         };
+        let mut aef_verified = false;
         if let Ok(report) = self.encode_aef_for_path(path) {
             processed.process_summary = format!(
                 "{}\nAEF: {:.2}% | Delta {:.2}% | Lossless {}",
                 processed.process_summary,
                 report.compression_rate_percent,
                 report.delta_percent,
-                if report.lossless_confirmed { "JA" } else { "NEIN" }
+                if report.lossless_confirmed {
+                    "JA"
+                } else {
+                    "NEIN"
+                }
             );
             self.last_aef_report = Some(report.clone());
             self.append_log(format!(
                 ".aef geschrieben: {} | Lossless {} | Trust {:.2}",
                 report.filename,
-                if report.lossless_confirmed { "JA" } else { "NEIN" },
+                if report.lossless_confirmed {
+                    "JA"
+                } else {
+                    "NEIN"
+                },
                 report.trust_score
             ));
             self.refresh_projection_for_path(path);
+            aef_verified = report.lossless_confirmed;
         }
         self.current_file = Some(processed.clone());
 
         let entry = RegisterEntry {
             id: 0,
             owner_username: username.to_owned(),
-            file_name,
+            file_name: file_name.clone(),
             full_path: path.to_string_lossy().to_string(),
-            source_kind,
+            source_kind: source_kind.clone(),
             original_size,
             delta_size,
             compression_gain_percent,
-            anchor_summary,
-            process_summary,
-            preview_note,
+            anchor_summary: anchor_summary.clone(),
+            process_summary: process_summary.clone(),
+            preview_note: preview_note.clone(),
         };
         let entry_id = self.state_store.add_register_entry(entry)?;
         self.selected_register_id = Some(entry_id);
+        self.record_file_workflow(&source_kind, &file_name, aef_verified);
         Ok(processed)
     }
 
@@ -1148,13 +1463,11 @@ impl AetherRustShell {
         });
         self.last_aef_report = None;
         self.last_aef_projection = None;
-        self.preview_texture = Some(
-            ctx.load_texture(
-                format!("register::{}", entry.id),
-                placeholder_preview_image(),
-                egui::TextureOptions::LINEAR,
-            ),
-        );
+        self.preview_texture = Some(ctx.load_texture(
+            format!("register::{}", entry.id),
+            placeholder_preview_image(),
+            egui::TextureOptions::LINEAR,
+        ));
     }
 
     fn ui_analyse_tab(&mut self, ui: &mut egui::Ui) {
@@ -1188,13 +1501,16 @@ impl AetherRustShell {
                             ".aef: {} | Cover {:.1}% | Lossless {}",
                             report.filename,
                             report.vault_coverage * 100.0,
-                            if report.lossless_confirmed { "JA" } else { "NEIN" }
+                            if report.lossless_confirmed {
+                                "JA"
+                            } else {
+                                "NEIN"
+                            }
                         ));
                         if let Some(projection) = &self.last_aef_projection {
                             ui.label(format!(
                                 "Projektion: Delta {} B -> {} B bei groesserem Vault",
-                                projection.current_delta_size,
-                                projection.projected_delta_size
+                                projection.current_delta_size, projection.projected_delta_size
                             ));
                         }
                     }
@@ -1216,9 +1532,7 @@ impl AetherRustShell {
                         ui.separator();
                         ui.label(format!(
                             "AEF Trust {:.2} | C(t) {:.3} | Delta {} B",
-                            report.trust_score,
-                            report.coherence_index,
-                            report.delta_size_bytes
+                            report.trust_score, report.coherence_index, report.delta_size_bytes
                         ));
                         if let Some(projection) = &self.last_aef_projection {
                             ui.label(format!(
@@ -1331,10 +1645,16 @@ impl AetherRustShell {
                         self.consent_dialog = None;
                         match action {
                             ConsentAction::BrowserProbe { url } => self.run_browser_probe(&url),
-                            ConsentAction::BrowserSearch { query } => self.run_browser_search(&query),
-                            ConsentAction::ShareStableTtd { signed } => self.share_current_ttd(signed),
+                            ConsentAction::BrowserSearch { query } => {
+                                self.run_browser_search(&query)
+                            }
+                            ConsentAction::ShareStableTtd { signed } => {
+                                self.share_current_ttd(signed)
+                            }
                             ConsentAction::SyncPublicTtd => self.sync_public_ttd(),
-                            ConsentAction::ChatRelayPublishBatch { envelopes } => self.publish_chat_relay_batch(envelopes),
+                            ConsentAction::ChatRelayPublishBatch { envelopes } => {
+                                self.publish_chat_relay_batch(envelopes)
+                            }
                             ConsentAction::ChatRelayFetch => self.sync_chat_relay(),
                         }
                     }
@@ -1419,14 +1739,22 @@ impl AetherRustShell {
             }
         });
         let threads = self.state_store.private_threads_for(&username);
-        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-            for thread in threads {
-                let label = format!("{} ({})", thread.partner_name, thread.messages.len());
-                if ui.selectable_label(self.selected_private_partner == thread.partner_name, label).clicked() {
-                    self.selected_private_partner = thread.partner_name.clone();
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for thread in threads {
+                    let label = format!("{} ({})", thread.partner_name, thread.messages.len());
+                    if ui
+                        .selectable_label(
+                            self.selected_private_partner == thread.partner_name,
+                            label,
+                        )
+                        .clicked()
+                    {
+                        self.selected_private_partner = thread.partner_name.clone();
+                    }
                 }
-            }
-        });
+            });
         ui.separator();
         let messages = self
             .state_store
@@ -1435,12 +1763,18 @@ impl AetherRustShell {
             .find(|thread| thread.partner_name == self.selected_private_partner)
             .map(|thread| thread.messages)
             .unwrap_or_default();
-        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-            for message in messages {
-                ui.label(format!("{}: {}", message.author, message.body));
-            }
-        });
-        ui.add(TextEdit::multiline(&mut self.private_message_input).desired_rows(3).hint_text("Nachricht eingeben"));
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for message in messages {
+                    ui.label(format!("{}: {}", message.author, message.body));
+                }
+            });
+        ui.add(
+            TextEdit::multiline(&mut self.private_message_input)
+                .desired_rows(3)
+                .hint_text("Nachricht eingeben"),
+        );
         ui.horizontal(|ui| {
             if ui.button("Senden").clicked() {
                 let body = self.private_message_input.trim().to_owned();
@@ -1501,14 +1835,19 @@ impl AetherRustShell {
             }
         });
         let rooms = self.state_store.group_rooms_for(&username);
-        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-            for room in rooms {
-                let label = format!("{} ({})", room.name, room.messages.len());
-                if ui.selectable_label(self.selected_group_name == room.name, label).clicked() {
-                    self.selected_group_name = room.name.clone();
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for room in rooms {
+                    let label = format!("{} ({})", room.name, room.messages.len());
+                    if ui
+                        .selectable_label(self.selected_group_name == room.name, label)
+                        .clicked()
+                    {
+                        self.selected_group_name = room.name.clone();
+                    }
                 }
-            }
-        });
+            });
         ui.separator();
         let messages = self
             .state_store
@@ -1517,12 +1856,18 @@ impl AetherRustShell {
             .find(|room| room.name == self.selected_group_name)
             .map(|room| room.messages)
             .unwrap_or_default();
-        egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-            for message in messages {
-                ui.label(format!("{}: {}", message.author, message.body));
-            }
-        });
-        ui.add(TextEdit::multiline(&mut self.group_message_input).desired_rows(3).hint_text("Gruppennachricht eingeben"));
+        egui::ScrollArea::vertical()
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for message in messages {
+                    ui.label(format!("{}: {}", message.author, message.body));
+                }
+            });
+        ui.add(
+            TextEdit::multiline(&mut self.group_message_input)
+                .desired_rows(3)
+                .hint_text("Gruppennachricht eingeben"),
+        );
         ui.horizontal(|ui| {
             if ui.button("In Gruppe senden").clicked() {
                 let body = self.group_message_input.trim().to_owned();
@@ -1578,12 +1923,18 @@ impl AetherRustShell {
             .find(|thread| thread.partner_name == "Shanway")
             .map(|thread| thread.messages)
             .unwrap_or_default();
-        egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
-            for message in &messages {
-                ui.label(format!("{}: {}", message.author, message.body));
-            }
-        });
-        ui.add(TextEdit::multiline(&mut self.shanway_message_input).desired_rows(4).hint_text("Frage an Shanway"));
+        egui::ScrollArea::vertical()
+            .max_height(300.0)
+            .show(ui, |ui| {
+                for message in &messages {
+                    ui.label(format!("{}: {}", message.author, message.body));
+                }
+            });
+        ui.add(
+            TextEdit::multiline(&mut self.shanway_message_input)
+                .desired_rows(4)
+                .hint_text("Frage an Shanway"),
+        );
         let mut send_local = false;
         let mut send_relay = false;
         ui.horizontal(|ui| {
@@ -1597,15 +1948,22 @@ impl AetherRustShell {
                     .current_file
                     .as_ref()
                     .cloned()
-                    .or_else(|| self.browser_probe.as_ref().map(build_browser_processed_file))
+                    .or_else(|| {
+                        self.browser_probe
+                            .as_ref()
+                            .map(build_browser_processed_file)
+                    })
                     .map(|file| build_processed_signal(&file));
                 if let Some(signal) = active_signal.as_ref() {
-                    self.mind_model.learn_from_user_prompt(self.observer_id, signal, &prompt);
+                    self.mind_model
+                        .learn_from_user_prompt(self.observer_id, signal, &prompt);
                 }
                 let shanway_input = self.current_shanway_input();
                 let raw_reply = render_shanway_reply(shanway_input.as_ref(), &prompt);
                 let reply = if let Some(signal) = active_signal.as_ref() {
-                    let observer_delta = self.mind_model.calculate_observer_delta(signal, self.observer_id);
+                    let observer_delta = self
+                        .mind_model
+                        .calculate_observer_delta(signal, self.observer_id);
                     let adapted = ToMOutputAdapter::adapt_output(
                         &raw_reply,
                         &observer_delta,
@@ -1662,20 +2020,34 @@ impl AetherRustShell {
         }
     }
 
-    fn preview_existing_file(&mut self, path: &Path, ctx: &egui::Context) -> Result<ProcessedFile, String> {
-        let bytes = fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
-        let metadata = fs::metadata(path).map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
+    fn preview_existing_file(
+        &mut self,
+        path: &Path,
+        ctx: &egui::Context,
+    ) -> Result<ProcessedFile, String> {
+        let bytes =
+            fs::read(path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
+        let metadata = fs::metadata(path)
+            .map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
         let fingerprint_hash = sha256_hex(&bytes);
         let original_size = metadata.len();
         let delta_size = estimate_compressed_size(&bytes)?;
-        let ratio = if original_size == 0 { 0.0 } else { delta_size as f32 / original_size as f32 };
+        let ratio = if original_size == 0 {
+            0.0
+        } else {
+            delta_size as f32 / original_size as f32
+        };
         let compression_gain_percent = ((1.0 - ratio).clamp(0.0, 1.0) * 10000.0).round() / 100.0;
         let entropy = shannon_entropy(&bytes);
         let preview = build_preview_image(path, &bytes);
         let symmetry = preview_symmetry(&preview);
         let drift = byte_drift(&bytes);
         let source_kind = detect_source_kind(path, &bytes);
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("unbekannt").to_owned();
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unbekannt")
+            .to_owned();
         let preview_note = format!(
             "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Drift {:.2}",
             source_kind,
@@ -1684,15 +2056,14 @@ impl AetherRustShell {
             drift
         );
         let anchor_summary = build_anchor_summary(entropy, symmetry, drift);
-        let process_summary = build_process_summary(entropy, symmetry, compression_gain_percent, &source_kind);
+        let process_summary =
+            build_process_summary(entropy, symmetry, compression_gain_percent, &source_kind);
         let excerpt = build_excerpt(&source_kind, &bytes);
-        self.preview_texture = Some(
-            ctx.load_texture(
-                format!("preview::{file_name}"),
-                preview,
-                egui::TextureOptions::LINEAR,
-            ),
-        );
+        self.preview_texture = Some(ctx.load_texture(
+            format!("preview::{file_name}"),
+            preview,
+            egui::TextureOptions::LINEAR,
+        ));
         Ok(ProcessedFile {
             file_name,
             full_path: path.to_string_lossy().to_string(),
@@ -1719,35 +2090,41 @@ impl AetherRustShell {
         ui.label(RichText::new("Lokales Register").strong());
         ui.label("Ein Klick laedt die Datei kompakt in die Vorschau. Keine Vollbild-Uebernahme.");
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("register_grid").striped(true).show(ui, |ui| {
-                ui.strong("ID");
-                ui.strong("Datei");
-                ui.strong("Typ");
-                ui.strong("Original");
-                ui.strong("Delta");
-                ui.strong("Gewinn");
-                ui.end_row();
-                for entry in entries {
-                    let selected = self.selected_register_id == Some(entry.id);
-                    if ui.selectable_label(selected, entry.id.to_string()).clicked() {
-                        self.load_register_entry(ctx, &entry);
-                    }
-                    if ui.selectable_label(selected, &entry.file_name).clicked() {
-                        self.load_register_entry(ctx, &entry);
-                    }
-                    ui.label(&entry.source_kind);
-                    ui.label(format!("{} B", entry.original_size));
-                    ui.label(format!("{} B", entry.delta_size));
-                    ui.label(format!("{:.2}%", entry.compression_gain_percent));
+            egui::Grid::new("register_grid")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong("ID");
+                    ui.strong("Datei");
+                    ui.strong("Typ");
+                    ui.strong("Original");
+                    ui.strong("Delta");
+                    ui.strong("Gewinn");
                     ui.end_row();
-                }
-            });
+                    for entry in entries {
+                        let selected = self.selected_register_id == Some(entry.id);
+                        if ui
+                            .selectable_label(selected, entry.id.to_string())
+                            .clicked()
+                        {
+                            self.load_register_entry(ctx, &entry);
+                        }
+                        if ui.selectable_label(selected, &entry.file_name).clicked() {
+                            self.load_register_entry(ctx, &entry);
+                        }
+                        ui.label(&entry.source_kind);
+                        ui.label(format!("{} B", entry.original_size));
+                        ui.label(format!("{} B", entry.delta_size));
+                        ui.label(format!("{:.2}%", entry.compression_gain_percent));
+                        ui.end_row();
+                    }
+                });
         });
     }
 }
 
 impl eframe::App for AetherRustShell {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_bus_events();
         if self.current_user.is_none() {
             self.ui_auth(ctx);
             return;
@@ -1767,7 +2144,10 @@ impl eframe::App for AetherRustShell {
 
 fn build_processed_signal(file: &ProcessedFile) -> ProcessedSignal {
     ProcessedSignal::from_summary(
-        format!("{} | {} | {}", file.file_name, file.anchor_summary, file.process_summary),
+        format!(
+            "{} | {} | {}",
+            file.file_name, file.anchor_summary, file.process_summary
+        ),
         vec![domain_from_source_kind(&file.source_kind)],
     )
 }
@@ -1790,7 +2170,8 @@ fn build_browser_processed_file(probe: &BrowserProbeResult) -> ProcessedFile {
         source_kind: format!("Browser {}", probe.category),
         original_size: probe.content_length as u64,
         delta_size: (probe.content_length as f32 * probe.risk_score.clamp(0.0, 1.0)) as u64,
-        compression_gain_percent: ((1.0 - probe.risk_score.clamp(0.0, 1.0)) * 100.0).clamp(0.0, 100.0),
+        compression_gain_percent: ((1.0 - probe.risk_score.clamp(0.0, 1.0)) * 100.0)
+            .clamp(0.0, 100.0),
         entropy: probe.entropy,
         symmetry: probe.frontend_symmetry.clamp(0.0, 1.0),
         drift: (probe.risk_score * 255.0).clamp(0.0, 255.0),
@@ -1844,7 +2225,11 @@ fn signal_type_from_source_kind(source_kind: &str) -> SignalType {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn map_text_signal_to_comprehension(prompt: &str) -> ComprehensionSignal {
@@ -1865,7 +2250,10 @@ fn trimmed_at_boundary(source: &str, limit: usize) -> String {
     for (index, ch) in normalized.chars().enumerate() {
         if index >= limit {
             let trimmed = output
-                .trim_end_matches(|candidate: char| candidate.is_whitespace() || matches!(candidate, ',' | '.' | ';' | ':' | '!' | '?'))
+                .trim_end_matches(|candidate: char| {
+                    candidate.is_whitespace()
+                        || matches!(candidate, ',' | '.' | ';' | ':' | '!' | '?')
+                })
                 .to_owned();
             return format!("{trimmed}...");
         }
@@ -1886,10 +2274,16 @@ fn push_message_if_new(messages: &mut Vec<ChatMessage>, author: String, body: St
 }
 
 fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     match extension.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tif" | "tiff" | "webp" => "Bild".to_owned(),
-        "txt" | "md" | "json" | "toml" | "yaml" | "yml" | "rs" | "py" | "js" | "html" | "css" => "Text / Code".to_owned(),
+        "txt" | "md" | "json" | "toml" | "yaml" | "yml" | "rs" | "py" | "js" | "html" | "css" => {
+            "Text / Code".to_owned()
+        }
         "wav" | "mp3" | "flac" | "ogg" => "Audio".to_owned(),
         "mp4" | "mov" | "mkv" | "avi" | "webm" => "Video".to_owned(),
         _ if bytes.starts_with(b"%PDF") => "PDF".to_owned(),
@@ -1900,17 +2294,30 @@ fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
 fn build_excerpt(source_kind: &str, bytes: &[u8]) -> String {
     if source_kind == "Text / Code" || source_kind == "PDF" {
         if let Ok(text) = String::from_utf8(bytes.iter().copied().take(2400).collect()) {
-            return text.replace('\r', "").replace('\0', " ").chars().take(420).collect();
+            return text
+                .replace('\r', "")
+                .replace('\0', " ")
+                .chars()
+                .take(420)
+                .collect();
         }
     }
-    let hex: Vec<String> = bytes.iter().take(64).map(|byte| format!("{byte:02x}")).collect();
+    let hex: Vec<String> = bytes
+        .iter()
+        .take(64)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     format!("Hex-Anriss: {}", hex.join(" "))
 }
 
 fn estimate_compressed_size(bytes: &[u8]) -> Result<u64, String> {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder.write_all(bytes).map_err(|err| format!("Kompressionsprobe fehlgeschlagen: {err}"))?;
-    let output = encoder.finish().map_err(|err| format!("Kompressionsprobe konnte nicht abgeschlossen werden: {err}"))?;
+    encoder
+        .write_all(bytes)
+        .map_err(|err| format!("Kompressionsprobe fehlgeschlagen: {err}"))?;
+    let output = encoder
+        .finish()
+        .map_err(|err| format!("Kompressionsprobe konnte nicht abgeschlossen werden: {err}"))?;
     Ok(output.len() as u64)
 }
 
@@ -1923,17 +2330,24 @@ fn shannon_entropy(bytes: &[u8]) -> f32 {
         counts[*byte as usize] += 1;
     }
     let total = bytes.len() as f32;
-    counts.iter().filter(|count| **count > 0).map(|count| {
-        let probability = *count as f32 / total;
-        -(probability * probability.log2())
-    }).sum()
+    counts
+        .iter()
+        .filter(|count| **count > 0)
+        .map(|count| {
+            let probability = *count as f32 / total;
+            -(probability * probability.log2())
+        })
+        .sum()
 }
 
 fn byte_drift(bytes: &[u8]) -> f32 {
     if bytes.len() < 2 {
         return 0.0;
     }
-    let total: u64 = bytes.windows(2).map(|window| (window[0] as i32 - window[1] as i32).unsigned_abs() as u64).sum();
+    let total: u64 = bytes
+        .windows(2)
+        .map(|window| (window[0] as i32 - window[1] as i32).unsigned_abs() as u64)
+        .sum();
     total as f32 / bytes.len().saturating_sub(1) as f32
 }
 
@@ -1955,10 +2369,18 @@ fn build_anchor_summary(entropy: f32, symmetry: f32, drift: f32) -> String {
     } else {
         "Heisenberg: Beobachtergrenze kontrollierbar"
     };
-    format!("{noether} | {mandelbrot} | {heisenberg} | Entropie {:.2}", entropy)
+    format!(
+        "{noether} | {mandelbrot} | {heisenberg} | Entropie {:.2}",
+        entropy
+    )
 }
 
-fn build_process_summary(entropy: f32, symmetry: f32, compression_gain_percent: f32, source_kind: &str) -> String {
+fn build_process_summary(
+    entropy: f32,
+    symmetry: f32,
+    compression_gain_percent: f32,
+    source_kind: &str,
+) -> String {
     format!(
         "Quelle: {source_kind}\nVerdichtung: {:.2}% Gewinn\nEntropiepfad: {:.2} bit\nSymmetriestabilitaet: {:.1}%",
         compression_gain_percent,
@@ -1972,14 +2394,27 @@ fn load_local_vault_store() -> VaultStore {
 }
 
 fn aef_output_path(path: &Path) -> PathBuf {
-    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("artifact");
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("artifact");
     let file_name = format!("{stem}.aef");
-    PathBuf::from("data").join("rust_shell").join("aef").join(file_name)
+    PathBuf::from("data")
+        .join("rust_shell")
+        .join("aef")
+        .join(file_name)
 }
 
 fn build_preview_image(path: &Path, bytes: &[u8]) -> ColorImage {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_ascii_lowercase();
-    if matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tif" | "tiff" | "webp") {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "tif" | "tiff" | "webp"
+    ) {
         if let Ok(image) = image::load_from_memory(bytes) {
             let scaled = image.thumbnail(640, 360).to_rgba8();
             let size = [scaled.width() as usize, scaled.height() as usize];
@@ -1993,6 +2428,14 @@ fn build_preview_image(path: &Path, bytes: &[u8]) -> ColorImage {
         pixels.push(Color32::from_rgb(value, value, value));
     }
     ColorImage::new([side, side], pixels)
+}
+
+fn color_image_rgba_bytes(image: &ColorImage) -> Vec<u8> {
+    image
+        .pixels
+        .iter()
+        .flat_map(|pixel| pixel.to_array())
+        .collect()
 }
 
 fn placeholder_preview_image() -> ColorImage {
@@ -2025,5 +2468,9 @@ fn preview_symmetry(image: &ColorImage) -> f32 {
             comparisons += 1;
         }
     }
-    if comparisons == 0 { 0.0 } else { total_score / comparisons as f32 }
+    if comparisons == 0 {
+        0.0
+    } else {
+        total_score / comparisons as f32
+    }
 }

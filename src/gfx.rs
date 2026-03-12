@@ -1,6 +1,7 @@
 use crate::inter_layer_bus::{
-    BusEvent, BusPublisher, ShaderCacheHitEvent, ShaderCompileRequestEvent, TextureUploadRequestEvent,
-    TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent, VramPressureLevel,
+    BusEvent, BusPublisher, ShaderCacheHitEvent, ShaderCompileRequestEvent,
+    TextureUploadRequestEvent, TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent,
+    VramPressureLevel,
 };
 use crate::vault_access::VaultAccessLayer;
 use sha2::{Digest, Sha256};
@@ -67,49 +68,58 @@ impl AetherGfx {
     }
 
     pub async fn upload_texture(&mut self, label: &str, bytes: &[u8]) -> u64 {
-        self.bus.publish(BusEvent::TextureUploadRequested(TextureUploadRequestEvent {
-            program_id: self.backend.backend_name().to_owned(),
-            texture_label: label.to_owned(),
-            byte_size: bytes.len(),
-            expected_vram_mb: bytes.len() as f32 / 1_048_576.0,
-        }));
+        self.bus.publish(BusEvent::TextureUploadRequested(
+            TextureUploadRequestEvent {
+                program_id: self.backend.backend_name().to_owned(),
+                texture_label: label.to_owned(),
+                byte_size: bytes.len(),
+                expected_vram_mb: bytes.len() as f32 / 1_048_576.0,
+            },
+        ));
         let result = self.texture_vault.prepare(label, bytes).await;
-        self.bus.publish(BusEvent::VramOptimized(VramOptimizedEvent {
-            texture_label: label.to_owned(),
-            original_mb: bytes.len() as f32 / 1_048_576.0,
-            compressed_mb: result.compressed_size as f32 / 1_048_576.0,
-            vault_hit_rate: result.hit_rate,
-            compression_ratio: result.compression_ratio,
-        }));
+        self.bus
+            .publish(BusEvent::VramOptimized(VramOptimizedEvent {
+                texture_label: label.to_owned(),
+                original_mb: bytes.len() as f32 / 1_048_576.0,
+                compressed_mb: result.compressed_size as f32 / 1_048_576.0,
+                vault_hit_rate: result.hit_rate,
+                compression_ratio: result.compression_ratio,
+            }));
         let handle = if result.hit_rate > 0.5 {
             self.backend
                 .upload_delta_texture(label, &result.anchor_refs, &result.residual)
         } else {
             self.backend.upload_raw_texture(label, bytes)
         };
-        self.bus.publish(BusEvent::TextureUploadCompleted(TextureUploadResultEvent {
-            program_id: self.backend.backend_name().to_owned(),
-            texture_label: label.to_owned(),
-            handle,
-            uploaded_mb: result.compressed_size as f32 / 1_048_576.0,
-            used_delta_path: result.hit_rate > 0.5,
-        }));
+        self.bus
+            .publish(BusEvent::TextureUploadCompleted(TextureUploadResultEvent {
+                program_id: self.backend.backend_name().to_owned(),
+                texture_label: label.to_owned(),
+                handle,
+                uploaded_mb: result.compressed_size as f32 / 1_048_576.0,
+                used_delta_path: result.hit_rate > 0.5,
+            }));
         handle
     }
 
     pub fn compile_shader_cached(&mut self, program_id: &str, source: &str, stage: &str) -> u64 {
-        self.bus.publish(BusEvent::ShaderCompileRequested(ShaderCompileRequestEvent {
-            program_id: program_id.to_owned(),
-            shader_hash: format!("{:x}", Sha256::digest(source.as_bytes())),
-            stage: stage.to_owned(),
-        }));
-        let (handle, cache_hit, shader_hash) = self.shader_cache.get_or_insert(source, || self.backend.compile_shader(source));
-        if cache_hit {
-            self.bus.publish(BusEvent::ShaderCacheHit(ShaderCacheHitEvent {
+        self.bus.publish(BusEvent::ShaderCompileRequested(
+            ShaderCompileRequestEvent {
                 program_id: program_id.to_owned(),
-                shader_hash,
-                handle,
-            }));
+                shader_hash: format!("{:x}", Sha256::digest(source.as_bytes())),
+                stage: stage.to_owned(),
+            },
+        ));
+        let (handle, cache_hit, shader_hash) = self
+            .shader_cache
+            .get_or_insert(source, || self.backend.compile_shader(source));
+        if cache_hit {
+            self.bus
+                .publish(BusEvent::ShaderCacheHit(ShaderCacheHitEvent {
+                    program_id: program_id.to_owned(),
+                    shader_hash,
+                    handle,
+                }));
         }
         handle
     }
@@ -124,13 +134,14 @@ impl AetherGfx {
             value if value > 0.60 => VramPressureLevel::Medium,
             _ => VramPressureLevel::Low,
         };
-        self.bus.publish(BusEvent::VramPressureChanged(VramPressureEvent {
-            used_mb: used,
-            total_mb: total,
-            pressure_ratio: ratio,
-            pressure_level: level,
-            active_programs: vec![self.backend.backend_name().to_owned()],
-        }));
+        self.bus
+            .publish(BusEvent::VramPressureChanged(VramPressureEvent {
+                used_mb: used,
+                total_mb: total,
+                pressure_ratio: ratio,
+                pressure_level: level,
+                active_programs: vec![self.backend.backend_name().to_owned()],
+            }));
     }
 }
 
@@ -149,7 +160,10 @@ struct TexturePrepResult {
 
 impl TextureVaultCache {
     fn new(vault: Arc<VaultAccessLayer>) -> Self {
-        Self { vault, tile_size: 64 }
+        Self {
+            vault,
+            tile_size: 64,
+        }
     }
 
     async fn prepare(&self, _label: &str, bytes: &[u8]) -> TexturePrepResult {
@@ -196,7 +210,11 @@ impl ShaderVaultCache {
         }
     }
 
-    fn get_or_insert(&mut self, source: &str, compile_fn: impl FnOnce() -> u64) -> (u64, bool, String) {
+    fn get_or_insert(
+        &mut self,
+        source: &str,
+        compile_fn: impl FnOnce() -> u64,
+    ) -> (u64, bool, String) {
         let hash = format!("{:x}", Sha256::digest(source.as_bytes()));
         if let Some(handle) = self.compiled.get(&hash).copied() {
             return (handle, true, hash);

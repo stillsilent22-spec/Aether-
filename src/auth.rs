@@ -115,7 +115,8 @@ impl AuthStore {
             users: self.users.clone(),
         };
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|err| format!("Auth-Verzeichnis konnte nicht erstellt werden: {err}"))?;
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("Auth-Verzeichnis konnte nicht erstellt werden: {err}"))?;
         }
         let serialized = serde_json::to_string_pretty(&payload)
             .map_err(|err| format!("Auth-Daten konnten nicht serialisiert werden: {err}"))?;
@@ -143,7 +144,9 @@ fn normalize_username(value: &str) -> Result<String, String> {
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
     {
-        return Err("Nutzername darf nur ASCII-Buchstaben, Ziffern, _, - und . enthalten.".to_owned());
+        return Err(
+            "Nutzername darf nur ASCII-Buchstaben, Ziffern, _, - und . enthalten.".to_owned(),
+        );
     }
     Ok(cleaned.to_owned())
 }
@@ -165,9 +168,12 @@ fn issue_session(mut user: UserRecord, password: &str) -> UserRecord {
         )
         .as_bytes(),
     );
-    let live_session_fingerprint = live_session_key[..24.min(live_session_key.len())].to_ascii_uppercase();
-    let raw_storage_key_hex = sha256_hex(format!("{}|{}|{}|storage", user.username, user.salt_hex, password).as_bytes());
-    let raw_storage_fingerprint = raw_storage_key_hex[..24.min(raw_storage_key_hex.len())].to_ascii_uppercase();
+    let live_session_fingerprint =
+        live_session_key[..24.min(live_session_key.len())].to_ascii_uppercase();
+    let raw_storage_key_hex =
+        sha256_hex(format!("{}|{}|{}|storage", user.username, user.salt_hex, password).as_bytes());
+    let raw_storage_fingerprint =
+        raw_storage_key_hex[..24.min(raw_storage_key_hex.len())].to_ascii_uppercase();
     let session_seed = derive_session_seed(&user.username, &user.salt_hex, &nonce);
     user.session_id = format!("session-{}", random_hex(12));
     user.login_at_epoch = login_at_epoch;
@@ -206,7 +212,11 @@ fn hash_password(username: &str, salt_hex: &str, password: &str) -> String {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn default_role() -> String {
@@ -219,7 +229,9 @@ mod tests {
 
     #[test]
     fn authenticate_issues_live_session_fields() {
-        let path = PathBuf::from("data").join("rust_shell").join("test_users_auth.json");
+        let path = PathBuf::from("data")
+            .join("rust_shell")
+            .join("test_users_auth.json");
         let _ = fs::remove_file(&path);
         let mut store = AuthStore::load_from(path.clone());
         store.register("tester", "supersecret").unwrap();

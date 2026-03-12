@@ -143,7 +143,10 @@ impl QuarantineIpcClient {
         Self::with_root(PathBuf::from("data").join("rust_shell").join("quarantine"))
     }
 
-    pub fn classify(&self, query: &ClassifyQueryMessage) -> Result<ClassifyResponse, ObservationError> {
+    pub fn classify(
+        &self,
+        query: &ClassifyQueryMessage,
+    ) -> Result<ClassifyResponse, ObservationError> {
         self.verify_integrity()?;
         let records = self.load_records()?;
         let mut matches: Vec<(QuarantineCategory, f32)> = records
@@ -156,12 +159,7 @@ impl QuarantineIpcClient {
             })
             .filter(|(_, similarity)| *similarity >= 0.85)
             .collect();
-        matches.sort_by(|left, right| {
-            right
-                .1
-                .partial_cmp(&left.1)
-                .unwrap_or(Ordering::Equal)
-        });
+        matches.sort_by(|left, right| right.1.partial_cmp(&left.1).unwrap_or(Ordering::Equal));
         if let Some((category, confidence)) = matches.first().copied() {
             return Ok(ClassifyResponse {
                 known: true,
@@ -181,7 +179,10 @@ impl QuarantineIpcClient {
     pub fn store_anchor(&self, msg: &StoreAnchorMessage) -> Result<(), ObservationError> {
         let mut records = self.load_records()?;
         let hash_hex = hex_encode(&msg.anchor_hash);
-        if records.iter().any(|record| record.anchor_hash_hex == hash_hex) {
+        if records
+            .iter()
+            .any(|record| record.anchor_hash_hex == hash_hex)
+        {
             return Ok(());
         }
         records.push(QuarantineRecord {
@@ -228,7 +229,8 @@ impl QuarantineIpcClient {
             fs::write(manifest_path, raw).map_err(|err| ObservationError::Io(err.to_string()))?;
             return Ok(());
         }
-        let raw = fs::read_to_string(&manifest_path).map_err(|err| ObservationError::Io(err.to_string()))?;
+        let raw = fs::read_to_string(&manifest_path)
+            .map_err(|err| ObservationError::Io(err.to_string()))?;
         let manifest: QuarantineManifest =
             serde_json::from_str(&raw).map_err(|err| ObservationError::Format(err.to_string()))?;
         if manifest.merkle_root_hex != current_root || manifest.record_count != records.len() {
@@ -253,16 +255,18 @@ impl QuarantineIpcClient {
         fs::create_dir_all(&self.root).map_err(|err| ObservationError::Io(err.to_string()))?;
         let records_path = self.root.join("records.json");
         let manifest_path = self.root.join("manifest.json");
-        let raw = serde_json::to_string_pretty(records).map_err(|err| ObservationError::Format(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(records)
+            .map_err(|err| ObservationError::Format(err.to_string()))?;
         fs::write(records_path, raw).map_err(|err| ObservationError::Io(err.to_string()))?;
         let manifest = QuarantineManifest {
             merkle_root_hex: merkleish_root(records),
             record_count: records.len(),
             updated_at: unix_timestamp(),
         };
-        let manifest_raw =
-            serde_json::to_string_pretty(&manifest).map_err(|err| ObservationError::Format(err.to_string()))?;
-        fs::write(manifest_path, manifest_raw).map_err(|err| ObservationError::Io(err.to_string()))?;
+        let manifest_raw = serde_json::to_string_pretty(&manifest)
+            .map_err(|err| ObservationError::Format(err.to_string()))?;
+        fs::write(manifest_path, manifest_raw)
+            .map_err(|err| ObservationError::Io(err.to_string()))?;
         Ok(())
     }
 }
@@ -283,7 +287,8 @@ impl ObservationFeatureExtractor {
         let technical_density = technical_density(&signal.bytes) as f32;
         let emotional_valence = emotional_valence(&signal.bytes) as f32;
         let factual_density = factual_density(&signal.bytes) as f32;
-        let coherence = structural_coherence(entropy as f64, symmetry as f64, repetition as f64) as f32;
+        let coherence =
+            structural_coherence(entropy as f64, symmetry as f64, repetition as f64) as f32;
         let novelty = novelty_score(entropy, symmetry, repetition);
         [
             entropy,
@@ -334,22 +339,26 @@ impl ObservationOnlyEngine {
         let query = ClassifyQueryMessage {
             feature_vector: features,
         };
-        let classification = self.ipc_client.classify(&query).unwrap_or(ClassifyResponse {
-            known: false,
-            category: QuarantineCategory::Unknown,
-            confidence: 0.0,
-            match_count: 0,
-        });
+        let classification = self
+            .ipc_client
+            .classify(&query)
+            .unwrap_or(ClassifyResponse {
+                known: false,
+                category: QuarantineCategory::Unknown,
+                confidence: 0.0,
+                match_count: 0,
+            });
         if classification.known && classification.confidence >= 0.85 {
             let action = match classification.category {
                 QuarantineCategory::Malware => ObservationAction::HardBlock,
                 _ => ObservationAction::ObserveKnown,
             };
-            self.bus.publish(BusEvent::ObservationEngineBlock(ObservationBlockEvent {
-                category: classification.category,
-                confidence: classification.confidence,
-                action: action.clone(),
-            }));
+            self.bus
+                .publish(BusEvent::ObservationEngineBlock(ObservationBlockEvent {
+                    category: classification.category,
+                    confidence: classification.confidence,
+                    action: action.clone(),
+                }));
             if matches!(action, ObservationAction::HardBlock) {
                 self.hard_block_malware(signal, classification.category, classification.confidence);
             }
@@ -371,10 +380,11 @@ impl ObservationOnlyEngine {
                 engine_flags: self.get_engine_flags(&features),
             };
             let _ = self.ipc_client.store_anchor(&message);
-            self.bus.publish(BusEvent::ObservationEngineLearn(ObservationLearnEvent {
-                category,
-                is_new_pattern: true,
-            }));
+            self.bus
+                .publish(BusEvent::ObservationEngineLearn(ObservationLearnEvent {
+                    category,
+                    is_new_pattern: true,
+                }));
             return ObservationResult {
                 is_quarantined: true,
                 category: Some(category),
@@ -397,14 +407,16 @@ impl ObservationOnlyEngine {
         let technical_density = features[10];
         let dehumanization = features[9];
         let emotional = features[11];
-        let binary_header = signal.bytes.starts_with(b"MZ") || signal.bytes.starts_with(&[0x7F, b'E', b'L', b'F']);
+        let binary_header =
+            signal.bytes.starts_with(b"MZ") || signal.bytes.starts_with(&[0x7F, b'E', b'L', b'F']);
         (binary_header && entropy >= 6.5 && technical_density >= 0.45)
             || dehumanization >= 0.72
             || (emotional >= 0.78 && symmetry <= 0.35)
     }
 
     fn infer_category(&self, signal: &RawSignal, features: &[f32; 16]) -> QuarantineCategory {
-        let binary_header = signal.bytes.starts_with(b"MZ") || signal.bytes.starts_with(&[0x7F, b'E', b'L', b'F']);
+        let binary_header =
+            signal.bytes.starts_with(b"MZ") || signal.bytes.starts_with(&[0x7F, b'E', b'L', b'F']);
         if binary_header && features[10] >= 0.45 {
             return QuarantineCategory::Malware;
         }
@@ -437,7 +449,12 @@ impl ObservationOnlyEngine {
         flags
     }
 
-    fn hard_block_malware(&self, signal: &mut RawSignal, category: QuarantineCategory, confidence: f32) {
+    fn hard_block_malware(
+        &self,
+        signal: &mut RawSignal,
+        category: QuarantineCategory,
+        confidence: f32,
+    ) {
         signal.zero_memory();
         self.bus.publish(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
             process_id: None,
@@ -531,7 +548,9 @@ fn benford_deviation(bytes: &[u8]) -> f64 {
     if digits.is_empty() {
         return 0.0;
     }
-    let benford = [0.0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046];
+    let benford = [
+        0.0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046,
+    ];
     let mut counts = [0usize; 10];
     for digit in digits {
         counts[digit as usize] += 1;
@@ -547,7 +566,10 @@ fn repetition_rate(bytes: &[u8]) -> f64 {
     if bytes.len() < 3 {
         return 0.0;
     }
-    let repeated = bytes.windows(3).filter(|window| window[0] == window[1] && window[1] == window[2]).count();
+    let repeated = bytes
+        .windows(3)
+        .filter(|window| window[0] == window[1] && window[1] == window[2])
+        .count();
     repeated as f64 / bytes.len() as f64
 }
 
@@ -608,14 +630,28 @@ fn harmonic_ratio(bytes: &[u8]) -> f64 {
 
 fn dehumanization_proximity(bytes: &[u8]) -> f64 {
     let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
-    let anchors = ["untermensch", "vernichten", "saeubern", "parasiten", "abschaum"];
+    let anchors = [
+        "untermensch",
+        "vernichten",
+        "saeubern",
+        "parasiten",
+        "abschaum",
+    ];
     let hits = anchors.iter().filter(|term| text.contains(**term)).count();
     (hits as f64 / anchors.len().max(1) as f64).clamp(0.0, 1.0)
 }
 
 fn technical_density(bytes: &[u8]) -> f64 {
     let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
-    let anchors = ["virtualalloc", "loadlibrary", "cmd.exe", "powershell", "socket", "xor", "shellcode"];
+    let anchors = [
+        "virtualalloc",
+        "loadlibrary",
+        "cmd.exe",
+        "powershell",
+        "socket",
+        "xor",
+        "shellcode",
+    ];
     let hits = anchors.iter().filter(|term| text.contains(**term)).count();
     (hits as f64 / anchors.len().max(1) as f64).clamp(0.0, 1.0)
 }
@@ -623,23 +659,35 @@ fn technical_density(bytes: &[u8]) -> f64 {
 fn emotional_valence(bytes: &[u8]) -> f64 {
     let text = String::from_utf8_lossy(bytes);
     let exclamations = text.matches('!').count() as f64;
-    let uppercase = text.chars().filter(|value| value.is_ascii_uppercase()).count() as f64;
+    let uppercase = text
+        .chars()
+        .filter(|value| value.is_ascii_uppercase())
+        .count() as f64;
     ((exclamations + uppercase) / text.len().max(1) as f64 * 4.0).clamp(0.0, 1.0)
 }
 
 fn factual_density(bytes: &[u8]) -> f64 {
     let text = String::from_utf8_lossy(bytes);
     let digits = text.chars().filter(|value| value.is_ascii_digit()).count() as f64;
-    let punctuation = text.chars().filter(|value| [':', ';', '.', ','].contains(value)).count() as f64;
+    let punctuation = text
+        .chars()
+        .filter(|value| [':', ';', '.', ','].contains(value))
+        .count() as f64;
     ((digits + punctuation) / text.len().max(1) as f64 * 5.0).clamp(0.0, 1.0)
 }
 
 fn structural_coherence(entropy: f64, symmetry: f64, repetition: f64) -> f64 {
-    ((symmetry * 0.5) + ((1.0 - (entropy / 8.0).clamp(0.0, 1.0)) * 0.3) + ((1.0 - repetition) * 0.2)).clamp(0.0, 1.0)
+    ((symmetry * 0.5)
+        + ((1.0 - (entropy / 8.0).clamp(0.0, 1.0)) * 0.3)
+        + ((1.0 - repetition) * 0.2))
+        .clamp(0.0, 1.0)
 }
 
 fn fractal_dimension_proxy(bytes: &[u8]) -> f64 {
-    let transitions = bytes.windows(2).filter(|window| window[0] != window[1]).count();
+    let transitions = bytes
+        .windows(2)
+        .filter(|window| window[0] != window[1])
+        .count();
     (transitions as f64 / bytes.len().max(1) as f64 * 2.0).clamp(0.0, 2.0)
 }
 
@@ -680,7 +728,10 @@ mod tests {
         let root = PathBuf::from("target").join("observation_test");
         let _ = fs::remove_dir_all(&root);
         let bus = InterLayerBus::new(16);
-        let engine = ObservationOnlyEngine::with_client(bus.publisher(), QuarantineIpcClient::with_root(root));
+        let engine = ObservationOnlyEngine::with_client(
+            bus.publisher(),
+            QuarantineIpcClient::with_root(root),
+        );
         let mut signal = RawSignal::new(
             "sample",
             b"MZ....VirtualAlloc...cmd.exe...powershell...shellcode".to_vec(),

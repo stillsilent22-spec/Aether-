@@ -64,7 +64,10 @@ impl WorkflowSignalCollector {
 
     pub async fn ingest_event(&mut self, program_id: &str, event_type: &str, timestamp_ms: u64) {
         let should_complete = {
-            let events = self.active_workflows.entry(program_id.to_string()).or_default();
+            let events = self
+                .active_workflows
+                .entry(program_id.to_string())
+                .or_default();
             let delta = events
                 .last()
                 .map(|entry| timestamp_ms.saturating_sub(entry.timestamp_ms))
@@ -80,6 +83,11 @@ impl WorkflowSignalCollector {
             let completed = self.active_workflows.remove(program_id).unwrap_or_default();
             self.process_workflow(program_id, &completed).await;
         }
+    }
+
+    pub async fn complete_program(&mut self, program_id: &str) {
+        let completed = self.active_workflows.remove(program_id).unwrap_or_default();
+        self.process_workflow(program_id, &completed).await;
     }
 
     fn is_complete(&self, events: &[TimedEvent]) -> bool {
@@ -100,42 +108,46 @@ impl WorkflowSignalCollector {
         }
         let anchor = self.extract_anchor(program_id, events);
         if let Some(mut known) = self.vault.lookup_workflow_anchor(&anchor.anchor_hash).await {
-            let proactive = LogarithmicPriority::should_act_proactively(known.hit_count, known.confidence);
+            let proactive =
+                LogarithmicPriority::should_act_proactively(known.hit_count, known.confidence);
             known.confidence = LogarithmicPriority::compute(known.confidence, known.hit_count);
-            self.bus.publish(BusEvent::WorkflowAnchorHit(WorkflowHitEvent {
-                anchor_hash: anchor.anchor_hash.clone(),
-                program_id: program_id.to_string(),
-                known_outcome: format!("{:?}", known.outcome),
-                optimization_type: format!("{:?}", known.best_optimization),
-                confidence: known.confidence,
-                hit_count: known.hit_count,
-                expected_duration_ms: known.duration_ms,
-            }));
+            self.bus
+                .publish(BusEvent::WorkflowAnchorHit(WorkflowHitEvent {
+                    anchor_hash: anchor.anchor_hash.clone(),
+                    program_id: program_id.to_string(),
+                    known_outcome: format!("{:?}", known.outcome),
+                    optimization_type: format!("{:?}", known.best_optimization),
+                    confidence: known.confidence,
+                    hit_count: known.hit_count,
+                    expected_duration_ms: known.duration_ms,
+                }));
             if proactive {
                 for similar in self.vault.find_similar_workflows(&anchor, 0.92).await {
                     if similar.context == anchor.context {
                         continue;
                     }
-                    self.bus.publish(BusEvent::CrossProgramVramReuse(CrossProgramReuseEvent {
-                        anchor_hash: similar.anchor_hash.clone(),
-                        source_program: similar.context.clone(),
-                        target_program: program_id.to_string(),
-                        vram_saved_mb: (similar.hit_count as f32 * 0.25).clamp(0.0, 64.0),
-                        similarity: cosine_similarity(
-                            &[anchor.sequence_entropy, anchor.fractal_dimension],
-                            &[similar.sequence_entropy, similar.fractal_dimension],
-                        ),
-                    }));
+                    self.bus
+                        .publish(BusEvent::CrossProgramVramReuse(CrossProgramReuseEvent {
+                            anchor_hash: similar.anchor_hash.clone(),
+                            source_program: similar.context.clone(),
+                            target_program: program_id.to_string(),
+                            vram_saved_mb: (similar.hit_count as f32 * 0.25).clamp(0.0, 64.0),
+                            similarity: cosine_similarity(
+                                &[anchor.sequence_entropy, anchor.fractal_dimension],
+                                &[similar.sequence_entropy, similar.fractal_dimension],
+                            ),
+                        }));
                 }
             }
         } else {
             self.vault.store_workflow_anchor(&anchor).await;
-            self.bus.publish(BusEvent::WorkflowAnchorLearned(WorkflowLearnedEvent {
-                anchor_hash: anchor.anchor_hash.clone(),
-                program_id: program_id.to_string(),
-                context: anchor.context.clone(),
-                event_count: events.len(),
-            }));
+            self.bus
+                .publish(BusEvent::WorkflowAnchorLearned(WorkflowLearnedEvent {
+                    anchor_hash: anchor.anchor_hash.clone(),
+                    program_id: program_id.to_string(),
+                    context: anchor.context.clone(),
+                    event_count: events.len(),
+                }));
         }
     }
 
@@ -184,7 +196,10 @@ impl WorkflowSignalCollector {
     }
 
     fn normalized_timing(&self, events: &[TimedEvent]) -> Vec<f32> {
-        let deltas: Vec<f32> = events.iter().map(|event| event.delta_from_prev_ms as f32).collect();
+        let deltas: Vec<f32> = events
+            .iter()
+            .map(|event| event.delta_from_prev_ms as f32)
+            .collect();
         let max = deltas.iter().copied().fold(0.0_f32, f32::max);
         if max < 1.0 {
             return deltas;
@@ -196,7 +211,10 @@ impl WorkflowSignalCollector {
         if timing.len() < 2 {
             return 1.0;
         }
-        let diffs: Vec<f32> = timing.windows(2).map(|window| (window[1] - window[0]).abs()).collect();
+        let diffs: Vec<f32> = timing
+            .windows(2)
+            .map(|window| (window[1] - window[0]).abs())
+            .collect();
         let length: f32 = diffs.iter().sum();
         let distance: f32 = diffs.iter().copied().fold(0.0_f32, f32::max);
         if distance < 1e-9 || length < 1e-9 {

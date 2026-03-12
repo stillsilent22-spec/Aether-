@@ -150,7 +150,10 @@ pub struct VaultAccessLayer {
 
 impl VaultAccessLayer {
     pub fn new(db: Arc<RwLock<VaultStore>>, engine_pipeline: Arc<EnginePipeline>) -> Self {
-        Self { db, engine_pipeline }
+        Self {
+            db,
+            engine_pipeline,
+        }
     }
 
     pub async fn submit_anchor(
@@ -175,10 +178,9 @@ impl VaultAccessLayer {
         }
 
         let (vault_version, genesis_block_ref) = {
-            let vault = self
-                .db
-                .read()
-                .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+            let vault = self.db.read().map_err(|_| {
+                VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned())
+            })?;
             (vault.version(), vault.genesis_block_ref())
         };
         let unsigned_record = PublicAnchorRecord {
@@ -203,13 +205,17 @@ impl VaultAccessLayer {
             genesis_block_ref: hex_encode(&genesis_block_ref),
         };
         let signed_record = self.sign_record(unsigned_record)?;
-        let commit_bytes = serde_json::to_vec_pretty(&signed_record)
-            .map_err(|err| VaultAccessError::DatabaseError(format!("Commit konnte nicht serialisiert werden: {err}")))?;
+        let commit_bytes = serde_json::to_vec_pretty(&signed_record).map_err(|err| {
+            VaultAccessError::DatabaseError(format!(
+                "Commit konnte nicht serialisiert werden: {err}"
+            ))
+        })?;
         let vault_ref = {
-            let mut vault = self
-                .db
-                .write()
-                .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht geschrieben werden".to_owned()))?;
+            let mut vault = self.db.write().map_err(|_| {
+                VaultAccessError::DatabaseError(
+                    "Vault-Lock konnte nicht geschrieben werden".to_owned(),
+                )
+            })?;
             vault
                 .upsert(&commit_bytes, anchor.signal_type)
                 .map_err(|err| VaultAccessError::DatabaseError(err.to_string()))?
@@ -231,19 +237,22 @@ impl VaultAccessLayer {
         Ok(commit)
     }
 
-    pub async fn lookup_anchor(&self, hash: &[u8; 32]) -> Result<Option<VaultAnchor>, VaultAccessError> {
+    pub async fn lookup_anchor(
+        &self,
+        hash: &[u8; 32],
+    ) -> Result<Option<VaultAnchor>, VaultAccessError> {
         let raw = {
-            let vault = self
-                .db
-                .read()
-                .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+            let vault = self.db.read().map_err(|_| {
+                VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned())
+            })?;
             vault.get(hash)
         };
         let Some(raw) = raw else {
             return Ok(None);
         };
-        let record: PublicAnchorRecord = serde_json::from_slice(&raw)
-            .map_err(|err| VaultAccessError::DatabaseError(format!("Vault-Record ungueltig: {err}")))?;
+        let record: PublicAnchorRecord = serde_json::from_slice(&raw).map_err(|err| {
+            VaultAccessError::DatabaseError(format!("Vault-Record ungueltig: {err}"))
+        })?;
         Ok(Some(VaultAnchor {
             vault_ref: *hash,
             record,
@@ -251,10 +260,9 @@ impl VaultAccessLayer {
     }
 
     pub fn list_records(&self) -> Result<Vec<PublicAnchorRecord>, VaultAccessError> {
-        let vault = self
-            .db
-            .read()
-            .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+        let vault = self.db.read().map_err(|_| {
+            VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned())
+        })?;
         let records = vault
             .all_serialized_entries()
             .into_iter()
@@ -272,7 +280,10 @@ impl VaultAccessLayer {
         Ok((count / (count + 24.0)).clamp(0.0, 1.0))
     }
 
-    pub fn get_anchors_by_domain(&self, domain: &str) -> Result<Vec<PublicAnchorRecord>, VaultAccessError> {
+    pub fn get_anchors_by_domain(
+        &self,
+        domain: &str,
+    ) -> Result<Vec<PublicAnchorRecord>, VaultAccessError> {
         let needle = sanitize_domain(domain);
         Ok(self
             .list_records()?
@@ -397,23 +408,29 @@ impl VaultAccessLayer {
 
     pub fn remove_anchor_record(&self, anchor_id: Uuid) -> Result<bool, VaultAccessError> {
         let records = self.list_records()?;
-        let Some(record) = records.into_iter().find(|record| record.anchor_id == anchor_id) else {
+        let Some(record) = records
+            .into_iter()
+            .find(|record| record.anchor_id == anchor_id)
+        else {
             return Ok(false);
         };
         let Some(vault_ref) = parse_hex_32(&record.vault_ref) else {
-            return Err(VaultAccessError::DatabaseError("Vault-Ref des Ankers ist ungueltig".to_owned()));
+            return Err(VaultAccessError::DatabaseError(
+                "Vault-Ref des Ankers ist ungueltig".to_owned(),
+            ));
         };
-        let mut vault = self
-            .db
-            .write()
-            .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht geschrieben werden".to_owned()))?;
+        let mut vault = self.db.write().map_err(|_| {
+            VaultAccessError::DatabaseError("Vault-Lock konnte nicht geschrieben werden".to_owned())
+        })?;
         vault
             .remove(&vault_ref)
             .map_err(|err| VaultAccessError::DatabaseError(err.to_string()))
     }
 
     pub fn enqueue_github_push_sync(&self, commit: &AnchorCommitResult) -> Result<(), PushError> {
-        let queue_dir = PathBuf::from("data").join("rust_shell").join("public_push_queue");
+        let queue_dir = PathBuf::from("data")
+            .join("rust_shell")
+            .join("public_push_queue");
         fs::create_dir_all(&queue_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let raw = serde_json::to_string_pretty(&commit.record)
             .map_err(|err| PushError::Serialization(err.to_string()))?;
@@ -422,19 +439,27 @@ impl VaultAccessLayer {
         Ok(())
     }
 
-    fn sign_record(&self, mut record: PublicAnchorRecord) -> Result<PublicAnchorRecord, VaultAccessError> {
-        let payload = serde_json::to_vec(&record)
-            .map_err(|err| VaultAccessError::PipelineError(format!("Signatur-Payload ungueltig: {err}")))?;
+    fn sign_record(
+        &self,
+        mut record: PublicAnchorRecord,
+    ) -> Result<PublicAnchorRecord, VaultAccessError> {
+        let payload = serde_json::to_vec(&record).map_err(|err| {
+            VaultAccessError::PipelineError(format!("Signatur-Payload ungueltig: {err}"))
+        })?;
         let signature = self.engine_pipeline.sign(&payload);
         record.shanway_signature = BASE64.encode(signature);
         Ok(record)
     }
 
-    pub fn verify_record_signature(&self, record: &PublicAnchorRecord) -> Result<(), VaultAccessError> {
+    pub fn verify_record_signature(
+        &self,
+        record: &PublicAnchorRecord,
+    ) -> Result<(), VaultAccessError> {
         let mut unsigned = record.clone();
         unsigned.shanway_signature.clear();
-        let payload = serde_json::to_vec(&unsigned)
-            .map_err(|err| VaultAccessError::PipelineError(format!("Signaturpruefung fehlgeschlagen: {err}")))?;
+        let payload = serde_json::to_vec(&unsigned).map_err(|err| {
+            VaultAccessError::PipelineError(format!("Signaturpruefung fehlgeschlagen: {err}"))
+        })?;
         let raw = BASE64
             .decode(&record.shanway_signature)
             .map_err(|_| VaultAccessError::InvalidSignature)?;
@@ -448,7 +473,10 @@ impl VaultAccessLayer {
             .map_err(|_| VaultAccessError::InvalidSignature)
     }
 
-    pub fn verify_anchor_record(&self, record: &PublicAnchorRecord) -> Result<VerificationResult, VaultAccessError> {
+    pub fn verify_anchor_record(
+        &self,
+        record: &PublicAnchorRecord,
+    ) -> Result<VerificationResult, VaultAccessError> {
         self.verify_record_signature(record)?;
         let submission = RawAnchorSubmission {
             anchor_id: record.anchor_id,
@@ -537,7 +565,11 @@ pub struct GitHubPushPipeline {
 }
 
 impl GitHubPushPipeline {
-    pub fn new(repo_url: impl Into<String>, branch: impl Into<String>, git_token: impl Into<String>) -> Self {
+    pub fn new(
+        repo_url: impl Into<String>,
+        branch: impl Into<String>,
+        git_token: impl Into<String>,
+    ) -> Self {
         Self {
             repo_url: repo_url.into(),
             branch: branch.into(),
@@ -548,13 +580,20 @@ impl GitHubPushPipeline {
 
     pub async fn push_anchor(&self, commit: &AnchorCommitResult) -> Result<(), PushError> {
         let record = commit.record.clone();
-        let path = format!("vault/anchors/{}/{}.json", sanitize_domain(&record.domain), record.anchor_id);
+        let path = format!(
+            "vault/anchors/{}/{}.json",
+            sanitize_domain(&record.domain),
+            record.anchor_id
+        );
         let json = serde_json::to_string_pretty(&record)
             .map_err(|err| PushError::Serialization(err.to_string()))?;
         self.github_put_file(
             &path,
             &json,
-            &format!("anchor: add {} [trust={:.2}]", record.anchor_id, record.trust_score),
+            &format!(
+                "anchor: add {} [trust={:.2}]",
+                record.anchor_id, record.trust_score
+            ),
         )
         .await?;
         self.update_index(&record).await?;
@@ -562,7 +601,12 @@ impl GitHubPushPipeline {
         Ok(())
     }
 
-    async fn github_put_file(&self, path: &str, raw_json: &str, message: &str) -> Result<(), PushError> {
+    async fn github_put_file(
+        &self,
+        path: &str,
+        raw_json: &str,
+        message: &str,
+    ) -> Result<(), PushError> {
         let Some((owner, repo)) = parse_repo(&self.repo_url) else {
             return Err(PushError::Http("repo_url ist ungueltig".to_owned()));
         };
@@ -582,18 +626,25 @@ impl GitHubPushPipeline {
             .await
             .map_err(|err| PushError::Http(err.to_string()))?;
         if !response.status().is_success() {
-            return Err(PushError::Http(format!("GitHub PUT fehlgeschlagen: {}", response.status())));
+            return Err(PushError::Http(format!(
+                "GitHub PUT fehlgeschlagen: {}",
+                response.status()
+            )));
         }
         Ok(())
     }
 
     async fn update_index(&self, record: &PublicAnchorRecord) -> Result<(), PushError> {
-        let index_dir = PathBuf::from("data").join("rust_shell").join("github_preview");
+        let index_dir = PathBuf::from("data")
+            .join("rust_shell")
+            .join("github_preview");
         fs::create_dir_all(&index_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let index_path = index_dir.join("index.json");
         let mut index: Vec<BTreeMap<String, String>> = if index_path.exists() {
-            serde_json::from_str(&fs::read_to_string(&index_path).map_err(|err| PushError::Io(err.to_string()))?)
-                .unwrap_or_default()
+            serde_json::from_str(
+                &fs::read_to_string(&index_path).map_err(|err| PushError::Io(err.to_string()))?,
+            )
+            .unwrap_or_default()
         } else {
             Vec::new()
         };
@@ -602,13 +653,16 @@ impl GitHubPushPipeline {
             ("vault_ref".to_owned(), record.vault_ref.clone()),
             ("domain".to_owned(), record.domain.clone()),
         ]));
-        let raw = serde_json::to_string_pretty(&index).map_err(|err| PushError::Serialization(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(&index)
+            .map_err(|err| PushError::Serialization(err.to_string()))?;
         fs::write(index_path, raw).map_err(|err| PushError::Io(err.to_string()))?;
         Ok(())
     }
 
     async fn update_manifest(&self, record: &PublicAnchorRecord) -> Result<(), PushError> {
-        let manifest_dir = PathBuf::from("data").join("rust_shell").join("github_preview");
+        let manifest_dir = PathBuf::from("data")
+            .join("rust_shell")
+            .join("github_preview");
         fs::create_dir_all(&manifest_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let manifest_path = manifest_dir.join("vault_manifest.json");
         let mut distribution: BTreeMap<String, usize> = BTreeMap::new();
@@ -621,7 +675,8 @@ impl GitHubPushPipeline {
             "last_updated": Utc::now().timestamp(),
             "aether_version": record.aether_version,
         });
-        let raw = serde_json::to_string_pretty(&manifest).map_err(|err| PushError::Serialization(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(&manifest)
+            .map_err(|err| PushError::Serialization(err.to_string()))?;
         fs::write(manifest_path, raw).map_err(|err| PushError::Io(err.to_string()))?;
         Ok(())
     }
@@ -637,7 +692,15 @@ pub async fn sync_public_vault(
         return Ok(VaultSyncResult {
             anchors_synced: 0,
             anchors_rejected: 0,
-            new_vault_size: access_layer.db.read().map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?.entry_count(),
+            new_vault_size: access_layer
+                .db
+                .read()
+                .map_err(|_| {
+                    VaultAccessError::DatabaseError(
+                        "Vault-Lock konnte nicht gelesen werden".to_owned(),
+                    )
+                })?
+                .entry_count(),
             estimated_hit_rate_improvement: 0.0,
             estimated_compression_improvement: 0.0,
         });
@@ -645,10 +708,14 @@ pub async fn sync_public_vault(
     let mut synced = 0usize;
     let mut rejected = 0usize;
     for file in walk_json_files(&anchor_root) {
-        let raw = fs::read_to_string(&file)
-            .map_err(|err| VaultAccessError::PipelineError(format!("Public-Anchor konnte nicht gelesen werden: {err}")))?;
-        let record: PublicAnchorRecord = serde_json::from_str(&raw)
-            .map_err(|err| VaultAccessError::PipelineError(format!("Public-Anchor JSON ungueltig: {err}")))?;
+        let raw = fs::read_to_string(&file).map_err(|err| {
+            VaultAccessError::PipelineError(format!(
+                "Public-Anchor konnte nicht gelesen werden: {err}"
+            ))
+        })?;
+        let record: PublicAnchorRecord = serde_json::from_str(&raw).map_err(|err| {
+            VaultAccessError::PipelineError(format!("Public-Anchor JSON ungueltig: {err}"))
+        })?;
         if record.vault_version <= since_vault_version {
             continue;
         }
@@ -676,14 +743,19 @@ pub async fn sync_public_vault(
     let new_size = access_layer
         .db
         .read()
-        .map_err(|_| VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned()))?
+        .map_err(|_| {
+            VaultAccessError::DatabaseError("Vault-Lock konnte nicht gelesen werden".to_owned())
+        })?
         .entry_count();
     Ok(VaultSyncResult {
         anchors_synced: synced,
         anchors_rejected: rejected,
         new_vault_size: new_size,
-        estimated_hit_rate_improvement: ((synced as f32 / new_size.max(1) as f32) * 100.0).clamp(0.0, 100.0),
-        estimated_compression_improvement: ((synced as f32 / (new_size.max(1) as f32 * 2.0)) * 100.0).clamp(0.0, 100.0),
+        estimated_hit_rate_improvement: ((synced as f32 / new_size.max(1) as f32) * 100.0)
+            .clamp(0.0, 100.0),
+        estimated_compression_improvement: ((synced as f32 / (new_size.max(1) as f32 * 2.0))
+            * 100.0)
+            .clamp(0.0, 100.0),
     })
 }
 
@@ -729,7 +801,8 @@ fn derive_fourier_score(anchor: &RawAnchorSubmission) -> f32 {
     if anchor.frequency_signature.is_empty() {
         return 0.0;
     }
-    let mean = anchor.frequency_signature.iter().copied().sum::<f32>() / anchor.frequency_signature.len() as f32;
+    let mean = anchor.frequency_signature.iter().copied().sum::<f32>()
+        / anchor.frequency_signature.len() as f32;
     let variance = anchor
         .frequency_signature
         .iter()
@@ -767,7 +840,13 @@ fn parse_repo(repo_url: &str) -> Option<(String, String)> {
 fn sanitize_domain(domain: &str) -> String {
     let cleaned = domain
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' { ch } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' {
+                ch
+            } else {
+                '_'
+            }
+        })
         .collect::<String>();
     if cleaned.is_empty() {
         "unknown".to_owned()
@@ -812,11 +891,15 @@ fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
 }
 
 fn workflow_anchor_state_path() -> PathBuf {
-    PathBuf::from("data").join("rust_shell").join("workflow_anchors.json")
+    PathBuf::from("data")
+        .join("rust_shell")
+        .join("workflow_anchors.json")
 }
 
 fn raw_texture_cache_state_path() -> PathBuf {
-    PathBuf::from("data").join("rust_shell").join("raw_texture_cache.json")
+    PathBuf::from("data")
+        .join("rust_shell")
+        .join("raw_texture_cache.json")
 }
 
 fn load_workflow_anchor_state() -> Result<WorkflowAnchorState, String> {

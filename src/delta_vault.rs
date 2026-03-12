@@ -80,7 +80,8 @@ impl LocalDeltaVault {
             nonce_b64: BASE64.encode(nonce),
             ciphertext_b64: BASE64.encode(ciphertext),
         };
-        let raw = serde_json::to_string_pretty(&payload).map_err(|err| DeltaError::Format(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(&payload)
+            .map_err(|err| DeltaError::Format(err.to_string()))?;
         fs::write(self.path.join(format!("{anchor_id}.delta.enc")), raw)
             .map_err(|err| DeltaError::Io(err.to_string()))?;
         Ok(())

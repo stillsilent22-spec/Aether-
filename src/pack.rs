@@ -1,6 +1,8 @@
 use crate::aef::{EnginePipeline, SignalType};
 use crate::inter_layer_bus::{BusEvent, BusPublisher, PackDownloadEvent, PackRecommendedEvent};
-use crate::vault_access::{PublicAnchorRecord, RawAnchorSubmission, SubmissionSource, VaultAccessError, VaultAccessLayer};
+use crate::vault_access::{
+    PublicAnchorRecord, RawAnchorSubmission, SubmissionSource, VaultAccessError, VaultAccessLayer,
+};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use chrono::Utc;
@@ -153,8 +155,15 @@ pub enum PackError {
 impl std::fmt::Display for PackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::UserConfirmationRequired => write!(f, "Explizite Nutzerbestaetigung erforderlich"),
-            Self::Io(value) | Self::Format(value) | Self::Signature(value) | Self::Vault(value) | Self::NotFound(value) | Self::Download(value) => write!(f, "{value}"),
+            Self::UserConfirmationRequired => {
+                write!(f, "Explizite Nutzerbestaetigung erforderlich")
+            }
+            Self::Io(value)
+            | Self::Format(value)
+            | Self::Signature(value)
+            | Self::Vault(value)
+            | Self::NotFound(value)
+            | Self::Download(value) => write!(f, "{value}"),
         }
     }
 }
@@ -187,7 +196,14 @@ pub struct OfflineCacheManager {
 }
 
 impl AepPack {
-    pub fn new(pack_name: impl Into<String>, domain: impl Into<String>, subdomain: Option<String>, curator: impl Into<String>, description: impl Into<String>, anchors: Vec<PublicAnchorRecord>) -> Self {
+    pub fn new(
+        pack_name: impl Into<String>,
+        domain: impl Into<String>,
+        subdomain: Option<String>,
+        curator: impl Into<String>,
+        description: impl Into<String>,
+        anchors: Vec<PublicAnchorRecord>,
+    ) -> Self {
         Self {
             magic: AEP_MAGIC,
             version: AEP_FORMAT_VERSION,
@@ -214,25 +230,40 @@ impl AepPack {
         self.stats = derive_stats(&self.anchors);
         let mut header = self.header.clone();
         header.shanway_signature.clear();
-        let payload = serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors)).unwrap_or_default();
+        let payload =
+            serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors))
+                .unwrap_or_default();
         self.header.shanway_signature = BASE64.encode(engine.sign(&payload));
     }
 
     pub fn verify(&self, engine: &EnginePipeline) -> Result<(), PackError> {
-        if self.magic != AEP_MAGIC || self.eof_marker != AEP_EOF_MARKER || self.version != AEP_FORMAT_VERSION {
-            return Err(PackError::Format("AEP-Magic oder Version ungueltig".to_owned()));
+        if self.magic != AEP_MAGIC
+            || self.eof_marker != AEP_EOF_MARKER
+            || self.version != AEP_FORMAT_VERSION
+        {
+            return Err(PackError::Format(
+                "AEP-Magic oder Version ungueltig".to_owned(),
+            ));
         }
         let decoded = BASE64
             .decode(self.header.shanway_signature.as_bytes())
-            .map_err(|err| PackError::Signature(format!("Pack-Signatur konnte nicht dekodiert werden: {err}")))?;
+            .map_err(|err| {
+                PackError::Signature(format!(
+                    "Pack-Signatur konnte nicht dekodiert werden: {err}"
+                ))
+            })?;
         if decoded.len() != 64 {
-            return Err(PackError::Signature("Pack-Signatur hat nicht 64 Bytes".to_owned()));
+            return Err(PackError::Signature(
+                "Pack-Signatur hat nicht 64 Bytes".to_owned(),
+            ));
         }
         let mut signature = [0u8; 64];
         signature.copy_from_slice(&decoded);
         let mut header = self.header.clone();
         header.shanway_signature.clear();
-        let payload = serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors)).unwrap_or_default();
+        let payload =
+            serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors))
+                .unwrap_or_default();
         engine
             .verify(&payload, &signature)
             .map_err(|err| PackError::Signature(err.to_string()))
@@ -243,16 +274,19 @@ impl AepPack {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|err| PackError::Io(err.to_string()))?;
         }
-        let raw = serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
+        let raw =
+            serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
         self.header.pack_size_bytes = raw.len() as u64;
         self.sign(engine);
-        let raw = serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
+        let raw =
+            serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
         fs::write(path, raw).map_err(|err| PackError::Io(err.to_string()))
     }
 
     pub fn read_from_path(path: &Path, engine: &EnginePipeline) -> Result<Self, PackError> {
         let raw = fs::read_to_string(path).map_err(|err| PackError::Io(err.to_string()))?;
-        let pack: AepPack = serde_json::from_str(&raw).map_err(|err| PackError::Format(err.to_string()))?;
+        let pack: AepPack =
+            serde_json::from_str(&raw).map_err(|err| PackError::Format(err.to_string()))?;
         pack.verify(engine)?;
         Ok(pack)
     }
@@ -260,7 +294,10 @@ impl AepPack {
 
 impl PackRegistry {
     pub fn load_default() -> Result<Self, PackError> {
-        let local_cache = PathBuf::from("data").join("rust_shell").join("packs").join("pack_registry.json");
+        let local_cache = PathBuf::from("data")
+            .join("rust_shell")
+            .join("packs")
+            .join("pack_registry.json");
         if !local_cache.exists() {
             let mut registry = Self {
                 index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
@@ -272,7 +309,8 @@ impl PackRegistry {
             return Ok(registry);
         }
         let raw = fs::read_to_string(&local_cache).map_err(|err| PackError::Io(err.to_string()))?;
-        let mut registry: Self = serde_json::from_str(&raw).map_err(|err| PackError::Format(err.to_string()))?;
+        let mut registry: Self =
+            serde_json::from_str(&raw).map_err(|err| PackError::Format(err.to_string()))?;
         registry.local_cache = local_cache;
         Ok(registry)
     }
@@ -282,17 +320,22 @@ impl PackRegistry {
         if let Some(parent) = self.local_cache.parent() {
             fs::create_dir_all(parent).map_err(|err| PackError::Io(err.to_string()))?;
         }
-        let raw = serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
+        let raw =
+            serde_json::to_string_pretty(self).map_err(|err| PackError::Format(err.to_string()))?;
         fs::write(&self.local_cache, raw).map_err(|err| PackError::Io(err.to_string()))
     }
 
     pub fn get(&self, pack_id: Uuid) -> Option<PackRegistryEntry> {
-        self.entries.iter().find(|entry| entry.pack_id == pack_id).cloned()
+        self.entries
+            .iter()
+            .find(|entry| entry.pack_id == pack_id)
+            .cloned()
     }
 
     pub fn register_local_pack(&mut self, pack: &AepPack, path: &Path) -> Result<(), PackError> {
         let path_string = path.to_string_lossy().to_string();
-        self.entries.retain(|entry| entry.pack_id != pack.header.pack_id);
+        self.entries
+            .retain(|entry| entry.pack_id != pack.header.pack_id);
         self.entries.push(PackRegistryEntry {
             pack_id: pack.header.pack_id,
             pack_name: pack.header.pack_name.clone(),
@@ -314,14 +357,26 @@ impl PackRegistry {
         self.save()
     }
 
-    pub fn find_relevant_packs(&self, usage_profile: &UsageProfile, min_gain: f32) -> Vec<PackRegistryEntry> {
+    pub fn find_relevant_packs(
+        &self,
+        usage_profile: &UsageProfile,
+        min_gain: f32,
+    ) -> Vec<PackRegistryEntry> {
         let mut relevant = self
             .entries
             .iter()
             .filter(|entry| entry.estimated_hit_rate_improvement >= min_gain)
             .filter(|entry| {
-                usage_profile.dominant_domains.iter().any(|(domain, _)| sanitize(domain).contains(&sanitize(&entry.domain)))
-                    || usage_profile.active_signal_types.iter().any(|signal_type| entry.tags.iter().any(|tag| tag.eq_ignore_ascii_case(&format!("{:?}", signal_type))))
+                usage_profile
+                    .dominant_domains
+                    .iter()
+                    .any(|(domain, _)| sanitize(domain).contains(&sanitize(&entry.domain)))
+                    || usage_profile.active_signal_types.iter().any(|signal_type| {
+                        entry
+                            .tags
+                            .iter()
+                            .any(|tag| tag.eq_ignore_ascii_case(&format!("{:?}", signal_type)))
+                    })
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -337,7 +392,10 @@ impl PackRegistry {
 
 impl PackManager {
     pub fn new(vault: Arc<VaultAccessLayer>, registry: Arc<RwLock<PackRegistry>>) -> Self {
-        let install_state_path = PathBuf::from("data").join("rust_shell").join("packs").join("installed_packs.json");
+        let install_state_path = PathBuf::from("data")
+            .join("rust_shell")
+            .join("packs")
+            .join("installed_packs.json");
         let installed_packs = if install_state_path.exists() {
             fs::read_to_string(&install_state_path)
                 .ok()
@@ -359,7 +417,11 @@ impl PackManager {
         &self.installed_packs
     }
 
-    pub async fn download_and_install(&mut self, pack_id: Uuid, user_confirmed: bool) -> Result<InstallResult, PackError> {
+    pub async fn download_and_install(
+        &mut self,
+        pack_id: Uuid,
+        user_confirmed: bool,
+    ) -> Result<InstallResult, PackError> {
         if !user_confirmed {
             return Err(PackError::UserConfirmationRequired);
         }
@@ -368,15 +430,22 @@ impl PackManager {
             .read()
             .map_err(|_| PackError::Io("Pack-Registry konnte nicht gelesen werden".to_owned()))?
             .get(pack_id)
-            .ok_or_else(|| PackError::NotFound("Pack ist im Registry-Index nicht vorhanden".to_owned()))?;
+            .ok_or_else(|| {
+                PackError::NotFound("Pack ist im Registry-Index nicht vorhanden".to_owned())
+            })?;
         let before = self.vault.current_hit_rate().map_err(map_vault_error)?;
         let pack = self.load_pack(&entry)?;
         pack.verify(&self.engine)?;
         for anchor in &pack.anchors {
-            let verification = self.vault.verify_anchor_record(anchor).map_err(map_vault_error)?;
+            let verification = self
+                .vault
+                .verify_anchor_record(anchor)
+                .map_err(map_vault_error)?;
             if !verification.approved {
                 return Err(PackError::Vault(
-                    verification.rejection_reason.unwrap_or_else(|| "Pack-Anker wurde lokal abgelehnt".to_owned()),
+                    verification
+                        .rejection_reason
+                        .unwrap_or_else(|| "Pack-Anker wurde lokal abgelehnt".to_owned()),
                 ));
             }
             let submission = RawAnchorSubmission {
@@ -416,7 +485,11 @@ impl PackManager {
         })
     }
 
-    pub fn download_and_install_sync(&mut self, pack_id: Uuid, user_confirmed: bool) -> Result<InstallResult, PackError> {
+    pub fn download_and_install_sync(
+        &mut self,
+        pack_id: Uuid,
+        user_confirmed: bool,
+    ) -> Result<InstallResult, PackError> {
         if !user_confirmed {
             return Err(PackError::UserConfirmationRequired);
         }
@@ -425,15 +498,22 @@ impl PackManager {
             .read()
             .map_err(|_| PackError::Io("Pack-Registry konnte nicht gelesen werden".to_owned()))?
             .get(pack_id)
-            .ok_or_else(|| PackError::NotFound("Pack ist im Registry-Index nicht vorhanden".to_owned()))?;
+            .ok_or_else(|| {
+                PackError::NotFound("Pack ist im Registry-Index nicht vorhanden".to_owned())
+            })?;
         let before = self.vault.current_hit_rate().map_err(map_vault_error)?;
         let pack = self.load_pack(&entry)?;
         pack.verify(&self.engine)?;
         for anchor in &pack.anchors {
-            let verification = self.vault.verify_anchor_record(anchor).map_err(map_vault_error)?;
+            let verification = self
+                .vault
+                .verify_anchor_record(anchor)
+                .map_err(map_vault_error)?;
             if !verification.approved {
                 return Err(PackError::Vault(
-                    verification.rejection_reason.unwrap_or_else(|| "Pack-Anker wurde lokal abgelehnt".to_owned()),
+                    verification
+                        .rejection_reason
+                        .unwrap_or_else(|| "Pack-Anker wurde lokal abgelehnt".to_owned()),
                 ));
             }
             let submission = RawAnchorSubmission {
@@ -480,7 +560,10 @@ impl PackManager {
             return Err(PackError::NotFound("Pack ist nicht installiert".to_owned()));
         };
         for anchor_id in installed.anchor_ids_added {
-            let _ = self.vault.remove_anchor_record(anchor_id).map_err(map_vault_error)?;
+            let _ = self
+                .vault
+                .remove_anchor_record(anchor_id)
+                .map_err(map_vault_error)?;
         }
         self.save_state()
     }
@@ -495,7 +578,10 @@ impl PackManager {
                 "Remote-Pack-Download bleibt im Rust-Shell-Port fail-closed, bis der Netzpfad fertig portiert ist".to_owned(),
             ));
         }
-        let anchors = self.vault.get_anchors_by_domain(&entry.domain).map_err(map_vault_error)?;
+        let anchors = self
+            .vault
+            .get_anchors_by_domain(&entry.domain)
+            .map_err(map_vault_error)?;
         let mut synthetic = AepPack::new(
             entry.pack_name.clone(),
             entry.domain.clone(),
@@ -512,7 +598,8 @@ impl PackManager {
         if let Some(parent) = self.install_state_path.parent() {
             fs::create_dir_all(parent).map_err(|err| PackError::Io(err.to_string()))?;
         }
-        let raw = serde_json::to_string_pretty(&self.installed_packs).map_err(|err| PackError::Format(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(&self.installed_packs)
+            .map_err(|err| PackError::Format(err.to_string()))?;
         fs::write(&self.install_state_path, raw).map_err(|err| PackError::Io(err.to_string()))
     }
 }
@@ -545,15 +632,17 @@ impl ShanwayPackAdvisor {
             {
                 continue;
             }
-            self.last_recommendation.insert(entry.pack_id, Utc::now().timestamp() as u64);
-            self.bus.publish(BusEvent::PackRecommended(PackRecommendedEvent {
-                pack_id: entry.pack_id.to_string(),
-                pack_name: entry.pack_name.clone(),
-                domain: entry.domain.clone(),
-                size_mb: entry.size_bytes as f32 / 1_048_576.0,
-                estimated_hit_rate_improvement: entry.estimated_hit_rate_improvement,
-                cooldown_respected: true,
-            }));
+            self.last_recommendation
+                .insert(entry.pack_id, Utc::now().timestamp() as u64);
+            self.bus
+                .publish(BusEvent::PackRecommended(PackRecommendedEvent {
+                    pack_id: entry.pack_id.to_string(),
+                    pack_name: entry.pack_name.clone(),
+                    domain: entry.domain.clone(),
+                    size_mb: entry.size_bytes as f32 / 1_048_576.0,
+                    estimated_hit_rate_improvement: entry.estimated_hit_rate_improvement,
+                    cooldown_respected: true,
+                }));
             output.push(PackRecommendation {
                 pack_id: entry.pack_id,
                 title: entry.pack_name.clone(),
@@ -571,15 +660,20 @@ impl ShanwayPackAdvisor {
         output
     }
 
-    pub async fn download_pack(&self, pack_id: Uuid, user_confirmed: bool) -> Result<(), PackError> {
+    pub async fn download_pack(
+        &self,
+        pack_id: Uuid,
+        user_confirmed: bool,
+    ) -> Result<(), PackError> {
         if !user_confirmed {
             return Err(PackError::UserConfirmationRequired);
         }
-        self.bus.publish(BusEvent::PackDownloadConfirmed(PackDownloadEvent {
-            pack_id: pack_id.to_string(),
-            confirmed_by_user: true,
-            started_at: Utc::now().timestamp() as u64,
-        }));
+        self.bus
+            .publish(BusEvent::PackDownloadConfirmed(PackDownloadEvent {
+                pack_id: pack_id.to_string(),
+                confirmed_by_user: true,
+                started_at: Utc::now().timestamp() as u64,
+            }));
         Ok(())
     }
 }
@@ -588,12 +682,18 @@ impl AutoPackGenerator {
     pub fn new(vault: Arc<VaultAccessLayer>) -> Self {
         Self {
             vault,
-            output_dir: PathBuf::from("data").join("rust_shell").join("generated_packs"),
+            output_dir: PathBuf::from("data")
+                .join("rust_shell")
+                .join("generated_packs"),
             engine: EnginePipeline::new(),
         }
     }
 
-    pub async fn generate_pack(&self, domain: impl Into<String>, user_confirmed: bool) -> Result<GeneratedPack, PackError> {
+    pub async fn generate_pack(
+        &self,
+        domain: impl Into<String>,
+        user_confirmed: bool,
+    ) -> Result<GeneratedPack, PackError> {
         if !user_confirmed {
             return Err(PackError::UserConfirmationRequired);
         }
@@ -623,7 +723,11 @@ impl AutoPackGenerator {
         })
     }
 
-    pub fn generate_pack_sync(&self, domain: impl Into<String>, user_confirmed: bool) -> Result<GeneratedPack, PackError> {
+    pub fn generate_pack_sync(
+        &self,
+        domain: impl Into<String>,
+        user_confirmed: bool,
+    ) -> Result<GeneratedPack, PackError> {
         if !user_confirmed {
             return Err(PackError::UserConfirmationRequired);
         }
@@ -657,7 +761,9 @@ impl AutoPackGenerator {
 impl OfflineCacheManager {
     pub fn new() -> Self {
         Self {
-            cache_dir: PathBuf::from("data").join("rust_shell").join("offline_cache"),
+            cache_dir: PathBuf::from("data")
+                .join("rust_shell")
+                .join("offline_cache"),
         }
     }
 
@@ -678,7 +784,14 @@ impl OfflineCacheManager {
             let activity_key = sanitize(activity);
             let matching = installed_packs
                 .values()
-                .filter(|pack| sanitize(&pack.entry.domain).contains(&activity_key) || pack.entry.tags.iter().any(|tag| sanitize(tag).contains(&activity_key)))
+                .filter(|pack| {
+                    sanitize(&pack.entry.domain).contains(&activity_key)
+                        || pack
+                            .entry
+                            .tags
+                            .iter()
+                            .any(|tag| sanitize(tag).contains(&activity_key))
+                })
                 .collect::<Vec<_>>();
             if matching.is_empty() {
                 gaps.push(activity.clone());
@@ -694,7 +807,8 @@ impl OfflineCacheManager {
         let max_anchors = (max_bytes / approx_anchor_bytes).max(1) as usize;
         selected.truncate(max_anchors);
         let cache_path = self.cache_dir.join("offline_cache.json");
-        let raw = serde_json::to_string_pretty(&selected).map_err(|err| PackError::Format(err.to_string()))?;
+        let raw = serde_json::to_string_pretty(&selected)
+            .map_err(|err| PackError::Format(err.to_string()))?;
         fs::write(&cache_path, raw.as_bytes()).map_err(|err| PackError::Io(err.to_string()))?;
         Ok(OfflineCacheResult {
             anchors_cached: selected.len(),
@@ -713,15 +827,25 @@ fn derive_stats(anchors: &[PublicAnchorRecord]) -> AepStats {
     let avg_coherence = if anchors.is_empty() {
         0.0
     } else {
-        (anchors.iter().map(|anchor| anchor.coherence_index).sum::<f64>() / anchors.len() as f64) as f32
+        (anchors
+            .iter()
+            .map(|anchor| anchor.coherence_index)
+            .sum::<f64>()
+            / anchors.len() as f64) as f32
     };
-    let compatible_signal_types = anchors.iter().fold(0u64, |mask, anchor| mask | (1u64 << (anchor.signal_type as u8 & 0x07)));
+    let compatible_signal_types = anchors.iter().fold(0u64, |mask, anchor| {
+        mask | (1u64 << (anchor.signal_type as u8 & 0x07))
+    });
     AepStats {
         anchor_count: anchors.len() as u32,
         avg_trust_score,
         avg_coherence,
-        estimated_hit_rate_improvement: (anchors.len() as f32 / (anchors.len() as f32 + 96.0)).clamp(0.0, 1.0) * 0.20,
-        estimated_compression_improvement: (anchors.len() as f32 / (anchors.len() as f32 + 128.0)).clamp(0.0, 1.0) * 0.14,
+        estimated_hit_rate_improvement: (anchors.len() as f32 / (anchors.len() as f32 + 96.0))
+            .clamp(0.0, 1.0)
+            * 0.20,
+        estimated_compression_improvement: (anchors.len() as f32 / (anchors.len() as f32 + 128.0))
+            .clamp(0.0, 1.0)
+            * 0.14,
         compatible_signal_types,
     }
 }
@@ -734,7 +858,8 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             pack_version: "1.0.0".to_owned(),
             domain: "language_german".to_owned(),
             subdomain: Some("text_code".to_owned()),
-            description: "Deutsche Text-, Markdown- und Code-Anker fuer schnellen Vault-Hit.".to_owned(),
+            description: "Deutsche Text-, Markdown- und Code-Anker fuer schnellen Vault-Hit."
+                .to_owned(),
             curator: "official".to_owned(),
             download_url: "data/rust_shell/packs/official_language_german.aep".to_owned(),
             size_bytes: 786_432,
@@ -744,7 +869,11 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             estimated_compression_improvement: 0.08,
             shanway_verified: true,
             created_at: Utc::now().timestamp() as u64,
-            tags: vec!["Text / Code".to_owned(), "PlainText".to_owned(), "Code".to_owned()],
+            tags: vec![
+                "Text / Code".to_owned(),
+                "PlainText".to_owned(),
+                "Code".to_owned(),
+            ],
         },
         PackRegistryEntry {
             pack_id: Uuid::new_v4(),
@@ -770,7 +899,8 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             pack_version: "1.0.0".to_owned(),
             domain: "security".to_owned(),
             subdomain: Some("runtime_signal".to_owned()),
-            description: "Sicherheits- und Laufzeit-Anker fuer Beobachtung und Quarantaene.".to_owned(),
+            description: "Sicherheits- und Laufzeit-Anker fuer Beobachtung und Quarantaene."
+                .to_owned(),
             curator: "official".to_owned(),
             download_url: "data/rust_shell/packs/official_security_runtime.aep".to_owned(),
             size_bytes: 1_048_576,
@@ -786,7 +916,10 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
 }
 
 fn sanitize(value: &str) -> String {
-    value.to_ascii_lowercase().replace(" / ", "_").replace([' ', '-', '.'], "_")
+    value
+        .to_ascii_lowercase()
+        .replace(" / ", "_")
+        .replace([' ', '-', '.'], "_")
 }
 
 fn map_vault_error(error: VaultAccessError) -> PackError {

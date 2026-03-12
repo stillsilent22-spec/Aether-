@@ -153,7 +153,9 @@ pub struct PublicTtdTransport {
 
 impl PublicTtdPoolStore {
     pub fn new_default() -> Self {
-        let base = PathBuf::from("data").join("rust_shell").join("public_ttd_anchor_pool");
+        let base = PathBuf::from("data")
+            .join("rust_shell")
+            .join("public_ttd_anchor_pool");
         Self {
             records_path: base.join("anchor_records.json"),
             summary_path: base.join("pool_summary.json"),
@@ -187,9 +189,15 @@ impl PublicTtdPoolStore {
         )
     }
 
-    pub fn submit_validation(&self, submission: &PublicTtdSubmission) -> Result<PublicTtdPoolSummary, String> {
+    pub fn submit_validation(
+        &self,
+        submission: &PublicTtdSubmission,
+    ) -> Result<PublicTtdPoolSummary, String> {
         let mut records = self.load_records();
-        if let Some(existing) = records.iter_mut().find(|record| record.ttd_hash == submission.ttd_hash) {
+        if let Some(existing) = records
+            .iter_mut()
+            .find(|record| record.ttd_hash == submission.ttd_hash)
+        {
             *existing = merge_public_ttd_anchor_record(existing, submission);
         } else {
             records.push(build_public_ttd_anchor_record(submission));
@@ -202,7 +210,10 @@ impl PublicTtdPoolStore {
         for bundle in bundles {
             let incoming = extract_records_from_bundle(bundle);
             for record in incoming {
-                if let Some(existing) = records.iter_mut().find(|item| item.ttd_hash == record.ttd_hash) {
+                if let Some(existing) = records
+                    .iter_mut()
+                    .find(|item| item.ttd_hash == record.ttd_hash)
+                {
                     let synthetic = PublicTtdSubmission {
                         ttd_hash: record.ttd_hash.clone(),
                         source_label: record.source_label.clone(),
@@ -288,7 +299,11 @@ impl PublicTtdTransport {
             result.network_used = true;
             match self.publish_bundle_ipfs(bundle, &settings.ipfs_api_url, timeout) {
                 Ok(payload) => {
-                    let cid = payload.get("cid").and_then(Value::as_str).unwrap_or_default().to_owned();
+                    let cid = payload
+                        .get("cid")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned();
                     result.ipfs = payload;
                     result.published = true;
                     if !cid.is_empty() {
@@ -371,7 +386,12 @@ impl PublicTtdTransport {
         output
     }
 
-    fn publish_bundle_http(&self, bundle: &Value, publish_url: &str, timeout: f32) -> Result<Value, String> {
+    fn publish_bundle_http(
+        &self,
+        bundle: &Value,
+        publish_url: &str,
+        timeout: f32,
+    ) -> Result<Value, String> {
         request_json(
             publish_url,
             "POST",
@@ -381,7 +401,12 @@ impl PublicTtdTransport {
         )
     }
 
-    fn publish_bundle_ipfs(&self, bundle: &Value, ipfs_api_url: &str, timeout: f32) -> Result<Value, String> {
+    fn publish_bundle_ipfs(
+        &self,
+        bundle: &Value,
+        ipfs_api_url: &str,
+        timeout: f32,
+    ) -> Result<Value, String> {
         let payload = serde_json::to_vec_pretty(bundle).map_err(|err| err.to_string())?;
         let boundary = format!("----AetherBoundary{}", Uuid::new_v4().simple());
         let mut body = Vec::new();
@@ -399,9 +424,17 @@ impl PublicTtdTransport {
             timeout,
         )?;
         let text = String::from_utf8_lossy(&raw);
-        let json_line = text.lines().rev().find(|line| !line.trim().is_empty()).unwrap_or("{}");
+        let json_line = text
+            .lines()
+            .rev()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("{}");
         let decoded: Value = serde_json::from_str(json_line).map_err(|err| err.to_string())?;
-        let cid = decoded.get("Hash").and_then(Value::as_str).unwrap_or_default().to_owned();
+        let cid = decoded
+            .get("Hash")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         if cid.is_empty() {
             return Err("ipfs_no_cid".to_owned());
         }
@@ -432,7 +465,10 @@ pub fn validate_public_ttd_candidate(
         reasons.push(format!("i_obs_ratio {:.3} <= 0.900", metrics.i_obs_ratio));
     }
     if metrics.delta_stability <= 0.90 {
-        reasons.push(format!("delta_stability {:.3} <= 0.900", metrics.delta_stability));
+        reasons.push(format!(
+            "delta_stability {:.3} <= 0.900",
+            metrics.delta_stability
+        ));
     }
     if metrics.recursive_count < 3 {
         reasons.push(format!("recursive_count {} < 3", metrics.recursive_count));
@@ -462,11 +498,20 @@ pub fn pseudonymous_network_identity(material: &str, purpose: &str) -> String {
     hasher.update(b"|");
     hasher.update(purpose.as_bytes());
     let digest = hasher.finalize();
-    digest[..12].iter().map(|byte| format!("{byte:02X}")).collect::<String>()
+    digest[..12]
+        .iter()
+        .map(|byte| format!("{byte:02X}"))
+        .collect::<String>()
 }
 
-pub fn summarize_public_ttd_anchor_records(records: &[PublicTtdAnchorRecord]) -> PublicTtdPoolSummary {
-    let normalized = records.iter().cloned().map(apply_trust_state).collect::<Vec<_>>();
+pub fn summarize_public_ttd_anchor_records(
+    records: &[PublicTtdAnchorRecord],
+) -> PublicTtdPoolSummary {
+    let normalized = records
+        .iter()
+        .cloned()
+        .map(apply_trust_state)
+        .collect::<Vec<_>>();
     let trusted_records = normalized
         .iter()
         .filter(|record| record.quorum_met)
@@ -477,10 +522,22 @@ pub fn summarize_public_ttd_anchor_records(records: &[PublicTtdAnchorRecord]) ->
         .filter(|record| !record.quorum_met)
         .cloned()
         .collect::<Vec<_>>();
-    let public_anchors = trusted_records.iter().map(public_ttd_anchor_view).collect::<Vec<_>>();
-    let candidate_anchors = candidate_records.iter().map(public_ttd_anchor_view).collect::<Vec<_>>();
-    let quorum_validated_count = trusted_records.iter().filter(|record| record.trust_reason == "peer_quorum_met").count();
-    let admin_trusted_count = trusted_records.iter().filter(|record| record.admin_trusted).count();
+    let public_anchors = trusted_records
+        .iter()
+        .map(public_ttd_anchor_view)
+        .collect::<Vec<_>>();
+    let candidate_anchors = candidate_records
+        .iter()
+        .map(public_ttd_anchor_view)
+        .collect::<Vec<_>>();
+    let quorum_validated_count = trusted_records
+        .iter()
+        .filter(|record| record.trust_reason == "peer_quorum_met")
+        .count();
+    let admin_trusted_count = trusted_records
+        .iter()
+        .filter(|record| record.admin_trusted)
+        .count();
     PublicTtdPoolSummary {
         schema: PUBLIC_TTD_POOL_SCHEMA.to_owned(),
         updated_at: utc_now(),
@@ -527,7 +584,10 @@ fn build_public_ttd_anchor_record(submission: &PublicTtdSubmission) -> PublicTtd
     })
 }
 
-fn merge_public_ttd_anchor_record(record: &PublicTtdAnchorRecord, submission: &PublicTtdSubmission) -> PublicTtdAnchorRecord {
+fn merge_public_ttd_anchor_record(
+    record: &PublicTtdAnchorRecord,
+    submission: &PublicTtdSubmission,
+) -> PublicTtdAnchorRecord {
     let mut validators = record.validation_pseudonyms.clone();
     let pseudonym = submission.pseudonym.trim();
     if !pseudonym.is_empty() && !validators.iter().any(|existing| existing == pseudonym) {
@@ -537,11 +597,22 @@ fn merge_public_ttd_anchor_record(record: &PublicTtdAnchorRecord, submission: &P
     let incoming = canonical_metrics(submission.public_metrics.clone());
     let current = canonical_metrics(record.public_metrics.clone());
     let merged_metrics = PublicTtdMetrics {
-        residual: (((current.residual * previous_count) + incoming.residual) / (previous_count + 1.0)).clamp(0.0, 1.0),
-        symmetry: (((current.symmetry * previous_count) + incoming.symmetry) / (previous_count + 1.0)).clamp(0.0, 1.0),
-        i_obs_ratio: (((current.i_obs_ratio * previous_count) + incoming.i_obs_ratio) / (previous_count + 1.0)).clamp(0.0, 1.0),
-        delta_stability: (((current.delta_stability * previous_count) + incoming.delta_stability) / (previous_count + 1.0)).clamp(0.0, 1.0),
-        delta_i_obs_percent: (((current.delta_i_obs_percent * previous_count) + incoming.delta_i_obs_percent) / (previous_count + 1.0)).clamp(0.0, 100.0),
+        residual: (((current.residual * previous_count) + incoming.residual)
+            / (previous_count + 1.0))
+            .clamp(0.0, 1.0),
+        symmetry: (((current.symmetry * previous_count) + incoming.symmetry)
+            / (previous_count + 1.0))
+            .clamp(0.0, 1.0),
+        i_obs_ratio: (((current.i_obs_ratio * previous_count) + incoming.i_obs_ratio)
+            / (previous_count + 1.0))
+            .clamp(0.0, 1.0),
+        delta_stability: (((current.delta_stability * previous_count) + incoming.delta_stability)
+            / (previous_count + 1.0))
+            .clamp(0.0, 1.0),
+        delta_i_obs_percent: (((current.delta_i_obs_percent * previous_count)
+            + incoming.delta_i_obs_percent)
+            / (previous_count + 1.0))
+            .clamp(0.0, 100.0),
         recursive_count: current.recursive_count.max(incoming.recursive_count),
     };
     apply_trust_state(PublicTtdAnchorRecord {
@@ -562,7 +633,8 @@ fn merge_public_ttd_anchor_record(record: &PublicTtdAnchorRecord, submission: &P
         uploader_role: normalize_public_role(&record.uploader_role),
         validation_pseudonyms: validators.clone(),
         validation_count: validators.len() as u32,
-        signed_validation_count: record.signed_validation_count + u32::from(submission.signature_included && !pseudonym.is_empty()),
+        signed_validation_count: record.signed_validation_count
+            + u32::from(submission.signature_included && !pseudonym.is_empty()),
         public_metrics: canonical_metrics(merged_metrics),
         latest_metrics: incoming,
         raw_data_included: false,
@@ -591,7 +663,12 @@ fn apply_trust_state(mut record: PublicTtdAnchorRecord) -> PublicTtdAnchorRecord
     } else {
         "peer_quorum_pending".to_owned()
     };
-    record.trust_state = if record.quorum_met { "trusted" } else { "candidate" }.to_owned();
+    record.trust_state = if record.quorum_met {
+        "trusted"
+    } else {
+        "candidate"
+    }
+    .to_owned();
     if record.quorum_met && record.trusted_at.as_deref().unwrap_or_default().is_empty() {
         record.trusted_at = Some(utc_now());
     }
@@ -714,13 +791,28 @@ fn timeout_secs(settings: &PublicTtdNetworkSettings) -> f32 {
         .unwrap_or(12.0)
 }
 
-fn request_json(url: &str, method: &str, body: Option<Vec<u8>>, headers: &[(&str, &str)], timeout: f32) -> Result<Value, String> {
+fn request_json(
+    url: &str,
+    method: &str,
+    body: Option<Vec<u8>>,
+    headers: &[(&str, &str)],
+    timeout: f32,
+) -> Result<Value, String> {
     let raw = request_raw(url, method, body, headers, timeout)?;
     serde_json::from_slice::<Value>(&raw).map_err(|err| err.to_string())
 }
 
-fn request_raw(url: &str, method: &str, body: Option<Vec<u8>>, headers: &[(&str, &str)], timeout: f32) -> Result<Vec<u8>, String> {
-    let runtime = Builder::new_current_thread().enable_all().build().map_err(|err| err.to_string())?;
+fn request_raw(
+    url: &str,
+    method: &str,
+    body: Option<Vec<u8>>,
+    headers: &[(&str, &str)],
+    timeout: f32,
+) -> Result<Vec<u8>, String> {
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| err.to_string())?;
     runtime.block_on(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs_f32(timeout.max(1.0)))

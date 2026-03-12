@@ -155,7 +155,11 @@ impl BrowserInspector {
         }
     }
 
-    pub fn build_search_fetch_url(query: &str, provider: &str, searx_base_url: &str) -> Result<String, String> {
+    pub fn build_search_fetch_url(
+        query: &str,
+        provider: &str,
+        searx_base_url: &str,
+    ) -> Result<String, String> {
         let cleaned = if query.trim().is_empty() {
             "file format structure"
         } else {
@@ -174,7 +178,12 @@ impl BrowserInspector {
         }
     }
 
-    pub fn fetch_search_context(query: &str, provider: &str, timeout_secs: f32, searx_base_url: &str) -> BrowserSearchContext {
+    pub fn fetch_search_context(
+        query: &str,
+        provider: &str,
+        timeout_secs: f32,
+        searx_base_url: &str,
+    ) -> BrowserSearchContext {
         let cleaned = query.split_whitespace().collect::<Vec<_>>().join(" ");
         if cleaned.trim().is_empty() {
             return BrowserSearchContext {
@@ -258,7 +267,11 @@ impl BrowserInspector {
     }
 
     pub fn strip_html_text(raw_html: &str, limit_chars: usize) -> String {
-        let cleaned = collapse_whitespace(&strip_markup(&remove_block(&remove_block(raw_html, "<script", "</script>"), "<style", "</style>")));
+        let cleaned = collapse_whitespace(&strip_markup(&remove_block(
+            &remove_block(raw_html, "<script", "</script>"),
+            "<style",
+            "</style>",
+        )));
         if cleaned.len() <= limit_chars.max(80) {
             cleaned
         } else {
@@ -266,7 +279,11 @@ impl BrowserInspector {
         }
     }
 
-    fn analyze_download(url: &str, download: DownloadPayload, policy: &BrowserProbePolicy) -> BrowserProbeResult {
+    fn analyze_download(
+        url: &str,
+        download: DownloadPayload,
+        policy: &BrowserProbePolicy,
+    ) -> BrowserProbeResult {
         let category = categorize_content_type(&download.content_type, &download.final_url);
         let entropy = byte_entropy(&download.raw_bytes);
         let header_blob = download
@@ -303,7 +320,8 @@ impl BrowserInspector {
             let lowered = html.to_ascii_lowercase();
             script_count = count_occurrences(&lowered, "<script");
             style_count = count_occurrences(&lowered, "<style");
-            inline_base64 = count_occurrences(&lowered, "data:") + count_occurrences(&lowered, ";base64,");
+            inline_base64 =
+                count_occurrences(&lowered, "data:") + count_occurrences(&lowered, ";base64,");
             eval_hits = count_occurrences(&lowered, "eval(")
                 + count_occurrences(&lowered, "atob(")
                 + count_occurrences(&lowered, "fromcharcode(")
@@ -328,10 +346,16 @@ impl BrowserInspector {
             preview_summary = "Textlayout".to_owned();
         } else {
             if category == "video" {
-                missing_data.push("Temporale Frame-Drift ohne lokalen Decoder nur stichprobenartig bewertbar".to_owned());
+                missing_data.push(
+                    "Temporale Frame-Drift ohne lokalen Decoder nur stichprobenartig bewertbar"
+                        .to_owned(),
+                );
             }
             if category == "audio" {
-                missing_data.push("Audiofront ohne lokalen Decoder nur ueber Header und Bytes bewertet".to_owned());
+                missing_data.push(
+                    "Audiofront ohne lokalen Decoder nur ueber Header und Bytes bewertet"
+                        .to_owned(),
+                );
             }
             frontend_symmetry = (1.0 - ((entropy - 4.2).abs() / 4.2)).clamp(0.0, 1.0);
             frontend_entropy = (entropy / 8.0).clamp(0.0, 1.0) * 4.0;
@@ -348,22 +372,24 @@ impl BrowserInspector {
             + (0.16 * (suspicious_long_lines as f32 / 6.0).min(1.0))
             + (0.14 * ((entropy - 6.4).max(0.0) / 1.6).min(1.0))
             + (0.10 * (script_count as f32 / 12.0).min(1.0)))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
 
         let ai_generation_score = ((0.22 * (frontend_entropy / 4.0).min(1.0))
             + (0.18 * (frontend_symmetry - 0.82).max(0.0))
             + (0.14 * ((entropy - 5.8).max(0.0) / 2.0).min(1.0)))
-            .clamp(0.0, 1.0);
-        let hate_score = ((0.55 * (hate_hits as f32 / 2.0).min(1.0)) + (0.18 * (fake_hits as f32 / 3.0).min(1.0))).clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
+        let hate_score = ((0.55 * (hate_hits as f32 / 2.0).min(1.0))
+            + (0.18 * (fake_hits as f32 / 3.0).min(1.0)))
+        .clamp(0.0, 1.0);
         let fake_score = ((0.28 * (fake_hits as f32 / 3.0).min(1.0))
             + (0.18 * ((header_entropy - 4.2).max(0.0) / 2.0).min(1.0))
             + (0.16 * ((entropy - 5.9).max(0.0) / 1.6).min(1.0))
             + (0.12 * (external_resources as f32 / 12.0).min(1.0)))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
         let scam_score = ((0.42 * (scam_hits as f32 / 3.0).min(1.0))
             + (0.28 * obfuscation_score)
             + (0.10 * (eval_hits as f32 / 2.0).min(1.0)))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
         let mut risk_score = ai_generation_score
             .max(hate_score)
             .max(fake_score)
@@ -374,16 +400,25 @@ impl BrowserInspector {
             risk_reasons.push("Obfuskation oder Script-Verschleierung erkannt".to_owned());
         }
         if hate_score >= 0.52 {
-            risk_reasons.push("Asymmetrische Sprachmuster mit Hate-Speech-Potenzial erkannt".to_owned());
+            risk_reasons
+                .push("Asymmetrische Sprachmuster mit Hate-Speech-Potenzial erkannt".to_owned());
         }
         if fake_score >= 0.50 {
-            risk_reasons.push("Inkonsistente oder sensationsgetriebene Struktur erhoeht Fakenews-Risiko".to_owned());
+            risk_reasons.push(
+                "Inkonsistente oder sensationsgetriebene Struktur erhoeht Fakenews-Risiko"
+                    .to_owned(),
+            );
         }
         if ai_generation_score >= 0.46 {
-            risk_reasons.push("Frontend-Signale wirken stark synthetisch oder uebermaessig glatt".to_owned());
+            risk_reasons.push(
+                "Frontend-Signale wirken stark synthetisch oder uebermaessig glatt".to_owned(),
+            );
         }
         if risk_reasons.is_empty() {
-            risk_reasons.push("Keine dominante Anomalie erkannt; Struktur bleibt vorlaeufig konsistent".to_owned());
+            risk_reasons.push(
+                "Keine dominante Anomalie erkannt; Struktur bleibt vorlaeufig konsistent"
+                    .to_owned(),
+            );
         }
 
         let mut risk_label = if risk_score >= policy.block_threshold {
@@ -409,14 +444,23 @@ impl BrowserInspector {
             .filter(|(key, _)| {
                 matches!(
                     key.as_str(),
-                    "content-type" | "content-length" | "server" | "cache-control" | "content-security-policy" | "x-frame-options"
+                    "content-type"
+                        | "content-length"
+                        | "server"
+                        | "cache-control"
+                        | "content-security-policy"
+                        | "x-frame-options"
                 )
             })
             .collect::<HashMap<_, _>>();
         let backend_summary = format!(
             "Headers {} | MIME {} | Scripts {} | Styles {} | Obfuskation {:.2}",
             headers.len(),
-            if download.content_type.is_empty() { "--" } else { &download.content_type },
+            if download.content_type.is_empty() {
+                "--"
+            } else {
+                &download.content_type
+            },
             script_count,
             style_count,
             obfuscation_score
@@ -433,7 +477,11 @@ impl BrowserInspector {
             url: url.to_owned(),
             final_url: download.final_url,
             title,
-            summary: if summary.is_empty() { trimmed_at_boundary(&text_sample, 720) } else { summary },
+            summary: if summary.is_empty() {
+                trimmed_at_boundary(&text_sample, 720)
+            } else {
+                summary
+            },
             text_sample,
             content_type: download.content_type,
             category,
@@ -466,8 +514,15 @@ impl BrowserInspector {
         }
     }
 
-    fn download_payload(url: &str, timeout_secs: f32, max_bytes: usize) -> Result<DownloadPayload, String> {
-        let runtime = Builder::new_current_thread().enable_all().build().map_err(|err| err.to_string())?;
+    fn download_payload(
+        url: &str,
+        timeout_secs: f32,
+        max_bytes: usize,
+    ) -> Result<DownloadPayload, String> {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?;
         runtime.block_on(async move {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs_f32(timeout_secs.max(1.0)))
@@ -485,11 +540,23 @@ impl BrowserInspector {
             let headers = response
                 .headers()
                 .iter()
-                .filter_map(|(key, value)| value.to_str().ok().map(|decoded| (key.as_str().to_ascii_lowercase(), decoded.to_owned())))
+                .filter_map(|(key, value)| {
+                    value
+                        .to_str()
+                        .ok()
+                        .map(|decoded| (key.as_str().to_ascii_lowercase(), decoded.to_owned()))
+                })
                 .collect::<HashMap<_, _>>();
             let content_type = headers
                 .get("content-type")
-                .map(|value| value.split(';').next().unwrap_or_default().trim().to_ascii_lowercase())
+                .map(|value| {
+                    value
+                        .split(';')
+                        .next()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_ascii_lowercase()
+                })
                 .unwrap_or_default();
             let mut raw_bytes = Vec::new();
             let mut response = response;
@@ -517,7 +584,10 @@ impl BrowserInspector {
     }
 
     fn download_text(url: &str, timeout_secs: f32) -> Result<String, String> {
-        let runtime = Builder::new_current_thread().enable_all().build().map_err(|err| err.to_string())?;
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| err.to_string())?;
         runtime.block_on(async move {
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs_f32(timeout_secs.max(1.0)))
@@ -541,7 +611,9 @@ fn encode_query(text: &str) -> String {
     let mut output = String::new();
     for byte in text.bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => output.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                output.push(byte as char)
+            }
             b' ' => output.push('+'),
             _ => output.push_str(&format!("%{byte:02X}")),
         }
@@ -664,8 +736,16 @@ fn layout_profile(text: &str) -> (f32, f32) {
     if lines.is_empty() {
         return (0.0, 0.0);
     }
-    let max_length = lines.iter().map(|line| line.len()).max().unwrap_or(1).max(1) as f32;
-    let lengths = lines.iter().map(|line| line.len() as f32 / max_length).collect::<Vec<_>>();
+    let max_length = lines
+        .iter()
+        .map(|line| line.len())
+        .max()
+        .unwrap_or(1)
+        .max(1) as f32;
+    let lengths = lines
+        .iter()
+        .map(|line| line.len() as f32 / max_length)
+        .collect::<Vec<_>>();
     let symmetry = if lengths.len() < 2 {
         0.0
     } else {
@@ -675,7 +755,11 @@ fn layout_profile(text: &str) -> (f32, f32) {
             score += 1.0 - (lengths[index] - lengths[lengths.len() - 1 - index]).abs();
             comparisons += 1;
         }
-        if comparisons == 0 { 0.0 } else { (score / comparisons as f32).clamp(0.0, 1.0) }
+        if comparisons == 0 {
+            0.0
+        } else {
+            (score / comparisons as f32).clamp(0.0, 1.0)
+        }
     };
     let collapsed = lines.join(" ");
     let mut histogram = HashMap::<char, usize>::new();
@@ -696,7 +780,11 @@ fn layout_profile(text: &str) -> (f32, f32) {
 fn categorize_content_type(content_type: &str, url: &str) -> String {
     let normalized = content_type.trim().to_ascii_lowercase();
     let lowered_url = url.to_ascii_lowercase();
-    if normalized.starts_with("text/html") || lowered_url.ends_with(".html") || lowered_url.ends_with(".htm") || lowered_url.ends_with('/') {
+    if normalized.starts_with("text/html")
+        || lowered_url.ends_with(".html")
+        || lowered_url.ends_with(".htm")
+        || lowered_url.ends_with('/')
+    {
         "html".to_owned()
     } else if normalized.starts_with("image/")
         || lowered_url.ends_with(".png")
@@ -737,7 +825,9 @@ fn categorize_content_type(content_type: &str, url: &str) -> String {
 }
 
 fn host_label(url: &str) -> String {
-    let stripped = url.trim_start_matches("https://").trim_start_matches("http://");
+    let stripped = url
+        .trim_start_matches("https://")
+        .trim_start_matches("http://");
     stripped.split('/').next().unwrap_or(url).to_owned()
 }
 
@@ -757,7 +847,10 @@ mod tests {
 
     #[test]
     fn strip_html_text_removes_tags() {
-        let text = BrowserInspector::strip_html_text("<html><body><script>x</script><h1>Hallo Welt</h1></body></html>", 120);
+        let text = BrowserInspector::strip_html_text(
+            "<html><body><script>x</script><h1>Hallo Welt</h1></body></html>",
+            120,
+        );
         assert!(text.contains("Hallo Welt"));
         assert!(!text.contains("<h1>"));
     }
@@ -773,8 +866,15 @@ mod tests {
             raw_bytes: br#"<html><title>Breaking</title><body>Unglaublich exklusive geheime Wahrheit</body></html>"#.to_vec(),
             secure: true,
         };
-        let result = BrowserInspector::analyze_download("https://example.org/news", payload, &BrowserProbePolicy::default());
+        let result = BrowserInspector::analyze_download(
+            "https://example.org/news",
+            payload,
+            &BrowserProbePolicy::default(),
+        );
         assert!(result.risk_score > 0.0);
-        assert!(matches!(result.risk_label.as_str(), "SUSPICIOUS" | "CRITICAL"));
+        assert!(matches!(
+            result.risk_label.as_str(),
+            "SUSPICIOUS" | "CRITICAL"
+        ));
     }
 }

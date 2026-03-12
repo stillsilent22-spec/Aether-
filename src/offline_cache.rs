@@ -25,7 +25,11 @@ pub enum CacheTarget {
 
 impl OfflineCacheManager {
     pub fn new(vault: Arc<VaultAccessLayer>, cache_dir: PathBuf, bus: BusPublisher) -> Self {
-        Self { vault, cache_dir, bus }
+        Self {
+            vault,
+            cache_dir,
+            bus,
+        }
     }
 
     pub async fn prepare_offline_cache(
@@ -52,34 +56,37 @@ impl OfflineCacheManager {
                 CacheTarget::LocalCache => self.cache_dir.clone(),
                 CacheTarget::ExternalDrive(path) => path.clone(),
             };
-            self.write_anchor_cache(&anchors, &cache_path, activity).await;
+            self.write_anchor_cache(&anchors, &cache_path, activity)
+                .await;
         }
 
         let cache_size_mb = total_anchors as f32 * 0.032;
-        self.bus.publish(BusEvent::OfflineCachePrepared(OfflineCacheEvent {
-            activities: request.planned_activities.clone(),
-            cache_size_mb,
-            anchor_count: total_anchors,
-            coverage_by_activity: coverage.clone(),
-        }));
+        self.bus
+            .publish(BusEvent::OfflineCachePrepared(OfflineCacheEvent {
+                activities: request.planned_activities.clone(),
+                cache_size_mb,
+                anchor_count: total_anchors,
+                coverage_by_activity: coverage.clone(),
+            }));
 
         let coverage_str = coverage
             .iter()
             .map(|(activity, ratio)| format!("  {activity} -> {:.0}%", ratio * 100.0))
             .collect::<Vec<_>>()
             .join("\n");
-        self.bus.publish(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-            process_id: None,
-            message: format!(
+        self.bus
+            .publish(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
+                process_id: None,
+                message: format!(
                 "Offline-Cache bereit fuer: {}\nAnker: {} | Groesse: ~{:.1} MB\n\nAbdeckung:\n{}",
                 request.planned_activities.join(", "),
                 total_anchors,
                 cache_size_mb,
                 coverage_str
             ),
-            trust_score: 0.75,
-            action_available: false,
-        }));
+                trust_score: 0.75,
+                action_available: false,
+            }));
 
         Ok(())
     }

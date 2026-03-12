@@ -190,7 +190,11 @@ pub(crate) struct VaultStore {
 
 impl VaultStore {
     pub fn load_default() -> Result<Self, AefError> {
-        Self::load_from(PathBuf::from("data").join("rust_shell").join("vault_store.json"))
+        Self::load_from(
+            PathBuf::from("data")
+                .join("rust_shell")
+                .join("vault_store.json"),
+        )
     }
 
     pub fn load_from(path: PathBuf) -> Result<Self, AefError> {
@@ -219,8 +223,9 @@ impl VaultStore {
             version: self.version,
             entries: self.entries.clone(),
         };
-        let raw = serde_json::to_string_pretty(&payload)
-            .map_err(|err| AefError::Vault(format!("Vault konnte nicht serialisiert werden: {err}")))?;
+        let raw = serde_json::to_string_pretty(&payload).map_err(|err| {
+            AefError::Vault(format!("Vault konnte nicht serialisiert werden: {err}"))
+        })?;
         fs::write(&self.path, raw)?;
         Ok(())
     }
@@ -252,7 +257,9 @@ impl VaultStore {
 
     pub fn contains(&self, vault_ref: &[u8; 32]) -> bool {
         let target = hex_encode(vault_ref);
-        self.entries.iter().any(|entry| entry.vault_ref_hex == target)
+        self.entries
+            .iter()
+            .any(|entry| entry.vault_ref_hex == target)
     }
 
     pub fn get(&self, vault_ref: &[u8; 32]) -> Option<Vec<u8>> {
@@ -266,7 +273,11 @@ impl VaultStore {
     pub fn upsert(&mut self, data: &[u8], signal_type: SignalType) -> Result<[u8; 32], AefError> {
         let vault_ref = sha256_bytes(data);
         let ref_hex = hex_encode(&vault_ref);
-        if !self.entries.iter().any(|entry| entry.vault_ref_hex == ref_hex) {
+        if !self
+            .entries
+            .iter()
+            .any(|entry| entry.vault_ref_hex == ref_hex)
+        {
             self.entries.push(StoredVaultEntry {
                 vault_ref_hex: ref_hex,
                 signal_type,
@@ -295,7 +306,9 @@ impl VaultStore {
 impl Default for VaultStore {
     fn default() -> Self {
         Self {
-            path: PathBuf::from("data").join("rust_shell").join("vault_store.json"),
+            path: PathBuf::from("data")
+                .join("rust_shell")
+                .join("vault_store.json"),
             version: 1,
             entries: Vec::new(),
         }
@@ -326,7 +339,12 @@ impl EnginePipeline {
         }
     }
 
-    pub fn evaluate(&self, original: &[u8], delta_uncompressed: &[u8], anchor_count: usize) -> EngineEvaluation {
+    pub fn evaluate(
+        &self,
+        original: &[u8],
+        delta_uncompressed: &[u8],
+        anchor_count: usize,
+    ) -> EngineEvaluation {
         let entropy = shannon_entropy(original);
         let symmetry = mirrored_symmetry(original);
         let delta_ratio = if original.is_empty() {
@@ -339,7 +357,7 @@ impl EnginePipeline {
         let fourier = fourier_score(original);
         let bayes = ((anchor_count as f32 / ((anchor_count as f32) + 4.0)).clamp(0.0, 1.0)
             * (1.0 - delta_ratio.clamp(0.0, 1.0)))
-            .clamp(0.0, 1.0);
+        .clamp(0.0, 1.0);
         let h_lambda = entropy * (1.0 - symmetry).clamp(0.0, 1.0);
         let knowledge_ratio = (1.0 - delta_ratio.clamp(0.0, 1.0)).clamp(0.0, 1.0);
         let coherence_index = (1.0 - (h_lambda / entropy.max(0.0001))).clamp(0.0, 1.0) as f64;
@@ -407,7 +425,10 @@ pub struct AefEncoder {
 
 impl AefEncoder {
     pub fn new(vault: Arc<RwLock<VaultStore>>, engine_pipeline: Arc<EnginePipeline>) -> Self {
-        Self { vault, engine_pipeline }
+        Self {
+            vault,
+            engine_pipeline,
+        }
     }
 }
 
@@ -431,7 +452,11 @@ struct AnchorCandidate {
 }
 
 impl AefEncoder {
-    pub fn encode_sync(&self, input_path: &Path, output_path: &Path) -> Result<AefEncodeResult, AefError> {
+    pub fn encode_sync(
+        &self,
+        input_path: &Path,
+        output_path: &Path,
+    ) -> Result<AefEncodeResult, AefError> {
         let original = fs::read(input_path)?;
         let original_hash = sha256_bytes(&original);
         let signal_type = signal_type_from_path(input_path);
@@ -439,10 +464,9 @@ impl AefEncoder {
         let created_at = now_epoch();
 
         let (genesis_block_ref, vault_version) = {
-            let vault = self
-                .vault
-                .read()
-                .map_err(|_| AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+            let vault = self.vault.read().map_err(|_| {
+                AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned())
+            })?;
             (vault.genesis_block_ref(), vault.version())
         };
 
@@ -450,10 +474,9 @@ impl AefEncoder {
         let mut anchors = Vec::new();
         let mut predicted = vec![0u8; original.len()];
         {
-            let mut vault = self
-                .vault
-                .write()
-                .map_err(|_| AefError::Vault("Vault-Lock konnte nicht geschrieben werden".to_owned()))?;
+            let mut vault = self.vault.write().map_err(|_| {
+                AefError::Vault("Vault-Lock konnte nicht geschrieben werden".to_owned())
+            })?;
             for candidate in chunk_candidates {
                 let vault_ref = vault.upsert(&candidate.data, signal_type)?;
                 let start = candidate.position as usize;
@@ -474,7 +497,9 @@ impl AefEncoder {
 
         let delta_uncompressed = xor_bytes(&original, &predicted);
         let delta_compressed = zlib_compress(&delta_uncompressed)?;
-        let evaluation = self.engine_pipeline.evaluate(&original, &delta_uncompressed, anchors.len());
+        let evaluation =
+            self.engine_pipeline
+                .evaluate(&original, &delta_uncompressed, anchors.len());
 
         let mut file = AefFile {
             header: AefHeader {
@@ -510,10 +535,9 @@ impl AefEncoder {
         };
 
         let probe_reconstruction = {
-            let vault = self
-                .vault
-                .read()
-                .map_err(|_| AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+            let vault = self.vault.read().map_err(|_| {
+                AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned())
+            })?;
             file.reconstruct_bytes(&vault)?
         };
         let lossless_confirmed = probe_reconstruction.1.is_empty()
@@ -541,22 +565,32 @@ impl AefEncoder {
         })
     }
 
-    pub async fn encode(&self, input_path: &Path, output_path: &Path) -> Result<AefEncodeResult, AefError> {
+    pub async fn encode(
+        &self,
+        input_path: &Path,
+        output_path: &Path,
+    ) -> Result<AefEncodeResult, AefError> {
         self.encode_sync(input_path, output_path)
     }
 }
 
 impl AefDecoder {
-    pub fn decode_sync(&self, aef_path: &Path, output_path: &Path) -> Result<AefDecodeResult, AefError> {
+    pub fn decode_sync(
+        &self,
+        aef_path: &Path,
+        output_path: &Path,
+    ) -> Result<AefDecodeResult, AefError> {
         let file = AefFile::read_from_path(aef_path)?;
         let engine = EnginePipeline::new();
-        engine.verify(&file.signable_bytes()?, &file.trust_metadata.shanway_signature)?;
+        engine.verify(
+            &file.signable_bytes()?,
+            &file.trust_metadata.shanway_signature,
+        )?;
 
         let (reconstructed, missing_refs) = {
-            let vault = self
-                .vault
-                .read()
-                .map_err(|_| AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned()))?;
+            let vault = self.vault.read().map_err(|_| {
+                AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned())
+            })?;
             file.reconstruct_bytes(&vault)?
         };
         let original_hash_verified = sha256_bytes(&reconstructed) == file.header.original_hash;
@@ -576,7 +610,11 @@ impl AefDecoder {
         })
     }
 
-    pub async fn decode(&self, aef_path: &Path, output_path: &Path) -> Result<AefDecodeResult, AefError> {
+    pub async fn decode(
+        &self,
+        aef_path: &Path,
+        output_path: &Path,
+    ) -> Result<AefDecodeResult, AefError> {
         self.decode_sync(aef_path, output_path)
     }
 }
@@ -591,12 +629,18 @@ impl AefInspector {
         } else {
             (delta_size_bytes as f32 / file.header.original_size as f32).clamp(0.0, 1.0) * 100.0
         };
-        let delta_contribution = ((file.delta_layer.original_size as f32 / DEFAULT_CHUNK_SIZE as f32).ceil() as usize).max(1);
-        let vault_coverage =
-            (file.anchor_map.anchors.len() as f32 / (file.anchor_map.anchors.len() as f32 + delta_contribution as f32))
-                .clamp(0.0, 1.0);
+        let delta_contribution =
+            ((file.delta_layer.original_size as f32 / DEFAULT_CHUNK_SIZE as f32).ceil() as usize)
+                .max(1);
+        let vault_coverage = (file.anchor_map.anchors.len() as f32
+            / (file.anchor_map.anchors.len() as f32 + delta_contribution as f32))
+            .clamp(0.0, 1.0);
         Ok(AefReport {
-            filename: aef_path.file_name().and_then(|value| value.to_str()).unwrap_or("unbekannt").to_owned(),
+            filename: aef_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("unbekannt")
+                .to_owned(),
             original_filetype: file.header.original_filetype.clone(),
             original_size_bytes: file.header.original_size,
             aef_size_bytes,
@@ -608,8 +652,11 @@ impl AefInspector {
             trust_score: file.trust_metadata.trust_score,
             lossless_confirmed: file.trust_metadata.lossless_confirmed,
             engine_flags_readable: readable_engine_flags(file.trust_metadata.engine_flags),
-            confirmed_at: DateTime::<Utc>::from_timestamp(file.trust_metadata.confirmed_at as i64, 0)
-                .unwrap_or_else(Utc::now),
+            confirmed_at: DateTime::<Utc>::from_timestamp(
+                file.trust_metadata.confirmed_at as i64,
+                0,
+            )
+            .unwrap_or_else(Utc::now),
             vault_coverage,
         })
     }
@@ -621,17 +668,23 @@ impl AefInspector {
     ) -> Result<AefProjection, AefError> {
         let file = AefFile::read_from_path(aef_path)?;
         let current_vault_size = vault.entry_count().max(1);
-        let projected_scale =
-            ((1.0 + projected_vault_size as f32).ln() / (1.0 + current_vault_size as f32).ln()).max(1.0);
+        let projected_scale = ((1.0 + projected_vault_size as f32).ln()
+            / (1.0 + current_vault_size as f32).ln())
+        .max(1.0);
         let reduction_factor = (1.0 / projected_scale).clamp(0.10, 1.0);
         let current_delta_size = file.delta_layer.data.len() as u64;
         let projected_delta_size = ((current_delta_size as f32) * reduction_factor).round() as u64;
         let projected_compression_rate =
-            ((file.trust_metadata.compression_rate * reduction_factor).clamp(0.0, 1.0) * 10000.0).round() / 10000.0;
+            ((file.trust_metadata.compression_rate * reduction_factor).clamp(0.0, 1.0) * 10000.0)
+                .round()
+                / 10000.0;
         let vault_size_needed_for_lossless = if file.trust_metadata.lossless_confirmed {
             None
         } else {
-            Some(current_vault_size + ((file.delta_layer.original_size as usize / DEFAULT_CHUNK_SIZE).max(1) * 3))
+            Some(
+                current_vault_size
+                    + ((file.delta_layer.original_size as usize / DEFAULT_CHUNK_SIZE).max(1) * 3),
+            )
         };
         Ok(AefProjection {
             current_compression_rate: file.trust_metadata.compression_rate,
@@ -686,7 +739,9 @@ impl AefFile {
         }
         let version = read_u16(&mut cursor)?;
         if version != AEF_FORMAT_VERSION {
-            return Err(AefError::Format(format!("AEF-Version nicht unterstuetzt: {version}")));
+            return Err(AefError::Format(format!(
+                "AEF-Version nicht unterstuetzt: {version}"
+            )));
         }
         let header = read_header(&mut cursor)?;
         let anchor_map = read_anchor_map(&mut cursor)?;
@@ -701,7 +756,10 @@ impl AefFile {
             delta_layer,
             trust_metadata,
         };
-        EnginePipeline::new().verify(&file.signable_bytes()?, &file.trust_metadata.shanway_signature)?;
+        EnginePipeline::new().verify(
+            &file.signable_bytes()?,
+            &file.trust_metadata.shanway_signature,
+        )?;
         Ok(file)
     }
 
@@ -713,7 +771,10 @@ impl AefFile {
         Ok(bytes)
     }
 
-    pub fn reconstruct_bytes(&self, vault: &VaultStore) -> Result<(Vec<u8>, Vec<[u8; 32]>), AefError> {
+    pub fn reconstruct_bytes(
+        &self,
+        vault: &VaultStore,
+    ) -> Result<(Vec<u8>, Vec<[u8; 32]>), AefError> {
         let mut predicted = vec![0u8; self.header.original_size as usize];
         let mut missing = Vec::new();
         for anchor in &self.anchor_map.anchors {
@@ -730,8 +791,11 @@ impl AefFile {
             }
         }
         let delta = zlib_decompress(&self.delta_layer.data)?;
-        if delta.len() != self.delta_layer.original_size as usize || delta.len() != predicted.len() {
-            return Err(AefError::Format("Delta-Layer passt nicht zur erwarteten Originalgroesse".to_owned()));
+        if delta.len() != self.delta_layer.original_size as usize || delta.len() != predicted.len()
+        {
+            return Err(AefError::Format(
+                "Delta-Layer passt nicht zur erwarteten Originalgroesse".to_owned(),
+            ));
         }
         Ok((xor_bytes(&predicted, &delta), missing))
     }
@@ -773,7 +837,11 @@ impl AefFile {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&self.trust_metadata.coherence_index.to_le_bytes());
         bytes.extend_from_slice(&self.trust_metadata.compression_rate.to_le_bytes());
-        bytes.push(if self.trust_metadata.lossless_confirmed { 0x01 } else { 0x00 });
+        bytes.push(if self.trust_metadata.lossless_confirmed {
+            0x01
+        } else {
+            0x00
+        });
         bytes.extend_from_slice(&self.trust_metadata.trust_score.to_le_bytes());
         bytes.extend_from_slice(&self.trust_metadata.engine_flags.to_le_bytes());
         bytes.extend_from_slice(&self.trust_metadata.confirmed_at.to_le_bytes());
@@ -884,7 +952,9 @@ fn read_trust_metadata(cursor: &mut std::io::Cursor<&[u8]>) -> Result<AefTrustMe
     })
 }
 
-fn read_exact_array<const N: usize>(cursor: &mut std::io::Cursor<&[u8]>) -> Result<[u8; N], AefError> {
+fn read_exact_array<const N: usize>(
+    cursor: &mut std::io::Cursor<&[u8]>,
+) -> Result<[u8; N], AefError> {
     let mut data = [0u8; N];
     cursor.read_exact(&mut data)?;
     Ok(data)
@@ -914,15 +984,25 @@ fn read_f64(cursor: &mut std::io::Cursor<&[u8]>) -> Result<f64, AefError> {
     Ok(f64::from_le_bytes(read_exact_array::<8>(cursor)?))
 }
 
-fn read_fixed_string(cursor: &mut std::io::Cursor<&[u8]>, length: usize) -> Result<String, AefError> {
+fn read_fixed_string(
+    cursor: &mut std::io::Cursor<&[u8]>,
+    length: usize,
+) -> Result<String, AefError> {
     let mut bytes = vec![0u8; length];
     cursor.read_exact(&mut bytes)?;
-    let trimmed = bytes.into_iter().take_while(|byte| *byte != 0).collect::<Vec<u8>>();
+    let trimmed = bytes
+        .into_iter()
+        .take_while(|byte| *byte != 0)
+        .collect::<Vec<u8>>();
     Ok(String::from_utf8(trimmed).unwrap_or_else(|_| "unknown".to_owned()))
 }
 
 fn signal_type_from_path(path: &Path) -> SignalType {
-    let extension = path.extension().and_then(|ext| ext.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     match extension.as_str() {
         "txt" => SignalType::PlainText,
         "pdf" => SignalType::Pdf,
@@ -947,7 +1027,10 @@ fn signal_type_from_u8(value: u8) -> SignalType {
 }
 
 fn filetype_from_path(path: &Path) -> String {
-    path.extension().and_then(|ext| ext.to_str()).unwrap_or("bin").to_ascii_lowercase()
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("bin")
+        .to_ascii_lowercase()
 }
 
 fn fixed_type_field(value: &str) -> [u8; 16] {
@@ -981,7 +1064,10 @@ fn readable_engine_flags(flags: u64) -> Vec<String> {
         (engine_flags::FOURIER, "FOURIER"),
         (engine_flags::BAYES, "BAYES"),
     ] {
-        items.push(format!("{label} {}", if flags & mask != 0 { "✓" } else { "✗" }));
+        items.push(format!(
+            "{label} {}",
+            if flags & mask != 0 { "✓" } else { "✗" }
+        ));
     }
     items
 }
@@ -1043,7 +1129,9 @@ fn hex_encode(data: &[u8]) -> String {
 fn hex_decode(value: &str) -> Result<Vec<u8>, AefError> {
     let bytes = value.as_bytes();
     if bytes.len() % 2 != 0 {
-        return Err(AefError::Format("Hex-String hat ungerade Laenge".to_owned()));
+        return Err(AefError::Format(
+            "Hex-String hat ungerade Laenge".to_owned(),
+        ));
     }
     let mut output = Vec::with_capacity(bytes.len() / 2);
     let mut index = 0usize;
@@ -1089,7 +1177,11 @@ fn mirrored_symmetry(data: &[u8]) -> f32 {
         total += 1.0 - ((left - right).abs() / 255.0).clamp(0.0, 1.0);
         count += 1;
     }
-    if count == 0 { 1.0 } else { total / count as f32 }
+    if count == 0 {
+        1.0
+    } else {
+        total / count as f32
+    }
 }
 
 fn byte_drift(data: &[u8]) -> f32 {
@@ -1106,7 +1198,9 @@ fn byte_drift(data: &[u8]) -> f32 {
 fn benford_score(data: &[u8]) -> f32 {
     let mut leading = [0usize; 10];
     for chunk in data.chunks(4) {
-        let value = chunk.iter().fold(0u32, |acc, byte| (acc << 8) | (*byte as u32));
+        let value = chunk
+            .iter()
+            .fold(0u32, |acc, byte| (acc << 8) | (*byte as u32));
         let mut current = value;
         while current >= 10 {
             current /= 10;
@@ -1119,7 +1213,9 @@ fn benford_score(data: &[u8]) -> f32 {
     if total < 16 {
         return 0.5;
     }
-    let expected = [0.0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046];
+    let expected = [
+        0.0, 0.301, 0.176, 0.125, 0.097, 0.079, 0.067, 0.058, 0.051, 0.046,
+    ];
     let mut deviation = 0.0f32;
     for digit in 1..10 {
         let observed = leading[digit] as f32 / total as f32;
@@ -1165,9 +1261,15 @@ mod tests {
         let input_path = base.join("probe.txt");
         let output_path = base.join("probe.aef");
         let decoded_path = base.join("decoded.txt");
-        fs::write(&input_path, b"Aether test payload for roundtrip.\nSymmetry and drift.\n").unwrap();
+        fs::write(
+            &input_path,
+            b"Aether test payload for roundtrip.\nSymmetry and drift.\n",
+        )
+        .unwrap();
 
-        let vault = Arc::new(RwLock::new(VaultStore::load_from(base.join("vault.json")).unwrap_or_default()));
+        let vault = Arc::new(RwLock::new(
+            VaultStore::load_from(base.join("vault.json")).unwrap_or_default(),
+        ));
         let engine = Arc::new(EnginePipeline::new());
         let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
         let decoder = AefDecoder::new(Arc::clone(&vault));
@@ -1191,7 +1293,9 @@ mod tests {
         let output_path = base.join("inspect.aef");
         fs::write(&input_path, b"# Aether\n\nInspector payload.\n").unwrap();
 
-        let vault = Arc::new(RwLock::new(VaultStore::load_from(base.join("vault.json")).unwrap_or_default()));
+        let vault = Arc::new(RwLock::new(
+            VaultStore::load_from(base.join("vault.json")).unwrap_or_default(),
+        ));
         let engine = Arc::new(EnginePipeline::new());
         let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
         encoder.encode_sync(&input_path, &output_path).unwrap();

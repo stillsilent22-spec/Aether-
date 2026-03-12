@@ -1,7 +1,7 @@
 use crate::inter_layer_bus::{
     BusEvent, BusPublisher, OptimizationType, ProcessStartedEvent, RuntimeAnomalyEvent,
-    RuntimeOptimizationEvent, RuntimeSignalFrameEvent, SemanticClusterEvent, ShanwayOptimizationEvent,
-    ShanwayUserMessageEvent, VaultGapEvent, VaultWriteEvent,
+    RuntimeOptimizationEvent, RuntimeSignalFrameEvent, SemanticClusterEvent,
+    ShanwayOptimizationEvent, ShanwayUserMessageEvent, VaultGapEvent, VaultWriteEvent,
 };
 use crate::vault_access::VaultAccessLayer;
 use sha2::{Digest, Sha256};
@@ -125,7 +125,10 @@ pub fn is_private_context(source: &str, content_hint: &str) -> bool {
     let hint = content_hint.to_lowercase();
     let categories: [&[&str]; 4] = [COMMUNICATION, EMAIL, CREDENTIALS, PERSONAL];
     for patterns in categories {
-        if patterns.iter().any(|pattern| src.contains(pattern) || hint.contains(pattern)) {
+        if patterns
+            .iter()
+            .any(|pattern| src.contains(pattern) || hint.contains(pattern))
+        {
             return true;
         }
     }
@@ -184,11 +187,12 @@ impl RuntimeSignalCollector {
             },
         );
         if !blocked {
-            self.bus.publish(BusEvent::ProcessStarted(ProcessStartedEvent {
-                process_id: pid,
-                process_name,
-                timestamp: unix_timestamp(),
-            }));
+            self.bus
+                .publish(BusEvent::ProcessStarted(ProcessStartedEvent {
+                    process_id: pid,
+                    process_name,
+                    timestamp: unix_timestamp(),
+                }));
         }
     }
 
@@ -208,7 +212,8 @@ impl RuntimeSignalCollector {
             active_anchors: active.ids,
             entropy_stream: frame.entropy,
         };
-        self.bus.publish(BusEvent::RuntimeSignalFrame(event.clone()));
+        self.bus
+            .publish(BusEvent::RuntimeSignalFrame(event.clone()));
         if let Some(anomaly) = self.detect_anomaly(&event) {
             self.bus.publish(BusEvent::RuntimeAnomalyDetected(anomaly));
         }
@@ -247,16 +252,17 @@ impl RuntimeSignalCollector {
                 })
                 .sum::<f64>()
         };
-        self.bus.publish(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
-            process_id: deterministic_u32(source, content_hint),
-            process_name: source.to_owned(),
-            timestamp: unix_timestamp(),
-            cpu_per_anchor: HashMap::new(),
-            memory_pattern,
-            frame_timing_ms: None,
-            active_anchors: Vec::new(),
-            entropy_stream,
-        }));
+        self.bus
+            .publish(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
+                process_id: deterministic_u32(source, content_hint),
+                process_name: source.to_owned(),
+                timestamp: unix_timestamp(),
+                cpu_per_anchor: HashMap::new(),
+                memory_pattern,
+                frame_timing_ms: None,
+                active_anchors: Vec::new(),
+                entropy_stream,
+            }));
     }
 
     fn sample_process(&mut self, pid: u32) -> Option<RawFrame> {
@@ -300,7 +306,8 @@ impl RuntimeSignalCollector {
             return Some(RuntimeAnomalyEvent {
                 process_id: frame.process_id,
                 process_name: frame.process_name.clone(),
-                severity: ((frame.entropy_stream as f32 / 8.0) + (frame.frame_timing_ms.unwrap_or(0.0) / 40.0))
+                severity: ((frame.entropy_stream as f32 / 8.0)
+                    + (frame.frame_timing_ms.unwrap_or(0.0) / 40.0))
                     .clamp(0.0, 1.0)
                     / 2.0,
                 reason: "Entropie-Spike oder Timing-Einbruch im Laufzeitsignal".to_owned(),
@@ -321,12 +328,17 @@ impl RuntimeOptimizer {
         Self { vault, bus }
     }
 
-    pub async fn analyze_frame(&self, frame: RuntimeSignalFrameEvent) -> Vec<RuntimeOptimizationEvent> {
+    pub async fn analyze_frame(
+        &self,
+        frame: RuntimeSignalFrameEvent,
+    ) -> Vec<RuntimeOptimizationEvent> {
         let mut optimizations = Vec::new();
         for anchor_id in &frame.active_anchors {
             let vault_ref = uuid_to_vault_ref(anchor_id);
             let vault_hit = matches!(self.vault.lookup_anchor(&vault_ref).await, Ok(Some(_)));
-            let confidence = (((1.0 - (frame.entropy_stream as f32 / 8.0).clamp(0.0, 1.0)) * 0.6) + 0.4).clamp(0.0, 1.0);
+            let confidence = (((1.0 - (frame.entropy_stream as f32 / 8.0).clamp(0.0, 1.0)) * 0.6)
+                + 0.4)
+                .clamp(0.0, 1.0);
             // Laufzeitoptimierungen duerfen auch dann vorgeschlagen werden, wenn das Muster
             // strukturell stabil ist, aber noch nicht 1:1 als Vault-Ref vorliegt.
             if vault_hit || confidence >= 0.72 {
@@ -409,7 +421,10 @@ impl ShanwayCoordinator {
                     let gap = VaultGapEvent {
                         domain: "runtime".to_owned(),
                         gap_magnitude: (frame.entropy_stream as f32 / 8.0).clamp(0.0, 1.0),
-                        description: format!("Unbekanntes Laufzeitsignal in {}", frame.process_name),
+                        description: format!(
+                            "Unbekanntes Laufzeitsignal in {}",
+                            frame.process_name
+                        ),
                         process_id: Some(frame.process_id),
                     };
                     self.gap_queue.push(gap.clone());
@@ -472,15 +487,18 @@ impl ShanwayCoordinator {
     }
 
     fn update_process_context(&mut self, frame: &RuntimeSignalFrameEvent) {
-        let context = self.active_processes.entry(frame.process_id).or_insert(ProcessContext {
-            pid: frame.process_id,
-            name: frame.process_name.clone(),
-            known_anchors: Vec::new(),
-            unknown_patterns: Vec::new(),
-            current_trust_score: 0.0,
-            optimization_history: Vec::new(),
-            frame_count: 0,
-        });
+        let context = self
+            .active_processes
+            .entry(frame.process_id)
+            .or_insert(ProcessContext {
+                pid: frame.process_id,
+                name: frame.process_name.clone(),
+                known_anchors: Vec::new(),
+                unknown_patterns: Vec::new(),
+                current_trust_score: 0.0,
+                optimization_history: Vec::new(),
+                frame_count: 0,
+            });
         context.frame_count += 1;
         context.current_trust_score = (1.0 - (frame.entropy_stream as f32 / 8.0)).clamp(0.0, 1.0);
         context.known_anchors = frame.active_anchors.clone();
@@ -496,15 +514,22 @@ impl ShanwayCoordinator {
     fn check_new_anchor_for_runtime_gain(&self, write: &VaultWriteEvent) -> Vec<BusEvent> {
         let mut outputs = Vec::new();
         for (pid, context) in &self.active_processes {
-            if context.unknown_patterns.iter().any(|pattern| pattern.matches_anchor(write)) {
-                outputs.push(BusEvent::RuntimeOptimizationAvailable(RuntimeOptimizationEvent {
-                    process_id: *pid,
-                    anchor_id: write.anchor_id,
-                    vault_match: write.anchor_id,
-                    optimization_type: OptimizationType::CacheSubstitution,
-                    estimated_gain_percent: (write.coverage_improvement * 100.0).clamp(1.0, 25.0),
-                    confidence: write.trust_score,
-                }));
+            if context
+                .unknown_patterns
+                .iter()
+                .any(|pattern| pattern.matches_anchor(write))
+            {
+                outputs.push(BusEvent::RuntimeOptimizationAvailable(
+                    RuntimeOptimizationEvent {
+                        process_id: *pid,
+                        anchor_id: write.anchor_id,
+                        vault_match: write.anchor_id,
+                        optimization_type: OptimizationType::CacheSubstitution,
+                        estimated_gain_percent: (write.coverage_improvement * 100.0)
+                            .clamp(1.0, 25.0),
+                        confidence: write.trust_score,
+                    },
+                ));
             }
         }
         outputs
@@ -575,7 +600,10 @@ mod tests {
         let bus = InterLayerBus::new(32);
         let vault = Arc::new(RwLock::new(VaultStore::default()));
         let pipeline = Arc::new(EnginePipeline::new());
-        let access = Arc::new(VaultAccessLayer::new(Arc::clone(&vault), Arc::clone(&pipeline)));
+        let access = Arc::new(VaultAccessLayer::new(
+            Arc::clone(&vault),
+            Arc::clone(&pipeline),
+        ));
         let anchor_id = deterministic_uuid(41, 0);
         let submission = RawAnchorSubmission {
             anchor_id,
@@ -590,7 +618,10 @@ mod tests {
             coherence_index: 0.82,
             lossless_confirmed: true,
         };
-        let _ = access.submit_anchor(submission, SubmissionSource::GitHubPR).await.unwrap();
+        let _ = access
+            .submit_anchor(submission, SubmissionSource::GitHubPR)
+            .await
+            .unwrap();
         let optimizer = RuntimeOptimizer::new(Arc::clone(&access), bus.publisher());
         let frame = RuntimeSignalFrameEvent {
             process_id: 41,
@@ -610,17 +641,20 @@ mod tests {
     fn coordinator_promotes_runtime_gap() {
         let bus = InterLayerBus::new(32);
         let mut coordinator = ShanwayCoordinator::new(bus.publisher());
-        let outputs = coordinator.handle_event(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
-            process_id: 9,
-            process_name: "game.exe".to_owned(),
-            timestamp: 0,
-            cpu_per_anchor: HashMap::new(),
-            memory_pattern: vec![3, 5, 8],
-            frame_timing_ms: Some(38.0),
-            active_anchors: vec![Uuid::new_v4()],
-            entropy_stream: 7.2,
-        }));
-        assert!(outputs.iter().any(|event| matches!(event, BusEvent::VaultGapDetected(_))));
+        let outputs =
+            coordinator.handle_event(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
+                process_id: 9,
+                process_name: "game.exe".to_owned(),
+                timestamp: 0,
+                cpu_per_anchor: HashMap::new(),
+                memory_pattern: vec![3, 5, 8],
+                frame_timing_ms: Some(38.0),
+                active_anchors: vec![Uuid::new_v4()],
+                entropy_stream: 7.2,
+            }));
+        assert!(outputs
+            .iter()
+            .any(|event| matches!(event, BusEvent::VaultGapDetected(_))));
         let write_event = VaultWriteEvent {
             anchor_id: Uuid::new_v4(),
             domain: "runtime".to_owned(),

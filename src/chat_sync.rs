@@ -3,7 +3,7 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64_URL;
 use base64::Engine;
 use chrono::Utc;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -59,7 +59,9 @@ pub struct ChatRelayClient {
 
 impl ChatRelayStateStore {
     pub fn load_default() -> Result<ChatRelayConfig, String> {
-        let path = PathBuf::from("data").join("rust_shell").join("chat_relay.json");
+        let path = PathBuf::from("data")
+            .join("rust_shell")
+            .join("chat_relay.json");
         if !path.exists() {
             return Ok(ChatRelayConfig::default());
         }
@@ -69,7 +71,9 @@ impl ChatRelayStateStore {
 
     pub fn new_default() -> Self {
         Self {
-            path: PathBuf::from("data").join("rust_shell").join("chat_relay.json"),
+            path: PathBuf::from("data")
+                .join("rust_shell")
+                .join("chat_relay.json"),
         }
     }
 
@@ -93,10 +97,20 @@ impl ChatRelayClient {
     }
 
     pub fn health(&self, base_url: &str) -> Result<Value, String> {
-        request_json(&format!("{}/health", normalize_url(base_url)), reqwest::Method::GET, None, HeaderMap::new(), self.timeout_secs)
+        request_json(
+            &format!("{}/health", normalize_url(base_url)),
+            reqwest::Method::GET,
+            None,
+            HeaderMap::new(),
+            self.timeout_secs,
+        )
     }
 
-    pub fn publish(&self, config: &ChatRelayConfig, envelope: &ChatRelayEnvelope) -> Result<u64, String> {
+    pub fn publish(
+        &self,
+        config: &ChatRelayConfig,
+        envelope: &ChatRelayEnvelope,
+    ) -> Result<u64, String> {
         let blob = encrypt_sync_event(
             &serde_json::to_value(envelope).map_err(|err| err.to_string())?,
             &config.shared_secret,
@@ -107,7 +121,10 @@ impl ChatRelayClient {
             "blob": blob,
         }))
         .map_err(|err| err.to_string())?;
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
         let response = request_json(
             &format!("{}/publish", normalize_url(&config.base_url)),
             reqwest::Method::POST,
@@ -115,12 +132,21 @@ impl ChatRelayClient {
             headers,
             self.timeout_secs,
         )?;
-        Ok(response.get("event_id").and_then(Value::as_u64).unwrap_or(0))
+        Ok(response
+            .get("event_id")
+            .and_then(Value::as_u64)
+            .unwrap_or(0))
     }
 
-    pub fn fetch(&self, config: &ChatRelayConfig) -> Result<Vec<(RelayEvent, ChatRelayEnvelope)>, String> {
+    pub fn fetch(
+        &self,
+        config: &ChatRelayConfig,
+    ) -> Result<Vec<(RelayEvent, ChatRelayEnvelope)>, String> {
         let mut headers = sync_headers(&config.shared_secret)?;
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json; charset=utf-8"));
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/json; charset=utf-8"),
+        );
         let url = format!(
             "{}/events?after={}&limit=128",
             normalize_url(&config.base_url),
@@ -128,18 +154,32 @@ impl ChatRelayClient {
         );
         let payload = request_json(&url, reqwest::Method::GET, None, headers, self.timeout_secs)?;
         let mut events = Vec::new();
-        for item in payload.get("events").and_then(Value::as_array).cloned().unwrap_or_default() {
+        for item in payload
+            .get("events")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+        {
             let blob = item.get("blob").and_then(Value::as_str).unwrap_or_default();
             if blob.is_empty() {
                 continue;
             }
             let decrypted = decrypt_sync_event(blob, &config.shared_secret)?;
-            let envelope: ChatRelayEnvelope = serde_json::from_value(decrypted).map_err(|err| err.to_string())?;
+            let envelope: ChatRelayEnvelope =
+                serde_json::from_value(decrypted).map_err(|err| err.to_string())?;
             events.push((
                 RelayEvent {
                     event_id: item.get("id").and_then(Value::as_u64).unwrap_or(0),
-                    created_at: item.get("created_at").and_then(Value::as_str).unwrap_or_default().to_owned(),
-                    origin_node: item.get("origin_node").and_then(Value::as_str).unwrap_or_default().to_owned(),
+                    created_at: item
+                        .get("created_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
+                    origin_node: item
+                        .get("origin_node")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_owned(),
                     blob: blob.to_owned(),
                 },
                 envelope,
@@ -153,7 +193,14 @@ pub fn encrypt_sync_event(payload: &Value, shared_secret: &str) -> Result<String
     let key = derive_transport_key(shared_secret)?;
     let canonical = serde_json::to_vec(payload).map_err(|err| err.to_string())?;
     let mut nonce_bytes = [0u8; 12];
-    let digest = Sha256::digest(format!("{}|{}", Utc::now().timestamp_nanos_opt().unwrap_or_default(), Uuid::new_v4()).as_bytes());
+    let digest = Sha256::digest(
+        format!(
+            "{}|{}",
+            Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+            Uuid::new_v4()
+        )
+        .as_bytes(),
+    );
     nonce_bytes.copy_from_slice(&digest[..12]);
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|err| err.to_string())?;
     let ciphertext = cipher
@@ -166,7 +213,9 @@ pub fn encrypt_sync_event(payload: &Value, shared_secret: &str) -> Result<String
 
 pub fn decrypt_sync_event(blob: &str, shared_secret: &str) -> Result<Value, String> {
     let key = derive_transport_key(shared_secret)?;
-    let raw = BASE64_URL.decode(blob.as_bytes()).map_err(|err| err.to_string())?;
+    let raw = BASE64_URL
+        .decode(blob.as_bytes())
+        .map_err(|err| err.to_string())?;
     if raw.len() < 13 {
         return Err("Ungueltiger Sync-Blob.".to_owned());
     }
@@ -194,7 +243,13 @@ fn sync_headers(shared_secret: &str) -> Result<HeaderMap, String> {
     let mut headers = HeaderMap::new();
     headers.insert(
         HeaderName::from_static("x-aether-token"),
-        HeaderValue::from_str(&token.iter().map(|byte| format!("{byte:02x}")).collect::<String>()).map_err(|err| err.to_string())?,
+        HeaderValue::from_str(
+            &token
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>(),
+        )
+        .map_err(|err| err.to_string())?,
     );
     Ok(headers)
 }
@@ -215,7 +270,10 @@ fn request_json(
     headers: HeaderMap,
     timeout_secs: f32,
 ) -> Result<Value, String> {
-    let runtime = Builder::new_current_thread().enable_all().build().map_err(|err| err.to_string())?;
+    let runtime = Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| err.to_string())?;
     runtime.block_on(async move {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs_f32(timeout_secs.max(1.0)))
@@ -251,7 +309,9 @@ mod tests {
     #[test]
     fn relay_state_roundtrip_persists() {
         let store = ChatRelayStateStore {
-            path: PathBuf::from("data").join("rust_shell").join("chat_relay_test.json"),
+            path: PathBuf::from("data")
+                .join("rust_shell")
+                .join("chat_relay_test.json"),
         };
         let config = ChatRelayConfig {
             base_url: "http://127.0.0.1:8765".to_owned(),

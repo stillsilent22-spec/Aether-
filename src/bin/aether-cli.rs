@@ -70,14 +70,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let threshold = parse_threshold(&args).unwrap_or(0.65);
             let root = PathBuf::from("vault").join("anchors");
             let report = pipeline_check(&root, &access, threshold)?;
-            fs::write("shanway-report.json", serde_json::to_string_pretty(&report)?)?;
+            fs::write(
+                "shanway-report.json",
+                serde_json::to_string_pretty(&report)?,
+            )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if report.rejected > 0 {
                 std::process::exit(2);
             }
         }
         "sync-vault" => {
-            let repo_root = args.get(2).map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+            let repo_root = args
+                .get(2)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("."));
             let since = args
                 .get(3)
                 .and_then(|value| value.parse::<u64>().ok())

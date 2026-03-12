@@ -75,7 +75,8 @@ impl StateStore {
 
     pub fn save(&self) -> Result<(), String> {
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent).map_err(|err| format!("State-Verzeichnis konnte nicht erstellt werden: {err}"))?;
+            fs::create_dir_all(parent)
+                .map_err(|err| format!("State-Verzeichnis konnte nicht erstellt werden: {err}"))?;
         }
         let serialized = serde_json::to_string_pretty(&self.state)
             .map_err(|err| format!("State konnte nicht serialisiert werden: {err}"))?;
@@ -105,11 +106,10 @@ impl StateStore {
     }
 
     pub fn private_thread(&mut self, username: &str, partner: &str) -> &mut PrivateThread {
-        if let Some(index) = self
-            .state
-            .private_threads
-            .iter()
-            .position(|thread| thread.owner_username == username && thread.partner_name == partner)
+        if let Some(index) =
+            self.state.private_threads.iter().position(|thread| {
+                thread.owner_username == username && thread.partner_name == partner
+            })
         {
             return &mut self.state.private_threads[index];
         }

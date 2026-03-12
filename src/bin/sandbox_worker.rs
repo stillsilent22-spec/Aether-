@@ -31,7 +31,10 @@ struct WorkerStatus {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let db_path = PathBuf::from("data").join("rust_shell").join("quarantine").join("quarantine.db");
+    let db_path = PathBuf::from("data")
+        .join("rust_shell")
+        .join("quarantine")
+        .join("quarantine.db");
     let command = parse_command(&args)?;
     apply_sandbox_restrictions();
     let store = QuarantineVaultStore::open(&db_path)?;
@@ -60,7 +63,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             engine_flags,
             feature_vector,
         } => {
-            store.store_anchor(category, &anchor_hash_hex, &feature_vector, confidence, engine_flags)?;
+            store.store_anchor(
+                category,
+                &anchor_hash_hex,
+                &feature_vector,
+                confidence,
+                engine_flags,
+            )?;
             println!("stored");
         }
         WorkerCommand::Classify { feature_vector } => {
@@ -94,7 +103,10 @@ impl QuarantineVaultStore {
         )?;
         Ok(Self {
             conn,
-            root: path.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
+            root: path
+                .parent()
+                .unwrap_or_else(|| Path::new("."))
+                .to_path_buf(),
         })
     }
 
@@ -124,10 +136,13 @@ impl QuarantineVaultStore {
         Ok(())
     }
 
-    fn classify(&self, feature_vector: &[f32; 16]) -> Result<ClassifyResponse, Box<dyn std::error::Error>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT category, feature_vector FROM quarantine_anchors",
-        )?;
+    fn classify(
+        &self,
+        feature_vector: &[f32; 16],
+    ) -> Result<ClassifyResponse, Box<dyn std::error::Error>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT category, feature_vector FROM quarantine_anchors")?;
         let rows = stmt.query_map([], |row| {
             let category: u8 = row.get(0)?;
             let vector_json: String = row.get(1)?;
@@ -226,9 +241,11 @@ impl QuarantineVaultStore {
     }
 
     fn record_count(&self) -> Result<usize, Box<dyn std::error::Error>> {
-        let count: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM quarantine_anchors", [], |row| row.get(0))?;
+        let count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM quarantine_anchors", [], |row| {
+                    row.get(0)
+                })?;
         Ok(count.max(0) as usize)
     }
 }
@@ -278,7 +295,12 @@ fn parse_category(raw: &str) -> Result<QuarantineCategory, Box<dyn std::error::E
 
 fn parse_vector(raw: &str) -> Result<[f32; 16], Box<dyn std::error::Error>> {
     let mut output = [0.0f32; 16];
-    for (index, value) in raw.split(',').filter(|value| !value.is_empty()).take(16).enumerate() {
+    for (index, value) in raw
+        .split(',')
+        .filter(|value| !value.is_empty())
+        .take(16)
+        .enumerate()
+    {
         output[index] = value.trim().parse::<f32>()?;
     }
     Ok(output)
