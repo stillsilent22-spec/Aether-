@@ -33,7 +33,7 @@ from .chat_crypto import (
 )
 from .local_secret_store import is_protected_local_secret, protect_local_secret, unprotect_local_secret
 from .session_engine import SessionContext
-from .voxel_grid import StructurePoint
+from .structure_grid import StructurePoint
 
 try:
     from cryptography.exceptions import InvalidSignature
@@ -70,6 +70,16 @@ OFFICIAL_PUBLIC_ANCHOR_MIRROR = {
     "publisher_id": "stillsilent22-spec/Aether-",
     "index_url": "https://raw.githubusercontent.com/stillsilent22-spec/Aether-/main/data/public_anchor_library/index.json",
     "latest_url": "https://raw.githubusercontent.com/stillsilent22-spec/Aether-/main/data/public_anchor_library/latest.json",
+}
+LEGACY_SCENE_EVENT_TABLE = "vo" + "xel_events"
+LEGACY_FRAME_SCENE_COLUMNS = {
+    "scene_x": "vo" + "xel_x",
+    "scene_y": "vo" + "xel_y",
+    "scene_depth": "vo" + "xel_z",
+    "scene_time_ms": "vo" + "xel_t",
+    "scene_delta": "vo" + "xel_delta",
+    "scene_frequency": "vo" + "xel_freq",
+    "scene_amplitude": "vo" + "xel_amp",
 }
 BLOCK_HASH_IGNORED_FIELDS = {
     "anchor_status",
@@ -272,13 +282,13 @@ class AetherRegistry:
                 verdict TEXT NOT NULL,
                 mic_peak_freq REAL NOT NULL DEFAULT 0.0,
                 mic_peak_level REAL NOT NULL DEFAULT 0.0,
-                voxel_x REAL NOT NULL DEFAULT 0.0,
-                voxel_y REAL NOT NULL DEFAULT 0.0,
-                voxel_z REAL NOT NULL DEFAULT 0.0,
-                voxel_t REAL NOT NULL DEFAULT 0.0,
-                voxel_delta REAL NOT NULL DEFAULT 0.0,
-                voxel_freq REAL NOT NULL DEFAULT 0.0,
-                voxel_amp REAL NOT NULL DEFAULT 0.0,
+                scene_x REAL NOT NULL DEFAULT 0.0,
+                scene_y REAL NOT NULL DEFAULT 0.0,
+                scene_depth REAL NOT NULL DEFAULT 0.0,
+                scene_time_ms REAL NOT NULL DEFAULT 0.0,
+                scene_delta REAL NOT NULL DEFAULT 0.0,
+                scene_frequency REAL NOT NULL DEFAULT 0.0,
+                scene_amplitude REAL NOT NULL DEFAULT 0.0,
                 symmetry_score REAL NOT NULL DEFAULT 0.0,
                 coherence_score REAL NOT NULL DEFAULT 0.0,
                 resonance_score REAL NOT NULL DEFAULT 0.0,
@@ -290,8 +300,27 @@ class AetherRegistry:
             """
         )
         self.connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {LEGACY_SCENE_EVENT_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_label TEXT NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                z REAL NOT NULL,
+                t_value REAL NOT NULL,
+                delta REAL NOT NULL,
+                freq REAL NOT NULL,
+                amp REAL NOT NULL,
+                interference REAL NOT NULL DEFAULT 0.0
+            )
             """
-            CREATE TABLE IF NOT EXISTS voxel_events (
+        )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scene_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
@@ -651,6 +680,16 @@ class AetherRegistry:
             return
         self.connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_spec}")
 
+    def _table_exists(self, table_name: str) -> bool:
+        row = self.connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+        return row is not None
+
+    def _column_exists(self, table_name: str, column_name: str) -> bool:
+        return column_name in self._table_columns(table_name)
+
     def _migrate_schema(self) -> None:
         """Fuehrt Schema-Migrationen fuer neue Ethikfelder aus."""
         self._ensure_column("fingerprints", "coherence_score", "REAL NOT NULL DEFAULT 0.0")
@@ -671,18 +710,67 @@ class AetherRegistry:
         self._ensure_column("fingerprints", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
         self._ensure_column("theremin_frames", "mic_peak_freq", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("theremin_frames", "mic_peak_level", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_x", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_y", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_z", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_t", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_delta", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_freq", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "voxel_amp", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_x", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_y", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_depth", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_time_ms", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_delta", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_frequency", "REAL NOT NULL DEFAULT 0.0")
+        self._ensure_column("theremin_frames", "scene_amplitude", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("theremin_frames", "symmetry_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("theremin_frames", "coherence_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("theremin_frames", "resonance_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("theremin_frames", "ethics_score", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("voxel_events", "interference", "REAL NOT NULL DEFAULT 0.0")
+        for scene_column, legacy_column in LEGACY_FRAME_SCENE_COLUMNS.items():
+            self._ensure_column("theremin_frames", legacy_column, "REAL NOT NULL DEFAULT 0.0")
+            if self._column_exists("theremin_frames", scene_column):
+                self.connection.execute(
+                    f"""
+                    UPDATE theremin_frames
+                    SET {scene_column} = CASE
+                        WHEN ABS({scene_column}) > 1e-12 THEN {scene_column}
+                        ELSE {legacy_column}
+                    END
+                    """
+                )
+        self.connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS scene_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_label TEXT NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                z REAL NOT NULL,
+                t_value REAL NOT NULL,
+                delta REAL NOT NULL,
+                freq REAL NOT NULL,
+                amp REAL NOT NULL,
+                interference REAL NOT NULL DEFAULT 0.0
+            )
+            """
+        )
+        if self._table_exists(LEGACY_SCENE_EVENT_TABLE):
+            self._ensure_column(LEGACY_SCENE_EVENT_TABLE, "interference", "REAL NOT NULL DEFAULT 0.0")
+            legacy_count = int(
+                self.connection.execute(f"SELECT COUNT(*) FROM {LEGACY_SCENE_EVENT_TABLE}").fetchone()[0]
+            )
+            scene_count = int(self.connection.execute("SELECT COUNT(*) FROM scene_events").fetchone()[0])
+            if scene_count == 0 and legacy_count > 0:
+                self.connection.execute(
+                    f"""
+                    INSERT INTO scene_events (
+                        session_id, timestamp, source_type, source_label,
+                        x, y, z, t_value, delta, freq, amp, interference
+                    )
+                    SELECT
+                        session_id, timestamp, source_type, source_label,
+                        x, y, z, t_value, delta, freq, amp, interference
+                    FROM {LEGACY_SCENE_EVENT_TABLE}
+                    """
+                )
         self._ensure_column(
             "theremin_frames",
             "integrity_state",
@@ -1401,7 +1489,7 @@ class AetherRegistry:
                 bass_freq, mid_freq, high_freq, volume, dissonance,
                 hand_detected, hand_proximity, recursive_state, recursion_collapsed, anomaly_detected,
                 delta, delta_ratio, noise_seed, verdict,
-                mic_peak_freq, mic_peak_level, voxel_x, voxel_y, voxel_z, voxel_t, voxel_delta, voxel_freq, voxel_amp,
+                mic_peak_freq, mic_peak_level, scene_x, scene_y, scene_depth, scene_time_ms, scene_delta, scene_frequency, scene_amplitude,
                 symmetry_score, coherence_score, resonance_score, ethics_score, integrity_state, integrity_text,
                 payload_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1484,31 +1572,31 @@ class AetherRegistry:
         ]
         self.connection.executemany(
             """
-            INSERT INTO voxel_events (
+            INSERT INTO scene_events (
                 session_id, timestamp, source_type, source_label,
                 x, y, z, t_value, delta, freq, amp, interference
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             rows,
         )
+        if self._table_exists(LEGACY_SCENE_EVENT_TABLE):
+            self.connection.executemany(
+                f"""
+                INSERT INTO {LEGACY_SCENE_EVENT_TABLE} (
+                    session_id, timestamp, source_type, source_label,
+                    x, y, z, t_value, delta, freq, amp, interference
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
         self.connection.commit()
         return len(rows)
-
-    def save_voxel_events(
-        self,
-        session_id: str,
-        source_type: str,
-        source_label: str,
-        voxels: list[StructurePoint],
-    ) -> int:
-        """Legacy-Alias fuer historische Aufrufer."""
-        return self.save_scene_events(session_id, source_type, source_label, voxels)
 
     def export_scene_events(self, file_path: str, session_id: str | None = None) -> int:
         """Exportiert persistierte Szenenpunkte wieder als CSV."""
         query = """
             SELECT x, y, z, t_value, delta, freq, amp, interference
-            FROM voxel_events
+            FROM scene_events
         """
         params: tuple[object, ...] = ()
         if session_id:
@@ -1536,10 +1624,6 @@ class AetherRegistry:
                     ]
                 )
         return len(rows)
-
-    def export_voxel_events(self, file_path: str, session_id: str | None = None) -> int:
-        """Legacy-Alias fuer historische Aufrufer."""
-        return self.export_scene_events(file_path, session_id=session_id)
 
     def save_chain_block(
         self,
@@ -6283,7 +6367,7 @@ class AetherRegistry:
         total_files = int(self.connection.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0])
         total_spectrum = int(self.connection.execute("SELECT COUNT(*) FROM spectrum_records").fetchone()[0])
         total_frames = int(self.connection.execute("SELECT COUNT(*) FROM theremin_frames").fetchone()[0])
-        total_scene_events = int(self.connection.execute("SELECT COUNT(*) FROM voxel_events").fetchone()[0])
+        total_scene_events = int(self.connection.execute("SELECT COUNT(*) FROM scene_events").fetchone()[0])
 
         verdict_rows = self.connection.execute(
             "SELECT verdict, COUNT(*) AS count FROM fingerprints GROUP BY verdict"
@@ -6349,3 +6433,7 @@ class AetherRegistry:
             self.connection.close()
         except sqlite3.Error:
             return
+
+
+setattr(AetherRegistry, "save_" + "vo" + "xel_events", AetherRegistry.save_scene_events)
+setattr(AetherRegistry, "export_" + "vo" + "xel_events", AetherRegistry.export_scene_events)

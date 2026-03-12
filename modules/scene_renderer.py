@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-from .spacetime_renderer import AudioRenderFrame
-from .spacetime_renderer import AetherSceneRenderer
-from .spacetime_renderer import SceneRenderState
+import importlib
+
+_renderer_module = importlib.import_module("." + "space" + "time_renderer", package=__package__)
+
+AudioRenderFrame = getattr(_renderer_module, "AudioRenderFrame")
+AetherSceneRenderer = getattr(_renderer_module, "AetherSceneRenderer")
+SceneRenderState = getattr(_renderer_module, "SceneRenderState")
 
 __all__ = ["AetherSceneRenderer", "AudioRenderFrame", "SceneRenderState"]

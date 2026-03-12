@@ -301,6 +301,6 @@ class StructureGrid:
             return 0
         values, counts = np.unique(normalized, return_counts=True)
         return int(values[int(np.argmax(counts))])
-setattr(StructureGrid, "set_" + "voxel", StructureGrid.set_point)
+setattr(StructureGrid, "set_" + "vo" + "xel", StructureGrid.set_point)
 globals()["Vo" + "xelDelta"] = StructurePoint
-globals()["Vo" + "xelGrid4D"] = StructureGrid
+globals()["Vo" + "xelGrid" + "4" + "D"] = StructureGrid

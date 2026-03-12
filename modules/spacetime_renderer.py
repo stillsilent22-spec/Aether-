@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 from matplotlib import cm, pyplot as plt
 from matplotlib.figure import Figure
-from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+from mpl_toolkits import mplot3d as _mplot3d  # noqa: F401
 
 try:
     import cv2
