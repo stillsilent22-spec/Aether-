@@ -602,12 +602,14 @@ Der Rust-Pfad fuehrt jetzt einen zusaetzlichen Beschleuniger-Layer fuer speziali
 - `PackManager` installiert Packs nur nach expliziter Nutzerbestaetigung
 - jeder Pack-Anker wird lokal erneut durch die Vault-/Trust-Pruefung geschickt
 - `AutoPackGenerator` kann aus bereits bestaetigten lokalen Ankern einer Domaene einen `.aep` erzeugen
+- `OfflineCacheManager` kann aus installierten Packs einen kleinen Offline-Cache fuer geplante Aktivitaeten vorbereiten
 
 Wichtig:
 
 - Download ist kein Zwang
 - ein Pack ersetzt nicht den lokalen Delta-Pfad
 - ohne bestaetigte Signatur und lokale Verifikation kommt kein Pack-Anker in den lokalen Vault
+- die Rust-Shell kann jetzt empfohlene Packs direkt lokal installieren, Packs aus der aktiven Domaene generieren und einen kleinen Offline-Cache vorbereiten
 
 ## Theory of Mind
 
@@ -619,6 +621,7 @@ Der Rust-Shell-Schnitt fuehrt jetzt einen kleinen observer-relativen Kommunikati
 - `ObserverDelta = O1 - O2` bestimmt die empfohlene Erklaertiefe
 - `ComprehensionDetector` liest aus dem lokalen Texteingang nur grobe Verstaendnissignale wie `Confusion`, `AlreadyFamiliar` oder `Understood`
 - `ToMOutputAdapter` passt nur Tiefe und Brueckenhinweise an, nicht die Faktenbasis
+- die Shell kann das Observer-Modell nun auf Wunsch von `SessionOnly` nach `PersistentLocal` heben oder wieder lokal loeschen
 
 Das bedeutet praktisch:
 

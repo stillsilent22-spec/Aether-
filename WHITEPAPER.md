@@ -480,6 +480,7 @@ Der neue Pack-Layer fuehrt eine weitere, optionale Beschleunigung ein:
 - `PackManager` installiert nie automatisch, sondern nur nach explizitem Nutzerentscheid
 - auch signierte Pack-Anker muessen lokal erneut durch die Vault-Pruefung
 - `AutoPackGenerator` kann aus lokal bestaetigten Domaanenankern wieder einen Pack erzeugen
+- `OfflineCacheManager` kann installierte Packs fuer bekannte Aktivitaeten in einen lokalen Offline-Cache ueberfuehren
 
 Dadurch entsteht ein zusaetzlicher Beschleuniger zwischen normalem Online-Vault und rein lokalem Delta-Pfad:
 
@@ -505,6 +506,7 @@ Implementiert wird das ueber:
 - `ObserverModel`
 - `ComprehensionDetector`
 - `ToMOutputAdapter`
+- ein umschaltbarer Persistenzpfad zwischen `SessionOnly` und `PersistentLocal`
 
 Methodisch bleibt der Eingriff additiv:
 
@@ -517,6 +519,7 @@ Privacy-by-default bleibt erhalten:
 - Default-Scope ist `SessionOnly`
 - keine Namen, keine Demographie, keine externen Identitaeten
 - nur lokale Familiarity-Schaetzungen fuer Anchors und Domaenen
+- die aktuelle Rust-Shell erlaubt explizit das lokale Persistieren oder Loeschen dieses Beobachterzustands
 
 Damit wird Shanway nicht zu einem Profiling-System, sondern zu einem lokalen Beobachter, der die kommunikative Luecke zwischen `O1` und `O2` klein haelt, ohne dafuer mehr Daten zu sammeln als noetig.
 

@@ -1,6 +1,6 @@
-use crate::aef::{AefEncoder, AefInspector, AefReport, EnginePipeline, SignalType, VaultStore};
+use crate::aef::{AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
-use crate::pack::{PackRegistry, ShanwayPackAdvisor, UsageProfile};
+use crate::pack::{AutoPackGenerator, OfflineCacheManager, OfflinePrepRequest, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
 use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput, ShanwayObserverContext, ShanwayPackHint};
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
 use crate::theory_of_mind::{ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope, ProcessedSignal, ToMOutputAdapter};
@@ -60,6 +60,7 @@ pub struct AetherRustShell {
     preview_texture: Option<TextureHandle>,
     current_file: Option<ProcessedFile>,
     last_aef_report: Option<AefReport>,
+    last_aef_projection: Option<AefProjection>,
     aef_vault: Arc<RwLock<VaultStore>>,
     aef_engine: Arc<EnginePipeline>,
     selected_register_id: Option<u64>,
@@ -74,7 +75,10 @@ pub struct AetherRustShell {
     observer_id: Uuid,
     mind_model: MindModelEngine,
     pack_registry: Arc<RwLock<PackRegistry>>,
+    pack_manager: PackManager,
     pack_advisor: ShanwayPackAdvisor,
+    pack_generator: AutoPackGenerator,
+    offline_cache_manager: OfflineCacheManager,
 }
 
 impl AetherRustShell {
@@ -91,7 +95,11 @@ impl AetherRustShell {
             last_updated: 0,
             entries: Vec::new(),
         })));
+        let vault_access = Arc::new(crate::vault_access::VaultAccessLayer::new(Arc::clone(&aef_vault), Arc::clone(&aef_engine)));
+        let pack_manager = PackManager::new(Arc::clone(&vault_access), Arc::clone(&pack_registry));
         let pack_advisor = ShanwayPackAdvisor::new(Arc::clone(&pack_registry));
+        let pack_generator = AutoPackGenerator::new(Arc::clone(&vault_access));
+        let offline_cache_manager = OfflineCacheManager::new();
         Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -107,6 +115,7 @@ impl AetherRustShell {
             preview_texture: None,
             current_file: None,
             last_aef_report: None,
+            last_aef_projection: None,
             aef_vault,
             aef_engine,
             selected_register_id: None,
@@ -121,7 +130,10 @@ impl AetherRustShell {
             observer_id,
             mind_model,
             pack_registry,
+            pack_manager,
             pack_advisor,
+            pack_generator,
+            offline_cache_manager,
         }
     }
 
@@ -136,6 +148,19 @@ impl AetherRustShell {
             .encode_sync(path, &output_path)
             .map_err(|err| format!("AEF-Encoding fehlgeschlagen: {err}"))?;
         AefInspector::inspect(&output_path).map_err(|err| format!("AEF-Inspektion fehlgeschlagen: {err}"))
+    }
+
+    fn refresh_projection_for_path(&mut self, path: &Path) {
+        let output_path = aef_output_path(path);
+        let projection = self
+            .aef_vault
+            .read()
+            .ok()
+            .and_then(|vault| {
+                let projected_vault_size = vault.entry_count().saturating_mul(2).max(32);
+                AefInspector::project_future_compression_sync(&output_path, &vault, projected_vault_size).ok()
+            });
+        self.last_aef_projection = projection;
     }
 
     fn current_shanway_input(&mut self) -> Option<ShanwayInput> {
@@ -199,6 +224,16 @@ impl AetherRustShell {
             .map(|vault| vault.entry_count() as f32)
             .unwrap_or(0.0);
         (count / (count + 24.0)).clamp(0.0, 1.0)
+    }
+
+    fn current_usage_profile(&self) -> Option<UsageProfile> {
+        self.current_file
+            .as_ref()
+            .map(|file| build_usage_profile(file, self.current_hit_rate()))
+    }
+
+    fn current_domain_key(&self) -> Option<String> {
+        self.current_file.as_ref().map(|file| domain_from_source_kind(&file.source_kind))
     }
 
     fn append_log(&mut self, message: impl Into<String>) {
@@ -285,6 +320,14 @@ impl AetherRustShell {
                 .map(|registry| registry.entries.len())
                 .unwrap_or(0);
             ui.label(format!("Pack-Registry: {pack_count} optionale Pack-Metadaten lokal gecacht."));
+            ui.label(format!(
+                "Observer-Persistenz: {}",
+                match self.mind_model.scope() {
+                    ObserverModelScope::SessionOnly => "SessionOnly",
+                    ObserverModelScope::PersistentLocal => "PersistentLocal",
+                    ObserverModelScope::NeverStore => "NeverStore",
+                }
+            ));
             ui.separator();
             if let Some(file) = &self.current_file {
                 ui.label(RichText::new("Aktive Datei").strong());
@@ -292,6 +335,15 @@ impl AetherRustShell {
                 ui.label(format!("Typ: {}", file.source_kind));
                 ui.label(format!("Groesse: {} Bytes", file.original_size));
                 ui.label(format!("Kompressionsgewinn: {:.2}%", file.compression_gain_percent));
+                if let Some(projection) = &self.last_aef_projection {
+                    ui.label(format!(
+                        "AEF-Projektion: Delta {} B -> {} B | Rate {:.2}% -> {:.2}%",
+                        projection.current_delta_size,
+                        projection.projected_delta_size,
+                        projection.current_compression_rate * 100.0,
+                        projection.projected_compression_rate * 100.0
+                    ));
+                }
             } else {
                 ui.label("Noch keine Datei aktiv.");
             }
@@ -304,10 +356,104 @@ impl AetherRustShell {
                 self.current_file = None;
                 self.preview_texture = None;
                 self.last_aef_report = None;
+                self.last_aef_projection = None;
             }
             if ui.button("Shanway-Chat oeffnen").clicked() {
                 self.top_tab = TopTab::Chats;
                 self.chat_tab = ChatTab::Shanway;
+            }
+            if ui.button("Observer lokal behalten").clicked() {
+                self.mind_model.enable_persistent_local();
+                self.status_line = "Observer-Modell auf PersistentLocal umgestellt.".to_owned();
+                self.append_log("Observer-Modell wird jetzt lokal persistent gehalten.");
+            }
+            if ui.button("Observer lokal loeschen").clicked() {
+                match self.mind_model.clear_persistent_state() {
+                    Ok(()) => {
+                        self.status_line = "Lokaler Observer-Zustand geloescht.".to_owned();
+                        self.append_log("Observer-Modell lokal geloescht.");
+                    }
+                    Err(err) => {
+                        self.status_line = format!("Observer-Zustand konnte nicht geloescht werden: {err}");
+                    }
+                }
+            }
+            if ui.button("Empfohlenen Pack installieren").clicked() {
+                if let Some(profile) = self.current_usage_profile() {
+                    let top_pack = self
+                        .pack_registry
+                        .read()
+                        .ok()
+                        .and_then(|registry| registry.find_relevant_packs(&profile, 0.05).into_iter().next());
+                    if let Some(top_pack) = top_pack {
+                        match self.pack_manager.download_and_install_sync(top_pack.pack_id, true) {
+                            Ok(result) => {
+                                self.status_line = format!(
+                                    "Pack installiert: {} | Hit-Rate {:.0}% -> {:.0}%",
+                                    result.pack_name,
+                                    result.hit_rate_before * 100.0,
+                                    result.hit_rate_after * 100.0
+                                );
+                                self.append_log(self.status_line.clone());
+                            }
+                            Err(err) => {
+                                self.status_line = format!("Pack-Installation fehlgeschlagen: {err}");
+                            }
+                        }
+                    } else {
+                        self.status_line = "Kein relevanter Pack ueber der Empfehlungsschwelle gefunden.".to_owned();
+                    }
+                } else {
+                    self.status_line = "Fuer Pack-Empfehlungen braucht Shanway zuerst eine aktive Datei.".to_owned();
+                }
+            }
+            if ui.button("Pack aus aktiver Domaene generieren").clicked() {
+                if let Some(domain) = self.current_domain_key() {
+                    match self.pack_generator.generate_pack_sync(domain.clone(), true) {
+                        Ok(result) => {
+                            if let Ok(mut registry) = self.pack_registry.write() {
+                                let pack_path = result.path.clone();
+                                if let Ok(pack) = crate::pack::AepPack::read_from_path(&pack_path, &EnginePipeline::new()) {
+                                    let _ = registry.register_local_pack(&pack, &pack_path);
+                                }
+                            }
+                            self.status_line = format!("Lokaler Pack erzeugt: {} | {} Anker", result.domain, result.anchor_count);
+                            self.append_log(format!("Pack erzeugt: {}", result.path.display()));
+                        }
+                        Err(err) => {
+                            self.status_line = format!("Pack-Generierung fehlgeschlagen: {err}");
+                        }
+                    }
+                } else {
+                    self.status_line = "Ohne aktive Datei kann keine Domaene fuer den Pack bestimmt werden.".to_owned();
+                }
+            }
+            if ui.button("Offline-Cache vorbereiten").clicked() {
+                let activities = self
+                    .current_domain_key()
+                    .map(|domain| vec![domain])
+                    .unwrap_or_else(|| vec!["language_german".to_owned()]);
+                match self.offline_cache_manager.prepare_offline_cache(
+                    OfflinePrepRequest {
+                        planned_activities: activities,
+                        available_cache_mb: 64,
+                    },
+                    self.pack_manager.installed_packs(),
+                    true,
+                ) {
+                    Ok(result) => {
+                        self.status_line = format!(
+                            "Offline-Cache bereit: {} Anker | {} B | Abdeckung {}",
+                            result.anchors_cached,
+                            result.cache_size_bytes,
+                            if result.coverage.covered.is_empty() { "niedrig" } else { "teilweise" }
+                        );
+                        self.append_log(self.status_line.clone());
+                    }
+                    Err(err) => {
+                        self.status_line = format!("Offline-Cache fehlgeschlagen: {err}");
+                    }
+                }
             }
             ui.separator();
             egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
@@ -433,6 +579,7 @@ impl AetherRustShell {
                 if report.lossless_confirmed { "JA" } else { "NEIN" },
                 report.trust_score
             ));
+            self.refresh_projection_for_path(path);
         }
         self.current_file = Some(processed.clone());
 
@@ -459,6 +606,7 @@ impl AetherRustShell {
         if Path::new(&entry.full_path).exists() {
             if let Ok(file) = self.preview_existing_file(Path::new(&entry.full_path), ctx) {
                 self.current_file = Some(file.clone());
+                self.refresh_projection_for_path(Path::new(&entry.full_path));
                 self.status_line = format!("Registereintrag geladen: {}", file.file_name);
                 self.append_log(format!("Registereintrag geladen: {}", file.file_name));
                 return;
@@ -480,6 +628,7 @@ impl AetherRustShell {
             excerpt: "Originaldatei ist nicht mehr lokal vorhanden. Es werden Registermetadaten angezeigt.".to_owned(),
         });
         self.last_aef_report = None;
+        self.last_aef_projection = None;
         self.preview_texture = Some(
             ctx.load_texture(
                 format!("register::{}", entry.id),
@@ -522,6 +671,13 @@ impl AetherRustShell {
                             report.vault_coverage * 100.0,
                             if report.lossless_confirmed { "JA" } else { "NEIN" }
                         ));
+                        if let Some(projection) = &self.last_aef_projection {
+                            ui.label(format!(
+                                "Projektion: Delta {} B -> {} B bei groesserem Vault",
+                                projection.current_delta_size,
+                                projection.projected_delta_size
+                            ));
+                        }
                     }
                     ui.separator();
                     ui.label(&file.excerpt);
@@ -545,6 +701,14 @@ impl AetherRustShell {
                             report.coherence_index,
                             report.delta_size_bytes
                         ));
+                        if let Some(projection) = &self.last_aef_projection {
+                            ui.label(format!(
+                                "Rate {:.2}% -> {:.2}% | Ziel-Vault {:?}",
+                                projection.current_compression_rate * 100.0,
+                                projection.projected_compression_rate * 100.0,
+                                projection.vault_size_needed_for_lossless
+                            ));
+                        }
                     }
                 } else {
                     ui.label("Noch keine Prozessbeschreibung.");

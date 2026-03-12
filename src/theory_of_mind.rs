@@ -196,6 +196,23 @@ impl MindModelEngine {
         });
     }
 
+    pub fn scope(&self) -> ObserverModelScope {
+        self.scope
+    }
+
+    pub fn enable_persistent_local(&mut self) {
+        self.scope = ObserverModelScope::PersistentLocal;
+        let _ = self.save();
+    }
+
+    pub fn clear_persistent_state(&mut self) -> Result<(), String> {
+        self.observer_models.clear();
+        if self.path.exists() {
+            fs::remove_file(&self.path).map_err(|err| err.to_string())?;
+        }
+        Ok(())
+    }
+
     pub fn calculate_observer_delta(&self, signal: &ProcessedSignal, observer_id: Uuid) -> ObserverDelta {
         let o1_knowledge = 0.92;
         let o2_estimated_knowledge = self
@@ -449,4 +466,29 @@ fn now_epoch() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn observer_delta_reduces_with_known_anchor() {
+        let observer_id = Uuid::new_v4();
+        let signal = ProcessedSignal::from_summary("rust entropy", vec!["development_rust".to_owned()]);
+        let mut engine = MindModelEngine::new(ObserverModelScope::SessionOnly);
+        engine.ensure_observer(observer_id);
+        let before = engine.calculate_observer_delta(&signal, observer_id);
+        engine.learn_from_user_prompt(observer_id, &signal, "das weiss ich, rust kenne ich");
+        let after = engine.calculate_observer_delta(&signal, observer_id);
+        assert!(after.o2_estimated_knowledge >= before.o2_estimated_knowledge);
+    }
+
+    #[test]
+    fn comprehension_detector_flags_confusion() {
+        assert_eq!(
+            ComprehensionDetector::detect_text_signal("ich verstehe nicht was du meinst"),
+            TextSignal::Confusion
+        );
+    }
 }
