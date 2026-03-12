@@ -1,4 +1,5 @@
 use aether_rust_shell::aef::{EnginePipeline, VaultStore};
+use aether_rust_shell::bus_ipc;
 use aether_rust_shell::vault_access::{sync_public_vault, PublicAnchorRecord, VaultAccessLayer};
 use serde::Serialize;
 use std::fs;
@@ -26,6 +27,29 @@ struct ReportEntry {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|item| item == "--bus-stream") {
+        let filter = get_filter_arg(&args);
+        bus_ipc::stream_events(&filter)?;
+        return Ok(());
+    }
+    if args.iter().any(|item| item == "--bus-publish") {
+        let event_type = get_arg_value(&args, "--event").unwrap_or_default();
+        let payload = get_arg_value(&args, "--payload").unwrap_or_else(|| "{}".to_owned());
+        if event_type.is_empty() {
+            eprintln!("--bus-publish braucht --event.");
+            std::process::exit(1);
+        }
+        bus_ipc::append_publish_request(&event_type, &payload)?;
+        println!(
+            "{}",
+            serde_json::json!({
+                "ok": true,
+                "event_type": event_type,
+                "ts": bus_ipc::utc_now_iso(),
+            })
+        );
+        return Ok(());
+    }
     if args.len() < 2 {
         print_usage();
         std::process::exit(1);
@@ -172,10 +196,29 @@ fn walk_json_files(root: &Path) -> Vec<PathBuf> {
 fn print_usage() {
     eprintln!(
         "Aether CLI\n\
+         Flags:\n\
+         - --bus-stream [--filter <EventA,EventB,...>]\n\
+         - --bus-publish --event <EventType> --payload <json>\n\
+         \n\
          Kommandos:\n\
          - verify-anchor <path>\n\
          - verify-signatures <dir>\n\
          - pipeline-check [--threshold <float>]\n\
          - sync-vault [repo_root] [since_vault_version]"
     );
+}
+
+fn get_filter_arg(args: &[String]) -> Vec<String> {
+    get_arg_value(args, "--filter")
+        .unwrap_or_default()
+        .split(',')
+        .map(|item| item.trim().to_owned())
+        .filter(|item| !item.is_empty())
+        .collect()
+}
+
+fn get_arg_value(args: &[String], flag: &str) -> Option<String> {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].clone())
 }

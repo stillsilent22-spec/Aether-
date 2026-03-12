@@ -27,6 +27,7 @@ from .audio_engine import AudioEngine
 from .bayes_engine import BayesianBeliefEngine, BayesianBeliefSnapshot
 from .agent_loop import AgentLoopEngine
 from .browser_engine import BrowserEngine, BrowserSnapshot
+from .bus_bridge import RustBusBridge
 from .chat_sync_engine import ChatRelayServer, ChatSyncClient, sync_error_text
 from .conway_engine import ContinuousConway
 from .device_profile import DeviceProfileEngine, RuntimePressure
@@ -39,6 +40,9 @@ from .log_system import LogSystem
 from .observer_engine import AnchorPoint, ObserverEngine
 from .public_anchor import PublicBlockchainAnchor
 from .public_ttd_transport import PublicTTDTransport
+from .preload_optimizer import PreloadOptimizer
+from .privacy_anchor_builder import PrivacyAnchorBuilder
+from .privacy_observer import WindowsPrivacyObserver
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
 from .screen_vision_engine import ScreenVisionEngine, ShanwayAetherVision
@@ -51,10 +55,13 @@ from .security_engine import (
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
+from .shanway_interface import PrivacyAnalysisResult, ShanwayInterface, ShanwayInterfaceResult
+from .shanway_response_builder import ShanwayResponseBuilder, ShanwayStructuredResponse
 from .symbol_grounding import SymbolGroundingLayer
 from .spectrum_engine import SpectrumEngine
 from .scene_renderer import AetherSceneRenderer, SceneRenderState
 from .storage_gp import DualModeStorageEngine
+from .telemetry_classifier import TelemetryClassifier
 from .theremin_engine import ThereminEngine, ThereminFrameState
 from .vault_chain import AetherAugmentor
 from .ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
@@ -98,6 +105,13 @@ class VeiraGUI:
         self.conway_engine = ContinuousConway()
         self.dialog_engine = StructuralDialogEngine(registry=registry)
         self.shanway_engine = ShanwayEngine()
+        self.preload_optimizer = PreloadOptimizer()
+        self.bus_bridge = RustBusBridge(event_filter=[
+            "WorkflowAnchorHit",
+            "ShanwayUserMessage",
+            "OfflineCachePrepared",
+            "CrossProgramVramReuse",
+        ])
         self.embedding_engine = CrossDomainEmbeddingEngine(session_context.seed)
         self.graph_engine = GraphFieldEngine()
         self.reconstruction_engine = LosslessReconstructionEngine()
@@ -106,6 +120,20 @@ class VeiraGUI:
         self.device_profile = self.device_profile_engine.detect()
         self.efficiency_monitor = EfficiencyMonitor()
         self.browser_engine = BrowserEngine()
+        self.privacy_observer = WindowsPrivacyObserver()
+        self.telemetry_classifier = TelemetryClassifier()
+        self.privacy_anchor_builder = PrivacyAnchorBuilder(session_engine=session_context)
+        self.response_builder = ShanwayResponseBuilder()
+        self.shanway_interface = ShanwayInterface(
+            shanway_engine=self.shanway_engine,
+            preload_optimizer=self.preload_optimizer,
+            browser_engine=self.browser_engine,
+            bus_bridge=self.bus_bridge,
+            auto_push_ttd=False,
+            telemetry_classifier=self.telemetry_classifier,
+            privacy_anchor_builder=self.privacy_anchor_builder,
+            response_builder=self.response_builder,
+        )
         self.chat_sync_client = ChatSyncClient()
         self.chat_relay_server = ChatRelayServer(str(Path("data") / "chat_relay_events.jsonl"))
         self.public_anchor = PublicBlockchainAnchor(str(Path("data") / "public_anchor_settings.json"))
@@ -265,6 +293,10 @@ class VeiraGUI:
         self.peer_delta_status_var = tk.StringVar(value="Peer-Delta: lokal | keine Freigabe")
         self.public_ttd_status_var = tk.StringVar(value="TTD-Pool: lokal | keine oeffentliche Freigabe")
         self.public_ttd_network_status_var = tk.StringVar(value="TTD-Netz: aus")
+        self.preload_status_var = tk.StringVar(value="Preload: keine Empfehlungen")
+        self.privacy_status_var = tk.StringVar(value="Privacy Monitor: bereit")
+        self.privacy_monitor_enabled_var = tk.BooleanVar(value=False)
+        self.shanway_ttd_push_var = tk.BooleanVar(value=False)
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
         )
@@ -387,6 +419,9 @@ class VeiraGUI:
         self.local_register_tree: ttk.Treeview | None = None
         self.chat_scope_notebook: ttk.Notebook | None = None
         self.efficiency_text: tk.Text | None = None
+        self.preload_text: tk.Text | None = None
+        self.privacy_tree: ttk.Treeview | None = None
+        self.privacy_response_text: tk.Text | None = None
         self.efficiency_job: str | None = None
         self._efficiency_log_lines: list[str] = []
         self._last_efficiency_warning_at = 0.0
@@ -418,6 +453,7 @@ class VeiraGUI:
         self._refresh_chat_channels()
         self._refresh_chat_view()
         self._prime_language_panel()
+        self._refresh_preload_recommendations()
         self._apply_raw_storage_mode_label(bool(self.raw_storage_enabled_var.get()))
         self._append_efficiency_log("Effizienzmonitor bereit.")
         self.root.after(500, self._poll_efficiency_monitor)
@@ -429,6 +465,7 @@ class VeiraGUI:
         self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
         self.root.after(2200, lambda: self._sync_local_public_ttd_pool(silent=True))
         self.root.after(2600, lambda: self._sync_remote_public_ttd_pool(silent=True))
+        self.bus_bridge.start(callback=self.shanway_interface.on_bus_event)
         self.aether_vision.start()
 
     @staticmethod
@@ -453,6 +490,116 @@ class VeiraGUI:
         ready = int(summary.get("main_ready", 0) or 0)
         quarantined = int(summary.get("quarantined_total", 0) or 0)
         return f"Λ {noether:.0f}% | Δ {dual:.0f}% | U {uncertainty:.0f}% | M {ready} | Q {quarantined}"
+
+    @staticmethod
+    def _set_text_widget(widget: tk.Text | None, text: str) -> None:
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.delete("1.0", "end")
+        widget.insert("1.0", str(text or ""))
+        widget.configure(state="disabled")
+
+    def _toggle_shanway_ttd_push(self) -> None:
+        enabled = bool(self.shanway_ttd_push_var.get())
+        self.shanway_interface.auto_push_ttd = enabled
+        self.preload_status_var.set(
+            "Preload: TTD-Opt-in aktiv"
+            if enabled else
+            "Preload: TTD-Opt-in aus"
+        )
+
+    def _refresh_preload_recommendations(self) -> None:
+        recommendations = self.preload_optimizer.recommend_preloads(top_n=5)
+        if not recommendations:
+            self.preload_status_var.set("Preload: keine stabilen Empfehlungen")
+            self._set_text_widget(self.preload_text, "Keine preload-faehigen Prioritaeten gefunden.")
+            return
+        lines = []
+        for item in recommendations:
+            lines.append(
+                f"#{int(item.get('rank', 0) or 0)} {item.get('file_type', '--')} | "
+                f"P {float(item.get('priority_score', 0.0) or 0.0):.3f} | "
+                f"Gain {float(item.get('estimated_coverage_gain', 0.0) or 0.0) * 100.0:.1f}%\n"
+                f"{item.get('payload_hint', '')}\n"
+                f"Anker: {', '.join(list(item.get('preload_anchors', []) or []))}\n"
+                f"Grund: {item.get('reason', '')}"
+            )
+        self.preload_status_var.set(f"Preload: {len(recommendations)} Empfehlung(en) aktiv")
+        self._set_text_widget(self.preload_text, "\n\n".join(lines))
+
+    def _toggle_privacy_monitor(self) -> None:
+        if bool(self.privacy_monitor_enabled_var.get()):
+            self.privacy_status_var.set("Privacy Monitor: kontinuierlich aktiv")
+            self.privacy_observer.start_continuous(self._queue_privacy_snapshot)
+        else:
+            self.privacy_observer.stop_continuous()
+            self.privacy_status_var.set("Privacy Monitor: gestoppt")
+
+    def _take_privacy_snapshot(self) -> None:
+        try:
+            snapshot = self.privacy_observer.take_snapshot()
+        except Exception as exc:
+            self.privacy_status_var.set(f"Privacy Snapshot fehlgeschlagen: {exc}")
+            return
+        self._handle_privacy_snapshot(snapshot)
+
+    def _queue_privacy_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self.root.after(0, lambda: self._handle_privacy_snapshot(snapshot))
+
+    def _handle_privacy_snapshot(self, snapshot: dict[str, Any]) -> None:
+        try:
+            result = self.shanway_interface.analyze_privacy_snapshot(snapshot)
+        except Exception as exc:
+            self.privacy_status_var.set(f"Privacy Analyse fehlgeschlagen: {exc}")
+            return
+        self._render_privacy_analysis(result)
+        self._refresh_preload_recommendations()
+
+    def _render_privacy_analysis(self, result: PrivacyAnalysisResult) -> None:
+        if self.privacy_tree is not None:
+            for item_id in self.privacy_tree.get_children():
+                self.privacy_tree.delete(item_id)
+            for verdict in result.verdicts[:50]:
+                classification = str(verdict.classification or "DEFAULT")
+                tag = classification if classification in {"CONFIRMED", "SUSPECTED"} else "DEFAULT"
+                self.privacy_tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        str(verdict.entity_name),
+                        str(verdict.entity_type),
+                        f"{float(verdict.telemetry_score):.2f}",
+                        classification,
+                        str(verdict.recommendation),
+                    ),
+                    tags=(tag,),
+                )
+        top = result.top_threat.entity_name if result.top_threat is not None else "keine"
+        self.privacy_status_var.set(
+            f"Privacy Monitor: confirmed {result.confirmed_count} | suspected {result.suspected_count} | top {top}"
+        )
+        self._set_text_widget(
+            self.privacy_response_text,
+            result.structured_response.render(),
+        )
+
+    def _build_structured_shanway_output(
+        self,
+        assessment: ShanwayAssessment,
+        interface_result: ShanwayInterfaceResult,
+        raw_answer: str,
+    ) -> ShanwayStructuredResponse:
+        structured = self.response_builder.build(
+            assessment,
+            interface_result,
+            raw_answer=raw_answer,
+        )
+        self.chat_reply_var.set(structured.render())
+        self.chat_semantic_var.set(
+            f"Semantik: {assessment.classification} | Vault {structured.vault_abgleich} | Ende {structured.endbewertung}"
+        )
+        return structured
 
     def _ae_vault_notice_signature(self, summary: dict[str, object]) -> str:
         """Bildet eine knappe Signatur, damit Vault-Updates nur bei echter Aenderung gemeldet werden."""
@@ -1345,6 +1492,7 @@ class VeiraGUI:
         efficiency_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         live_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         shanway_tab = tk.Frame(self.right_notebook, bg="#0D1930")
+        privacy_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         chat_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         browser_tab = tk.Frame(self.right_notebook, bg="#0D1930")
         chain_tab = tk.Frame(self.right_notebook, bg="#0D1930")
@@ -1355,6 +1503,7 @@ class VeiraGUI:
         self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
         self.right_notebook.add(live_tab, text="LIVE-FEEDBACK")
         self.right_notebook.add(shanway_tab, text="SHANWAY")
+        self.right_notebook.add(privacy_tab, text="PRIVACY")
         self.right_notebook.add(chat_tab, text="CHATS")
         self.right_notebook.add(browser_tab, text="BROWSER")
         self.right_notebook.add(chain_tab, text="CHAIN")
@@ -1538,6 +1687,29 @@ class VeiraGUI:
         tk.Label(shanway_status_card, textvariable=self.shanway_vault_watch_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_reply_var, bg="#10223F", fg="#F6E7A7", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 2))
         tk.Label(shanway_status_card, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
+        preload_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        preload_card.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(preload_card, text="Preload-Empfehlungen", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        ttk.Checkbutton(
+            preload_card,
+            text="TTD-Anker anonym teilen (Opt-in)",
+            variable=self.shanway_ttd_push_var,
+            command=self._toggle_shanway_ttd_push,
+        ).pack(anchor="w", padx=10, pady=(0, 4))
+        tk.Label(preload_card, textvariable=self.preload_status_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        self.preload_text = tk.Text(
+            preload_card,
+            bg="#07111F",
+            fg="#D7E8FF",
+            relief="flat",
+            wrap="word",
+            font=("Consolas", 8),
+            height=7,
+            padx=10,
+            pady=8,
+        )
+        self.preload_text.pack(fill="x", padx=10, pady=(0, 10))
+        self.preload_text.configure(state="disabled")
         miniature_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         miniature_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(miniature_card, text="Miniatur", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
@@ -1602,6 +1774,50 @@ class VeiraGUI:
             text="Leeren",
             command=lambda: self._clear_message_input("shanway"),
         ).pack(side="left", padx=(6, 0))
+        tk.Label(privacy_tab, text="Privacy Monitor", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
+        privacy_controls = tk.Frame(privacy_tab, bg="#0D1930")
+        privacy_controls.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(privacy_controls, text="Snapshot jetzt", command=self._take_privacy_snapshot).pack(side="left")
+        ttk.Checkbutton(
+            privacy_controls,
+            text="Kontinuierliche Ueberwachung (15s)",
+            variable=self.privacy_monitor_enabled_var,
+            command=self._toggle_privacy_monitor,
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(privacy_tab, textvariable=self.privacy_status_var, bg="#0D1930", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
+        self.privacy_tree = ttk.Treeview(
+            privacy_tab,
+            columns=("entity", "kind", "score", "class", "recommendation"),
+            show="headings",
+            height=10,
+        )
+        for column, label, width in [
+            ("entity", "Entity", 130),
+            ("kind", "Typ", 66),
+            ("score", "Score", 66),
+            ("class", "Klassifikation", 108),
+            ("recommendation", "Empfehlung", 200),
+        ]:
+            self.privacy_tree.heading(column, text=label)
+            self.privacy_tree.column(column, width=width, anchor="w", stretch=(column in {"entity", "recommendation"}))
+        self.privacy_tree.tag_configure("CONFIRMED", foreground="#FF7A7A")
+        self.privacy_tree.tag_configure("SUSPECTED", foreground="#F2C14E")
+        self.privacy_tree.tag_configure("DEFAULT", foreground="#D7E8FF")
+        self.privacy_tree.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(privacy_tab, text="Shanway Structured Response", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        self.privacy_response_text = tk.Text(
+            privacy_tab,
+            bg="#07111F",
+            fg="#D7E8FF",
+            relief="flat",
+            wrap="word",
+            font=("Consolas", 8),
+            height=14,
+            padx=10,
+            pady=8,
+        )
+        self.privacy_response_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.privacy_response_text.configure(state="disabled")
         self.chain_text = tk.Text(chain_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
         self.chain_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
         self.chain_text.bind("<Button-1>", self._select_chain_entry)
@@ -4631,6 +4847,7 @@ class VeiraGUI:
             full_reply = ""
             shanway_assessment: ShanwayAssessment | None = None
             shanway_self_assessment: ShanwayAssessment | None = None
+            shanway_interface_result: ShanwayInterfaceResult | None = None
             self_learned_tokens = 0
             detector_dna_path = ""
             history_excerpt = self._chat_recent_history_excerpt(descriptor)
@@ -4638,12 +4855,11 @@ class VeiraGUI:
 
             if should_reply:
                 assistant_context = self._assistant_context_for()
-                shanway_assessment = self.shanway_engine.detect_asymmetry(
+                shanway_interface_result = self.shanway_interface.analyze_and_route(
                     text,
                     coherence_score=float(getattr(self.current_fingerprint, "coherence_score", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
                     anchor_details=list(assistant_context.ae_anchor_details or []),
-                    browser_mode=False,
                     active=True,
                     h_lambda=float(getattr(self.current_fingerprint, "h_lambda", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
@@ -4677,6 +4893,7 @@ class VeiraGUI:
                     } if self.current_fingerprint is not None else {},
                     **self._shanway_visual_payloads(self.current_fingerprint),
                 )
+                shanway_assessment = shanway_interface_result.assessment
                 if shanway_assessment.sensitive:
                     blocked_sensitive = True
                     should_reply = False
@@ -4706,13 +4923,15 @@ class VeiraGUI:
                 )
                 beauty_d = float(shanway_assessment.noether_symmetry)
                 anchors = list(assistant_context.ae_anchor_details or [])
-                web_context = self._maybe_fetch_chat_web_context(
-                    text,
-                    descriptor,
-                    shanway_assessment,
-                    assistant_intent=str(getattr(assistant_response, "intent", "") or ""),
-                    force_network=bool(force_network),
-                )
+                web_context = dict(getattr(shanway_interface_result, "web_context", {}) or {})
+                if not web_context.get("ok"):
+                    web_context = self._maybe_fetch_chat_web_context(
+                        text,
+                        descriptor,
+                        shanway_assessment,
+                        assistant_intent=str(getattr(assistant_response, "intent", "") or ""),
+                        force_network=bool(force_network),
+                    )
                 partner_text = self.shanway_engine.compose_chat_partner_reply(
                     text,
                     shanway_assessment,
@@ -4885,16 +5104,41 @@ class VeiraGUI:
                 self._chat_sync_publish_message(int(message_id))
 
             if blocked_sensitive and shanway_assessment is not None:
-                self.chat_reply_var.set(f"Shanway: {full_reply}")
-                self.chat_semantic_var.set("Semantik: BLOCKED | sensible Daten")
+                structured = self._build_structured_shanway_output(
+                    shanway_assessment,
+                    shanway_interface_result or ShanwayInterfaceResult(
+                        assessment=shanway_assessment,
+                        preload_recommendations=[],
+                        web_context={},
+                        library_context={},
+                        ttd_push_status="disabled",
+                        ttd_push_count=0,
+                        bus_events_received=[],
+                        interface_log=[],
+                    ),
+                    full_reply,
+                )
+                self.chat_semantic_var.set(f"Semantik: BLOCKED | Ende {structured.endbewertung}")
                 self.chat_status_var.set("Sensible Inhalte erkannt | Analyse gestoppt")
                 self.loading_var.set("Sensible Inhalte erkannt | Shanway hat nicht analysiert")
             elif should_reply and reply is not None and assistant_response is not None and shanway_assessment is not None:
-                self.chat_reply_var.set(f"Shanway: {full_reply}")
+                structured = self._build_structured_shanway_output(
+                    shanway_assessment,
+                    shanway_interface_result or ShanwayInterfaceResult(
+                        assessment=shanway_assessment,
+                        preload_recommendations=[],
+                        web_context=dict(web_context),
+                        library_context={},
+                        ttd_push_status="disabled",
+                        ttd_push_count=0,
+                        bus_events_received=[],
+                        interface_log=[],
+                    ),
+                    full_reply,
+                )
                 self.chat_semantic_var.set(
-                    f"Semantik: {reply.semantics_label} | Schoenheit: {reply.beauty_score:.1f} ({reply.beauty_label}) | "
-                    f"Intent: {assistant_response.intent} | Layer {int(getattr(assistant_response, 'knowledge_layer', 0) or 0)} | "
-                    f"Noether {shanway_assessment.noether_symmetry * 100.0:.0f}% | tox {shanway_assessment.toxicity_score * 100.0:.0f}%"
+                    f"Semantik: {reply.semantics_label} | Intent: {assistant_response.intent} | "
+                    f"Noether {shanway_assessment.noether_symmetry * 100.0:.0f}% | Ende {structured.endbewertung}"
                 )
                 if shanway_assessment.classification == "toxic":
                     self.chat_status_var.set(
@@ -8212,11 +8456,10 @@ class VeiraGUI:
         )
         try:
             assistant_context = self._assistant_context_for(fingerprint)
-            shanway_assessment = self.shanway_engine.detect_asymmetry(
+            shanway_interface_result = self.shanway_interface.analyze_and_route(
                 f"{getattr(fingerprint, 'source_label', '')} {getattr(fingerprint, 'integrity_text', '')}",
                 coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
                 anchor_details=list(assistant_context.ae_anchor_details or []),
-                browser_mode=False,
                 active=True,
                 h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
                 observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
@@ -8243,6 +8486,7 @@ class VeiraGUI:
                 },
                 **self._shanway_visual_payloads(fingerprint),
             )
+            shanway_assessment = shanway_interface_result.assessment
             shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
             fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]
             setattr(fingerprint, "_shanway_assessment_payload", shanway_assessment.to_payload())
@@ -8255,9 +8499,13 @@ class VeiraGUI:
                         "shanway_assessment": shanway_assessment.to_payload(),
                     },
                 )
-            self.chat_reply_var.set(f"Shanway: {shanway_text}")
+            structured = self._build_structured_shanway_output(
+                shanway_assessment,
+                shanway_interface_result,
+                shanway_text,
+            )
             self.chat_semantic_var.set(
-                f"Semantik: {reply.semantics_label} | Schoenheit: {reply.beauty_label} | Boundary: {shanway_assessment.boundary}"
+                f"Semantik: {reply.semantics_label} | Boundary: {shanway_assessment.boundary} | Ende {structured.endbewertung}"
             )
             if self.current_fingerprint is fingerprint:
                 self._refresh_center_detail_panels(fingerprint)
@@ -9527,6 +9775,14 @@ class VeiraGUI:
             pass
         self.browser_engine.stop()
         self.chat_relay_server.stop()
+        try:
+            self.bus_bridge.stop()
+        except Exception:
+            pass
+        try:
+            self.privacy_observer.stop_continuous()
+        except Exception:
+            pass
         try:
             self.aether_vision.stop()
         except Exception:

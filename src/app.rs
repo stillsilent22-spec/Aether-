@@ -1,6 +1,7 @@
 use crate::aef::{
     AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore,
 };
+use crate::bus_ipc;
 use crate::auth::{AuthStore, UserRecord};
 use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
@@ -142,6 +143,7 @@ pub struct AetherRustShell {
     gfx: AetherGfx,
     bus_publisher: BusPublisher,
     bus_receiver: Receiver<BusEvent>,
+    bus_publish_offset: u64,
     public_ttd_pool: PublicTtdPoolStore,
     public_ttd_transport: PublicTtdTransport,
     chat_relay_store: ChatRelayStateStore,
@@ -165,6 +167,7 @@ impl AetherRustShell {
         let inter_layer_bus = InterLayerBus::new(128);
         let bus_publisher = inter_layer_bus.publisher();
         let bus_receiver = inter_layer_bus.subscriber();
+        let _ = bus_ipc::ensure_transport_dir();
         let pack_registry = Arc::new(RwLock::new(
             PackRegistry::load_default().unwrap_or(PackRegistry {
                 index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
@@ -251,6 +254,7 @@ impl AetherRustShell {
             gfx,
             bus_publisher,
             bus_receiver,
+            bus_publish_offset: 0,
             public_ttd_pool,
             public_ttd_transport,
             chat_relay_store,
@@ -819,7 +823,22 @@ impl AetherRustShell {
         }
     }
 
+    fn drain_bus_publish_requests(&mut self) {
+        let (events, next_offset) = match bus_ipc::read_publish_requests_from(self.bus_publish_offset) {
+            Ok(value) => value,
+            Err(err) => {
+                self.append_log(format!("Bus-Bridge lesen fehlgeschlagen: {err}"));
+                return;
+            }
+        };
+        self.bus_publish_offset = next_offset;
+        for event in events {
+            self.bus_publisher.publish(event);
+        }
+    }
+
     fn handle_bus_event(&mut self, event: BusEvent) {
+        let _ = bus_ipc::append_event(&event);
         match event {
             BusEvent::PackRecommended(payload) => {
                 self.append_log(format!(
@@ -2124,6 +2143,7 @@ impl AetherRustShell {
 
 impl eframe::App for AetherRustShell {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_bus_publish_requests();
         self.drain_bus_events();
         if self.current_user.is_none() {
             self.ui_auth(ctx);

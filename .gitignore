@@ -22,6 +22,8 @@ __pycache__/
 tests/.pytest_cache/
 tests/.pytest_tmp/
 tests/.tmp_pytest/
+tests/.tmp_pytest_run/
+tests/tmp*/
 pytest-cache-files-*/
 tests/pytest-cache-files-*/
 
@@ -39,6 +41,7 @@ data/vault/
 data/sync_smoke/
 data/tmp*/
 data/tmpr*/
+data/test_privacy_anchor_builder/
 data/shanway_lexicon.json
 data/fingerprint_chain*
 data/*rejects*

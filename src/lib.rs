@@ -1,6 +1,7 @@
 pub mod aef;
 pub mod app;
 pub mod auth;
+pub mod bus_ipc;
 pub mod browser;
 pub mod chat_sync;
 pub mod delta_vault;
