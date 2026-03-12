@@ -38,6 +38,14 @@ def _sample_bytes() -> bytes:
     return payload * 16
 
 
+def _workspace_tmp_dir(name: str) -> Path:
+    """Legt ein reproduzierbares Temp-Verzeichnis im Workspace statt im OS-Temp an."""
+    path = PROJECT_ROOT / "tests" / ".tmp_pytest" / name
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def _reconstruct_from_delta(delta: bytes, session_seed: int) -> bytes:
     """Hebt das XOR-Delta mit dem persistierten Session-Seed wieder auf."""
     noise = SessionContext.noise_from_seed(int(session_seed) & 0xFFFFFFFF, len(delta))
@@ -180,9 +188,10 @@ def test_lossless_roundtrip_wrong_seed_fails() -> None:
     assert "Delta-Seed muss für Rekonstruktion erhalten bleiben" in response
 
 
-def test_vault_growth_reduces_delta_size(tmp_path: Path) -> None:
+def test_vault_growth_reduces_delta_size() -> None:
     """Beweist C(t) -> 1 fuer wiederholte lokale Rekonstruktionen mit gleichem Input."""
-    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_path / "anchors.db"))
+    tmp_dir = _workspace_tmp_dir("vault_growth_reduces_delta_size")
+    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_dir / "anchors.db"))
     sample = _sample_bytes()
 
     delta_1 = engine.build_delta_log(sample)
@@ -200,6 +209,7 @@ def test_vault_growth_reduces_delta_size(tmp_path: Path) -> None:
     assert reconstructed == sample
     result = engine.verify_lossless(sample, reconstructed)
     assert result["verified"] is True
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_privacy_boundary_blocks_chat() -> None:
@@ -212,9 +222,10 @@ def test_privacy_boundary_blocks_chat() -> None:
     assert is_private_screen_context("game_renderer", "texture_load") is False
 
 
-def test_goedel_loop_terminates(tmp_path: Path) -> None:
+def test_goedel_loop_terminates() -> None:
     """Der Goedel-Loop endet deterministisch vor der Maximalgrenze."""
-    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_path / "goedel_anchors.db"))
+    tmp_dir = _workspace_tmp_dir("goedel_loop_terminates")
+    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_dir / "goedel_anchors.db"))
     terminator = GoedelLoopTerminator()
     sample = _sample_bytes()
 
@@ -223,6 +234,7 @@ def test_goedel_loop_terminates(tmp_path: Path) -> None:
     assert result["depth"] <= GoedelLoopTerminator.MAX_RECURSION_DEPTH
     assert 0.0 <= result["coherence"] <= 1.0
     assert result["goedel_rest"] >= 0.0
+    shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:

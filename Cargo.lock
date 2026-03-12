@@ -165,6 +165,7 @@ dependencies = [
  "flate2",
  "image",
  "interprocess",
+ "md5",
  "rand 0.8.5",
  "reqwest",
  "rusqlite",
@@ -2264,6 +2265,12 @@ checksum = "62bb907fe88d54d8d9ce32a3cceab4218ed2f6b7d35617cafe9adf84e43919cb"
 dependencies = [
  "libc",
 ]
+
+[[package]]
+name = "md5"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "490cc448043f947bae3cbee9c203358d62dbee0db12107a74be5c30ccfd09771"
 
 [[package]]
 name = "memchr"
