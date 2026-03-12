@@ -42,6 +42,120 @@ struct ActiveAnchorSet {
     cpu_distribution: HashMap<Uuid, f32>,
 }
 
+/// ABSOLUTE PRIVACY BOUNDARY
+/// Kein privates Signal erreicht je den Bus.
+/// Hard-verdrahtet und nicht konfigurierbar.
+pub fn is_private_context(source: &str, content_hint: &str) -> bool {
+    const COMMUNICATION: &[&str] = &[
+        "chat",
+        "dm",
+        "direct_message",
+        "message",
+        "messenger",
+        "groupchat",
+        "group_chat",
+        "group_message",
+        "channel_message",
+        "whatsapp",
+        "telegram",
+        "signal_app",
+        "discord_dm",
+        "slack_dm",
+        "teams_chat",
+        "sms",
+        "mms",
+        "imessage",
+        "facetime",
+        "skype",
+        "viber",
+    ];
+    const EMAIL: &[&str] = &[
+        "mail",
+        "email",
+        "e-mail",
+        "inbox",
+        "outbox",
+        "outlook",
+        "gmail",
+        "thunderbird",
+        "protonmail",
+        "smtp",
+        "imap",
+        "pop3",
+        "compose",
+        "draft",
+        "sent_mail",
+        "mailbox",
+    ];
+    const CREDENTIALS: &[&str] = &[
+        "password",
+        "passwort",
+        "passwd",
+        "pwd",
+        "passphrase",
+        "credentials",
+        "credential",
+        "login_form",
+        "auth_token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "secret_key",
+        "private_key",
+        "signing_key",
+        "2fa",
+        "otp",
+        "totp",
+        "pin_entry",
+        "pin_code",
+        "security_code",
+    ];
+    const PERSONAL: &[&str] = &[
+        "keychain",
+        "password_manager",
+        "biometric",
+        "face_id",
+        "fingerprint",
+        "touch_id",
+        "personal_vault",
+        "private_notes",
+    ];
+
+    let src = source.to_lowercase();
+    let hint = content_hint.to_lowercase();
+    let categories: [&[&str]; 4] = [COMMUNICATION, EMAIL, CREDENTIALS, PERSONAL];
+    for patterns in categories {
+        if patterns.iter().any(|pattern| src.contains(pattern) || hint.contains(pattern)) {
+            return true;
+        }
+    }
+    contains_email_pattern(&hint) || contains_password_field_pattern(&hint)
+}
+
+fn contains_email_pattern(text: &str) -> bool {
+    let Some(at_pos) = text.find('@') else {
+        return false;
+    };
+    let before = &text[..at_pos];
+    let after = &text[at_pos + 1..];
+    !before.is_empty()
+        && !after.is_empty()
+        && after.contains('.')
+        && before
+            .chars()
+            .last()
+            .map(|value| value.is_ascii_alphanumeric())
+            .unwrap_or(false)
+}
+
+fn contains_password_field_pattern(text: &str) -> bool {
+    text.contains("type=\"password\"")
+        || text.contains("type='password'")
+        || text.contains("input_type=password")
+        || text.contains("pwd=")
+        || text.contains("pass=")
+}
+
 pub struct RuntimeSignalCollector {
     bus: BusPublisher,
     pub sample_rate_ms: u64,
@@ -59,6 +173,7 @@ impl RuntimeSignalCollector {
 
     pub fn attach_process(&mut self, pid: u32, process_name: impl Into<String>) {
         let process_name = process_name.into();
+        let blocked = is_private_context(&process_name, &process_name);
         self.active_processes.insert(
             pid,
             ProcessProfile {
@@ -68,15 +183,20 @@ impl RuntimeSignalCollector {
                 runtime_source: RuntimeSignalSource::ProcessMonitor(pid),
             },
         );
-        self.bus.publish(BusEvent::ProcessStarted(ProcessStartedEvent {
-            process_id: pid,
-            process_name,
-            timestamp: unix_timestamp(),
-        }));
+        if !blocked {
+            self.bus.publish(BusEvent::ProcessStarted(ProcessStartedEvent {
+                process_id: pid,
+                process_name,
+                timestamp: unix_timestamp(),
+            }));
+        }
     }
 
     pub fn sample_once(&mut self, pid: u32) -> Option<RuntimeSignalFrameEvent> {
         let frame = self.sample_process(pid)?;
+        if is_private_context(&frame.process_name, &frame.process_name) {
+            return None;
+        }
         let active = self.match_frame_to_vault_anchors(&frame);
         let event = RuntimeSignalFrameEvent {
             process_id: frame.process_id,
@@ -93,6 +213,50 @@ impl RuntimeSignalCollector {
             self.bus.publish(BusEvent::RuntimeAnomalyDetected(anomaly));
         }
         Some(event)
+    }
+
+    pub fn collect(&self, source: &str, content_hint: &str, bytes: Vec<u8>) {
+        if is_private_context(source, content_hint)
+            || contains_email_pattern(content_hint)
+            || contains_password_field_pattern(content_hint)
+        {
+            return;
+        }
+        let memory_pattern = bytes
+            .chunks(8)
+            .map(|chunk| {
+                let mut padded = [0u8; 8];
+                let len = chunk.len().min(8);
+                padded[..len].copy_from_slice(&chunk[..len]);
+                u64::from_le_bytes(padded)
+            })
+            .collect::<Vec<_>>();
+        let entropy_stream = if bytes.is_empty() {
+            0.0
+        } else {
+            let mut counts = HashMap::<u8, usize>::new();
+            for byte in &bytes {
+                *counts.entry(*byte).or_insert(0) += 1;
+            }
+            let total = bytes.len() as f64;
+            -counts
+                .values()
+                .map(|count| {
+                    let probability = *count as f64 / total;
+                    probability * probability.log2()
+                })
+                .sum::<f64>()
+        };
+        self.bus.publish(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
+            process_id: deterministic_u32(source, content_hint),
+            process_name: source.to_owned(),
+            timestamp: unix_timestamp(),
+            cpu_per_anchor: HashMap::new(),
+            memory_pattern,
+            frame_timing_ms: None,
+            active_anchors: Vec::new(),
+            entropy_stream,
+        }));
     }
 
     fn sample_process(&mut self, pid: u32) -> Option<RawFrame> {
@@ -374,6 +538,14 @@ fn deterministic_uuid(pid: u32, salt: u64) -> Uuid {
     Uuid::from_bytes(bytes)
 }
 
+fn deterministic_u32(source: &str, content_hint: &str) -> u32 {
+    let mut hasher = Sha256::new();
+    hasher.update(source.as_bytes());
+    hasher.update(content_hint.as_bytes());
+    let digest = hasher.finalize();
+    u32::from_le_bytes([digest[0], digest[1], digest[2], digest[3]])
+}
+
 fn uuid_to_vault_ref(anchor_id: &Uuid) -> [u8; 32] {
     let mut hasher = Sha256::new();
     hasher.update(anchor_id.as_bytes());
@@ -459,5 +631,26 @@ mod tests {
         assert!(follow_up
             .iter()
             .any(|event| matches!(event, BusEvent::RuntimeOptimizationAvailable(_))));
+    }
+
+    #[test]
+    fn privacy_boundary_blocks_private_contexts() {
+        assert!(is_private_context("whatsapp_chat", ""));
+        assert!(is_private_context("email_inbox", ""));
+        assert!(is_private_context("", "password=abc123"));
+        assert!(is_private_context("", "user@example.com"));
+        assert!(!is_private_context("aether_vault", "anchor_data"));
+        assert!(!is_private_context("game_renderer", "texture_load"));
+    }
+
+    #[test]
+    fn collector_drops_private_process_events() {
+        let bus = InterLayerBus::new(8);
+        let publisher = bus.publisher();
+        let mut collector = RuntimeSignalCollector::new(publisher);
+        let mut subscriber = bus.subscriber();
+        collector.attach_process(7, "whatsapp_chat");
+        assert!(collector.sample_once(7).is_none());
+        assert!(subscriber.try_recv().is_err());
     }
 }

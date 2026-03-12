@@ -1,5 +1,7 @@
 # Aether
 
+Aether ist ein lokales, source-available Analyse- und Rekonstruktionssystem fuer Dateien und Bytestroeme. Das System kombiniert Strukturmetriken, beobachterrelative Restunsicherheit, Rekonstruktionspfade und fail-closed Governance in einem gemeinsamen auditierbaren Workflow. Objektiv ungewoehnlich ist nicht ein einzelnes Modell, sondern die Kopplung dieser Ebenen: Analyse, Persistenz, Freigabeentscheidungen und lokale Assistenz arbeiten auf demselben Zustand statt in getrennten Werkzeugketten.
+
 Stand: 08.03.2026
 Autor: Kevin Hannemann
 
@@ -19,19 +21,23 @@ Bei Aether ist die Lesbarkeit des Quellcodes kein Nebenaspekt, sondern Teil des 
 
 Die Lesbarkeit ist deshalb gewollt. Die freie Veraenderbarkeit ist es nicht.
 
-## Abstract
+## Kurzprofil
 
-Aether ist ein lokales System zur strukturellen Analyse, Rekonstruktion, Beobachtung und Darstellung von Datenstroemen. Der methodische Ursprung des Projekts liegt in der Frage, die sich aus Conways Game of Life ergibt: Wenn wenige lokale Regeln globale Muster erzeugen koennen, die nicht trivial vorhersagbar sind, wie weit laesst sich dieses Prinzip auf Information, Beobachtung, Rekonstruktion und Systemgestaltung uebertragen?
+Aether ist kein einzelnes Spezialtool und kein generisches Chat-System. Es ist ein lokales System fuer strukturelle Analyse, Rekonstruktion, Beobachtung und kontrollierte Weitergabe von Datenzustaenden. Im Zentrum stehen auditierbare Metriken, explizite Rekonstruktionsgrenzen und deterministische Sicherheitsregeln.
 
-Dieses Projekt behauptet nicht, eine neue Physik bewiesen zu haben. Es ist ein technisches Oekosystem, das lokale Metriken, Invarianten, beobachterrelative Unsicherheit, Rekonstruktionspfade, Bayes-Posterioren, Graphstrukturen und Governance-Regeln in einem gemeinsamen Rahmen zusammenfuehrt.
+Das Projekt fuehrt mehrere sonst getrennte Ebenen zusammen: Dateianalyse, Delta- und Snapshot-Logik, beobachterrelative Unsicherheit, lokale Wissensverdichtung und kontrollierte Exportpfade. Dadurch lassen sich Aussagen ueber Struktur, Rekonstruierbarkeit und Teilbarkeit im selben technischen Kontext pruefen.
 
-## Warum Aether existiert
+## Lokale Privacy-Grenzen
 
-Aether entstand nicht aus Wissen. Es entstand aus einer Frage. Was waere wenn eine Datei kein Format ist, sondern ein Zustand? Was waere wenn Struktur nicht erst real wird wenn ein Programm sie interpretiert, sondern schon vorher da ist, messbar, invariant, unabhaengig vom Label? Wheeler fragte: It from Bit. Goedel zeigte dass jedes hinreichend komplexe System Aussagen ueber sich selbst macht die es nicht vollstaendig beweisen kann. Aether baut einen Raum in dem diese Fragen lokal, messbar und nachvollziehbar untersucht werden koennen. Ich bin kein Physiker, kein Wissenschaftler, kein Programmierer. Ich habe gefragt. Dann gebaut. Ob die Antwort stimmt, entscheiden die Daten, nicht die Frage und nicht das Gefuehl. Das ist der einzige Anspruch den Aether stellt.
+Aether ist ein vollstaendig lokales System. Accounts, Deltas, rekonstruktive Restzustaende und lokale Lernsignale bleiben auf dem Geraet und werden weder zentral gespeichert noch still synchronisiert.
 
-## Widmung
+Wichtige Grundregeln:
 
-Fuer Shannon, der Information messbar machte. Fuer Noether, die zeigte dass hinter jeder Symmetrie eine Erhaltung steckt. Fuer Goedel, der bewies dass kein System sich selbst vollstaendig erklaeren kann und damit den Raum oeffnete fuer Systeme die es trotzdem versuchen. Fuer Wheeler, dessen "It from Bit" die Frage stellte bevor die Antwort denkbar war. Fuer Bayes, Conway, Kolmogorov, Boltzmann, Fourier. Die Werkzeuge die Aether traegt, ich habe sie nicht erfunden. Ich habe nur gefragt was passiert wenn man sie anders haelt. Und fuer jeden der eine Frage gestellt hat bevor er wusste ob sie erlaubt ist.
+- es gibt keine eingebaute Wiederherstellung fuer Benutzername oder Passwort
+- Aether speichert keine cloudbasierten Backups und keine serverseitigen Recovery-Daten
+- lokale Deltas und der nicht komprimierbare Shannon-Rest bleiben strikt lokal
+- global teilbar sind hoechstens stark komprimierte, nicht invertierbare Strukturanker
+- private Kontexte wie Chat, E-Mail und Passwortfelder sind durch harte Privacy-Boundaries vom Bus- und Vision-Pfad ausgeschlossen
 
 ## Was das Programm praktisch kann
 
@@ -39,8 +45,8 @@ Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobacht
 
 - Dateien und Byte-Stroeme per Drag-and-Drop strukturell analysieren
 - Delta-Pfade bilden und lokale Rekonstruktionsbedingungen abschaetzen
-- 3D/4D-Raumzeit- und Voxelzustande visualisieren
-- Kamera- und Raster-Zustaende als dynamische Strukturquellen verarbeiten
+- Analysezustaende, Deltas und Strukturverlaeufe visualisieren
+- visuelle Quellen und Laufzeitdaten als dynamische Strukturquellen verarbeiten
 - Anker, Frequenzmuster, Symmetrie, Entropie, Kohaerenz und Resonanz messen
 - Bayes-, Graph- und Beobachterzustaende gemeinsam in einen Fingerprint ueberfuehren
 - Vault-, Chain- und Snapshot-Pfade lokal und kontrolliert fuehren
@@ -123,10 +129,10 @@ Aether ist:
 
 Aether ist nicht:
 
-- ein Beweis fuer eine universelle Zellautomaten-Theorie der Welt
+- ein Beweis fuer ein universelles Modell realer Systeme
 - ein Ersatz fuer klassische Informationstheorie
-- ein Beweis fuer Bewusstsein in Maschinen
-- ein System, das verlorene Information magisch zurueckholt
+- ein System zur Behauptung von Bewusstsein
+- ein System, das fehlende Rekonstruktionsdaten ohne ausreichende Information ersetzt
 - ein LLM
 
 ## Formale Grundgroessen
@@ -296,7 +302,7 @@ Das Oekosystem besteht aus mehreren Schichten:
 
 ### 1. Analysekern
 
-Der Analysekern verarbeitet Dateien, Byte-Stroeme, Browser-HTML und Voxel-Daten und erzeugt AetherFingerprints.
+Der Analysekern verarbeitet Dateien, Byte-Stroeme, Browser-HTML und andere lokale Strukturquellen und erzeugt AetherFingerprints.
 
 Wesentliche Datei:
 
@@ -369,13 +375,12 @@ Wesentliche Dateien:
 
 Aether kann denselben Zustand multimodal darstellen:
 
-- 3D/4D-Raumzeitfeld
+- lokale Struktur-, Delta- und Statusansichten
 - synchrone Audio-/Visual-Rueckkopplung
 - Chat- und Statusoberflaeche
 
 Wesentliche Dateien:
 
-- [spacetime_renderer.py](modules/spacetime_renderer.py)
 - [audio_engine.py](modules/audio_engine.py)
 - [gui.py](modules/gui.py)
 
@@ -502,23 +507,15 @@ Wichtig:
 - Pattern-Snapshots oder Anchors allein sind nicht automatisch verlustfrei.
 - Lossless ist nur dann belastbar, wenn Anchors, Residual und Seed-Persistenz gemeinsam die Rekonstruktion tragen.
 
-## Shanway Miniatur, Raster und lokales Lernen
+## Shanway Miniatur und lokales Lernen
 
-Shanway kann jetzt zusaetzlich zur normalen Strukturmetrik zwei rein lokale Zusatzebenen nutzen:
+Shanway kann jetzt zusaetzlich zur normalen Strukturmetrik eine rein lokale Zusatzebene nutzen:
 
-- eine separate low-res Miniatur der geoeffneten Datei als zweite, kleine Repräsentation
-- optional eine lokale Raster-Einsicht in das aktuelle 4D-Feld
+- eine separate low-res Miniatur der geoeffneten Datei als zweite, kleine Repraesentation
 
-Wichtig ist die Trennung:
-
-- die Miniatur ist **nicht** das 4D-Raster
-- das 4D-Raster bleibt der dynamische Zustandsraum fuer Delta-, Drift- und Observer-Aenderungen
-- beide Pfade werden nicht automatisch exportiert
-
-Wenn `Raster-Einsicht` aktiviert ist oder `python start.py --shanway-raster-insight` genutzt wird, erweitert Shanway seine Verdichtung um:
+Die Miniatur dient als reduzierte Kontrollansicht fuer:
 
 - `[Miniatur-Reflexion]`
-- optional `[Raster-Self-Perception]`
 - rekursive lokale Reflexionsstufen bis zu einer festen Tiefe
 - TTD-Vorschlaege fuer stabile Anker
 - `learned_insight` als verdichtete Schlussfolgerung aus Symmetrie-, Residual- und Rekursionsverlauf
@@ -553,7 +550,7 @@ Der neue Netzpfad ist bewusst begrenzt:
 - `Netz-Kontext an` erlaubt nur, dass Shanway bei freien Fragen optional eine Suchverdichtung anfragen darf
 - vor jedem Netzschritt erscheint ein Consent-Dialog `Netz nutzen?`
 - geladen wird nur ein kurzer Such-/HTML-Kontext fuer die Antwortverdichtung
-- Rohdateien, Deltas, private Chatinhalte und Rasterdaten verlassen den Rechner nicht
+- Rohdateien, Deltas, private Chatinhalte und interne Zusatzdaten verlassen den Rechner nicht
 
 Dadurch kann Shanway auf Fragen wie `Was ist AGI?` oder browserbezogene Rueckfragen lesbarer antworten, ohne den lokalen, auditierbaren Kern aufzugeben.
 
@@ -575,7 +572,7 @@ Damit bleibt die Analyse lokal, consent-basiert und auditierbar. Es gibt keine s
 Im `VERIFY`-Tab gibt es jetzt ein persoenliches lokales Register:
 
 - letzte Analysen pro Nutzer sichtbar
-- Eintrag laden -> Szene, Raster, Shanway und Integritaetsstatus werden wiederhergestellt
+- Eintrag laden -> Analysezustand, Shanway und Integritaetsstatus werden wiederhergestellt
 - `Original oeffnen` und `Exportieren` greifen auf denselben lokalen Rekonstruktionspfad zu, falls der Eintrag eine echte Datei referenziert
 - Browser-/Probe-Eintraege ohne rekonstruierbare Datei bleiben trotzdem lokal ladbar und auditierbar
 
@@ -711,19 +708,15 @@ Fuer Aether bedeutet das konkret:
 
 Gerade fuer ein Programm, das sich mit Struktur, Beobachtung, Rekonstruktion und Vertrauen beschaeftigt, ist Einsicht in den Code kein Zusatz, sondern Teil der methodischen Konsistenz.
 
-## Philosophischer Schlusspunkt
+## Methodischer Schlusspunkt
 
-Das Projektmotiv laesst sich in drei Saetzen zusammenfassen:
+Das Projektmotiv laesst sich in drei Punkten zusammenfassen:
 
-1. Nicht jede Ordnung beginnt mit Bedeutung.
-2. Viele stabile Bedeutungen koennen aus lokalen Regeln emergieren.
-3. Beobachtung ist kein neutraler Nullpunkt, sondern selbst Teil der Dynamik.
+1. Struktur wird vor Semantik analysiert.
+2. Stabile Merkmale sollen aus lokalen Regeln und Messgroessen abgeleitet werden.
+3. Der Beobachterzustand wird explizit modelliert und nicht implizit vorausgesetzt.
 
-Darum steht am Ende dieses Projekts nicht einfach der klassische Satz `ich denke, also bin ich`, sondern eine andere Akzentsetzung:
-
-`Ich bin, also denke ich.`
-
-Das bedeutet in diesem Kontext:
+Aether priorisiert deshalb:
 
 - Zustand geht dem Begriff voraus.
 - Beobachtung geht der fertigen Interpretation voraus.
@@ -751,8 +744,8 @@ Die offenen Fragen sind:
 
 Das Hauptmotiv dieses Projekts ist einfach:
 
-Nicht zuerst eine grosse Weltformel behaupten.
-Sondern ein System bauen, in dem man lokal, messbar und nachvollziehbar untersuchen kann, wie Regeln, Invarianten, Beobachtung, Lernen und Rekonstruktion zusammen globale Ordnung erzeugen.
+Nicht mit unbelegten Totalmodellen beginnen.
+Sondern ein System bauen, in dem man lokal, messbar und nachvollziehbar untersuchen kann, wie Regeln, Invarianten, Beobachtung, Lernen und Rekonstruktion zusammenwirken.
 
 ## Rust-Pfad: Public Vault, Inter-Layer-Bus, Observation
 

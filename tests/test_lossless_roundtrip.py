@@ -21,7 +21,8 @@ from modules.analysis_engine import AnalysisEngine
 from modules.browser_engine import BrowserEngine
 from modules.observer_engine import ObserverEngine
 from modules.public_ttd_transport import PublicTTDTransport
-from modules.reconstruction_engine import LosslessReconstructionEngine
+from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine
+from modules.screen_vision_engine import is_private_context as is_private_screen_context
 from modules.session_engine import SessionContext
 from modules.shanway import ShanwayEngine
 from modules.vault_chain import AetherAugmentor
@@ -177,6 +178,51 @@ def test_lossless_roundtrip_wrong_seed_fails() -> None:
     assert bool(verification.get("session_seed_match", True)) is False
     assert response.startswith("Für vollständige Rekonstruktion fehlt noch:")
     assert "Delta-Seed muss für Rekonstruktion erhalten bleiben" in response
+
+
+def test_vault_growth_reduces_delta_size(tmp_path: Path) -> None:
+    """Beweist C(t) -> 1 fuer wiederholte lokale Rekonstruktionen mit gleichem Input."""
+    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_path / "anchors.db"))
+    sample = _sample_bytes()
+
+    delta_1 = engine.build_delta_log(sample)
+    delta_2 = engine.build_delta_log(sample)
+
+    add_ops_1 = [entry for entry in delta_1 if entry.get("op") == "add"]
+    add_ops_2 = [entry for entry in delta_2 if entry.get("op") == "add"]
+    ref_ops_2 = [entry for entry in delta_2 if entry.get("op") == "ref"]
+
+    assert len(add_ops_2) < len(add_ops_1)
+    assert len(ref_ops_2) > 0
+    assert engine.coherence_index(delta_2) > engine.coherence_index(delta_1)
+
+    reconstructed = engine.reconstruct_from_vault(delta_2)
+    assert reconstructed == sample
+    result = engine.verify_lossless(sample, reconstructed)
+    assert result["verified"] is True
+
+
+def test_privacy_boundary_blocks_chat() -> None:
+    """Privacy Boundary blockiert Chat-, Mail- und Passwortkontexte fail-closed."""
+    assert is_private_screen_context("whatsapp_chat", "") is True
+    assert is_private_screen_context("email_inbox", "") is True
+    assert is_private_screen_context("", "password=abc123") is True
+    assert is_private_screen_context("", "user@example.com") is True
+    assert is_private_screen_context("aether_vault", "anchor_data") is False
+    assert is_private_screen_context("game_renderer", "texture_load") is False
+
+
+def test_goedel_loop_terminates(tmp_path: Path) -> None:
+    """Der Goedel-Loop endet deterministisch vor der Maximalgrenze."""
+    engine = LosslessReconstructionEngine(vault_db_path=str(tmp_path / "goedel_anchors.db"))
+    terminator = GoedelLoopTerminator()
+    sample = _sample_bytes()
+
+    result = terminator.run_loop(sample, engine)
+    assert result["terminated"] is True
+    assert result["depth"] <= GoedelLoopTerminator.MAX_RECURSION_DEPTH
+    assert 0.0 <= result["coherence"] <= 1.0
+    assert result["goedel_rest"] >= 0.0
 
 
 def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:

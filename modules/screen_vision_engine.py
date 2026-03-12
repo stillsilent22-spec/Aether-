@@ -25,6 +25,110 @@ if TYPE_CHECKING:
     from .analysis_engine import AnalysisEngine, AetherFingerprint
 
 
+def contains_email_pattern(text: str) -> bool:
+    raw = str(text or "").lower()
+    at_pos = raw.find("@")
+    if at_pos < 0:
+        return False
+    before = raw[:at_pos]
+    after = raw[at_pos + 1 :]
+    return bool(before and after and "." in after and before[-1].isalnum())
+
+
+def contains_password_field_pattern(text: str) -> bool:
+    raw = str(text or "").lower()
+    return (
+        'type="password"' in raw
+        or "type='password'" in raw
+        or "input_type=password" in raw
+        or "pwd=" in raw
+        or "pass=" in raw
+    )
+
+
+def is_private_context(source: str, content_hint: str) -> bool:
+    communication = (
+        "chat",
+        "dm",
+        "direct_message",
+        "message",
+        "messenger",
+        "groupchat",
+        "group_chat",
+        "group_message",
+        "channel_message",
+        "whatsapp",
+        "telegram",
+        "signal_app",
+        "discord_dm",
+        "slack_dm",
+        "teams_chat",
+        "sms",
+        "mms",
+        "imessage",
+        "facetime",
+        "skype",
+        "viber",
+    )
+    email = (
+        "mail",
+        "email",
+        "e-mail",
+        "inbox",
+        "outbox",
+        "outlook",
+        "gmail",
+        "thunderbird",
+        "protonmail",
+        "smtp",
+        "imap",
+        "pop3",
+        "compose",
+        "draft",
+        "sent_mail",
+        "mailbox",
+    )
+    credentials = (
+        "password",
+        "passwort",
+        "passwd",
+        "pwd",
+        "passphrase",
+        "credentials",
+        "credential",
+        "login_form",
+        "auth_token",
+        "access_token",
+        "refresh_token",
+        "api_key",
+        "secret_key",
+        "private_key",
+        "signing_key",
+        "2fa",
+        "otp",
+        "totp",
+        "pin_entry",
+        "pin_code",
+        "security_code",
+    )
+    personal = (
+        "keychain",
+        "password_manager",
+        "biometric",
+        "face_id",
+        "fingerprint",
+        "touch_id",
+        "personal_vault",
+        "private_notes",
+    )
+    src = str(source or "").lower()
+    hint = str(content_hint or "").lower()
+    for patterns in (communication, email, credentials, personal):
+        if any(pattern in src or pattern in hint for pattern in patterns):
+            return True
+    return contains_email_pattern(hint) or contains_password_field_pattern(hint)
+
+
 def _anchor_keys_from_fingerprint(fingerprint: "AetherFingerprint | None") -> list[str]:
     if fingerprint is None:
         return []
@@ -96,6 +200,8 @@ class ScreenVisionEngine:
             raise RuntimeError("window title required for scoped capture")
         if not str(file_path or "").strip():
             raise RuntimeError("file path required for scoped capture")
+        if is_private_context(window_title, file_path):
+            raise RuntimeError("private analysis regions are blocked")
         windows = [window for window in list(gw.getWindowsWithTitle(window_title) or []) if int(window.width) > 0 and int(window.height) > 0]
         if not windows:
             raise RuntimeError(f"analysis window not found: {window_title}")
@@ -167,3 +273,83 @@ class ScreenVisionEngine:
             delta_file_only=delta_file_only[:16],
             status="ok",
         )
+
+
+class ShanwayAetherVision:
+    """
+    Permanenter, fail-closed Vision-Loop fuer Aether-eigene Oberflaechen.
+
+    Erfasst ausschliesslich Aether-Fenster und respektiert dieselbe
+    Privacy-Boundary wie der Runtime-Pfad.
+    """
+
+    AETHER_WINDOW_KEYWORDS = ["aether", "shanway", "vera_aether"]
+    SAMPLE_INTERVAL_MS: int = 500
+
+    def __init__(self, analysis_engine: Any, bus_publish_fn: Any) -> None:
+        self.analysis_engine = analysis_engine
+        self.bus_publish = bus_publish_fn
+        self._running = False
+        self._current_state: dict[str, Any] = {}
+
+    def start(self) -> None:
+        import threading
+
+        self._running = True
+        thread = threading.Thread(target=self._vision_loop, daemon=True)
+        thread.start()
+
+    def stop(self) -> None:
+        self._running = False
+
+    def _vision_loop(self) -> None:
+        import time
+
+        while self._running:
+            try:
+                frame = self._capture_aether_frame()
+                if frame:
+                    self._current_state = frame
+                    self._proactive_check(frame)
+            except Exception:
+                pass
+            time.sleep(self.SAMPLE_INTERVAL_MS / 1000.0)
+
+    def _capture_aether_frame(self) -> dict[str, Any] | None:
+        if gw is None or mss is None:
+            return None
+        windows = list(gw.getAllWindows() or [])
+        aether_window = None
+        for window in windows:
+            title_lower = str(getattr(window, "title", "") or "").lower()
+            if any(keyword in title_lower for keyword in self.AETHER_WINDOW_KEYWORDS):
+                aether_window = window
+                break
+        if aether_window is None:
+            return None
+        title = str(getattr(aether_window, "title", "") or "")
+        if is_private_context(title, ""):
+            return None
+        return {
+            "window_title": title,
+            "timestamp": int(__import__("time").time()),
+            "active": True,
+        }
+
+    def _proactive_check(self, frame: dict[str, Any]) -> None:
+        bus_publish = getattr(self, "bus_publish", None)
+        if callable(bus_publish):
+            try:
+                bus_publish(
+                    {
+                        "type": "shanway_aether_vision",
+                        "window_title": str(frame.get("window_title", "") or ""),
+                        "timestamp": int(frame.get("timestamp", 0) or 0),
+                    }
+                )
+            except Exception:
+                return
+
+    @property
+    def current_state(self) -> dict[str, Any]:
+        return dict(self._current_state)

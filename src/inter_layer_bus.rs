@@ -1,4 +1,5 @@
 use crate::observation::{ObservationAction, QuarantineCategory};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -29,6 +30,26 @@ pub enum BusEvent {
     ShanwayDecision(ShanwayDecisionEvent),
     ShanwayOptimizationApplied(ShanwayOptimizationEvent),
     ShanwayUserMessage(ShanwayUserMessageEvent),
+    VramPressureChanged(VramPressureEvent),
+    TextureUploadRequested(TextureUploadRequestEvent),
+    TextureUploadCompleted(TextureUploadResultEvent),
+    ShaderCompileRequested(ShaderCompileRequestEvent),
+    ShaderCacheHit(ShaderCacheHitEvent),
+    VramOptimized(VramOptimizedEvent),
+    VramEvictionRequired(VramEvictionEvent),
+    FrameStarted(FrameStartedEvent),
+    FrameCompleted(FrameCompletedEvent),
+    FrameDropDetected(FrameDropEvent),
+    RenderBottleneckDetected(BottleneckEvent),
+    WorkflowAnchorHit(WorkflowHitEvent),
+    WorkflowAnchorLearned(WorkflowLearnedEvent),
+    WorkflowOptimizationExecuted(WorkflowOptEvent),
+    CrossProgramVramReuse(CrossProgramReuseEvent),
+    ShanwayVramDecision(VramDecisionEvent),
+    PackRecommended(PackRecommendedEvent),
+    PackDownloadConfirmed(PackDownloadEvent),
+    PackInstalled(PackInstalledEvent),
+    OfflineCachePrepared(OfflineCacheEvent),
 }
 
 #[derive(Debug, Clone)]
@@ -220,6 +241,200 @@ pub struct ShanwayUserMessageEvent {
     pub action_available: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VramPressureEvent {
+    pub used_mb: f32,
+    pub total_mb: f32,
+    pub pressure_ratio: f32,
+    pub pressure_level: VramPressureLevel,
+    pub active_programs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VramPressureLevel {
+    Low,
+    Medium,
+    High,
+    Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextureUploadRequestEvent {
+    pub program_id: String,
+    pub texture_label: String,
+    pub byte_size: usize,
+    pub expected_vram_mb: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextureUploadResultEvent {
+    pub program_id: String,
+    pub texture_label: String,
+    pub handle: u64,
+    pub uploaded_mb: f32,
+    pub used_delta_path: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShaderCompileRequestEvent {
+    pub program_id: String,
+    pub shader_hash: String,
+    pub stage: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShaderCacheHitEvent {
+    pub program_id: String,
+    pub shader_hash: String,
+    pub handle: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameStartedEvent {
+    pub program_id: String,
+    pub frame_index: u64,
+    pub expected_fps: f32,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameCompletedEvent {
+    pub program_id: String,
+    pub frame_index: u64,
+    pub frame_time_ms: f32,
+    pub presented: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrameDropEvent {
+    pub program_id: String,
+    pub expected_fps: f32,
+    pub actual_fps: f32,
+    pub frame_time_ms: f32,
+    pub suspected_cause: FrameDropCause,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FrameDropCause {
+    VramPressure,
+    ShaderCompileStall,
+    TextureUploadStall,
+    CpuBottleneck,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BottleneckEvent {
+    pub program_id: String,
+    pub bottleneck: String,
+    pub severity: f32,
+    pub frame_time_ms: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowHitEvent {
+    pub anchor_hash: String,
+    pub program_id: String,
+    pub known_outcome: String,
+    pub optimization_type: String,
+    pub confidence: f32,
+    pub hit_count: u32,
+    pub expected_duration_ms: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowLearnedEvent {
+    pub anchor_hash: String,
+    pub program_id: String,
+    pub context: String,
+    pub event_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkflowOptEvent {
+    pub anchor_hash: String,
+    pub program_id: String,
+    pub optimization_type: String,
+    pub expected_gain_percent: f32,
+    pub applied: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossProgramReuseEvent {
+    pub anchor_hash: String,
+    pub source_program: String,
+    pub target_program: String,
+    pub vram_saved_mb: f32,
+    pub similarity: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VramDecisionEvent {
+    pub decision_type: VramDecisionType,
+    pub affected_program: String,
+    pub reasoning: String,
+    pub vram_delta_mb: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VramDecisionType {
+    EvictTexture,
+    PreloadTexture,
+    DeferShaderCompile,
+    ReallocateBudget,
+    CrossProgramShare,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VramOptimizedEvent {
+    pub texture_label: String,
+    pub original_mb: f32,
+    pub compressed_mb: f32,
+    pub vault_hit_rate: f32,
+    pub compression_ratio: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VramEvictionEvent {
+    pub program_id: String,
+    pub reclaimed_mb: f32,
+    pub reason: String,
+    pub evicted_labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackRecommendedEvent {
+    pub pack_id: String,
+    pub pack_name: String,
+    pub domain: String,
+    pub size_mb: f32,
+    pub estimated_hit_rate_improvement: f32,
+    pub cooldown_respected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackDownloadEvent {
+    pub pack_id: String,
+    pub confirmed_by_user: bool,
+    pub started_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PackInstalledEvent {
+    pub pack_id: String,
+    pub pack_name: String,
+    pub installed_anchor_count: usize,
+    pub hit_rate_delta: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OfflineCacheEvent {
+    pub activities: Vec<String>,
+    pub cache_size_mb: f32,
+    pub anchor_count: usize,
+    pub coverage_by_activity: Vec<(String, f32)>,
+}
+
 pub struct InterLayerBus {
     sender: broadcast::Sender<BusEvent>,
 }
@@ -247,6 +462,10 @@ pub struct BusPublisher {
 }
 
 impl BusPublisher {
+    pub fn noop() -> Self {
+        InterLayerBus::new(16).publisher()
+    }
+
     pub fn publish(&self, event: BusEvent) {
         let _ = self.sender.send(event);
     }

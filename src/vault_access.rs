@@ -118,6 +118,31 @@ pub struct VaultSyncResult {
     pub estimated_compression_improvement: f32,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct WorkflowAnchorState {
+    entries: Vec<StoredWorkflowAnchor>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredWorkflowAnchor {
+    anchor: crate::workflow_anchor::WorkflowAnchor,
+    created_at: u64,
+    last_seen: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct RawTextureCacheState {
+    entries: Vec<RawTextureCacheEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct RawTextureCacheEntry {
+    hash: String,
+    bytes_hex: String,
+    created_at: u64,
+    last_seen: u64,
+}
+
 pub struct VaultAccessLayer {
     db: Arc<RwLock<VaultStore>>,
     engine_pipeline: Arc<EnginePipeline>,
@@ -254,6 +279,120 @@ impl VaultAccessLayer {
             .into_iter()
             .filter(|record| sanitize_domain(&record.domain) == needle)
             .collect())
+    }
+
+    pub async fn store_workflow_anchor(&self, anchor: &crate::workflow_anchor::WorkflowAnchor) {
+        let now = unix_timestamp();
+        let mut state = load_workflow_anchor_state().unwrap_or_default();
+        if let Some(existing) = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.anchor.anchor_hash == anchor.anchor_hash)
+        {
+            existing.anchor.hit_count = existing.anchor.hit_count.saturating_add(1);
+            existing.anchor.confidence = existing.anchor.confidence.max(anchor.confidence);
+            existing.anchor.duration_ms = anchor.duration_ms;
+            existing.last_seen = now;
+        } else {
+            state.entries.push(StoredWorkflowAnchor {
+                anchor: anchor.clone(),
+                created_at: now,
+                last_seen: now,
+            });
+        }
+        let _ = save_workflow_anchor_state(&state);
+    }
+
+    pub async fn lookup_workflow_anchor(
+        &self,
+        anchor_hash: &str,
+    ) -> Option<crate::workflow_anchor::WorkflowAnchor> {
+        let mut state = load_workflow_anchor_state().ok()?;
+        let result = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.anchor.anchor_hash == anchor_hash)
+            .map(|entry| {
+                entry.anchor.hit_count = entry.anchor.hit_count.saturating_add(1);
+                entry.last_seen = unix_timestamp();
+                entry.anchor.clone()
+            });
+        let _ = save_workflow_anchor_state(&state);
+        result
+    }
+
+    pub async fn find_similar_workflows(
+        &self,
+        anchor: &crate::workflow_anchor::WorkflowAnchor,
+        min_similarity: f32,
+    ) -> Vec<crate::workflow_anchor::WorkflowAnchor> {
+        let Ok(state) = load_workflow_anchor_state() else {
+            return Vec::new();
+        };
+        state
+            .entries
+            .into_iter()
+            .map(|entry| entry.anchor)
+            .filter(|candidate| candidate.anchor_hash != anchor.anchor_hash)
+            .filter_map(|candidate| {
+                let similarity = cosine_similarity(
+                    &[anchor.sequence_entropy, anchor.fractal_dimension],
+                    &[candidate.sequence_entropy, candidate.fractal_dimension],
+                );
+                if similarity >= min_similarity {
+                    Some(candidate)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    pub async fn find_anchors_by_domain(&self, domain: &str) -> Result<Vec<String>, String> {
+        let needle = sanitize_domain(domain);
+        self.list_records()
+            .map(|records| {
+                records
+                    .into_iter()
+                    .filter(|record| {
+                        let normalized = sanitize_domain(&record.domain);
+                        normalized.contains(&needle) || needle.contains(&normalized)
+                    })
+                    .map(|record| record.anchor_id.to_string())
+                    .collect()
+            })
+            .map_err(|err| err.to_string())
+    }
+
+    pub async fn lookup_raw(&self, hash: &str) -> Option<Vec<u8>> {
+        let mut state = load_raw_texture_cache_state().ok()?;
+        let result = state
+            .entries
+            .iter_mut()
+            .find(|entry| entry.hash == hash)
+            .and_then(|entry| {
+                entry.last_seen = unix_timestamp();
+                hex_decode(&entry.bytes_hex).ok()
+            });
+        let _ = save_raw_texture_cache_state(&state);
+        result
+    }
+
+    pub async fn store_raw(&self, hash: &str, bytes: &[u8]) {
+        let now = unix_timestamp();
+        let mut state = load_raw_texture_cache_state().unwrap_or_default();
+        if let Some(existing) = state.entries.iter_mut().find(|entry| entry.hash == hash) {
+            existing.bytes_hex = hex_encode(bytes);
+            existing.last_seen = now;
+        } else {
+            state.entries.push(RawTextureCacheEntry {
+                hash: hash.to_owned(),
+                bytes_hex: hex_encode(bytes),
+                created_at: now,
+                last_seen: now,
+            });
+        }
+        let _ = save_raw_texture_cache_state(&state);
     }
 
     pub fn remove_anchor_record(&self, anchor_id: Uuid) -> Result<bool, VaultAccessError> {
@@ -652,4 +791,86 @@ fn hex_encode(data: &[u8]) -> String {
         output.push_str(&format!("{byte:02x}"));
     }
     output
+}
+
+fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(Vec::new());
+    }
+    if trimmed.len() % 2 != 0 {
+        return Err("hex string length must be even".to_owned());
+    }
+    trimmed
+        .as_bytes()
+        .chunks(2)
+        .map(|chunk| {
+            let text = std::str::from_utf8(chunk).map_err(|err| err.to_string())?;
+            u8::from_str_radix(text, 16).map_err(|err| err.to_string())
+        })
+        .collect()
+}
+
+fn workflow_anchor_state_path() -> PathBuf {
+    PathBuf::from("data").join("rust_shell").join("workflow_anchors.json")
+}
+
+fn raw_texture_cache_state_path() -> PathBuf {
+    PathBuf::from("data").join("rust_shell").join("raw_texture_cache.json")
+}
+
+fn load_workflow_anchor_state() -> Result<WorkflowAnchorState, String> {
+    let path = workflow_anchor_state_path();
+    if !path.exists() {
+        return Ok(WorkflowAnchorState::default());
+    }
+    let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    serde_json::from_str(&raw).map_err(|err| err.to_string())
+}
+
+fn save_workflow_anchor_state(state: &WorkflowAnchorState) -> Result<(), String> {
+    let path = workflow_anchor_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(state).map_err(|err| err.to_string())?;
+    fs::write(path, raw).map_err(|err| err.to_string())
+}
+
+fn load_raw_texture_cache_state() -> Result<RawTextureCacheState, String> {
+    let path = raw_texture_cache_state_path();
+    if !path.exists() {
+        return Ok(RawTextureCacheState::default());
+    }
+    let raw = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    serde_json::from_str(&raw).map_err(|err| err.to_string())
+}
+
+fn save_raw_texture_cache_state(state: &RawTextureCacheState) -> Result<(), String> {
+    let path = raw_texture_cache_state_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let raw = serde_json::to_string_pretty(state).map_err(|err| err.to_string())?;
+    fs::write(path, raw).map_err(|err| err.to_string())
+}
+
+fn unix_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|delta| delta.as_secs())
+        .unwrap_or(0)
+}
+
+fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
+    if left.len() != right.len() || left.is_empty() {
+        return 0.0;
+    }
+    let dot: f32 = left.iter().zip(right.iter()).map(|(a, b)| a * b).sum();
+    let norm_left: f32 = left.iter().map(|value| value * value).sum::<f32>().sqrt();
+    let norm_right: f32 = right.iter().map(|value| value * value).sum::<f32>().sqrt();
+    if norm_left < 1e-6 || norm_right < 1e-6 {
+        return 0.0;
+    }
+    (dot / (norm_left * norm_right)).clamp(0.0, 1.0)
 }

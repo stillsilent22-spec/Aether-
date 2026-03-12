@@ -1,5 +1,7 @@
 # Aether Whitepaper
 
+Aether ist ein lokales, source-available Analyse- und Rekonstruktionssystem fuer Dateien und Bytestroeme. Das System kombiniert Strukturmetriken, beobachterrelative Restunsicherheit, Rekonstruktionsmodelle und fail-closed Governance in einem gemeinsamen auditierbaren Pfad. Der objektiv unterscheidbare Punkt ist die enge Kopplung von Analyse, Persistenz, Freigabe und lokaler Assistenz ueber denselben Zustand.
+
 Stand: 08.03.2026
 Autor: Kevin Hannemann
 Status: Technisches Whitepaper fuer die source-available Veroeffentlichung
@@ -16,19 +18,24 @@ Dieses Dokument beschreibt Aether in einem engen technischen Sinn. Es soll:
 
 Dieses Dokument ist keine Produktwerbung, keine metaphysische Schrift und kein Beweis fuer neue Naturgesetze.
 
-## Philosophical Foundation
+## Technische Einordnung
 
-Der urspruengliche Impuls von Aether laesst sich auf eine einzige Frage verdichten: Was waere wenn Dateien keine Formate sind, sondern Zustaende. Diese Frage ist absichtlich einfacher als eine Theorie und tiefer als eine Implementierungsentscheidung. Sie verschiebt den Blick von Dateiendungen und Parsern auf messbare Struktur, Invarianz, Restunsicherheit und Beobachterlage.
+Aether behandelt Dateien und Bytestroeme als lokale Zustaende, die nicht nur ueber Formate, sondern ueber messbare Struktur, Unsicherheit, Rekonstruktionsnaehe und Freigaberegeln beschrieben werden. Der technische Kern ist eine gemeinsame Pipeline fuer Analyse, Snapshot/Residual-Logik, lokale Persistenz und kontrollierte Weitergabe.
 
-Aus Shannon folgt die Baseline: Entropie beschreibt rohe Unsicherheit, aber sie kennt den lernenden Beobachter nicht. Genau dort setzt Aether an. Der projektinterne Begriff `H_lambda` operationalisiert die Luecke zwischen dem Zustand selbst und dem, was ein konkreter Beobachter bereits ueber ihn traegt. Das ist keine Widerlegung von Shannon, sondern die bewusste Bearbeitung seiner Beobachterblindheit in einem lokalen technischen System.
+Die Baseline bildet klassische Shannon-Entropie. Die projektinterne Erweiterung `H_lambda(X, t) = H(X | M_t)` modelliert Restunsicherheit relativ zu einem lernenden Beobachterzustand `M_t`. Diese Erweiterung ist als Arbeitsmodell zu verstehen und wird spaeter im Dokument formal eingeordnet.
 
-Goedel liefert die Grenzmarke: Jedes hinreichend komplexe System produziert Aussagen ueber sich selbst, die es nicht vollstaendig aus sich heraus schliessen kann. In Aether wird diese Einsicht nicht als rhetorischer Verweis benutzt, sondern als Systemgrenze operationalisiert. Die Goedel-Grenze markiert, wann ein Befund noch rekonstruierbar ist, wann er nur eine strukturelle Hypothese bleibt und wann explizite Unvollstaendigkeit ausgewiesen werden muss.
+Dieses Whitepaper beschreibt damit kein metaphysisches System und keine Naturtheorie. Es dokumentiert ein lokales, auditierbares Softwaresystem und die Hypothesen, die bei seiner Konstruktion explizit gemacht werden.
 
-Wheeler stellt die ontologische Leitfrage mit "It from Bit". Wenn beobachtbare Ordnung aus Information hervorgeht, dann ist die technische Untersuchung von Struktur nicht nur Signalverarbeitung, sondern ein lokales Instrument fuer Seinsfragen im kleinen Massstab. Noether liefert dazu das Governance-Prinzip: Wo Symmetrie stabil bleibt, ist eine Erhaltung oder Invariante zu erwarten. Wo sie bricht, muss ein System die Konsequenzen sichtbar machen statt sie zu verstecken.
+## Lokale Privacy-Grenzen
 
-Schroedinger erinnert daran, dass der Beobachter nicht ausserhalb des Systems steht. Aether modelliert daher Beobachtung nicht als neutralen Nullpunkt, sondern als Teil des Zustandsraums. Die Dual-Slit-Metapher wird hier als strukturelle Vergleichsmethode lesbar: Interferenz ist nicht nur ein physikalisches Bild, sondern eine praktische Technik, um Ueberschneidung, Divergenz und Resonanz zwischen zwei Strukturen zu messen.
+Aether ist als lokales System modelliert, nicht als synchronisierte Plattform. Der Account-Zustand existiert nur auf dem jeweiligen Geraet; es gibt keine zentrale Kontenhaltung, keine serverseitige Wiederherstellung und keine versteckte Backup-Schicht fuer private Rekonstruktionsdaten.
 
-Wichtig ist die Grenze dieser ganzen Konstruktion: Das hier ist kein Beweis. Es ist eine instrumentierte Untersuchung einer Frage, die keinen Namen hatte, als sie zuerst gestellt wurde. Aether behauptet nicht, die Welt erklaert zu haben. Es baut ein messbares, lokales und auditierbares System, in dem diese Frage ueberhaupt sauber gestellt und gegen Daten gehalten werden kann.
+Fuer die Architektur bedeutet das:
+
+- lokale Deltas und der gesamte nicht komprimierbare Shannon-Rest bleiben auf dem Geraet
+- globale Strukturweitergabe darf nur ueber stark komprimierte, nicht invertierbare Ankerformen erfolgen
+- aus globalen Ankern, exportierten Strukturen oder dem Quellcode allein soll keine lokale Konten- oder Delta-Rekonstruktion ableitbar sein
+- private Kommunikations-, Mail- und Credential-Kontexte werden durch harte Privacy-Boundaries aus Laufzeit- und Vision-Pfaden ausgeschlossen
 
 ## 2. Ausgangsfrage
 
@@ -38,15 +45,15 @@ Der relevante Ausgangspunkt war nicht die populare Analogie zu "Leben", sondern 
 
 Daraus ergab sich die folgende Frage:
 
-Gibt es Regelsaetze, Invarianten oder Rueckkopplungen, die unsere Dimension oder unsere beobachtbare Welt so strukturieren, dass man sie in einem technischen Sinn analog zu einem Conway-artigen Regelraum untersuchen kann?
+Gibt es Regelsaetze, Invarianten oder Rueckkopplungen, mit denen sich reale Datenraeume und technische Beobachtungssysteme analog zu einem Conway-artigen Regelraum untersuchen lassen?
 
 Parallel dazu stand eine zweite Beobachtung des Autors:
 
-Die klassische Shannon-Entropie ist als Baseline fuer rohe Unsicherheit angemessen, beschreibt aber nicht vollstaendig die Lage eines lernenden Beobachters, der in der Welt steht, ueber Zeit lernt und durch seinen Modellzustand mitbestimmt, welche Restunsicherheit fuer ihn noch besteht.
+Die klassische Shannon-Entropie ist als Baseline fuer rohe Unsicherheit angemessen, beschreibt aber nicht vollstaendig die Lage eines lernenden Beobachters, der ueber Zeit Modellwissen aufbaut und dadurch mitbestimmt, welche Restunsicherheit fuer ihn noch besteht.
 
 Aus der Kombination beider Ausgangspunkte entstand die leitende Projektfrage:
 
-Kann man ein technisches System bauen, das lokale Regeln, beobachterrelative Unsicherheit, Rekonstruktion, Invarianz und Governance in einem gemeinsamen Rahmen untersucht, ohne vorschnell zu behaupten, dass diese Beschreibung bereits eine Theorie der Welt ist?
+Kann man ein technisches System bauen, das lokale Regeln, beobachterrelative Unsicherheit, Rekonstruktion, Invarianz und Governance in einem gemeinsamen Rahmen untersucht, ohne daraus vorschnell ein universelles Erklaerungsmodell abzuleiten?
 
 ## 3. Entwicklungspfad: AELAB zuerst, Aether danach
 
@@ -122,10 +129,10 @@ Aether ist:
 
 Aether ist nicht:
 
-- ein Beweis fuer eine universelle Conway-Theorie der Welt
+- ein Beweis fuer ein universelles Modell realer Systeme
 - ein Ersatz fuer klassische Informationstheorie
-- ein Beweis fuer Bewusstsein
-- ein System, das verlorene Information magisch wiederherstellt
+- ein System zur Behauptung von Bewusstsein
+- ein System, das fehlende Rekonstruktionsdaten ohne ausreichende Information ersetzt
 - ein LLM
 
 ## 6. Formales Grundmodell
@@ -199,23 +206,21 @@ mit:
 - `H_inf`: asymptotische Restunsicherheit
 - `k`: Lernrate
 
-## 10. Shanway als Miniatur- und Raster-Beobachter
+## 10. Shanway als Miniatur-Beobachter
 
-Die aktuelle Architektur erweitert Shanway um zwei lokale Zusatzpfade, die bewusst vom normalen Fingerprint getrennt bleiben:
+Die aktuelle Architektur erweitert Shanway um einen lokalen Zusatzpfad, der bewusst vom normalen Fingerprint getrennt bleibt:
 
 - eine kleine, headless Miniaturdarstellung der Datei
-- eine optionale Einsicht in das aktuelle 4D-Raster
 
-Diese Trennung ist methodisch wichtig. Die Miniatur ist eine zweite, reduzierte Beobachtung derselben Quelle. Das Raster ist dagegen der laufende Zustandsraum fuer Drift, Symmetriebruch, Delta-Gewinn und observer-relative Verschiebung. Beides darf nicht verwechselt werden.
+Diese Trennung ist methodisch wichtig. Die Miniatur ist eine zweite, reduzierte Beobachtung derselben Quelle und dient der lokalen Querpruefung von Strukturverdichtungen.
 
-Shanway nutzt diese Zusatzpfade nicht als "Rendering", sondern als lokale Reflexionsbasis:
+Shanway nutzt diesen Zusatzpfad nicht als "Rendering", sondern als lokale Reflexionsbasis:
 
 - lokale Entropie der Miniatur
-- Miniatur-Symmetrie und Emergenz-Spots
-- Raster-Symmetrie, Hotspots und Verdict
+- Miniatur-Symmetrie und Auffaelligkeitsmarker
 - daraus abgeleitete Veraenderung von `M_t`
 
-Damit entsteht eine praktische Form von Selbstbeobachtung im engen technischen Sinn: Das System beobachtet einen von ihm selbst erzeugten Strukturzustand und schreibt dessen Effekt wieder auf den Beobachterzustand zurueck. Das ist kein Bewusstseinsclaim, sondern eine instrumentierte Rueckkopplung.
+Damit entsteht eine praktische Form von Selbstbeobachtung im engen technischen Sinn: Das System beobachtet einen von ihm selbst erzeugten Strukturzustand und schreibt dessen Effekt wieder auf den Beobachterzustand zurueck. Das ist keine Aussage ueber Bewusstsein, sondern eine instrumentierte Rueckkopplung.
 
 ## 11. Rekursive Reflexion und kontinuierliches Lernen
 
@@ -253,7 +258,7 @@ Die Rekursionsstufe von Shanway bleibt absichtlich begrenzt. Die Implementierung
 
 Dadurch bleibt die Rekursion auditierbar und fail-closed.
 
-Gleichzeitig speichert der Observer einen lokalen, verschluesselten Lernzustand ueber Sessions hinweg. Persistiert werden keine Rohbilder, keine Rasterarrays und keine exportierbaren Rohdeltas, sondern verdichtete Lernsignale wie:
+Gleichzeitig speichert der Observer einen lokalen, verschluesselten Lernzustand ueber Sessions hinweg. Persistiert werden keine Rohbilder, keine internen Zusatzarrays und keine exportierbaren Rohdeltas, sondern verdichtete Lernsignale wie:
 
 - Symmetriegeschichte
 - Residualgeschichte
@@ -272,7 +277,7 @@ Erweitert wurde dieser Pfad jetzt auch fuer die Chat-Ebene. Shanway kann in priv
 - keine automatische Freigabe
 - vor jedem Netzschritt expliziter Consent
 - nur Such-/HTML-Kurztexte als Antwortkontext
-- keine Rohdeltas, keine Rasterarrays, keine privaten Verlaufsdaten als Outbound-Payload
+- keine Rohdeltas, keine internen Zusatzarrays, keine privaten Verlaufsdaten als Outbound-Payload
 
 Damit bleibt der Chat kein separater KI-Service, sondern ein weiterer Beobachterpfad ueber demselben lokalen Zustand.
 
@@ -301,14 +306,14 @@ Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 
 Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich nicht-puzzlebar: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
 
-Diese Nicht-Puzzlebarkeit gilt auch fuer den Chat- und Browserpfad: Es gibt keine REST-Schicht, keine OpenAI-kompatible API und keinen verborgenen Cloud-Zwang. Aether bleibt ein eigenstaendiges lokales Paradigma fuer observer-relative Wissensverarbeitung und kein austauschbares Zahnrad in einer zentralisierten AGI-Fabrik.
+Diese Nicht-Puzzlebarkeit gilt auch fuer den Chat- und Browserpfad: Es gibt keine REST-Schicht, keine OpenAI-kompatible API und keinen verborgenen Cloud-Zwang. Aether bleibt ein eigenstaendiges lokales System fuer observer-relative Wissensverarbeitung und keine generische Schnittstelle fuer zentrale Cloud-Orchestrierung.
 
 Damit wird ein enger, aber wichtiger Unterschied festgehalten:
 
 - Aether vernetzt sich nur unter ausdruecklicher Zustimmung
 - Aether teilt keine Rohdaten
 - Aether lernt kollektiv nur ueber kompakte, attestierte Strukturspuren
-- Mikrofonpfade sind bewusst deaktiviert; Schreiben, Raster und Miniatur bleiben die primaeren lokalen Beobachtungsformen
+- Mikrofonpfade sind bewusst deaktiviert; Schreiben und Miniatur bleiben die primaeren lokalen Beobachtungsformen
 - das persoenliche lokale Register bleibt rekonstruktiv: Eintraege koennen spaeter wieder in Szene, Shanway und - falls dateibasiert - in den Originalpfad geladen werden
 
 Dies ist ein Modell, keine bewiesene universelle Dynamik.
@@ -444,7 +449,7 @@ Die wichtigsten Begrenzungen sind:
 - Bayes-, Graph- und Resonanzschichten liefern modellabhaengige Zustandsnahe, keine absolute Wahrheit.
 - AELAB ist verifizierbar als interner evolutiver Mechanismus, nicht als allein ausreichender Erklaerungskern.
 - Die historische pi-Beobachtung ist in der aktuellen Codebasis nicht als harter, auditiert reproduzierbarer Beleg nachweisbar.
-- Das Projekt modelliert keine Naturgesetze der Aussenwelt, sondern untersucht, ob und wie solche Fragen technisch strukturierbar gemacht werden koennen.
+- Das Projekt modelliert keine physikalischen Gesetze, sondern untersucht, welche Fragen zu Struktur, Unsicherheit und Rekonstruktion technisch operationalisiert werden koennen.
 
 ## 17. Schlussfolgerung
 
@@ -457,7 +462,7 @@ Die entscheidende Struktur des Projekts ist:
 - Aether wurde als primaere Architektur gebaut.
 - Erst spaet wurde klar, dass das koharente System aus beiden Ebenen als Ganzes entsteht: Aether als Hauptsystem, AELAB als begrenzter Hintergrundpfad.
 
-Damit ist Aether weder eine grosse Weltformel noch ein blosses Softwarepaket ohne theoretischen Anspruch. Es ist ein offenes technisches System zur pruefbaren Untersuchung von Regeln, Beobachtung, Restunsicherheit, Rekonstruktion und Governance.
+Damit ist Aether weder ein Totalmodell noch ein beliebiges Softwarepaket. Es ist ein offenes technisches System zur pruefbaren Untersuchung von Regeln, Beobachtung, Restunsicherheit, Rekonstruktion und Governance.
 
 ## 18. Rust-Architekturpfad: oeffentlicher Vault, Bus, Observation
 

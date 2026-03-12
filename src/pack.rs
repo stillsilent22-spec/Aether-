@@ -1,4 +1,5 @@
 use crate::aef::{EnginePipeline, SignalType};
+use crate::inter_layer_bus::{BusEvent, BusPublisher, PackDownloadEvent, PackRecommendedEvent};
 use crate::vault_access::{PublicAnchorRecord, RawAnchorSubmission, SubmissionSource, VaultAccessError, VaultAccessLayer};
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
@@ -172,6 +173,7 @@ pub struct ShanwayPackAdvisor {
     registry: Arc<RwLock<PackRegistry>>,
     last_recommendation: HashMap<Uuid, u64>,
     cooldown_secs: u64,
+    bus: BusPublisher,
 }
 
 pub struct AutoPackGenerator {
@@ -517,10 +519,15 @@ impl PackManager {
 
 impl ShanwayPackAdvisor {
     pub fn new(registry: Arc<RwLock<PackRegistry>>) -> Self {
+        Self::with_bus(registry, BusPublisher::noop())
+    }
+
+    pub fn with_bus(registry: Arc<RwLock<PackRegistry>>, bus: BusPublisher) -> Self {
         Self {
             registry,
             last_recommendation: HashMap::new(),
             cooldown_secs: 86_400,
+            bus,
         }
     }
 
@@ -539,6 +546,14 @@ impl ShanwayPackAdvisor {
                 continue;
             }
             self.last_recommendation.insert(entry.pack_id, Utc::now().timestamp() as u64);
+            self.bus.publish(BusEvent::PackRecommended(PackRecommendedEvent {
+                pack_id: entry.pack_id.to_string(),
+                pack_name: entry.pack_name.clone(),
+                domain: entry.domain.clone(),
+                size_mb: entry.size_bytes as f32 / 1_048_576.0,
+                estimated_hit_rate_improvement: entry.estimated_hit_rate_improvement,
+                cooldown_respected: true,
+            }));
             output.push(PackRecommendation {
                 pack_id: entry.pack_id,
                 title: entry.pack_name.clone(),
@@ -554,6 +569,18 @@ impl ShanwayPackAdvisor {
             });
         }
         output
+    }
+
+    pub async fn download_pack(&self, pack_id: Uuid, user_confirmed: bool) -> Result<(), PackError> {
+        if !user_confirmed {
+            return Err(PackError::UserConfirmationRequired);
+        }
+        self.bus.publish(BusEvent::PackDownloadConfirmed(PackDownloadEvent {
+            pack_id: pack_id.to_string(),
+            confirmed_by_user: true,
+            started_at: Utc::now().timestamp() as u64,
+        }));
+        Ok(())
     }
 }
 
