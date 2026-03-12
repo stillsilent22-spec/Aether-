@@ -122,25 +122,6 @@ pub struct GeneratedPack {
     pub domain: String,
 }
 
-#[derive(Debug, Clone)]
-pub struct OfflinePrepRequest {
-    pub planned_activities: Vec<String>,
-    pub available_cache_mb: u64,
-}
-
-#[derive(Debug, Clone)]
-pub struct CoverageReport {
-    pub covered: Vec<String>,
-    pub gaps: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct OfflineCacheResult {
-    pub anchors_cached: usize,
-    pub cache_size_bytes: u64,
-    pub coverage: CoverageReport,
-}
-
 #[derive(Debug)]
 pub enum PackError {
     UserConfirmationRequired,
@@ -189,10 +170,6 @@ pub struct AutoPackGenerator {
     vault: Arc<VaultAccessLayer>,
     output_dir: PathBuf,
     engine: EnginePipeline,
-}
-
-pub struct OfflineCacheManager {
-    cache_dir: PathBuf,
 }
 
 impl AepPack {
@@ -754,66 +731,6 @@ impl AutoPackGenerator {
             path,
             anchor_count: pack.anchors.len(),
             domain,
-        })
-    }
-}
-
-impl OfflineCacheManager {
-    pub fn new() -> Self {
-        Self {
-            cache_dir: PathBuf::from("data")
-                .join("rust_shell")
-                .join("offline_cache"),
-        }
-    }
-
-    pub fn prepare_offline_cache(
-        &self,
-        request: OfflinePrepRequest,
-        installed_packs: &HashMap<Uuid, InstalledPack>,
-        user_confirmed: bool,
-    ) -> Result<OfflineCacheResult, PackError> {
-        if !user_confirmed {
-            return Err(PackError::UserConfirmationRequired);
-        }
-        fs::create_dir_all(&self.cache_dir).map_err(|err| PackError::Io(err.to_string()))?;
-        let mut selected = Vec::new();
-        let mut covered = Vec::new();
-        let mut gaps = Vec::new();
-        for activity in &request.planned_activities {
-            let activity_key = sanitize(activity);
-            let matching = installed_packs
-                .values()
-                .filter(|pack| {
-                    sanitize(&pack.entry.domain).contains(&activity_key)
-                        || pack
-                            .entry
-                            .tags
-                            .iter()
-                            .any(|tag| sanitize(tag).contains(&activity_key))
-                })
-                .collect::<Vec<_>>();
-            if matching.is_empty() {
-                gaps.push(activity.clone());
-                continue;
-            }
-            covered.push(activity.clone());
-            for pack in matching {
-                selected.extend(pack.anchor_ids_added.iter().copied());
-            }
-        }
-        let max_bytes = request.available_cache_mb.saturating_mul(1_048_576);
-        let approx_anchor_bytes = 96u64;
-        let max_anchors = (max_bytes / approx_anchor_bytes).max(1) as usize;
-        selected.truncate(max_anchors);
-        let cache_path = self.cache_dir.join("offline_cache.json");
-        let raw = serde_json::to_string_pretty(&selected)
-            .map_err(|err| PackError::Format(err.to_string()))?;
-        fs::write(&cache_path, raw.as_bytes()).map_err(|err| PackError::Io(err.to_string()))?;
-        Ok(OfflineCacheResult {
-            anchors_cached: selected.len(),
-            cache_size_bytes: raw.len() as u64,
-            coverage: CoverageReport { covered, gaps },
         })
     }
 }
