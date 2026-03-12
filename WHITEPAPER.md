@@ -454,3 +454,19 @@ Methodisch bedeutet das:
 - Gefahrenwissen nur als strukturierte Beobachtung, nicht als ausgabefaehiger Inhalt
 
 Damit bleibt die Grundlinie erhalten: Wissen teilen, ohne Rohinhalte preiszugeben; lernen, ohne die Sicherheitsgrenzen des Systems aufzugeben.
+
+### Rust-Weiterfuehrung: Gatekeeper und Quarantaene-Worker
+
+Der Rust-Pfad ist nicht mehr nur eine UI-Skizze, sondern beginnt eigene operative Randzonen auszubilden:
+
+- ein `aether-cli`, das oeffentliche Anchor-Records signatur- und trust-basiert pruefen kann
+- ein eigener `sandbox_worker`, der Quarantaene-Wissen in einem getrennten Prozesspfad halten soll
+- ein PR-Workflow, der Anchor-Beitraege vor dem Merge durch dieselbe Strukturpruefung laufen laesst
+
+Damit wird die Trennung weiter geschaerft:
+
+- normaler Vault: ausgabefaehige, geteilte mathematische Struktur
+- privater Delta-Layer: lokale Rekonstruktion
+- Quarantaene-Layer: Beobachtungswissen ohne reproduzierbaren Inhalt
+
+Die Richtung bleibt dieselbe: Lernen ja, aber nicht um den Preis offener Rohinhalte oder unkontrollierter Ausgabe.

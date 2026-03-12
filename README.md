@@ -706,3 +706,21 @@ Diese Rust-Module sind bewusst lokal-first:
 - kein Rohinhalt aus dem Quarantaenepfad verlaesst den lokalen Speicher
 
 Der Rust-Pfad ist damit architektonisch vorhanden, auch wenn der eigentliche Toolchain-Build auf diesem Rechner separat abgeschlossen werden muss.
+
+### Rust-Binaries fuer Public Vault und Quarantaene
+
+Der Rust-Schnitt enthaelt jetzt zusaetzlich zwei eigene Binaries:
+
+- `aether-cli`
+  - `verify-anchor <path>`
+  - `verify-signatures <dir>`
+  - `pipeline-check --threshold 0.65`
+  - `sync-vault [repo_root] [since_vault_version]`
+- `sandbox_worker`
+  - separater Quarantaene-Worker fuer das isolierte Gefahrenwissen
+  - eigener Store unter `data/rust_shell/quarantine/`
+  - Integritaetspruefung, Klassifikation und strukturierter Store-Pfad
+
+Fuer Pull Requests auf `vault/anchors/**` gibt es zusaetzlich den Workflow
+`.github/workflows/vault-pr-check.yml`, der Signaturen und Trust-Pipeline
+ueber `aether-cli` prueft.

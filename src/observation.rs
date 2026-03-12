@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use zeroize::Zeroize;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -103,7 +103,7 @@ struct QuarantineManifest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct QuarantineStatus {
+pub struct QuarantineStatus {
     pub record_count: usize,
     pub hatespeech: usize,
     pub malware: usize,
@@ -449,6 +449,10 @@ impl ObservationOnlyEngine {
             trust_score: confidence,
             action_available: false,
         }));
+    }
+
+    pub fn status(&self) -> Result<QuarantineStatus, ObservationError> {
+        self.ipc_client.status()
     }
 }
 
