@@ -1,5 +1,7 @@
+mod aef;
 mod app;
 mod auth;
+mod shanway;
 mod state;
 
 use app::AetherRustShell;

@@ -1,4 +1,5 @@
 use crate::auth::{AuthStore, UserRecord};
+use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput};
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
 use eframe::egui::{self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2};
 use flate2::write::GzEncoder;
@@ -95,6 +96,35 @@ impl AetherRustShell {
 
     fn current_username(&self) -> Option<String> {
         self.current_user.as_ref().map(|user| user.username.clone())
+    }
+
+    fn current_shanway_input(&self) -> Option<ShanwayInput> {
+        self.current_file.as_ref().map(|file| ShanwayInput {
+            file_name: file.file_name.clone(),
+            file_type: file.source_kind.clone(),
+            entropy_mean: file.entropy,
+            knowledge_ratio: (1.0 - file.drift / 255.0).clamp(0.0, 1.0),
+            symmetry_gini: (1.0 - file.symmetry).clamp(0.0, 1.0),
+            delta_paths: ((file.drift / 8.0).round() as i32).max(1) as u32,
+            bayes_priors: format!(
+                "symmetry={:.3}, entropy={:.3}, gain={:.3}",
+                file.symmetry,
+                file.entropy,
+                (file.compression_gain_percent / 100.0).clamp(0.0, 1.0)
+            ),
+            residual_ratio: (file.delta_size as f32 / file.original_size.max(1) as f32).clamp(0.0, 1.0),
+            observer_mutual_info: (file.symmetry * (1.0 - (file.drift / 255.0).clamp(0.0, 1.0))).clamp(0.0, 1.0),
+            h_lambda: (file.entropy * (1.0 - file.symmetry).clamp(0.0, 1.0)).max(0.0),
+            boundary: if file.symmetry < 0.58 {
+                "GOEDEL_LIMIT".to_owned()
+            } else if file.symmetry < 0.76 {
+                "STRUCTURAL_HYPOTHESIS".to_owned()
+            } else {
+                "RECONSTRUCTABLE".to_owned()
+            },
+            anchor_summary: file.anchor_summary.clone(),
+            process_summary: file.process_summary.clone(),
+        })
     }
 
     fn append_log(&mut self, message: impl Into<String>) {
@@ -576,7 +606,8 @@ impl AetherRustShell {
         if ui.button("An Shanway senden").clicked() {
             let prompt = self.shanway_message_input.trim().to_owned();
             if !prompt.is_empty() {
-                let reply = build_shanway_reply(self.current_file.as_ref(), &prompt);
+                let shanway_input = self.current_shanway_input();
+                let reply = render_shanway_reply(shanway_input.as_ref(), &prompt);
                 let shanway_thread = self.state_store.private_thread(&username, "Shanway");
                 shanway_thread.messages.push(ChatMessage {
                     author: username.clone(),
@@ -823,22 +854,4 @@ fn preview_symmetry(image: &ColorImage) -> f32 {
         }
     }
     if comparisons == 0 { 0.0 } else { total_score / comparisons as f32 }
-}
-
-fn build_shanway_reply(current_file: Option<&ProcessedFile>, prompt: &str) -> String {
-    match current_file {
-        Some(file) => format!(
-            "[Analyse] Noether zeigt {:.1}% Symmetrie, Mandelbrot erkennt Wiederholungen bei Drift {:.2}, Heisenberg setzt die Beobachtergrenze bei {:.2} bit.\n[Simulation] Die Vorschau von {} bleibt lokal und kompakt; Shanway sieht Muster, keine Inhalte.\n[Reflection] Bayes aktualisiert die Strukturkarte nur evidenzbasiert. Aktueller Prompt: \"{}\".\n[Final Insight] {}",
-            file.symmetry * 100.0,
-            file.drift,
-            file.entropy,
-            file.file_name,
-            prompt,
-            file.anchor_summary
-        ),
-        None => format!(
-            "[Analyse] Noch keine aktive Datei. Shanway arbeitet strukturell und wartet auf Drag and Drop.\n[Simulation] Der aktuelle Prompt lautet: \"{}\".\n[Reflection] Ohne Dateispur bleibt die Aussage auf Beobachterlogik und Sicherheitsgrenzen beschraenkt.\n[Final Insight] Bitte zuerst eine Datei ziehen.",
-            prompt
-        ),
-    }
 }

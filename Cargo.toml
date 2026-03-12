@@ -6,6 +6,9 @@ description = "Rust shell migration for Aether"
 license = "LicenseRef-Aether-Source-Available"
 
 [dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+crc32fast = "1.4"
+ed25519-dalek = "2"
 eframe = "0.30"
 egui_extras = "0.30"
 flate2 = "1.0"
@@ -13,3 +16,4 @@ image = { version = "0.25", default-features = false, features = ["bmp", "gif", 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
+uuid = { version = "1", features = ["serde", "v4"] }
