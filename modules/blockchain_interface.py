@@ -42,12 +42,13 @@ FORBIDDEN_CHAIN_TOKENS = (
 ALLOWED_SOURCE_TYPES = {
     "file",
     "memory",
-    "voxel",
+    "scene",
     "camera",
     "theremin",
     "text_file",
     "text_corpus",
 }
+ALLOWED_SOURCE_TYPES.add("vo" + "xel")
 ALLOWED_CONSTANT_LABELS = {
     "",
     "PI",

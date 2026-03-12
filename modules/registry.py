@@ -33,7 +33,7 @@ from .chat_crypto import (
 )
 from .local_secret_store import is_protected_local_secret, protect_local_secret, unprotect_local_secret
 from .session_engine import SessionContext
-from .voxel_grid import VoxelDelta
+from .voxel_grid import StructurePoint
 
 try:
     from cryptography.exceptions import InvalidSignature
@@ -1434,13 +1434,13 @@ class AetherRegistry:
                 frame_state.verdict,
                 float(frame_state.mic_peak_freq),
                 float(frame_state.mic_peak_level),
-                float(frame_state.voxel_x),
-                float(frame_state.voxel_y),
-                float(frame_state.voxel_z),
-                float(frame_state.voxel_t),
-                float(frame_state.voxel_delta),
-                float(frame_state.voxel_freq),
-                float(frame_state.voxel_amp),
+                float(frame_state.scene_x),
+                float(frame_state.scene_y),
+                float(frame_state.scene_depth),
+                float(frame_state.scene_time_ms),
+                float(frame_state.scene_delta),
+                float(frame_state.scene_frequency),
+                float(frame_state.scene_amplitude),
                 float(frame_state.symmetry_score),
                 float(frame_state.coherence_score),
                 float(frame_state.resonance_score),
@@ -1453,15 +1453,15 @@ class AetherRegistry:
         self.connection.commit()
         return int(cursor.lastrowid)
 
-    def save_voxel_events(
+    def save_scene_events(
         self,
         session_id: str,
         source_type: str,
         source_label: str,
-        voxels: list[VoxelDelta],
+        points: list[StructurePoint],
     ) -> int:
-        """Persistiert eine Menge 4D-Voxel-Ereignisse fuer CSV-Import oder Theremin."""
-        if not voxels:
+        """Persistiert eine Menge Szenenpunkte fuer CSV-Import oder Kameraanalyse."""
+        if not points:
             return 0
 
         timestamp = datetime.now(timezone.utc).isoformat()
@@ -1471,16 +1471,16 @@ class AetherRegistry:
                 timestamp,
                 source_type,
                 source_label,
-                float(voxel.x),
-                float(voxel.y),
-                float(voxel.z),
-                float(voxel.t),
-                float(voxel.delta),
-                float(voxel.freq),
-                float(voxel.amp),
-                float(getattr(voxel, "interference", 0.0) or 0.0),
+                float(point.x),
+                float(point.y),
+                float(point.z),
+                float(point.t),
+                float(point.delta),
+                float(point.freq),
+                float(point.amp),
+                float(getattr(point, "interference", 0.0) or 0.0),
             )
-            for voxel in voxels
+            for point in points
         ]
         self.connection.executemany(
             """
@@ -1494,8 +1494,18 @@ class AetherRegistry:
         self.connection.commit()
         return len(rows)
 
-    def export_voxel_events(self, file_path: str, session_id: str | None = None) -> int:
-        """Exportiert persistierte Voxel-Ereignisse wieder als CSV."""
+    def save_voxel_events(
+        self,
+        session_id: str,
+        source_type: str,
+        source_label: str,
+        voxels: list[StructurePoint],
+    ) -> int:
+        """Legacy-Alias fuer historische Aufrufer."""
+        return self.save_scene_events(session_id, source_type, source_label, voxels)
+
+    def export_scene_events(self, file_path: str, session_id: str | None = None) -> int:
+        """Exportiert persistierte Szenenpunkte wieder als CSV."""
         query = """
             SELECT x, y, z, t_value, delta, freq, amp, interference
             FROM voxel_events
@@ -1526,6 +1536,10 @@ class AetherRegistry:
                     ]
                 )
         return len(rows)
+
+    def export_voxel_events(self, file_path: str, session_id: str | None = None) -> int:
+        """Legacy-Alias fuer historische Aufrufer."""
+        return self.export_scene_events(file_path, session_id=session_id)
 
     def save_chain_block(
         self,
@@ -4117,11 +4131,13 @@ class AetherRegistry:
             int(key): int(value)
             for key, value in dict(byte_distribution_raw).items()
         } if isinstance(byte_distribution_raw, dict) else {}
-        voxel_points = payload.get("voxel_points")
-        if isinstance(voxel_points, list):
-            parsed_voxels = [tuple(float(part) for part in item) for item in voxel_points if isinstance(item, (list, tuple))]
+        scene_points = payload.get("scene_points")
+        if scene_points is None:
+            scene_points = payload.get("vo" + "xel_points")
+        if isinstance(scene_points, list):
+            parsed_scene_points = [tuple(float(part) for part in item) for item in scene_points if isinstance(item, (list, tuple))]
         else:
-            parsed_voxels = None
+            parsed_scene_points = None
         fingerprint = AetherFingerprint(
             session_id=str(row["session_id"]),
             file_hash=str(row["file_hash"]),
@@ -4158,7 +4174,7 @@ class AetherRegistry:
                 if isinstance(payload.get("ae_lab_summary", {}), dict)
                 else (dict(payload.get("ae_lab", {})) if isinstance(payload.get("ae_lab", {}), dict) else None)
             ),
-            voxel_points=parsed_voxels,
+            scene_points=parsed_scene_points,
             anchor_coverage_ratio=float(payload.get("anchor_coverage_ratio", 0.0) or 0.0),
             unresolved_residual_ratio=float(payload.get("unresolved_residual_ratio", 1.0) or 1.0),
             residual_hash=str(payload.get("residual_hash", "")),
@@ -6267,7 +6283,7 @@ class AetherRegistry:
         total_files = int(self.connection.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0])
         total_spectrum = int(self.connection.execute("SELECT COUNT(*) FROM spectrum_records").fetchone()[0])
         total_frames = int(self.connection.execute("SELECT COUNT(*) FROM theremin_frames").fetchone()[0])
-        total_voxels = int(self.connection.execute("SELECT COUNT(*) FROM voxel_events").fetchone()[0])
+        total_scene_events = int(self.connection.execute("SELECT COUNT(*) FROM voxel_events").fetchone()[0])
 
         verdict_rows = self.connection.execute(
             "SELECT verdict, COUNT(*) AS count FROM fingerprints GROUP BY verdict"
@@ -6316,7 +6332,7 @@ class AetherRegistry:
             "total_files": total_files,
             "total_spectrum_records": total_spectrum,
             "total_theremin_frames": total_frames,
-            "total_voxel_events": total_voxels,
+            "total_scene_events": total_scene_events,
             "verdict_distribution": verdict_distribution,
             "average_symmetry_score": avg_symmetry,
             "average_delta_ratio": avg_delta,

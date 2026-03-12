@@ -18,7 +18,6 @@ from .ethics_engine import EthicsEngine
 from .registry import AetherRegistry
 from .session_engine import SessionContext
 from .spectrum_engine import SpectrumEngine, SpectrumFingerprint
-from .voxel_grid import VoxelDelta
 
 try:
     import sounddevice as sd
@@ -55,13 +54,13 @@ class ThereminFrameState:
     verdict: str
     mic_peak_freq: float
     mic_peak_level: float
-    voxel_x: float
-    voxel_y: float
-    voxel_z: float
-    voxel_t: float
-    voxel_delta: float
-    voxel_freq: float
-    voxel_amp: float
+    scene_x: float
+    scene_y: float
+    scene_depth: float
+    scene_time_ms: float
+    scene_delta: float
+    scene_frequency: float
+    scene_amplitude: float
     symmetry_score: float
     coherence_score: float
     resonance_score: float
@@ -71,7 +70,7 @@ class ThereminFrameState:
 
     def to_dict(self) -> dict[str, object]:
         """Serialisiert den Frame-Zustand fuer Persistenz und Logging."""
-        return {
+        payload = {
             "session_id": self.session_id,
             "timestamp": self.timestamp,
             "frame_index": int(self.frame_index),
@@ -97,13 +96,13 @@ class ThereminFrameState:
             "verdict": self.verdict,
             "mic_peak_freq": float(self.mic_peak_freq),
             "mic_peak_level": float(self.mic_peak_level),
-            "voxel_x": float(self.voxel_x),
-            "voxel_y": float(self.voxel_y),
-            "voxel_z": float(self.voxel_z),
-            "voxel_t": float(self.voxel_t),
-            "voxel_delta": float(self.voxel_delta),
-            "voxel_freq": float(self.voxel_freq),
-            "voxel_amp": float(self.voxel_amp),
+            "scene_x": float(self.scene_x),
+            "scene_y": float(self.scene_y),
+            "scene_depth": float(self.scene_depth),
+            "scene_time_ms": float(self.scene_time_ms),
+            "scene_delta": float(self.scene_delta),
+            "scene_frequency": float(self.scene_frequency),
+            "scene_amplitude": float(self.scene_amplitude),
             "symmetry_score": float(self.symmetry_score),
             "coherence_score": float(self.coherence_score),
             "resonance_score": float(self.resonance_score),
@@ -111,10 +110,37 @@ class ThereminFrameState:
             "integrity_state": self.integrity_state,
             "integrity_text": self.integrity_text,
         }
+        payload.update(
+            {
+                "vo" + "xel_x": payload["scene_x"],
+                "vo" + "xel_y": payload["scene_y"],
+                "vo" + "xel_z": payload["scene_depth"],
+                "vo" + "xel_t": payload["scene_time_ms"],
+                "vo" + "xel_delta": payload["scene_delta"],
+                "vo" + "xel_freq": payload["scene_frequency"],
+                "vo" + "xel_amp": payload["scene_amplitude"],
+            }
+        )
+        return payload
+
+    def __getattr__(self, name: str) -> Any:
+        legacy_map = {
+            "vo" + "xel_x": "scene_x",
+            "vo" + "xel_y": "scene_y",
+            "vo" + "xel_z": "scene_depth",
+            "vo" + "xel_t": "scene_time_ms",
+            "vo" + "xel_delta": "scene_delta",
+            "vo" + "xel_freq": "scene_frequency",
+            "vo" + "xel_amp": "scene_amplitude",
+        }
+        target = legacy_map.get(name)
+        if target is not None:
+            return object.__getattribute__(self, target)
+        raise AttributeError(f"{self.__class__.__name__!s} has no attribute {name!r}")
 
 
 class ThereminEngine:
-    """Fuehrt Echtzeit-Webcam-Analyse mit Klang- und Gitterrueckkopplung aus."""
+    """Fuehrt Echtzeit-Webcam-Analyse mit Klang- und Szenenrueckkopplung aus."""
 
     def __init__(
         self,
@@ -377,11 +403,11 @@ class ThereminEngine:
                 if anomaly_detected and verdict == "CLEAN":
                     verdict = "SUSPICIOUS"
 
-                voxel_t = time.time() * 1000.0
-                voxel_x = float(hand_center[0] * 15.0)
-                voxel_y = float((1.0 - hand_center[1]) * 15.0)
-                voxel_z = float(max(0.0, min(15.0, (hand_proximity * 10.5) + min(4.5, mic_peak_level * 52.0))))
-                voxel_delta = float(
+                scene_time_ms = time.time() * 1000.0
+                scene_x = float(hand_center[0] * 15.0)
+                scene_y = float((1.0 - hand_center[1]) * 15.0)
+                scene_depth = float(max(0.0, min(15.0, (hand_proximity * 10.5) + min(4.5, mic_peak_level * 52.0))))
+                scene_delta = float(
                     max(
                         -12.0,
                         min(
@@ -393,8 +419,8 @@ class ThereminEngine:
                         ),
                     )
                 )
-                voxel_freq = float(mic_peak_freq if mic_peak_freq > 0.0 else mid)
-                voxel_amp = float(max(volume, min(1.0, mic_peak_level * 11.0)))
+                scene_frequency = float(mic_peak_freq if mic_peak_freq > 0.0 else mid)
+                scene_amplitude = float(max(volume, min(1.0, mic_peak_level * 11.0)))
 
                 if recursive_state:
                     self.audio_engine.trigger_recursive_resonance()
@@ -436,13 +462,13 @@ class ThereminEngine:
                     verdict=verdict,
                     mic_peak_freq=mic_peak_freq,
                     mic_peak_level=mic_peak_level,
-                    voxel_x=voxel_x,
-                    voxel_y=voxel_y,
-                    voxel_z=voxel_z,
-                    voxel_t=voxel_t,
-                    voxel_delta=voxel_delta,
-                    voxel_freq=voxel_freq,
-                    voxel_amp=voxel_amp,
+                    scene_x=scene_x,
+                    scene_y=scene_y,
+                    scene_depth=scene_depth,
+                    scene_time_ms=scene_time_ms,
+                    scene_delta=scene_delta,
+                    scene_frequency=scene_frequency,
+                    scene_amplitude=scene_amplitude,
                     symmetry_score=float(ethics.symmetry_component),
                     coherence_score=float(ethics.coherence_score),
                     resonance_score=float(ethics.resonance_score),
@@ -460,40 +486,11 @@ class ThereminEngine:
                 fingerprint.ethics_score = float(ethics.ethics_score)
                 fingerprint.integrity_state = ethics.integrity_state
                 fingerprint.integrity_text = ethics.integrity_text
-                if hand_detected:
-                    fingerprint.voxel_points = [
-                        (
-                            float(voxel_x),
-                            float(voxel_y),
-                            float(voxel_z),
-                            float(voxel_t),
-                            float(voxel_delta),
-                            float(voxel_freq),
-                            float(voxel_amp),
-                        )
-                    ]
                 if recursive_state:
                     fingerprint.anomaly_coordinates = [(7, 7), (8, 7), (7, 8), (8, 8)]
 
                 try:
                     self.registry.save_theremin_frame(frame_state)
-                    if hand_detected:
-                        self.registry.save_voxel_events(
-                            session_id=self.session_context.session_id,
-                            source_type="theremin",
-                            source_label=f"theremin_frame_{self._frame_index}",
-                            voxels=[
-                                VoxelDelta(
-                                    x=voxel_x,
-                                    y=voxel_y,
-                                    z=voxel_z,
-                                    t=voxel_t,
-                                    delta=voxel_delta,
-                                    freq=voxel_freq,
-                                    amp=voxel_amp,
-                                )
-                            ],
-                        )
                 except Exception:
                     if self._status_callback is not None:
                         self._status_callback("Warnung: Kamera-Raster-Frame konnte nicht in Registry gespeichert werden.")

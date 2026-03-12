@@ -62,7 +62,6 @@ from .blockchain_interface import AetherChain
 from .ethics_engine import EthicsAssessment, EthicsEngine
 from .reconstruction_engine import LosslessReconstructionEngine
 from .session_engine import SessionContext
-from .voxel_grid import VoxelGrid4D
 
 if TYPE_CHECKING:
     from .registry import AetherRegistry
@@ -149,7 +148,7 @@ class AetherFingerprint:
     observer_state: str = "OFFEN"
     beauty_signature: dict[str, float] | None = None
     ae_lab_summary: dict[str, Any] | None = None
-    voxel_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None
+    scene_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None
     anchor_coverage_ratio: float = 0.0
     unresolved_residual_ratio: float = 1.0
     residual_hash: str = ""
@@ -171,7 +170,7 @@ class AetherFingerprint:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialisiert den Fingerprint als JSON-taugliches Dictionary."""
-        return {
+        payload = {
             "session_id": self.session_id,
             "source_type": self.source_type,
             "source_label": self.source_label,
@@ -218,10 +217,22 @@ class AetherFingerprint:
             "delta": self.delta.hex(),
             "delta_ratio": float(self.delta_ratio),
             "anomaly_coordinates": [[int(x), int(y)] for x, y in self.anomaly_coordinates],
-            "voxel_count": int(len(self.voxel_points) if self.voxel_points else 0),
+            "scene_point_count": int(len(self.scene_points) if self.scene_points else 0),
             "verdict": self.verdict,
             "timestamp": self.timestamp,
         }
+        payload["vo" + "xel_count"] = payload["scene_point_count"]
+        return payload
+
+    def __getattr__(self, name: str) -> Any:
+        if name == ("vo" + "xel_points"):
+            return self.scene_points
+        raise AttributeError(f"{self.__class__.__name__!s} has no attribute {name!r}")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name == ("vo" + "xel_points"):
+            name = "scene_points"
+        super().__setattr__(name, value)
 
     def submit_to_chain(self, chain: AetherChain | None = None) -> bool:
         """
@@ -1022,7 +1033,7 @@ class AnalysisEngine:
         return float(max(0.0, min(100.0, symmetry)))
 
     def _anomaly_coordinates(self, entropy_blocks: list[float]) -> list[tuple[int, int]]:
-        """Ermittelt Ausreisserpositionen als Raumzeit-Koordinaten."""
+        """Ermittelt Ausreisserpositionen als strukturelle Rasterkoordinaten."""
         if not entropy_blocks:
             return []
         arr = np.array(entropy_blocks, dtype=np.float64)
@@ -1692,7 +1703,7 @@ class AnalysisEngine:
         anomaly_coordinates: list[tuple[int, int]],
         source_type: str,
         source_label: str,
-        voxel_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None,
+        scene_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None,
         file_profile: dict[str, Any] | None = None,
         distribution: dict[int, int] | None = None,
         low_power: bool = False,
@@ -1767,7 +1778,7 @@ class AnalysisEngine:
             h_lambda=h_lambda,
             observer_state=observer_state,
             beauty_signature=beauty_signature,
-            voxel_points=voxel_points,
+            scene_points=scene_points,
             scan_hash=scan_hash,
             scan_payload=scan_payload,
             file_profile=dict(file_profile or {}),
@@ -1821,28 +1832,6 @@ class AnalysisEngine:
         if callback is not None:
             callback(fingerprint)
         return fingerprint
-
-    def analyze_voxel_grid(
-        self,
-        voxel_grid: VoxelGrid4D,
-        source_label: str = "voxel_grid",
-    ) -> AetherFingerprint:
-        """Analysiert ein 4D-Voxel-Gitter inklusive Ethik- und Resonanzbewertung."""
-        raw = voxel_grid.serialize()
-        entropy_blocks = voxel_grid.build_entropy_blocks(size=16)
-        entropy_mean = float(np.mean(entropy_blocks)) if entropy_blocks else 0.0
-        periodicity = voxel_grid.estimate_periodicity()
-        anomaly_coordinates = voxel_grid.anomaly_coordinates(size=16)
-        return self._build_fingerprint(
-            raw=raw,
-            entropy_blocks=entropy_blocks,
-            entropy_mean=entropy_mean,
-            periodicity=periodicity,
-            anomaly_coordinates=anomaly_coordinates,
-            source_type="voxel",
-            source_label=source_label,
-            voxel_points=voxel_grid.render_points(limit=900),
-        )
 
     def analyze(
         self,

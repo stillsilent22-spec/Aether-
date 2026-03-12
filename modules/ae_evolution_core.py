@@ -1590,7 +1590,7 @@ class AetherAnchorInterpreter:
 
     def classify_anchor(self, result: Any, data: Any) -> str:
         if isinstance(result, (int, float)) and (abs(float(result)) < 0.01 or abs(float(result)) > 1000.0):
-            return "Raumzeit-Anker"
+            return "Struktur-Anker"
         if isinstance(result, dict) and "pi_resonance" in result:
             return "Legacy-DNA-Anker"
         if isinstance(result, str) and result in str(data):

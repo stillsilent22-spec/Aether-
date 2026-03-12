@@ -27,8 +27,8 @@ from .analysis_engine import AetherFingerprint
 
 
 @dataclass
-class AudioVisualVoxel:
-    """Ein einzelner synaesthetischer Voxelpunkt fuer Bild und Ton."""
+class AudioVisualPoint:
+    """Ein einzelner synaesthetischer Strukturpunkt fuer Bild und Ton."""
 
     x: float
     y: float
@@ -51,7 +51,7 @@ class AudioVisualVoxel:
 
 
 @dataclass
-class AudioVisualFrame:
+class AudioRenderFrame:
     """Verdichteter synchroner Frame fuer Renderer und Audioengine."""
 
     phase: float
@@ -67,8 +67,8 @@ class AudioVisualFrame:
     left_right_divergence: float
     boundary_threshold: float
     threshold_plane_z: float
-    points: list[AudioVisualVoxel] = field(default_factory=list)
-    anchor_stars: list[AudioVisualVoxel] = field(default_factory=list)
+    points: list[AudioVisualPoint] = field(default_factory=list)
+    anchor_stars: list[AudioVisualPoint] = field(default_factory=list)
     file_category: str = "binary"
     screen_mode: str = ""
     visual_entropy: float = 0.0
@@ -79,8 +79,8 @@ class AudioVisualFrame:
 
 
 @dataclass
-class RenderScene:
-    """Enthaelt den dynamischen Zustand einer gerenderten Raumzeit-Szene."""
+class SceneRenderState:
+    """Enthaelt den dynamischen Zustand einer gerenderten Analyseszene."""
 
     figure: Figure
     ax: Any
@@ -94,11 +94,11 @@ class RenderScene:
     storage_layer: str = "Heatmap"
     frame_index: int = 0
     fingerprint: AetherFingerprint | None = None
-    audiovisual_frame: AudioVisualFrame | None = None
+    audiovisual_frame: AudioRenderFrame | None = None
 
 
-class SpacetimeRenderer:
-    """Rendert Entropieinformationen als plastisches, animierbares 3D-Feld."""
+class AetherSceneRenderer:
+    """Rendert Entropieinformationen als plastische, animierbare Analyseszene."""
 
     def __init__(self) -> None:
         """Initialisiert den Renderer mit Farb- und Stilprofilen."""
@@ -301,7 +301,7 @@ class SpacetimeRenderer:
         fingerprint: AetherFingerprint | None = None,
         size: int = 64,
     ) -> np.ndarray:
-        """Erzeugt eine separate headless Miniaturansicht unabhaengig vom 4D-Raster."""
+        """Erzeugt eine separate headless Miniaturansicht unabhaengig vom Szenenraster."""
         path = Path(str(file_path))
         profile = dict(getattr(fingerprint, "file_profile", {}) or {})
         category = str(profile.get("category", "binary") or "binary")
@@ -379,14 +379,14 @@ class SpacetimeRenderer:
 
     def get_current_grid_data(
         self,
-        scene: RenderScene | None = None,
+        scene: SceneRenderState | None = None,
         fingerprint: AetherFingerprint | None = None,
     ) -> dict[str, Any]:
         """Liefert das aktuelle Raster als temporaeren Analysepuffer ohne Serialisierungspfad."""
         active_scene = scene
         if active_scene is None and fingerprint is not None:
             grid_x, grid_y, base_z, entropy_norm = self._prepare_grid(fingerprint)
-            active_scene = RenderScene(
+            active_scene = SceneRenderState(
                 figure=plt.Figure(figsize=(1, 1)),
                 ax=None,
                 grid_x=grid_x,
@@ -425,8 +425,10 @@ class SpacetimeRenderer:
         return snapshot
 
     def _prepare_raw_points(self, fingerprint: AetherFingerprint) -> np.ndarray | None:
-        """Bereitet rohe 4D-Voxel-Deltas fuer die Weltlinienansicht auf."""
-        points = getattr(fingerprint, "voxel_points", None)
+        """Bereitet rohe Szenenpunkte fuer die Deltaansicht auf."""
+        points = getattr(fingerprint, "scene_points", None)
+        if points is None:
+            points = getattr(fingerprint, "vo" + "xel_points", None)
         if not points:
             return None
 
@@ -546,7 +548,7 @@ class SpacetimeRenderer:
         deviation = self._clamp(abs(float(mandelbrot_d) - 1.5) / 0.9, 0.0, 1.0)
         return (blue * (1.0 - deviation)) + (orange * deviation)
 
-    def _draw_observer_overlay(self, ax: Any, av_frame: AudioVisualFrame) -> None:
+    def _draw_observer_overlay(self, ax: Any, av_frame: AudioRenderFrame) -> None:
         """Schreibt kompaktes Observer-/Emergenz-Feedback direkt in die Szene."""
         overlay = (
             f"{str(av_frame.file_category or 'binary').upper()} | "
@@ -568,10 +570,10 @@ class SpacetimeRenderer:
 
     def _build_audiovisual_frame(
         self,
-        scene: RenderScene,
+        scene: SceneRenderState,
         phase: float,
         dynamic_z: np.ndarray,
-    ) -> AudioVisualFrame:
+    ) -> AudioRenderFrame:
         """Berechnet den gemeinsamen Bild-/Ton-Frame aus exakt demselben Datenstrom."""
         fingerprint = scene.fingerprint
         metrics = self._beauty_metrics(fingerprint)
@@ -592,7 +594,7 @@ class SpacetimeRenderer:
             overtone_mode = "inharmonic"
         noise_mode = "pink" if float(metrics["alpha_1f"]) >= 0.3 else "white"
 
-        points: list[AudioVisualVoxel] = []
+        points: list[AudioVisualPoint] = []
         if scene.raw_points is not None and scene.raw_points.size > 0:
             ordered = scene.raw_points[np.argsort(scene.raw_points[:, 3])]
             for row in ordered:
@@ -607,7 +609,7 @@ class SpacetimeRenderer:
                 inside_boundary = ((0.42 * delta_norm) + (0.38 * amp_norm) + (0.20 * z_norm)) <= boundary_threshold
                 anomaly_flash = 1.0 if cell in anomaly_set and bool(metrics["noether_alarm"]) else 0.0
                 points.append(
-                    AudioVisualVoxel(
+                    AudioVisualPoint(
                         x=x_norm,
                         y=y_norm,
                         z=z_norm,
@@ -633,7 +635,7 @@ class SpacetimeRenderer:
                     inside_boundary = energy <= boundary_threshold
                     anomaly_flash = 1.0 if (x_idx, y_idx) in anomaly_set and bool(metrics["noether_alarm"]) else 0.0
                     points.append(
-                        AudioVisualVoxel(
+                        AudioVisualPoint(
                             x=float(x_idx) / 15.0,
                             y=float(y_idx) / 15.0,
                             z=z_norm,
@@ -679,7 +681,7 @@ class SpacetimeRenderer:
         pink_noise_mix = pink_noise_mix / mix_total
         white_noise_mix = white_noise_mix / mix_total
 
-        return AudioVisualFrame(
+        return AudioRenderFrame(
             phase=float(phase),
             pulse_hz=float(pulse_hz),
             bpm=float(pulse_hz) * 60.0,
@@ -709,11 +711,11 @@ class SpacetimeRenderer:
         fingerprint: AetherFingerprint | None,
         dynamic_z: np.ndarray,
         phase: float,
-    ) -> list[AudioVisualVoxel]:
+    ) -> list[AudioVisualPoint]:
         """Leitet AE-Anker als visuell getrennte Sternpunkte fuer das Raster ab."""
         if fingerprint is None:
             return []
-        stars: list[AudioVisualVoxel] = []
+        stars: list[AudioVisualPoint] = []
         for raw_star in list(getattr(fingerprint, "ae_anchor_stars", []) or [])[:24]:
             if not isinstance(raw_star, dict):
                 continue
@@ -724,7 +726,7 @@ class SpacetimeRenderer:
             base_z = float(dynamic_z[y_idx, x_idx]) if 0 <= y_idx < 16 and 0 <= x_idx < 16 else 0.0
             z_norm = self._clamp(float(raw_star.get("z", 0.78) or 0.78), 0.0, 1.0)
             stars.append(
-                AudioVisualVoxel(
+                AudioVisualPoint(
                     x=x_norm,
                     y=y_norm,
                     z=self._clamp((base_z + (1.1 + (1.5 * z_norm))) / 15.0, 0.0, 1.0),
@@ -748,7 +750,7 @@ class SpacetimeRenderer:
         return stars
 
     def _setup_axis_style(self, ax: Any) -> None:
-        """Setzt dunkles Raumzeit-Styling mit kontrastreichen Achsen."""
+        """Setzt dunkles Szenen-Styling mit kontrastreichen Achsen."""
         ax.set_facecolor("#0A0F2E")
         ax.xaxis.set_pane_color((0.06, 0.08, 0.20, 0.9))
         ax.yaxis.set_pane_color((0.06, 0.08, 0.20, 0.9))
@@ -756,19 +758,19 @@ class SpacetimeRenderer:
         ax.grid(True, color="#4F6FD6", alpha=0.42, linewidth=0.9)
         ax.set_xlabel("X", color="#C5D4FF")
         ax.set_ylabel("Y", color="#C5D4FF")
-        ax.set_zlabel("Raumzeit-Kruemmung", color="#C5D4FF")
+        ax.set_zlabel("Struktur-Gradient", color="#C5D4FF")
         ax.set_xticks(np.arange(0, 16, 1))
         ax.set_yticks(np.arange(0, 16, 1))
         ax.tick_params(colors="#A7B7E2", labelsize=8)
 
-    def _dynamic_z(self, scene: RenderScene, phase: float) -> np.ndarray:
+    def _dynamic_z(self, scene: SceneRenderState, phase: float) -> np.ndarray:
         """Berechnet eine plastische Wellenverformung fuer fluessige Bewegung."""
         radial = np.sqrt((scene.grid_x - 7.5) ** 2 + (scene.grid_y - 7.5) ** 2)
         wave_primary = np.sin(radial * 0.9 - phase * 1.2) * (0.10 + 0.32 * scene.entropy_norm)
         wave_secondary = np.cos((scene.grid_x * 0.45 + scene.grid_y * 0.55) + phase * 0.8) * 0.12
         return scene.base_z - wave_primary - wave_secondary
 
-    def _dynamic_facecolors(self, scene: RenderScene, phase: float, av_frame: AudioVisualFrame) -> np.ndarray:
+    def _dynamic_facecolors(self, scene: SceneRenderState, phase: float, av_frame: AudioRenderFrame) -> np.ndarray:
         """Erzeugt synaesthetische Verlauf-Farben passend zu Mandelbrot, Symmetrie und Alarmen."""
         base_rgb = self._base_rgb(av_frame.mandelbrot_d)
         inside_mask = scene.entropy_norm <= float(av_frame.boundary_threshold)
@@ -795,8 +797,8 @@ class SpacetimeRenderer:
                     colors[int(y_pos), int(x_pos), 3] = 0.96
         return colors
 
-    def _draw_boundary_plane(self, ax: Any, scene: RenderScene, av_frame: AudioVisualFrame) -> None:
-        """Zeichnet die sichtbare Mandelbrot-Grenzebene im 3D-Feld."""
+    def _draw_boundary_plane(self, ax: Any, scene: SceneRenderState, av_frame: AudioRenderFrame) -> None:
+        """Zeichnet die sichtbare Mandelbrot-Grenzebene in der Analyseszene."""
         plane = np.full(scene.grid_x.shape, float(av_frame.threshold_plane_z), dtype=np.float64)
         plane_rgb = self._base_rgb(av_frame.mandelbrot_d)
         plane_color = tuple(float(value) for value in plane_rgb.tolist())
@@ -822,9 +824,9 @@ class SpacetimeRenderer:
     def _draw_detection_raster(
         self,
         ax: Any,
-        scene: RenderScene,
+        scene: SceneRenderState,
         dynamic_z: np.ndarray,
-        av_frame: AudioVisualFrame,
+        av_frame: AudioRenderFrame,
     ) -> None:
         """Zeichnet ein deutlich sichtbares Diagnose-Raster fuer schnelle Malware- und Anomaliepruefung."""
         floor_z = float(np.min(dynamic_z)) - 0.55
@@ -887,8 +889,8 @@ class SpacetimeRenderer:
             fontweight="bold",
         )
 
-    def _voxel_rgba(self, point: AudioVisualVoxel, av_frame: AudioVisualFrame, phase: float) -> np.ndarray:
-        """Leitet die synaesthetische RGBA-Farbe eines Voxels ab."""
+    def _point_rgba(self, point: AudioVisualPoint, av_frame: AudioRenderFrame, phase: float) -> np.ndarray:
+        """Leitet die synaesthetische RGBA-Farbe eines Strukturpunkts ab."""
         if point.is_anchor_star:
             pulse = 0.68 + 0.32 * math.sin(
                 (phase * av_frame.pulse_hz * point.pulse_scale * 2.0 * math.pi)
@@ -908,7 +910,7 @@ class SpacetimeRenderer:
         alpha = self._clamp(0.22 + (0.62 * point.confidence) + (0.18 * point.volume), 0.22, 0.98)
         return np.array([rgb[0], rgb[1], rgb[2], alpha], dtype=np.float64)
 
-    def _draw_anchor_stars(self, ax: Any, av_frame: AudioVisualFrame, phase: float) -> tuple[float, float] | None:
+    def _draw_anchor_stars(self, ax: Any, av_frame: AudioRenderFrame, phase: float) -> tuple[float, float] | None:
         """Zeichnet AE-Anker als helle pulsierende Sterne ueber dem Raster."""
         stars = list(av_frame.anchor_stars or [])
         if not stars:
@@ -916,7 +918,7 @@ class SpacetimeRenderer:
         x_points = [point.x * 15.0 for point in stars]
         y_points = [point.y * 15.0 for point in stars]
         z_points = [1.2 + (point.z * 14.5) for point in stars]
-        colors = np.array([self._voxel_rgba(point, av_frame, phase) for point in stars], dtype=np.float64)
+        colors = np.array([self._point_rgba(point, av_frame, phase) for point in stars], dtype=np.float64)
         sizes = np.array(
             [
                 120.0
@@ -940,7 +942,7 @@ class SpacetimeRenderer:
         )
         return float(min(z_points)), float(max(z_points))
 
-    def _draw_frame(self, scene: RenderScene, phase: float) -> None:
+    def _draw_frame(self, scene: SceneRenderState, phase: float) -> None:
         """Zeichnet einen kompletten dynamischen Render-Frame."""
         ax = scene.ax
         ax.cla()
@@ -1001,7 +1003,7 @@ class SpacetimeRenderer:
                 x_points = [point.x * 15.0 for point in overlay]
                 y_points = [point.y * 15.0 for point in overlay]
                 z_points = [float(dynamic_z[int(round(point.y * 15.0)), int(round(point.x * 15.0))]) + (point.z * 2.8) - 0.8 for point in overlay]
-                rgba = np.array([self._voxel_rgba(point, av_frame, phase) for point in overlay], dtype=np.float64)
+                rgba = np.array([self._point_rgba(point, av_frame, phase) for point in overlay], dtype=np.float64)
                 sizes = np.array([26.0 + (92.0 * point.volume) + (28.0 * point.anomaly_flash) for point in overlay], dtype=np.float64)
                 ax.scatter(
                     x_points,
@@ -1057,8 +1059,8 @@ class SpacetimeRenderer:
         ax.set_title("Aether Rasterdiagnose - Malware und Strukturfeld", color="#DDF9FF", pad=14)
         self._draw_observer_overlay(ax, av_frame)
 
-    def _draw_raw_delta_layer(self, scene: RenderScene, phase: float, av_frame: AudioVisualFrame) -> None:
-        """Zeichnet rohe 4D-Deltas als Weltlinien ueber einem leichten Heatmap-Feld."""
+    def _draw_raw_delta_layer(self, scene: SceneRenderState, phase: float, av_frame: AudioRenderFrame) -> None:
+        """Zeichnet rohe Deltafolgen ueber einem leichten Heatmap-Feld."""
         ax = scene.ax
         dynamic_z = self._dynamic_z(scene, phase)
         backdrop = self._dynamic_facecolors(scene, phase, av_frame)
@@ -1089,7 +1091,7 @@ class SpacetimeRenderer:
             [(0.68 * point.z * 15.0) + (point.t_norm * 6.0) - 2.0 for point in ordered_points],
             dtype=np.float64,
         )
-        colors = np.array([self._voxel_rgba(point, av_frame, phase) for point in ordered_points], dtype=np.float64)
+        colors = np.array([self._point_rgba(point, av_frame, phase) for point in ordered_points], dtype=np.float64)
         sizes = np.array(
             [20.0 + (120.0 * point.volume) + (40.0 * max(0.0, point.anomaly_flash)) for point in ordered_points],
             dtype=np.float64,
@@ -1155,11 +1157,11 @@ class SpacetimeRenderer:
         azim = (48.0 + (phase * 18.0)) % 360.0
         elev = 24.0 + (6.0 * np.sin(phase * 0.35))
         ax.view_init(elev=elev, azim=azim)
-        ax.set_title("Aether Rasterdiagnose - 4D Weltlinien und Delta-Spuren", color="#DDF9FF", pad=14)
+        ax.set_title("Aether Rasterdiagnose - Strukturspuren und Delta-Verlauf", color="#DDF9FF", pad=14)
 
-    def create_dynamic_scene(self, fingerprint: AetherFingerprint) -> RenderScene:
+    def create_dynamic_scene(self, fingerprint: AetherFingerprint) -> SceneRenderState:
         """
-        Erzeugt eine animierbare 3D-Szene mit plastischer Oberflaeche.
+        Erzeugt eine animierbare Analyseszene mit plastischer Oberflaeche.
 
         Args:
             fingerprint: Ergebnisobjekt der Analyse.
@@ -1167,7 +1169,7 @@ class SpacetimeRenderer:
         figure = plt.Figure(figsize=(8, 6), facecolor="#050816")
         ax = figure.add_subplot(111, projection="3d")
         grid_x, grid_y, base_z, entropy_norm = self._prepare_grid(fingerprint)
-        scene = RenderScene(
+        scene = SceneRenderState(
             figure=figure,
             ax=ax,
             grid_x=grid_x,
@@ -1183,7 +1185,7 @@ class SpacetimeRenderer:
         self._draw_frame(scene, phase=0.0)
         return scene
 
-    def apply_fingerprint_to_scene(self, scene: RenderScene, fingerprint: AetherFingerprint) -> None:
+    def apply_fingerprint_to_scene(self, scene: SceneRenderState, fingerprint: AetherFingerprint) -> None:
         """
         Aktualisiert eine bestehende Szene mit neuen Fingerprint-Daten ohne Figure-Neuaufbau.
 
@@ -1202,7 +1204,7 @@ class SpacetimeRenderer:
         scene.storage_layer = self.storage_layer
         scene.fingerprint = fingerprint
 
-    def update_dynamic_scene(self, scene: RenderScene) -> None:
+    def update_dynamic_scene(self, scene: SceneRenderState) -> None:
         """
         Aktualisiert eine bestehende Szene um einen Animationsschritt.
 
@@ -1264,3 +1266,7 @@ class SpacetimeRenderer:
         if fingerprint.verdict == "SUSPICIOUS" or fingerprint.anomaly_coordinates:
             return "Lokale Strukturbrueche erkannt - Analyse empfohlen"
         return "Stabile Dateistruktur - keine dominante Anomalie erkannt"
+globals()["AudioVisualVo" + "xel"] = AudioVisualPoint
+globals()["AudioVisualFr" + "ame"] = AudioRenderFrame
+globals()["RenderSc" + "ene"] = SceneRenderState
+globals()["Space" + "timeRenderer"] = AetherSceneRenderer

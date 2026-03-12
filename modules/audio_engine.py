@@ -13,7 +13,7 @@ import numpy as np
 from .analysis_engine import AetherFingerprint
 
 if TYPE_CHECKING:
-    from .spacetime_renderer import AudioVisualFrame
+    from .scene_renderer import AudioRenderFrame
 
 try:
     import sounddevice as sd
@@ -276,7 +276,7 @@ class AudioEngine:
                 self._audiovisual_stream = None
             self._audiovisual_stream = None
 
-    def update_audiovisual_frame(self, frame: AudioVisualFrame | None) -> None:
+    def update_audiovisual_frame(self, frame: AudioRenderFrame | None) -> None:
         """Aktualisiert den gemeinsamen Bild-/Ton-Frame fuer die synaesthetische Ausgabe."""
         if not self.output_enabled:
             with self._audiovisual_lock:

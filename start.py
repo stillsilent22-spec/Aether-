@@ -297,7 +297,7 @@ def bootstrap(shanway_raster_insight: bool = False) -> None:
     from modules.log_system import LogSystem
     from modules.security_monitor import AetherSecurityMonitor
     from modules.session_engine import SessionContext
-    from modules.spacetime_renderer import SpacetimeRenderer
+    from modules.scene_renderer import AetherSceneRenderer
     from modules.ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
 
     session_context = SessionContext(security_session=security_session)
@@ -318,7 +318,7 @@ def bootstrap(shanway_raster_insight: bool = False) -> None:
             report_security_lock(str(getattr(security_snapshot, "summary", "Security lock active.")))
             return
     log_system = LogSystem(str(PROJECT_ROOT / "data" / "logs"), str(PROJECT_ROOT / "data" / "screenshots"))
-    renderer = SpacetimeRenderer()
+    renderer = AetherSceneRenderer()
     audio_engine = AudioEngine()
     chain = AetherChain(
         endpoint="local://aether-fingerprint-chain",

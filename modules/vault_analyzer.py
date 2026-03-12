@@ -281,7 +281,7 @@ def _build_vault_gaps(
                 "classification": "VAULT_GAP",
                 "gap_score": round(float(geometric_gap_score), 12),
                 "vault_gap": "Geometrische Anker sind im Vault schwach vertreten.",
-                "suggested_next": "3D-Modelldateien, CAD, Blender",
+                "suggested_next": "Geometrische Modelldateien, CAD, Blender",
                 "reason": f"geometric_rate={geometric_rate:.3f} bei frequency={int(type_frequency.get('geometric', 0))}",
             }
         )

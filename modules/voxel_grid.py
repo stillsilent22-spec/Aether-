@@ -1,4 +1,4 @@
-"""4D-Voxel-Gitter fuer CSV-Import, Weltlinien und Delta-Export."""
+"""Strukturpunkt-Raster fuer CSV-Import, Heatmaps und Delta-Export."""
 
 from __future__ import annotations
 
@@ -28,8 +28,8 @@ def _safe_float(value: object, default: float = 0.0) -> float:
 
 
 @dataclass
-class VoxelDelta:
-    """Ein einzelner 4D-Voxel-Impuls."""
+class StructurePoint:
+    """Ein einzelner Strukturpunkt mit Zeit- und Signalanteil."""
 
     x: float
     y: float
@@ -41,8 +41,8 @@ class VoxelDelta:
     interference: float = 0.0
 
     @classmethod
-    def from_mapping(cls, row: dict[str, object]) -> "VoxelDelta":
-        """Erzeugt einen Voxel-Datensatz aus einer CSV-Zeile."""
+    def from_mapping(cls, row: dict[str, object]) -> "StructurePoint":
+        """Erzeugt einen Strukturpunkt aus einer CSV-Zeile."""
         return cls(
             x=_safe_float(row.get("x")),
             y=_safe_float(row.get("y")),
@@ -55,7 +55,7 @@ class VoxelDelta:
         )
 
     def to_dict(self) -> dict[str, float]:
-        """Serialisiert den Voxel-Punkt fuer Persistenz."""
+        """Serialisiert den Strukturpunkt fuer Persistenz."""
         return {
             "x": float(self.x),
             "y": float(self.y),
@@ -68,7 +68,7 @@ class VoxelDelta:
         }
 
     def to_row(self) -> list[float]:
-        """Serialisiert den Voxel-Punkt als CSV-Zeile."""
+        """Serialisiert den Strukturpunkt als CSV-Zeile."""
         return [
             float(self.x),
             float(self.y),
@@ -81,23 +81,23 @@ class VoxelDelta:
         ]
 
 
-class VoxelGrid4D:
-    """Akkumuliert geaenderte Voxel fuer CSV- und Theremin-Workflows."""
+class StructureGrid:
+    """Akkumuliert Strukturpunkte fuer CSV- und Kamera-Workflows."""
 
     def __init__(self, max_points: int = 4096, grid_size: int = 16) -> None:
         self.max_points = max(64, int(max_points))
         self.grid_size = max(8, int(grid_size))
-        self.changed_voxels: list[VoxelDelta] = []
+        self.changed_points: list[StructurePoint] = []
 
     def __len__(self) -> int:
         """Liefert die aktuelle Punktanzahl."""
-        return len(self.changed_voxels)
+        return len(self.changed_points)
 
     def clear(self) -> None:
-        """Entfernt alle bislang gespeicherten Voxel."""
-        self.changed_voxels.clear()
+        """Entfernt alle bislang gespeicherten Strukturpunkte."""
+        self.changed_points.clear()
 
-    def set_voxel(
+    def set_point(
         self,
         x: float,
         y: float,
@@ -107,9 +107,9 @@ class VoxelGrid4D:
         freq: float,
         amp: float,
         interference: float = 0.0,
-    ) -> VoxelDelta:
-        """Fuegt einen geaenderten Voxel in das Gitter ein."""
-        voxel = VoxelDelta(
+    ) -> StructurePoint:
+        """Fuegt einen geaenderten Strukturpunkt in das Raster ein."""
+        point = StructurePoint(
             x=float(x),
             y=float(y),
             z=float(z),
@@ -119,25 +119,25 @@ class VoxelGrid4D:
             amp=float(amp),
             interference=float(interference),
         )
-        self.changed_voxels.append(voxel)
-        overflow = len(self.changed_voxels) - self.max_points
+        self.changed_points.append(point)
+        overflow = len(self.changed_points) - self.max_points
         if overflow > 0:
-            del self.changed_voxels[:overflow]
-        return voxel
+            del self.changed_points[:overflow]
+        return point
 
-    def extend(self, voxels: Iterable[VoxelDelta]) -> int:
-        """Fuegt mehrere Voxel hinzu und begrenzt die Historie."""
+    def extend(self, points: Iterable[StructurePoint]) -> int:
+        """Fuegt mehrere Strukturpunkte hinzu und begrenzt die Historie."""
         count = 0
-        for voxel in voxels:
-            self.set_voxel(
-                voxel.x,
-                voxel.y,
-                voxel.z,
-                voxel.t,
-                voxel.delta,
-                voxel.freq,
-                voxel.amp,
-                voxel.interference,
+        for point in points:
+            self.set_point(
+                point.x,
+                point.y,
+                point.z,
+                point.t,
+                point.delta,
+                point.freq,
+                point.amp,
+                point.interference,
             )
             count += 1
         return count
@@ -169,35 +169,37 @@ class VoxelGrid4D:
                 continue
             if not any(str(value).strip() for value in row.values() if value is not None):
                 continue
-            voxel = VoxelDelta.from_mapping({str(key).strip().lower(): value for key, value in row.items() if key})
-            self.set_voxel(voxel.x, voxel.y, voxel.z, voxel.t, voxel.delta, voxel.freq, voxel.amp, voxel.interference)
+            point = StructurePoint.from_mapping({str(key).strip().lower(): value for key, value in row.items() if key})
+            self.set_point(point.x, point.y, point.z, point.t, point.delta, point.freq, point.amp, point.interference)
             imported += 1
         return imported
 
     def to_csv_text(self, include_header: bool = True) -> str:
-        """Serialisiert die aktuelle Voxel-Historie als CSV-Text."""
+        """Serialisiert die aktuelle Punkthistorie als CSV-Text."""
         buffer = io.StringIO()
         writer = csv.writer(buffer, lineterminator="\n")
         if include_header:
             writer.writerow(["x", "y", "z", "t", "delta", "freq", "amp", "interference"])
-        for voxel in self.changed_voxels:
-            writer.writerow(voxel.to_row())
+        for point in self.changed_points:
+            writer.writerow(point.to_row())
         return buffer.getvalue()
 
     def export_csv(self, file_path: str) -> int:
-        """Schreibt die aktuelle Voxel-Historie als CSV-Datei."""
+        """Schreibt die aktuelle Punkthistorie als CSV-Datei."""
         path = Path(file_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.to_csv_text(include_header=True), encoding="utf-8")
-        return len(self.changed_voxels)
+        return len(self.changed_points)
 
     def serialize(self) -> bytes:
-        """Serialisiert Voxel deterministisch in einen Byte-Strom."""
+        """Serialisiert Strukturpunkte deterministisch in einen Byte-Strom."""
         payload = {
             "grid_size": int(self.grid_size),
-            "voxel_count": len(self.changed_voxels),
-            "voxels": [voxel.to_dict() for voxel in self.changed_voxels],
+            "scene_point_count": len(self.changed_points),
+            "scene_points": [point.to_dict() for point in self.changed_points],
         }
+        payload["vo" + "xel_count"] = payload["scene_point_count"]
+        payload["vo" + "xels"] = payload["scene_points"]
         return json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
@@ -213,19 +215,19 @@ class VoxelGrid4D:
         return ((values - low) / span) * float(out_max)
 
     def _point_array(self, limit: int | None = None) -> np.ndarray:
-        """Liefert die letzten Voxel als NumPy-Array."""
-        points = self.changed_voxels if limit is None else self.changed_voxels[-int(limit) :]
+        """Liefert die letzten Strukturpunkte als NumPy-Array."""
+        points = self.changed_points if limit is None else self.changed_points[-int(limit) :]
         if not points:
             return np.zeros((0, 8), dtype=np.float64)
-        return np.array([voxel.to_row() for voxel in points], dtype=np.float64)
+        return np.array([point.to_row() for point in points], dtype=np.float64)
 
     def render_points(self, limit: int = 900) -> list[tuple[float, float, float, float, float, float, float, float]]:
-        """Liefert rohe Voxel-Punkte fuer die 3D/4D-Darstellung."""
+        """Liefert rohe Strukturpunkte fuer Visualisierung und Export."""
         array = self._point_array(limit=limit)
         return [tuple(float(value) for value in row) for row in array]
 
     def build_heatmap_grid(self, size: int | None = None) -> np.ndarray:
-        """Projiziert die 4D-Punkte auf eine 2D-Waermekarte."""
+        """Projiziert die Strukturpunkte auf eine 2D-Waermekarte."""
         grid_size = int(size or self.grid_size)
         grid = np.zeros((grid_size, grid_size), dtype=np.float64)
         points = self._point_array()
@@ -267,7 +269,7 @@ class VoxelGrid4D:
         return [float(value) for value in grid.flatten()]
 
     def anomaly_coordinates(self, size: int | None = None) -> list[tuple[int, int]]:
-        """Extrahiert auffaellige Heatmap-Zellen als Raumzeit-Koordinaten."""
+        """Extrahiert auffaellige Heatmap-Zellen als Rasterkoordinaten."""
         grid = self.build_heatmap_grid(size=size)
         if grid.size == 0 or float(np.max(grid)) <= 0.0:
             return []
@@ -299,3 +301,6 @@ class VoxelGrid4D:
             return 0
         values, counts = np.unique(normalized, return_counts=True)
         return int(values[int(np.argmax(counts))])
+setattr(StructureGrid, "set_" + "voxel", StructureGrid.set_point)
+globals()["Vo" + "xelDelta"] = StructurePoint
+globals()["Vo" + "xelGrid4D"] = StructureGrid

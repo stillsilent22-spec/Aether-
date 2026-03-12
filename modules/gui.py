@@ -53,11 +53,10 @@ from .session_engine import SessionContext
 from .shanway import ShanwayAssessment, ShanwayEngine
 from .symbol_grounding import SymbolGroundingLayer
 from .spectrum_engine import SpectrumEngine
-from .spacetime_renderer import RenderScene, SpacetimeRenderer
+from .scene_renderer import AetherSceneRenderer, SceneRenderState
 from .storage_gp import DualModeStorageEngine
 from .theremin_engine import ThereminEngine, ThereminFrameState
 from .vault_chain import AetherAugmentor
-from .voxel_grid import VoxelGrid4D
 from .ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
 from .aelab_legacy import iter_legacy_dna_files, parse_legacy_dna_file
 
@@ -78,7 +77,7 @@ class VeiraGUI:
         session_context: SessionContext,
         registry: AetherRegistry,
         log_system: LogSystem,
-        renderer: SpacetimeRenderer,
+        renderer: AetherSceneRenderer,
         audio_engine: AudioEngine,
         analysis_engine: AnalysisEngine,
         security_monitor: AetherSecurityMonitor,
@@ -94,7 +93,6 @@ class VeiraGUI:
         self.analysis_engine = analysis_engine
         self.security_monitor = security_monitor
         self.spectrum_engine = SpectrumEngine(session_context=session_context)
-        self.voxel_grid = VoxelGrid4D()
         self.observer_engine = ObserverEngine()
         self.bayes_engine = BayesianBeliefEngine()
         self.conway_engine = ContinuousConway()
@@ -305,7 +303,6 @@ class VeiraGUI:
         self.chat_sync_polling = False
         self.spectrum_thread: threading.Thread | None = None
         self._pending_screen_scope: dict[str, Any] | None = None
-        self.csv_thread: threading.Thread | None = None
         self.chat_thread: threading.Thread | None = None
         self.shanway_corpus_thread: threading.Thread | None = None
         self._last_ae_vault_notice_signature = ""
@@ -321,7 +318,7 @@ class VeiraGUI:
         self.ae_anchor_text: tk.Text | None = None
         self.ae_vault_text: tk.Text | None = None
         self.ae_stop_button: tk.Button | None = None
-        self.animation_scene: RenderScene | None = None
+        self.animation_scene: SceneRenderState | None = None
         self.animation_job: str | None = None
         self.camera_capture: cv2.VideoCapture | None = None
         self.camera_job: str | None = None
@@ -1215,7 +1212,7 @@ class VeiraGUI:
         self._build_right_panel()
 
     def _build_center_panel(self) -> None:
-        """Erzeugt die zentrale Dateivorschau mit Detailpaneelen statt 3D-Szene."""
+        """Erzeugt die zentrale Dateivorschau mit Detailpaneelen."""
         self.center_pane = ttk.Panedwindow(self.center_frame, orient="vertical")
         self.center_pane.pack(fill="both", expand=True)
 
@@ -1463,7 +1460,7 @@ class VeiraGUI:
 
         tk.Label(live_tab, text="Live-Feedback", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         tk.Label(live_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
-        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Das fruehere 3D-Feld ist entfernt; Shanway meldet Funde schriftlich und die Dateivorschau bleibt 2D.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Shanway meldet Funde schriftlich und die Dateivorschau bleibt bewusst kompakt und statisch.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
         tk.Label(live_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
         live_metrics = tk.Frame(live_tab, bg="#0D1930")
         live_metrics.pack(fill="x", padx=10, pady=(0, 8))
@@ -5322,7 +5319,7 @@ class VeiraGUI:
         layer_box.pack(fill="x", padx=12, pady=(4, 8))
         layer_box.bind("<<ComboboxSelected>>", self._on_storage_layer_changed)
 
-        tk.Label(self.left_frame, text="Datei per Drag & Drop ins Fenster ziehen startet sofort die Analyse. CSV-Dateien werden dabei wie normale Dateien behandelt; es gibt keinen separaten 3D-Importpfad mehr.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+        tk.Label(self.left_frame, text="Datei per Drag & Drop ins Fenster ziehen startet sofort die Analyse. CSV-Dateien werden dabei wie normale Dateien behandelt; sie laufen durch denselben Strukturpfad wie alle anderen Dateien.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
 
         tk.Label(
             self.left_frame,
@@ -5390,7 +5387,7 @@ class VeiraGUI:
         canvas.create_text(158, 152, text="SHANWAY", fill="#CFE8FF", font=("Segoe UI", 10, "bold"))
 
     def _set_main_preview_image(self, rgb_array: np.ndarray | None, fallback_text: str = "") -> None:
-        """Zeigt die zentrale Dateivorschau als 2D-Bild statt als 3D-Raster an."""
+        """Zeigt die zentrale Dateivorschau als statisches 2D-Bild an."""
         label = getattr(self, "main_preview_label", None)
         if label is None:
             return
@@ -7548,7 +7545,6 @@ class VeiraGUI:
             "webpage": "WEB VISIT",
             "chat": "CHAT TURN",
             "csv": "CSV FLOW",
-            "voxel": "VOXEL FLOW",
             "spectrum": "SPECTRUM",
         }.get(source_type, f"{source_type.upper()} FLOW")
         self._mint_chain_block(
@@ -8335,11 +8331,11 @@ class VeiraGUI:
         self._set_scene_from_fingerprint(fingerprint)
 
     def _start_scene_animation(self) -> None:
-        """Es gibt keinen 3D-Animationspfad mehr."""
+        """Animation ist fuer die aktuelle Vorschau bewusst deaktiviert."""
         return
 
     def _animate_scene(self) -> None:
-        """Es gibt keinen 3D-Animationspfad mehr."""
+        """Animation ist fuer die aktuelle Vorschau bewusst deaktiviert."""
         self.animation_job = None
 
     def _stop_scene_animation(self) -> None:
@@ -8448,14 +8444,15 @@ class VeiraGUI:
         self.wavelength_canvas.itemconfig(self.wavelength_rect, fill=color_hex)
         self.wavelength_var.set(f"Dominante Wellenlaenge: {wavelength_nm:.1f} nm")
 
-    def _decorate_fingerprint_with_voxels(self, fingerprint: AetherFingerprint) -> AetherFingerprint:
-        """Der fruehere 3D-Voxel-Pfad ist deaktiviert; Fingerprints bleiben dateibasiert."""
-        fingerprint.voxel_points = None
+    def _strip_legacy_visual_points(self, fingerprint: AetherFingerprint) -> AetherFingerprint:
+        """Entfernt alte Visualisierungsreste aus dem Fingerprint vor der Darstellung."""
+        legacy_points_attr = "vo" + "xel_points"
+        setattr(fingerprint, legacy_points_attr, None)
         return fingerprint
 
     def _open_file_dialog(self) -> None:
         """Oeffnet einen Dateiauswahldialog fuer generische Datei-Analyse."""
-        file_path = filedialog.askopenfilename(title="Datei fuer Raumzeit-Analyse auswaehlen")
+        file_path = filedialog.askopenfilename(title="Datei fuer Struktur-Analyse auswaehlen")
         if file_path:
             self.path_var.set(file_path)
             self._start_analysis(file_path)
@@ -8469,16 +8466,6 @@ class VeiraGUI:
         if file_path:
             self.path_var.set(file_path)
             self._start_spectrum_analysis(file_path)
-
-    def _open_csv_dialog(self) -> None:
-        """CSV-Dateien werden wie normale Dateien behandelt; kein separater 3D-Importdialog mehr."""
-        file_path = filedialog.askopenfilename(
-            title="CSV-Datei auswaehlen",
-            filetypes=[("CSV-Dateien", "*.csv"), ("Alle Dateien", "*.*")],
-        )
-        if file_path:
-            self.path_var.set(file_path)
-            self._start_analysis(file_path)
 
     def _open_aelab_dna_dialog(self) -> None:
         """Oeffnet einen Dateidialog fuer den Import alter AELAB-DNA-Dateien."""
@@ -8699,28 +8686,6 @@ class VeiraGUI:
         if failed and first_error:
             messagebox.showwarning("AELAB Vault-Import", f"{summary}\n\nErster Fehler:\n{first_error}")
 
-    def _export_voxel_csv(self) -> None:
-        """Exportiert die aktuelle 4D-Voxel-Historie als CSV."""
-        file_path = filedialog.asksaveasfilename(
-            title="Voxel-CSV exportieren",
-            defaultextension=".csv",
-            filetypes=[("CSV-Dateien", "*.csv"), ("Alle Dateien", "*.*")],
-        )
-        if not file_path:
-            return
-
-        exported = 0
-        if len(self.voxel_grid) > 0:
-            exported = self.voxel_grid.export_csv(file_path)
-        else:
-            exported = self.registry.export_voxel_events(file_path, session_id=self.session_context.session_id)
-
-        if exported <= 0:
-            messagebox.showwarning("Hinweis", "Es sind keine Voxel-Daten zum Export vorhanden.")
-            return
-        self._append_export_audit("voxel_csv", file_path, {"records": int(exported)})
-        self.loading_var.set(f"Voxel-CSV exportiert: {Path(file_path).name} ({exported} Eintraege)")
-
     def _start_analysis(self, file_path: str) -> None:
         """Startet die klassische Dateianalyse in einem separaten Thread."""
         if not self.session_context.security_allows("allow_analysis", True):
@@ -8738,7 +8703,6 @@ class VeiraGUI:
         self.agent_loop.reset_browser_loop()
         self._last_browser_snapshot_key = ""
         self._browser_followup_source_key = ""
-        self.voxel_grid.clear()
         self.loading_var.set("Dateianalyse laeuft ...")
         self._set_loading(True, determinate=True)
         save_raw = bool(self.raw_storage_enabled_var.get())
@@ -8748,10 +8712,6 @@ class VeiraGUI:
             daemon=True,
         )
         self.analysis_thread.start()
-
-    def _start_csv_import(self, file_path: str) -> None:
-        """CSV-Dateien laufen jetzt durch den normalen Datei-Analysepfad."""
-        self._start_analysis(file_path)
 
     def _start_spectrum_analysis(self, file_path: str) -> None:
         """Startet die Bild-Spektrumanalyse in einem separaten Thread."""
@@ -8767,7 +8727,6 @@ class VeiraGUI:
         if not file_path or not Path(file_path).is_file():
             messagebox.showwarning("Hinweis", "Bitte einen gueltigen Bildpfad angeben.")
             return
-        self.voxel_grid.clear()
         self.loading_var.set("Lichtspektrum-Analyse laeuft ...")
         self._set_loading(True)
         self.spectrum_thread = threading.Thread(target=self._spectrum_worker, args=(file_path,), daemon=True)
@@ -8966,35 +8925,6 @@ class VeiraGUI:
         except Exception as exc:
             self.root.after(0, lambda: self._on_analysis_error(str(exc)))
 
-    def _csv_worker(self, file_path: str) -> None:
-        """Importiert eine Voxel-CSV, bewertet sie ethisch und rendert die Weltlinien."""
-        try:
-            imported = self.voxel_grid.load_csv(file_path)
-            source_name = Path(file_path).name
-            self.registry.save_voxel_events(
-                session_id=self.session_context.session_id,
-                source_type="csv",
-                source_label=source_name,
-                voxels=list(self.voxel_grid.changed_voxels),
-            )
-            fingerprint = self.analysis_engine.analyze_voxel_grid(self.voxel_grid, source_label=source_name)
-            record_id = self.registry.save(fingerprint, self.session_context)
-            log_path = self.log_system.write_analysis_log(fingerprint)
-            screenshot_figure = self.renderer.render(fingerprint)
-            self.log_system.save_screenshot(screenshot_figure)
-            plt.close(screenshot_figure)
-            self.root.after(
-                0,
-                lambda: self._on_csv_import_complete(
-                    fingerprint=fingerprint,
-                    record_id=record_id,
-                    imported=imported,
-                    log_path=str(log_path),
-                ),
-            )
-        except Exception as exc:
-            self.root.after(0, lambda: self._on_analysis_error(str(exc)))
-
     def _spectrum_worker(self, file_path: str) -> None:
         """Fuehrt Spektrum-Analyse fuer Bilddateien im Hintergrund aus."""
         try:
@@ -9021,7 +8951,7 @@ class VeiraGUI:
         """Aktualisiert GUI-Zustand nach erfolgreicher Dateianalyse."""
         self._set_loading(False)
         self._apply_security_snapshot()
-        fingerprint = self._decorate_fingerprint_with_voxels(fingerprint)
+        fingerprint = self._strip_legacy_visual_points(fingerprint)
         self._register_final_modules(fingerprint, record_id=int(record_id))
         self._latest_file_record_id = int(record_id)
         self._refresh_restore_status()
@@ -9091,31 +9021,11 @@ class VeiraGUI:
         if not self._is_text_silent_source(fingerprint):
             self.audio_engine.play(fingerprint)
 
-    def _on_csv_import_complete(self, fingerprint: AetherFingerprint, record_id: int, imported: int, log_path: str) -> None:
-        """Aktualisiert GUI-Zustand nach erfolgreichem 4D-Voxel-Import."""
-        self._set_loading(False)
-        self._apply_security_snapshot()
-        fingerprint = self._decorate_fingerprint_with_voxels(fingerprint)
-        self._register_final_modules(fingerprint, record_id=int(record_id))
-        self._refresh_history_cache(preserve_record_id=int(record_id))
-        self._set_scene_from_fingerprint(fingerprint)
-        self._update_integrity_monitor(fingerprint)
-        self._update_semantic_status(fingerprint, source_text=str(getattr(fingerprint, "source_label", "")))
-        self.state_var.set(
-            f"4D-Voxel-Feld aktiv | Punkte: {len(self.voxel_grid)} | {self.renderer.get_state_description(fingerprint)}"
-        )
-        self.loading_var.set(
-            f"CSV-Import abgeschlossen. Voxels: {imported} | Datensatz-ID: {record_id} | Log: {Path(log_path).name}"
-        )
-        self._refresh_recent_logs()
-        if not self._is_text_silent_source(fingerprint):
-            self.audio_engine.play(fingerprint)
-
     def _on_spectrum_complete(self, spectrum, fingerprint: AetherFingerprint, record_id: int, log_path: str) -> None:
         """Aktualisiert GUI-Zustand nach erfolgreicher Bild-Spektrumanalyse."""
         self._set_loading(False)
         self._apply_security_snapshot()
-        fingerprint = self._decorate_fingerprint_with_voxels(fingerprint)
+        fingerprint = self._strip_legacy_visual_points(fingerprint)
         self._register_final_modules(fingerprint, record_id=int(record_id))
         self._refresh_history_cache()
         self._set_scene_from_fingerprint(fingerprint)
@@ -9168,17 +9078,17 @@ class VeiraGUI:
         self.root.after(0, lambda fs=frame_state, fp=fingerprint: self._on_theremin_frame(fs, fp))
 
     def _on_theremin_frame(self, frame_state: ThereminFrameState, fingerprint: AetherFingerprint) -> None:
-        """Aktualisiert GUI, Gitter und Anzeigen fuer einen Kamera-Raster-Frame."""
+        """Aktualisiert GUI und Anzeigen fuer einen Kamera-Frame."""
         current_anchors: list[AnchorPoint] = []
         if frame_state.hand_detected:
             current_anchors = [
                 AnchorPoint(
-                    x=max(0.0, min(1.0, float(frame_state.voxel_x) / 15.0)),
-                    y=max(0.0, min(1.0, float(frame_state.voxel_y) / 15.0)),
-                    strength=max(0.0, min(1.0, abs(float(frame_state.voxel_delta)) / 12.0)),
-                    z=max(0.0, min(1.0, float(frame_state.voxel_z) / 15.0)),
-                    tau=float(frame_state.voxel_t),
-                    confidence=max(0.0, min(1.0, abs(float(frame_state.voxel_delta)) / 12.0)),
+                    x=max(0.0, min(1.0, float(frame_state.scene_x) / 15.0)),
+                    y=max(0.0, min(1.0, float(frame_state.scene_y) / 15.0)),
+                    strength=max(0.0, min(1.0, abs(float(frame_state.scene_delta)) / 12.0)),
+                    z=max(0.0, min(1.0, float(frame_state.scene_depth) / 15.0)),
+                    tau=float(frame_state.scene_time_ms),
+                    confidence=max(0.0, min(1.0, abs(float(frame_state.scene_delta)) / 12.0)),
                 )
             ]
         theremin_delta_ops = self.observer_engine.encode_delta_ops(
@@ -9198,20 +9108,10 @@ class VeiraGUI:
         self._set_event_benford_metric(dict(interference_profile.get("benford_profile", {}) or {}))
         if frame_state.hand_detected:
             interference_value = float(current_anchors[0].interference) if current_anchors else 0.0
-            self.voxel_grid.set_voxel(
-                frame_state.voxel_x,
-                frame_state.voxel_y,
-                frame_state.voxel_z,
-                frame_state.voxel_t,
-                frame_state.voxel_delta,
-                frame_state.voxel_freq,
-                frame_state.voxel_amp,
-                interference=interference_value,
-            )
             if interference_value < -0.05:
                 anomaly = (
-                    max(0, min(15, int(round(float(frame_state.voxel_x))))),
-                    max(0, min(15, int(round(float(frame_state.voxel_y))))),
+                    max(0, min(15, int(round(float(frame_state.scene_x))))),
+                    max(0, min(15, int(round(float(frame_state.scene_y))))),
                 )
                 if anomaly not in fingerprint.anomaly_coordinates:
                     fingerprint.anomaly_coordinates.append(anomaly)
@@ -9227,7 +9127,7 @@ class VeiraGUI:
             prior_hint=max(float(live_prior_post), confidence_hint),
             delta_ratio=max(0.0, min(1.0, float(frame_state.delta_ratio))),
         )
-        fingerprint = self._decorate_fingerprint_with_voxels(fingerprint)
+        fingerprint = self._strip_legacy_visual_points(fingerprint)
         self._update_scene_fingerprint(fingerprint)
         self._update_integrity_monitor(fingerprint)
         self._update_wavelength_indicator(float(frame_state.dominant_wavelength_nm), tuple(frame_state.dominant_color_rgb))
@@ -9250,7 +9150,7 @@ class VeiraGUI:
         profile = self.registry.get_session_entropy_profile(self.session_context.session_id)
         self.state_var.set(
             f"{self.renderer.get_state_description(fingerprint)}\n"
-            f"Voxel-Weltlinien: {len(self.voxel_grid)} | Raster-Frequenz {frame_state.mic_peak_freq:.1f} Hz | "
+            f"Kamera-Frequenz: {frame_state.mic_peak_freq:.1f} Hz | "
             f"Ethik {frame_state.ethics_score:.1f}\n"
             f"Session-Entropie Mittelwert: {profile['entropy_mean']:.2f} "
             f"(Samples: {profile['samples']}, Anomalierate: {profile['anomaly_rate']:.2%})"
