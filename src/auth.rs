@@ -1,15 +1,36 @@
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct UserRecord {
     pub username: String,
     pub salt_hex: String,
     pub password_hash_hex: String,
     pub created_at_epoch: u64,
+    #[serde(default = "default_role")]
+    pub role: String,
+    #[serde(default)]
+    pub user_settings: HashMap<String, String>,
+    #[serde(default)]
+    pub session_id: String,
+    #[serde(default)]
+    pub login_at_epoch: u64,
+    #[serde(default)]
+    pub live_session_key: String,
+    #[serde(default)]
+    pub live_session_fingerprint: String,
+    #[serde(default)]
+    pub session_seed: u64,
+    #[serde(default)]
+    pub raw_storage_key_hex: String,
+    #[serde(default)]
+    pub raw_storage_fingerprint: String,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
@@ -45,13 +66,30 @@ impl AuthStore {
             return Err("Nutzername existiert bereits.".to_owned());
         }
         let now = now_epoch();
-        let salt_hex = make_salt(&normalized, now);
+        let salt_hex = random_hex(16);
         let password_hash_hex = hash_password(&normalized, &salt_hex, password);
+        let role = if self.users.is_empty() {
+            "admin".to_owned()
+        } else {
+            "operator".to_owned()
+        };
         self.users.push(UserRecord {
             username: normalized,
             salt_hex,
             password_hash_hex,
             created_at_epoch: now,
+            role,
+            user_settings: HashMap::from([
+                ("security_mode".to_owned(), "local".to_owned()),
+                ("storage_model".to_owned(), "append_only".to_owned()),
+            ]),
+            session_id: String::new(),
+            login_at_epoch: 0,
+            live_session_key: String::new(),
+            live_session_fingerprint: String::new(),
+            session_seed: 0,
+            raw_storage_key_hex: String::new(),
+            raw_storage_fingerprint: String::new(),
         });
         self.save()?;
         Ok(())
@@ -69,7 +107,7 @@ impl AuthStore {
         if expected != user.password_hash_hex {
             return Err("Passwort ist ungueltig.".to_owned());
         }
-        Ok(user)
+        Ok(issue_session(user, password))
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -117,6 +155,43 @@ fn validate_password(password: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn issue_session(mut user: UserRecord, password: &str) -> UserRecord {
+    let login_at_epoch = now_epoch();
+    let nonce = random_hex(32);
+    let live_session_key = sha256_hex(
+        format!(
+            "{}|{}|{}|{}|{}",
+            user.username, user.password_hash_hex, user.salt_hex, login_at_epoch, nonce
+        )
+        .as_bytes(),
+    );
+    let live_session_fingerprint = live_session_key[..24.min(live_session_key.len())].to_ascii_uppercase();
+    let raw_storage_key_hex = sha256_hex(format!("{}|{}|{}|storage", user.username, user.salt_hex, password).as_bytes());
+    let raw_storage_fingerprint = raw_storage_key_hex[..24.min(raw_storage_key_hex.len())].to_ascii_uppercase();
+    let session_seed = derive_session_seed(&user.username, &user.salt_hex, &nonce);
+    user.session_id = format!("session-{}", random_hex(12));
+    user.login_at_epoch = login_at_epoch;
+    user.live_session_key = live_session_key;
+    user.live_session_fingerprint = live_session_fingerprint;
+    user.session_seed = session_seed;
+    user.raw_storage_key_hex = raw_storage_key_hex;
+    user.raw_storage_fingerprint = raw_storage_fingerprint;
+    user
+}
+
+fn derive_session_seed(username: &str, salt_hex: &str, nonce: &str) -> u64 {
+    let digest = Sha256::digest(format!("{username}|{salt_hex}|{nonce}|seed").as_bytes());
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&digest[..8]);
+    u64::from_le_bytes(bytes)
+}
+
+fn random_hex(byte_len: usize) -> String {
+    let mut bytes = vec![0u8; byte_len];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -124,19 +199,34 @@ fn now_epoch() -> u64 {
         .unwrap_or(0)
 }
 
-fn make_salt(username: &str, timestamp: u64) -> String {
-    let seed = format!("{username}:{timestamp}:aether-rust-shell");
-    let mut hasher = Sha256::new();
-    hasher.update(seed.as_bytes());
-    format!("{:x}", hasher.finalize())
+fn hash_password(username: &str, salt_hex: &str, password: &str) -> String {
+    sha256_hex(format!("{username}|{salt_hex}|{password}|aether-rust-shell").as_bytes())
 }
 
-fn hash_password(username: &str, salt_hex: &str, password: &str) -> String {
+fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(username.as_bytes());
-    hasher.update(b"|");
-    hasher.update(salt_hex.as_bytes());
-    hasher.update(b"|");
-    hasher.update(password.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hasher.update(bytes);
+    hasher.finalize().iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn default_role() -> String {
+    "operator".to_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authenticate_issues_live_session_fields() {
+        let path = PathBuf::from("data").join("rust_shell").join("test_users_auth.json");
+        let _ = fs::remove_file(&path);
+        let mut store = AuthStore::load_from(path.clone());
+        store.register("tester", "supersecret").unwrap();
+        let user = store.authenticate("tester", "supersecret").unwrap();
+        assert!(!user.session_id.is_empty());
+        assert!(!user.live_session_key.is_empty());
+        assert!(user.session_seed > 0);
+        let _ = fs::remove_file(&path);
+    }
 }

@@ -219,6 +219,32 @@ Damit entsteht eine praktische Form von Selbstbeobachtung im engen technischen S
 
 ## 11. Rekursive Reflexion und kontinuierliches Lernen
 
+## 11a. Rust-Shell: Session-Isolation und Consent-gebundener Relay-Pfad
+
+Der neuere Rust-Shell-Pfad fuehrt eine sichtbare Trennung zwischen lokaler Session, lokalem Speicherpfad und optionalem Netzpfad ein.
+
+Pro erfolgreichem Login werden neue Session-Merkmale erzeugt:
+
+- `session_id`
+- `live_session_key`
+- `live_session_fingerprint`
+- `session_seed`
+- `raw_storage_key_hex`
+- `raw_storage_fingerprint`
+
+Methodisch ist dabei wichtig, dass die Shell nicht mit einem statischen, nach aussen wiederverwendeten Sitzungsschluessel arbeitet. Die Session-Spur ist lokal und kurzlebig, waehrend der Speicherpfad separat markiert bleibt. Damit wird die lokale Rekonstruktions- und Delta-Arbeit nicht mit einem oeffentlichen oder dauerhaft identischen Netzschluessel vermischt.
+
+Zusätzlich fuehrt die Rust-Shell einen optionalen Chat-Relay-Pfad ein. Dieser Pfad ist:
+
+- standardmaessig fail-closed
+- nur nach expliziter URL- und Secret-Konfiguration aktiv
+- fuer Publish und Sync jeweils consent-gebunden
+- von Datei-, Delta- und Vault-Rohdaten getrennt
+
+Der Relay-Pfad ist bewusst kleiner als ein vollstaendiges P2P-Mesh. Er ist ein auditiertes Zwischenstueck: verschluesselte Chat-Ereignisse koennen lokal erzeugt, optional veroeffentlicht und spaeter wieder eingezogen werden, ohne dass der lokale Delta-Vault, der Observer-Zustand oder rohe Dateien dadurch in den Netzpfad fallen.
+
+Damit bleibt die Grundregel erhalten: Lokale Struktur- und Rekonstruktionsarbeit bleibt lokal; nur der ausdruecklich freigegebene Kommunikationspfad verlaesst die Shell.
+
 Die Rekursionsstufe von Shanway bleibt absichtlich begrenzt. Die Implementierung stoppt spaetestens bei einer festen Tiefe und frueher, wenn:
 
 - der Delta-Gewinn unter eine kleine Schwelle faellt

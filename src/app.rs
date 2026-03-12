@@ -1,6 +1,7 @@
 use crate::aef::{AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::browser::{BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext};
+use crate::chat_sync::{ChatRelayClient, ChatRelayConfig, ChatRelayEnvelope, ChatRelayStateStore};
 use crate::pack::{AutoPackGenerator, OfflineCacheManager, OfflinePrepRequest, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
 use crate::public_ttd::{
     pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation, PublicTtdMetrics,
@@ -11,6 +12,7 @@ use crate::shanway::{
 };
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
 use crate::theory_of_mind::{ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope, ProcessedSignal, ToMOutputAdapter};
+use chrono::Utc;
 use eframe::egui::{self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2};
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -43,6 +45,8 @@ enum ConsentAction {
     BrowserSearch { query: String },
     ShareStableTtd { signed: bool },
     SyncPublicTtd,
+    ChatRelayPublishBatch { envelopes: Vec<QueuedRelayEnvelope> },
+    ChatRelayFetch,
 }
 
 #[derive(Debug, Clone)]
@@ -50,6 +54,14 @@ struct ConsentDialogState {
     title: String,
     body: String,
     action: ConsentAction,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedRelayEnvelope {
+    room_kind: String,
+    room_name: String,
+    author: String,
+    body: String,
 }
 
 #[derive(Debug, Clone)]
@@ -109,6 +121,13 @@ pub struct AetherRustShell {
     offline_cache_manager: OfflineCacheManager,
     public_ttd_pool: PublicTtdPoolStore,
     public_ttd_transport: PublicTtdTransport,
+    chat_relay_store: ChatRelayStateStore,
+    chat_relay_client: ChatRelayClient,
+    chat_relay_config: ChatRelayConfig,
+    chat_relay_base_url_input: String,
+    chat_relay_secret_input: String,
+    chat_relay_node_id_input: String,
+    relay_status_line: String,
     consent_dialog: Option<ConsentDialogState>,
 }
 
@@ -133,6 +152,19 @@ impl AetherRustShell {
         let offline_cache_manager = OfflineCacheManager::new();
         let public_ttd_pool = PublicTtdPoolStore::new_default();
         let public_ttd_transport = PublicTtdTransport::new_default();
+        let chat_relay_store = ChatRelayStateStore::new_default();
+        let chat_relay_config = ChatRelayStateStore::load_default().unwrap_or_default();
+        let chat_relay_client = ChatRelayClient::new(6.0);
+        let relay_status_line = if chat_relay_config.base_url.trim().is_empty()
+            || chat_relay_config.shared_secret.trim().is_empty()
+        {
+            "Chat-Relay bleibt lokal / fail-closed, bis URL und Secret gesetzt sind.".to_owned()
+        } else {
+            format!(
+                "Chat-Relay bereit: {} @ {}",
+                chat_relay_config.node_id, chat_relay_config.base_url
+            )
+        };
         Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -172,6 +204,13 @@ impl AetherRustShell {
             offline_cache_manager,
             public_ttd_pool,
             public_ttd_transport,
+            chat_relay_store,
+            chat_relay_client,
+            chat_relay_config: chat_relay_config.clone(),
+            chat_relay_base_url_input: chat_relay_config.base_url.clone(),
+            chat_relay_secret_input: chat_relay_config.shared_secret.clone(),
+            chat_relay_node_id_input: chat_relay_config.node_id.clone(),
+            relay_status_line,
             consent_dialog: None,
         }
     }
@@ -455,6 +494,191 @@ impl AetherRustShell {
         }
     }
 
+    fn persist_chat_relay_config(&mut self) -> Result<(), String> {
+        let node_id = if self.chat_relay_node_id_input.trim().is_empty() {
+            self.chat_relay_config.node_id.clone()
+        } else {
+            self.chat_relay_node_id_input.trim().to_owned()
+        };
+        self.chat_relay_node_id_input = node_id.clone();
+        self.chat_relay_config = ChatRelayConfig {
+            base_url: self.chat_relay_base_url_input.trim().to_owned(),
+            shared_secret: self.chat_relay_secret_input.trim().to_owned(),
+            node_id,
+            last_event_id: self.chat_relay_config.last_event_id,
+        };
+        self.chat_relay_store.save(&self.chat_relay_config)?;
+        self.relay_status_line = if self.chat_relay_config.base_url.trim().is_empty()
+            || self.chat_relay_config.shared_secret.trim().is_empty()
+        {
+            "Chat-Relay lokal gespeichert, aber weiter fail-closed deaktiviert.".to_owned()
+        } else {
+            format!(
+                "Chat-Relay gespeichert: {} @ {}",
+                self.chat_relay_config.node_id, self.chat_relay_config.base_url
+            )
+        };
+        Ok(())
+    }
+
+    fn probe_chat_relay_health(&mut self) {
+        if let Err(err) = self.persist_chat_relay_config() {
+            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            return;
+        }
+        if self.chat_relay_config.base_url.trim().is_empty() {
+            self.relay_status_line = "Chat-Relay bleibt lokal / fail-closed. Keine URL gesetzt.".to_owned();
+            return;
+        }
+        match self.chat_relay_client.health(&self.chat_relay_config.base_url) {
+            Ok(payload) => {
+                let status = payload
+                    .get("status")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("ok");
+                self.relay_status_line = format!(
+                    "Chat-Relay erreichbar: {} | Node {}",
+                    status, self.chat_relay_config.node_id
+                );
+                self.append_log(self.relay_status_line.clone());
+            }
+            Err(err) => {
+                self.relay_status_line = format!("Chat-Relay-Test fehlgeschlagen: {err}");
+            }
+        }
+    }
+
+    fn publish_chat_relay_batch(&mut self, envelopes: Vec<QueuedRelayEnvelope>) {
+        if envelopes.is_empty() {
+            self.status_line = "Kein Relay-Event zum Senden vorhanden.".to_owned();
+            return;
+        }
+        if let Err(err) = self.persist_chat_relay_config() {
+            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            return;
+        }
+        if self.chat_relay_config.base_url.trim().is_empty() || self.chat_relay_config.shared_secret.trim().is_empty() {
+            self.status_line = "Chat-Relay bleibt fail-closed: URL oder Secret fehlt.".to_owned();
+            return;
+        }
+        let mut last_event_id = self.chat_relay_config.last_event_id;
+        let mut sent = 0usize;
+        let mut errors = Vec::new();
+        for draft in envelopes {
+            let envelope = ChatRelayEnvelope {
+                room_kind: draft.room_kind,
+                room_name: draft.room_name,
+                author: draft.author,
+                body: draft.body,
+                created_at: Utc::now().to_rfc3339(),
+            };
+            match self.chat_relay_client.publish(&self.chat_relay_config, &envelope) {
+                Ok(event_id) => {
+                    sent += 1;
+                    last_event_id = last_event_id.max(event_id);
+                }
+                Err(err) => errors.push(err),
+            }
+        }
+        self.chat_relay_config.last_event_id = last_event_id;
+        let _ = self.chat_relay_store.save(&self.chat_relay_config);
+        if errors.is_empty() {
+            self.status_line = format!("Chat-Relay: {} Ereignis(se) gesendet.", sent);
+            self.relay_status_line = format!(
+                "Chat-Relay aktiv: letzter Event {}",
+                self.chat_relay_config.last_event_id
+            );
+            self.append_log(self.status_line.clone());
+        } else {
+            self.status_line = format!(
+                "Chat-Relay nur teilweise erfolgreich: {} ok | {} Fehler",
+                sent,
+                errors.len()
+            );
+            self.relay_status_line = errors.join(" | ");
+        }
+    }
+
+    fn sync_chat_relay(&mut self) {
+        if let Err(err) = self.persist_chat_relay_config() {
+            self.status_line = format!("Relay-Konfiguration konnte nicht gespeichert werden: {err}");
+            return;
+        }
+        if self.chat_relay_config.base_url.trim().is_empty() || self.chat_relay_config.shared_secret.trim().is_empty() {
+            self.status_line = "Chat-Relay bleibt fail-closed: URL oder Secret fehlt.".to_owned();
+            return;
+        }
+        match self.chat_relay_client.fetch(&self.chat_relay_config) {
+            Ok(events) => {
+                let mut applied = 0usize;
+                let mut last_event_id = self.chat_relay_config.last_event_id;
+                for (event, envelope) in events {
+                    last_event_id = last_event_id.max(event.event_id);
+                    if event.origin_node == self.chat_relay_config.node_id {
+                        continue;
+                    }
+                    self.route_relay_event(envelope);
+                    applied += 1;
+                }
+                self.chat_relay_config.last_event_id = last_event_id;
+                let _ = self.chat_relay_store.save(&self.chat_relay_config);
+                self.status_line = format!(
+                    "Chat-Relay-Sync abgeschlossen: {} neue Ereignisse.",
+                    applied
+                );
+                self.relay_status_line = format!(
+                    "Chat-Relay aktiv: letzter Event {}",
+                    self.chat_relay_config.last_event_id
+                );
+                self.append_log(self.status_line.clone());
+            }
+            Err(err) => {
+                self.status_line = format!("Chat-Relay-Sync fehlgeschlagen: {err}");
+            }
+        }
+    }
+
+    fn route_relay_event(&mut self, envelope: ChatRelayEnvelope) {
+        let Some(username) = self.current_username() else {
+            return;
+        };
+        match envelope.room_kind.as_str() {
+            "private" => {
+                let partner = if envelope.author.eq_ignore_ascii_case(&username) {
+                    if envelope.room_name.trim().is_empty() {
+                        "Kontakt".to_owned()
+                    } else {
+                        envelope.room_name.clone()
+                    }
+                } else {
+                    envelope.author.clone()
+                };
+                let thread = self.state_store.private_thread(&username, &partner);
+                push_message_if_new(&mut thread.messages, envelope.author, envelope.body);
+            }
+            "group" => {
+                let room_name = if envelope.room_name.trim().is_empty() {
+                    "Team".to_owned()
+                } else {
+                    envelope.room_name.clone()
+                };
+                let room = self.state_store.group_room(&username, &room_name);
+                push_message_if_new(&mut room.messages, envelope.author, envelope.body);
+            }
+            "shanway" => {
+                let room_name = if envelope.room_name.trim().is_empty() {
+                    "Shanway Mesh".to_owned()
+                } else {
+                    envelope.room_name.clone()
+                };
+                let room = self.state_store.group_room(&username, &room_name);
+                push_message_if_new(&mut room.messages, envelope.author, envelope.body);
+            }
+            _ => {}
+        }
+        let _ = self.state_store.save();
+    }
+
     fn append_log(&mut self, message: impl Into<String>) {
         self.activity_log.push(message.into());
         if self.activity_log.len() > 64 {
@@ -533,6 +757,11 @@ impl AetherRustShell {
             ui.label(RichText::new("Sicherheitsfilter: aktiv").color(Color32::LIGHT_GREEN));
             ui.label(RichText::new("Netzpfad: standardmaessig aus").color(Color32::LIGHT_YELLOW));
             ui.label(self.mind_model.observer_status(self.observer_id));
+            if let Some(user) = &self.current_user {
+                ui.label(format!("Live-Session: {}", user.session_id));
+                ui.label(format!("Session-Key-Fingerprint: {}", user.live_session_fingerprint));
+                ui.label(format!("Storage-Key-Fingerprint: {}", user.raw_storage_fingerprint));
+            }
             let pack_count = self
                 .pack_registry
                 .read()
@@ -552,6 +781,8 @@ impl AetherRustShell {
                 "Public-TTD-Netz: {}",
                 if self.public_ttd_transport.is_enabled() { "aktiv" } else { "aus / fail-closed" }
             ));
+            ui.label(format!("Chat-Relay-Node: {}", self.chat_relay_config.node_id));
+            ui.label(&self.relay_status_line);
             ui.separator();
             if let Some(file) = &self.current_file {
                 ui.label(RichText::new("Aktive Datei").strong());
@@ -1103,13 +1334,56 @@ impl AetherRustShell {
                             ConsentAction::BrowserSearch { query } => self.run_browser_search(&query),
                             ConsentAction::ShareStableTtd { signed } => self.share_current_ttd(signed),
                             ConsentAction::SyncPublicTtd => self.sync_public_ttd(),
+                            ConsentAction::ChatRelayPublishBatch { envelopes } => self.publish_chat_relay_batch(envelopes),
+                            ConsentAction::ChatRelayFetch => self.sync_chat_relay(),
                         }
                     }
                 });
             });
     }
 
+    fn ui_chat_relay_controls(&mut self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.label(RichText::new("Chat-Relay").strong());
+            ui.label("Optionaler Internet-Relay-Pfad. Ohne URL und Secret bleibt alles lokal und fail-closed.");
+            ui.horizontal(|ui| {
+                ui.label("Relay URL");
+                ui.add(TextEdit::singleline(&mut self.chat_relay_base_url_input).desired_width(260.0));
+                if ui.button("Speichern").clicked() {
+                    match self.persist_chat_relay_config() {
+                        Ok(()) => {
+                            self.status_line = "Chat-Relay-Konfiguration gespeichert.".to_owned();
+                            self.append_log(self.status_line.clone());
+                        }
+                        Err(err) => {
+                            self.status_line = format!("Chat-Relay-Konfiguration fehlgeschlagen: {err}");
+                        }
+                    }
+                }
+                if ui.button("Testen").clicked() {
+                    self.probe_chat_relay_health();
+                }
+                if ui.button("Syncen").clicked() {
+                    self.queue_consent(
+                        "Chat-Relay syncen",
+                        "Neue verschluesselte Relay-Ereignisse lokal abrufen und in die Chat-Raeume integrieren? Default bleibt Nein.",
+                        ConsentAction::ChatRelayFetch,
+                    );
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label("Shared Secret");
+                ui.add(TextEdit::singleline(&mut self.chat_relay_secret_input).password(true).desired_width(220.0));
+                ui.label("Node");
+                ui.add(TextEdit::singleline(&mut self.chat_relay_node_id_input).desired_width(220.0));
+            });
+            ui.label(&self.relay_status_line);
+        });
+    }
+
     fn ui_chats_tab(&mut self, ui: &mut egui::Ui) {
+        self.ui_chat_relay_controls(ui);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             for (tab, label) in [
                 (ChatTab::Private, "Einzelchat"),
@@ -1167,18 +1441,48 @@ impl AetherRustShell {
             }
         });
         ui.add(TextEdit::multiline(&mut self.private_message_input).desired_rows(3).hint_text("Nachricht eingeben"));
-        if ui.button("Senden").clicked() {
-            let body = self.private_message_input.trim().to_owned();
-            if !body.is_empty() {
-                let thread = self.state_store.private_thread(&username, &self.selected_private_partner);
-                thread.messages.push(ChatMessage {
-                    author: username.clone(),
-                    body,
-                });
-                let _ = self.state_store.save();
-                self.private_message_input.clear();
+        ui.horizontal(|ui| {
+            if ui.button("Senden").clicked() {
+                let body = self.private_message_input.trim().to_owned();
+                if !body.is_empty() {
+                    let thread = self.state_store.private_thread(&username, &self.selected_private_partner);
+                    thread.messages.push(ChatMessage {
+                        author: username.clone(),
+                        body,
+                    });
+                    let _ = self.state_store.save();
+                    self.private_message_input.clear();
+                }
             }
-        }
+            if ui.button("Senden + Relay").clicked() {
+                let body = self.private_message_input.trim().to_owned();
+                if !body.is_empty() {
+                    let partner = self.selected_private_partner.clone();
+                    let thread = self.state_store.private_thread(&username, &partner);
+                    thread.messages.push(ChatMessage {
+                        author: username.clone(),
+                        body: body.clone(),
+                    });
+                    let _ = self.state_store.save();
+                    self.private_message_input.clear();
+                    self.queue_consent(
+                        "Private Nachricht ins Relay geben",
+                        format!(
+                            "Die Nachricht wird verschluesselt als Relay-Ereignis veroeffentlicht.\nKontakt: {}\nDefault bleibt Nein.",
+                            partner
+                        ),
+                        ConsentAction::ChatRelayPublishBatch {
+                            envelopes: vec![QueuedRelayEnvelope {
+                                room_kind: "private".to_owned(),
+                                room_name: partner,
+                                author: username.clone(),
+                                body,
+                            }],
+                        },
+                    );
+                }
+            }
+        });
     }
 
     fn ui_group_chat(&mut self, ui: &mut egui::Ui) {
@@ -1219,18 +1523,48 @@ impl AetherRustShell {
             }
         });
         ui.add(TextEdit::multiline(&mut self.group_message_input).desired_rows(3).hint_text("Gruppennachricht eingeben"));
-        if ui.button("In Gruppe senden").clicked() {
-            let body = self.group_message_input.trim().to_owned();
-            if !body.is_empty() {
-                let room = self.state_store.group_room(&username, &self.selected_group_name);
-                room.messages.push(ChatMessage {
-                    author: username.clone(),
-                    body,
-                });
-                let _ = self.state_store.save();
-                self.group_message_input.clear();
+        ui.horizontal(|ui| {
+            if ui.button("In Gruppe senden").clicked() {
+                let body = self.group_message_input.trim().to_owned();
+                if !body.is_empty() {
+                    let room = self.state_store.group_room(&username, &self.selected_group_name);
+                    room.messages.push(ChatMessage {
+                        author: username.clone(),
+                        body,
+                    });
+                    let _ = self.state_store.save();
+                    self.group_message_input.clear();
+                }
             }
-        }
+            if ui.button("Gruppe + Relay").clicked() {
+                let body = self.group_message_input.trim().to_owned();
+                if !body.is_empty() {
+                    let room_name = self.selected_group_name.clone();
+                    let room = self.state_store.group_room(&username, &room_name);
+                    room.messages.push(ChatMessage {
+                        author: username.clone(),
+                        body: body.clone(),
+                    });
+                    let _ = self.state_store.save();
+                    self.group_message_input.clear();
+                    self.queue_consent(
+                        "Gruppennachricht ins Relay geben",
+                        format!(
+                            "Die Gruppennachricht wird verschluesselt fuer den Raum '{}' veroeffentlicht.\nDefault bleibt Nein.",
+                            room_name
+                        ),
+                        ConsentAction::ChatRelayPublishBatch {
+                            envelopes: vec![QueuedRelayEnvelope {
+                                room_kind: "group".to_owned(),
+                                room_name,
+                                author: username.clone(),
+                                body,
+                            }],
+                        },
+                    );
+                }
+            }
+        });
     }
 
     fn ui_shanway_chat(&mut self, ui: &mut egui::Ui) {
@@ -1250,7 +1584,13 @@ impl AetherRustShell {
             }
         });
         ui.add(TextEdit::multiline(&mut self.shanway_message_input).desired_rows(4).hint_text("Frage an Shanway"));
-        if ui.button("An Shanway senden").clicked() {
+        let mut send_local = false;
+        let mut send_relay = false;
+        ui.horizontal(|ui| {
+            send_local = ui.button("An Shanway senden").clicked();
+            send_relay = ui.button("An Shanway senden + Relay").clicked();
+        });
+        if send_local || send_relay {
             let prompt = self.shanway_message_input.trim().to_owned();
             if !prompt.is_empty() {
                 let active_signal = self
@@ -1288,13 +1628,35 @@ impl AetherRustShell {
                 let shanway_thread = self.state_store.private_thread(&username, "Shanway");
                 shanway_thread.messages.push(ChatMessage {
                     author: username.clone(),
-                    body: prompt,
+                    body: prompt.clone(),
                 });
                 shanway_thread.messages.push(ChatMessage {
                     author: "Shanway".to_owned(),
-                    body: reply,
+                    body: reply.clone(),
                 });
                 let _ = self.state_store.save();
+                if send_relay {
+                    self.queue_consent(
+                        "Shanway-Dialog ins Relay geben",
+                        "Prompt und strukturelle Shanway-Antwort werden verschluesselt in den Shanway-Raum gelegt. Default bleibt Nein.",
+                        ConsentAction::ChatRelayPublishBatch {
+                            envelopes: vec![
+                                QueuedRelayEnvelope {
+                                    room_kind: "shanway".to_owned(),
+                                    room_name: "Shanway".to_owned(),
+                                    author: username.clone(),
+                                    body: prompt,
+                                },
+                                QueuedRelayEnvelope {
+                                    room_kind: "shanway".to_owned(),
+                                    room_name: "Shanway".to_owned(),
+                                    author: "Shanway".to_owned(),
+                                    body: reply,
+                                },
+                            ],
+                        },
+                    );
+                }
                 self.shanway_message_input.clear();
             }
         }
@@ -1491,6 +1853,35 @@ fn map_text_signal_to_comprehension(prompt: &str) -> ComprehensionSignal {
         crate::theory_of_mind::TextSignal::AlreadyFamiliar => ComprehensionSignal::AlreadyKnew,
         crate::theory_of_mind::TextSignal::Understood => ComprehensionSignal::Understood,
         crate::theory_of_mind::TextSignal::Neutral => ComprehensionSignal::Unknown,
+    }
+}
+
+fn trimmed_at_boundary(source: &str, limit: usize) -> String {
+    let normalized = source.trim();
+    if normalized.is_empty() || limit == 0 {
+        return String::new();
+    }
+    let mut output = String::new();
+    for (index, ch) in normalized.chars().enumerate() {
+        if index >= limit {
+            let trimmed = output
+                .trim_end_matches(|candidate: char| candidate.is_whitespace() || matches!(candidate, ',' | '.' | ';' | ':' | '!' | '?'))
+                .to_owned();
+            return format!("{trimmed}...");
+        }
+        output.push(ch);
+    }
+    output
+}
+
+fn push_message_if_new(messages: &mut Vec<ChatMessage>, author: String, body: String) {
+    let is_duplicate = messages
+        .iter()
+        .rev()
+        .take(12)
+        .any(|message| message.author == author && message.body == body);
+    if !is_duplicate {
+        messages.push(ChatMessage { author, body });
     }
 }
 

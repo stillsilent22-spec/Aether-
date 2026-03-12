@@ -49,6 +49,23 @@ Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobacht
 
 Das Programm ist damit weder nur Visualisierung noch nur Analyse noch nur Assistenz. Es verbindet diese Ebenen in einem gemeinsamen lokalen Regelraum.
 
+## Rust-Shell: Relay und Live-Session-Keys
+
+Der aktuelle Rust-Shell-Pfad fuehrt drei Sicherheits- und Koordinationsideen sichtbar zusammen:
+
+- lokale Anmeldung erzeugt pro Login einen neuen Live-Session-Key und einen separaten Storage-Key-Fingerprint
+- Chat-Relay bleibt standardmaessig fail-closed und wird erst mit expliziter URL- und Secret-Konfiguration aktiv
+- Netzschritte fuer Browser-Probe, Public-TTD und Chat-Relay laufen nur nach explizitem Consent
+
+Wichtig dabei:
+
+- der Live-Session-Key wird nicht als rekonstruierbarer Langzeitschluessel nach aussen gegeben
+- der Storage-Key-Fingerprint ist nur eine lokale Kontrollspur, kein exportierter Rohschluessel
+- ohne Relay-URL und Shared Secret bleibt der gesamte Chat-Pfad lokal
+- Relay-Nachrichten werden nur als verschluesselte Ereignisse behandelt; Dateien, Deltas und Rohinhalte des lokalen Vaults werden dadurch nicht freigegeben
+
+Der Rust-Shell-Pfad ersetzt damit noch nicht die gesamte Python-Codebasis, bildet aber bereits einen eigenstaendigen, auditierten UI-, Session-, Consent- und Strukturpfad fuer Datei-, Browser-, Public-TTD- und Chat-Arbeit.
+
 ## Was Aether anders macht als herkoemmliche Software
 
 Herkoemmliche Werkzeuge trennen diese Bereiche meist strikt:
