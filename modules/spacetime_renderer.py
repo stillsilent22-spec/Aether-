@@ -1,4 +1,4 @@
-"""3D-Raumzeit-Visualisierung fuer AetherFingerprints."""
+"""2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
 
 from __future__ import annotations
 
@@ -1215,12 +1215,40 @@ class SpacetimeRenderer:
 
     def render(self, fingerprint: AetherFingerprint) -> Figure:
         """
-        Rendert eine statische Momentaufnahme der dynamischen Szene.
+        Rendert eine statische 2D-Dateivorschau fuer Logs und Screenshots.
 
         Args:
             fingerprint: Ergebnisobjekt der Analyse.
         """
-        return self.create_dynamic_scene(fingerprint).figure
+        source_label = str(getattr(fingerprint, "source_label", "") or "")
+        preview = self.build_low_res_miniature(source_label, fingerprint=fingerprint, size=192)
+        figure = plt.Figure(figsize=(8, 5), facecolor="#050816")
+        ax = figure.add_subplot(111)
+        ax.set_facecolor("#050816")
+        ax.imshow(np.asarray(preview, dtype=np.uint8))
+        ax.set_xticks([])
+        ax.set_yticks([])
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        title = Path(source_label).name or source_label or "Aether-Dateivorschau"
+        ax.set_title(title, color="#DDF9FF", pad=12)
+        metrics_text = (
+            f"Typ: {str(getattr(fingerprint, 'source_type', 'file') or 'file')}  |  "
+            f"Delta: {float(getattr(fingerprint, 'delta_ratio', 0.0) or 0.0):.3f}  |  "
+            f"H_lambda: {float(getattr(fingerprint, 'h_lambda', 0.0) or 0.0):.3f}  |  "
+            f"I_obs: {float(getattr(fingerprint, 'observer_mutual_info', 0.0) or 0.0):.3f}"
+        )
+        ax.text(
+            0.5,
+            -0.06,
+            metrics_text,
+            transform=ax.transAxes,
+            ha="center",
+            va="top",
+            color="#CFE8FF",
+            fontsize=8.5,
+        )
+        return figure
 
     def get_state_description(self, fingerprint: AetherFingerprint) -> str:
         """
@@ -1230,9 +1258,9 @@ class SpacetimeRenderer:
             fingerprint: Ergebnisobjekt der Analyse.
         """
         if fingerprint.verdict == "RECURSIVE":
-            return "Rekursive Selbstbeobachtung aktiv - Goldresonanz stabil"
+            return "Rekursive Selbstbeobachtung aktiv - Strukturkonvergenz stabil"
         if fingerprint.verdict == "CRITICAL":
-            return "Kritische Raumzeit-Kruemmung - Anomalie bestaetigt"
+            return "Kritischer Strukturzustand - Anomalie bestaetigt"
         if fingerprint.verdict == "SUSPICIOUS" or fingerprint.anomaly_coordinates:
-            return "Lokale Verwerfungen erkannt - Analyse empfohlen"
-        return "Symmetrisches Feld - keine Anomalien erkannt"
+            return "Lokale Strukturbrueche erkannt - Analyse empfohlen"
+        return "Stabile Dateistruktur - keine dominante Anomalie erkannt"

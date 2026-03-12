@@ -2,6 +2,7 @@ build/
 build_repack/
 build_repack2/
 dist/
+target/
 __pycache__/
 *.pyc
 *.pyo

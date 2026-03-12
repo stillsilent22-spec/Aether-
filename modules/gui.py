@@ -127,7 +127,7 @@ class VeiraGUI:
         self.ae_interpreter = ae_interpreter or AetherAnchorInterpreter(self.ae_vault)
 
         self.root = TkinterDnD.Tk() if TKDND_AVAILABLE and TkinterDnD is not None else tk.Tk()
-        self.root.title("Aether - Raumzeit-Analyse")
+        self.root.title("Aether - Strukturanalyse")
         self.root.geometry("1560x900")
         self.root.minsize(1260, 760)
         self.root.configure(bg="#0A0F2E")
@@ -140,6 +140,10 @@ class VeiraGUI:
         self.history_status_var = tk.StringVar(value="Historie: keine Eintraege")
         self.honeypot_var = tk.StringVar(value="Diagnostik: ruhig")
         self.state_var = tk.StringVar(value="Symmetrisches Feld - keine Anomalien erkannt")
+        self.preview_title_var = tk.StringVar(value="Keine Datei geladen")
+        self.preview_context_var = tk.StringVar(value="Dateivorschau: warte auf Drag & Drop")
+        self.preview_relation_var = tk.StringVar(value="Screen / Hintergrund: noch kein Bezug aktiv")
+        self.preview_register_var = tk.StringVar(value="Register: keine Auswahl")
         self.semantic_state_var = tk.StringVar(value="Semantik: --")
         self.beauty_state_var = tk.StringVar(value="Schoenheit: --")
         self.graph_region_var = tk.StringVar(value="Graph-Region: --")
@@ -232,6 +236,7 @@ class VeiraGUI:
         self.voice_sentence_vars = [tk.StringVar(value=""), tk.StringVar(value=""), tk.StringVar(value="")]
         self.chat_input_var = tk.StringVar(value="")
         self.chat_channel_var = tk.StringVar(value="# global")
+        self.chat_scope_var = tk.StringVar(value="private")
         self.chat_status_var = tk.StringVar(value="Shanway bereit | lokal | ohne LLM")
         self.chat_reply_var = tk.StringVar(value="Shanway: --")
         self.chat_semantic_var = tk.StringVar(value="Semantik: -- | Schoenheit: --")
@@ -307,6 +312,12 @@ class VeiraGUI:
         self.current_canvas: FigureCanvasTkAgg | None = None
         self.current_figure = None
         self.current_fingerprint: AetherFingerprint | None = None
+        self.main_preview_label: tk.Label | None = None
+        self.main_preview_image_ref = None
+        self.center_file_text: tk.Text | None = None
+        self.center_process_text: tk.Text | None = None
+        self.center_anchor_text: tk.Text | None = None
+        self.shanway_face_canvas: tk.Canvas | None = None
         self.ae_anchor_text: tk.Text | None = None
         self.ae_vault_text: tk.Text | None = None
         self.ae_stop_button: tk.Button | None = None
@@ -376,6 +387,8 @@ class VeiraGUI:
         self.learning_curve_canvas: tk.Canvas | None = None
         self.anomaly_memory_label: tk.Label | None = None
         self.local_register_listbox: tk.Listbox | None = None
+        self.local_register_tree: ttk.Treeview | None = None
+        self.chat_scope_notebook: ttk.Notebook | None = None
         self.efficiency_text: tk.Text | None = None
         self.efficiency_job: str | None = None
         self._efficiency_log_lines: list[str] = []
@@ -1202,28 +1215,50 @@ class VeiraGUI:
         self._build_right_panel()
 
     def _build_center_panel(self) -> None:
-        """Erzeugt die zentrale Szeneflaeche mit optionalem Browser-Dock."""
+        """Erzeugt die zentrale Dateivorschau mit Detailpaneelen statt 3D-Szene."""
         self.center_pane = ttk.Panedwindow(self.center_frame, orient="vertical")
         self.center_pane.pack(fill="both", expand=True)
 
         self.scene_frame = tk.Frame(self.center_pane, bg="#050816", bd=0, relief="flat")
         self.center_pane.add(self.scene_frame, weight=5)
+        preview_header = tk.Frame(self.scene_frame, bg="#050816")
+        preview_header.pack(fill="x", padx=10, pady=(10, 6))
+        tk.Label(preview_header, textvariable=self.preview_title_var, bg="#050816", fg="#E7F4FF", font=("Segoe UI", 12, "bold")).pack(anchor="w")
+        tk.Label(preview_header, textvariable=self.preview_context_var, bg="#050816", fg="#8FD6FF", wraplength=760, justify="left", font=("Segoe UI", 9)).pack(anchor="w", pady=(2, 2))
+        tk.Label(preview_header, textvariable=self.preview_relation_var, bg="#050816", fg="#F6E7A7", wraplength=760, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w")
+        self.main_preview_label = tk.Label(
+            self.scene_frame,
+            bg="#07111F",
+            fg="#CFE8FF",
+            text="Dateivorschau erscheint nach Drag & Drop.",
+            compound="center",
+            anchor="center",
+        )
+        self.main_preview_label.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
         self.browser_main_panel = tk.Frame(self.center_pane, bg="#081120", bd=1, relief="groove")
-        self.browser_main_panel.pack_propagate(False)
-        self.browser_main_controls = self._create_browser_controls(self.browser_main_panel, outer_bg="#081120")
+        self.center_pane.add(self.browser_main_panel, weight=3)
+        detail_header = tk.Frame(self.browser_main_panel, bg="#081120")
+        detail_header.pack(fill="x", padx=8, pady=(8, 4))
+        tk.Label(detail_header, textvariable=self.preview_register_var, bg="#081120", fg="#9AD7C8", wraplength=780, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w")
         self.browser_main_status = self._create_browser_status_bar(self.browser_main_panel, bg="#081120")
-        self.browser_host_frame = tk.Frame(self.browser_main_panel, bg="#050B14", bd=0, relief="flat")
-        self.browser_host_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        self.browser_host_frame.bind("<Configure>", self._schedule_browser_host_sync)
-        self.browser_host_hint = tk.Label(
-            self.browser_host_frame,
-            text="Companion-Browser aktiv. Diese Flaeche bleibt als Platzhalter erhalten.",
-            bg="#050B14",
-            fg="#7AB6FF",
-            font=("Segoe UI", 10),
-        )
-        self.browser_host_hint.place(relx=0.5, rely=0.5, anchor="center")
+        detail_notebook = ttk.Notebook(self.browser_main_panel)
+        detail_notebook.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+        file_tab = tk.Frame(detail_notebook, bg="#081120")
+        process_tab = tk.Frame(detail_notebook, bg="#081120")
+        anchor_tab = tk.Frame(detail_notebook, bg="#081120")
+        detail_notebook.add(file_tab, text="DATEI")
+        detail_notebook.add(process_tab, text="PROZESSE")
+        detail_notebook.add(anchor_tab, text="ANKER")
+        self.center_file_text = tk.Text(file_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
+        self.center_file_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.center_file_text.configure(state="disabled")
+        self.center_process_text = tk.Text(process_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
+        self.center_process_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.center_process_text.configure(state="disabled")
+        self.center_anchor_text = tk.Text(anchor_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
+        self.center_anchor_text.pack(fill="both", expand=True, padx=8, pady=8)
+        self.center_anchor_text.configure(state="disabled")
 
     def _create_browser_controls(self, parent, outer_bg: str) -> tk.Frame:
         """Baut eine Browser-Toolbar mit gemeinsamem Navigationszustand."""
@@ -1268,7 +1303,7 @@ class VeiraGUI:
         return status
 
     def _build_augment_window(self) -> None:
-        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Voxel, Kamera-Raster und Shanway bleiben sichtbar."""
+        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Dateivorschau, Kamera und Shanway bleiben sichtbar."""
         self.augment_window = self.root
         for child in self.right_frame.winfo_children():
             child.destroy()
@@ -1315,7 +1350,7 @@ class VeiraGUI:
         self.right_notebook.add(node_tab, text="NODE")
         self.right_notebook.add(camera_tab, text="KAMERA")
         self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
-        self.right_notebook.add(live_tab, text="LIVE-RASTER")
+        self.right_notebook.add(live_tab, text="LIVE-FEEDBACK")
         self.right_notebook.add(shanway_tab, text="SHANWAY")
         self.right_notebook.add(chat_tab, text="CHATS")
         self.right_notebook.add(browser_tab, text="BROWSER")
@@ -1426,9 +1461,9 @@ class VeiraGUI:
         self.efficiency_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.efficiency_text.configure(state="disabled")
 
-        tk.Label(live_tab, text="Live-Raster", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
+        tk.Label(live_tab, text="Live-Feedback", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         tk.Label(live_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
-        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Ton ist entfernt, Shanway meldet Funde schriftlich.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Das fruehere 3D-Feld ist entfernt; Shanway meldet Funde schriftlich und die Dateivorschau bleibt 2D.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
         tk.Label(live_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
         live_metrics = tk.Frame(live_tab, bg="#0D1930")
         live_metrics.pack(fill="x", padx=10, pady=(0, 8))
@@ -1461,7 +1496,7 @@ class VeiraGUI:
         ).pack(side="left", padx=(8, 0))
         ttk.Checkbutton(
             shanway_mode_row,
-            text="Raster-Einsicht",
+            text="Datei-/Screen-Einsicht",
             variable=self.shanway_raster_insight_var,
             command=self._on_shanway_raster_toggle,
         ).pack(side="left", padx=(8, 0))
@@ -1507,7 +1542,7 @@ class VeiraGUI:
         self.shanway_miniature_label.pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(
             miniature_card,
-            text="Die Miniatur bleibt getrennt vom 4D-Raster und dient nur der lokalen Shanway-Reflexion.",
+            text="Die Miniatur bleibt getrennt von der Hauptvorschau und dient nur der lokalen Shanway-Reflexion.",
             bg="#10223F",
             fg="#CFE8FF",
             wraplength=400,
@@ -1564,8 +1599,6 @@ class VeiraGUI:
             text="Leeren",
             command=lambda: self._clear_message_input("shanway"),
         ).pack(side="left", padx=(6, 0))
-        self._build_voice_cards(shanway_tab)
-
         self.chain_text = tk.Text(chain_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
         self.chain_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
         self.chain_text.bind("<Button-1>", self._select_chain_entry)
@@ -1613,20 +1646,26 @@ class VeiraGUI:
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=10, pady=(0, 6))
         register_row = tk.Frame(register_card, bg="#10223F")
-        register_row.pack(fill="x", padx=10, pady=(0, 8))
-        self.local_register_listbox = tk.Listbox(
+        register_row.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.local_register_tree = ttk.Treeview(
             register_row,
-            height=7,
-            bg="#07111F",
-            fg="#D7E8FF",
-            relief="flat",
-            selectbackground="#1C4B7A",
-            selectforeground="#FFFFFF",
-            font=("Consolas", 9),
+            columns=("id", "type", "file", "size", "delta", "rate"),
+            show="headings",
+            height=8,
         )
-        self.local_register_listbox.pack(side="left", fill="both", expand=True)
-        self.local_register_listbox.bind("<<ListboxSelect>>", self._on_local_register_select)
-        self.local_register_listbox.bind("<Double-1>", lambda _event: self._load_local_register_entry())
+        for column, label, width in [
+            ("id", "ID", 54),
+            ("type", "Typ", 72),
+            ("file", "Datei", 170),
+            ("size", "Original", 78),
+            ("delta", "Delta", 78),
+            ("rate", "Rate", 72),
+        ]:
+            self.local_register_tree.heading(column, text=label)
+            self.local_register_tree.column(column, width=width, anchor="w", stretch=(column == "file"))
+        self.local_register_tree.pack(side="left", fill="both", expand=True)
+        self.local_register_tree.bind("<<TreeviewSelect>>", self._on_local_register_select)
+        self.local_register_tree.bind("<Double-1>", lambda _event: self._load_local_register_entry())
         register_buttons = tk.Frame(register_row, bg="#10223F")
         register_buttons.pack(side="left", fill="y", padx=(8, 0))
         ttk.Button(register_buttons, text="Laden", command=self._load_local_register_entry).pack(fill="x", pady=(0, 4))
@@ -1635,6 +1674,28 @@ class VeiraGUI:
         ttk.Button(register_buttons, text="Aktualisieren", command=self._refresh_local_register).pack(fill="x")
         self.verify_text = tk.Text(verify_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
         self.verify_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
+
+        chat_scope_wrap = tk.Frame(chat_tab, bg="#081120")
+        chat_scope_wrap.pack(fill="x", padx=8, pady=(8, 4))
+        self.chat_scope_notebook = ttk.Notebook(chat_scope_wrap)
+        self.chat_scope_notebook.pack(fill="x", expand=True)
+        chat_private_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
+        chat_group_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
+        chat_shanway_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
+        self.chat_scope_notebook.add(chat_private_scope, text="PRIVATE")
+        self.chat_scope_notebook.add(chat_group_scope, text="GROUP")
+        self.chat_scope_notebook.add(chat_shanway_scope, text="SHANWAY")
+        self.chat_scope_notebook.bind("<<NotebookTabChanged>>", self._on_chat_scope_changed)
+        ttk.Button(chat_private_scope, text="Direkt...", command=self._chat_open_private_dialog).pack(side="left", padx=8, pady=8)
+        tk.Label(chat_private_scope, text="Direktnachrichten und private Shanway-Sitzungen", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
+        ttk.Button(chat_group_scope, text="Neue Gruppe", command=self._chat_create_group_dialog).pack(side="left", padx=(8, 4), pady=8)
+        ttk.Button(chat_group_scope, text="Mitglied+", command=self._chat_add_group_member).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_group_scope, text="Mitglied-", command=self._chat_remove_group_member).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_group_scope, text="Shanway", command=self._chat_toggle_group_shanway).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_group_scope, text="Modus", command=self._chat_toggle_analysis_mode).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_group_scope, text="Verlassen", command=self._chat_leave_group).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_shanway_scope, text="Privaten Shanway-Chat oeffnen", command=self._send_private_shanway_message).pack(side="left", padx=8, pady=8)
+        tk.Label(chat_shanway_scope, text="Shanway bleibt lokal und antwortet textbasiert.", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
 
         chat_header = tk.Frame(chat_tab, bg="#081120")
         chat_header.pack(fill="x", padx=8, pady=(8, 6))
@@ -1660,11 +1721,8 @@ class VeiraGUI:
         chat_action_row.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(chat_action_row, text="Direkt...", command=self._chat_open_private_dialog).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Neue Gruppe", command=self._chat_create_group_dialog).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Mitglied+", command=self._chat_add_group_member).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Mitglied-", command=self._chat_remove_group_member).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Shanway", command=self._chat_toggle_group_shanway).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Modus", command=self._chat_toggle_analysis_mode).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Verlassen", command=self._chat_leave_group).pack(side="left")
+        ttk.Button(chat_action_row, text="Shanway", command=self._send_private_shanway_message).pack(side="left", padx=(0, 4))
+        ttk.Button(chat_action_row, text="Aktualisieren", command=self._refresh_chat_view).pack(side="left")
         chat_mode_row = tk.Frame(chat_header, bg="#081120")
         chat_mode_row.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Checkbutton(
@@ -3177,12 +3235,25 @@ class VeiraGUI:
         """Liefert den aktuell ausgewaehlten Chat-Kanal."""
         return self.chat_channel_map.get(self.chat_channel_var.get())
 
+    def _on_chat_scope_changed(self, _event=None) -> None:
+        """Filtert den Chat sichtbar nach Privat, Gruppe oder Shanway."""
+        notebook = getattr(self, "chat_scope_notebook", None)
+        if notebook is None:
+            return
+        try:
+            label = str(notebook.tab(notebook.select(), "text") or "PRIVATE").strip().lower()
+        except Exception:
+            label = "private"
+        self.chat_scope_var.set(label)
+        self._refresh_chat_channels()
+        self._refresh_chat_view()
+
     def _refresh_chat_channels(
         self,
         selected_channel: str | None = None,
         extra_descriptor: dict[str, object] | None = None,
     ) -> None:
-        """Aktualisiert die sichtbaren oeffentlichen, privaten und Gruppen-Kanaele."""
+        """Aktualisiert die sichtbaren Kanaele passend zum aktiven Chat-Tab."""
         channels = self.registry.get_user_chat_channels(
             user_id=int(getattr(self.session_context, "user_id", 0) or 0),
             username=str(getattr(self.session_context, "username", "")),
@@ -3192,10 +3263,22 @@ class VeiraGUI:
             if extra_channel and not any(str(item.get("channel", "")) == extra_channel for item in channels):
                 channels.append(dict(extra_descriptor))
 
+        if selected_channel:
+            if str(selected_channel).startswith("private:shanway"):
+                self.chat_scope_var.set("shanway")
+            elif str(selected_channel).startswith("private:"):
+                self.chat_scope_var.set("private")
+            else:
+                self.chat_scope_var.set("group")
+        active_scope = self._active_chat_scope()
+        self._select_chat_scope(active_scope)
+
         label_map: dict[str, dict[str, object]] = {}
         values: list[str] = []
         for descriptor in channels:
             item = dict(descriptor)
+            if not self._chat_descriptor_matches_scope(item, active_scope):
+                continue
             base_label = str(
                 item.get("label")
                 or item.get("title")
@@ -3518,13 +3601,13 @@ class VeiraGUI:
             self.chat_status_var.set("Shanway bleibt fuer Antworten rein lokal ohne Netz-Kontext.")
 
     def _on_shanway_raster_toggle(self) -> None:
-        """Aktualisiert die optionale Raster-Einsicht fuer Shanway."""
+        """Aktualisiert die optionale Datei-/Screen-Einsicht fuer Shanway."""
         enabled = bool(self.shanway_raster_insight_var.get())
         self._persist_shanway_preferences()
         if enabled:
-            self.chat_status_var.set("Shanway aktiv | Raster-Einsicht lokal zugeschaltet")
+            self.chat_status_var.set("Shanway aktiv | Datei-/Screen-Einsicht lokal zugeschaltet")
         else:
-            self.chat_status_var.set("Shanway aktiv | Raster-Einsicht aus")
+            self.chat_status_var.set("Shanway aktiv | Datei-/Screen-Einsicht aus")
 
     def _on_ttd_auto_share_toggle(self) -> None:
         """Persistiert den lokalen TTD-Auto-Share-Schalter fail-closed."""
@@ -3539,7 +3622,9 @@ class VeiraGUI:
 
     def _set_shanway_guard(self, message: str) -> None:
         """Aktualisiert die sichtbare Shanway-Schutzmeldung."""
-        self.shanway_sensitive_var.set(str(message or "Shanway Guard: bereit"))
+        text = str(message or "Shanway Guard: bereit")
+        self.shanway_sensitive_var.set(text)
+        self._draw_shanway_face(text)
 
     def _shanway_visual_payloads(self, fingerprint: AetherFingerprint | None = None) -> dict[str, Any]:
         """Sammelt Miniatur-, Raster- und Self-Reflection-Zusatzdaten fuer Shanway."""
@@ -5101,19 +5186,46 @@ class VeiraGUI:
         self._last_ontology_complete = ontology_complete
 
     def _build_left_panel(self) -> None:
-        """Baut den linken Bereich mit Analysekontrollen und Loganzeige."""
-        tk.Label(self.left_frame, text="Analyse-Steuerung", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
+        """Baut den linken Bereich mit Shanway-Fokus, Drag-and-Drop-Hinweis und Loganzeige."""
+        tk.Label(self.left_frame, text="Shanway", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
 
-        ttk.Button(self.left_frame, text="Datei analysieren", command=self._open_file_dialog).pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Button(self.left_frame, text="Lichtspektrum analysieren", command=self._open_spectrum_dialog).pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Button(self.left_frame, text="CSV 4D importieren", command=self._open_csv_dialog).pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Button(self.left_frame, text="AELAB DNA importieren", command=self._open_aelab_dna_dialog).pack(fill="x", padx=12, pady=(0, 6))
-        ttk.Button(self.left_frame, text="AELAB Vault importieren", command=self._open_aelab_vault_dialog).pack(fill="x", padx=12, pady=(0, 6))
+        face_card = tk.Frame(self.left_frame, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        face_card.pack(fill="x", padx=12, pady=(0, 8))
+        self.shanway_face_canvas = tk.Canvas(face_card, width=316, height=176, bg="#07111F", highlightthickness=0, bd=0)
+        self.shanway_face_canvas.pack(fill="x", padx=10, pady=(10, 6))
+        self._draw_shanway_face("bereit")
+        tk.Label(
+            face_card,
+            textvariable=self.shanway_sensitive_var,
+            bg="#10223F",
+            fg="#F6E7A7",
+            wraplength=316,
+            justify="left",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=10, pady=(0, 10))
 
-        ae_row = tk.Frame(self.left_frame, bg="#111A4A")
-        ae_row.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Label(
+            self.left_frame,
+            text="Dateien kommen nur noch per Drag & Drop in das Hauptfenster. So bleibt die Oberflaeche sauber und Shanway arbeitet immer auf dem sichtbaren Datensatz.",
+            bg="#111A4A",
+            fg="#8FB5FF",
+            wraplength=345,
+            justify="left",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(anchor="w", padx=12, pady=(0, 8))
+
+        control_card = tk.Frame(self.left_frame, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        control_card.pack(fill="x", padx=12, pady=(0, 8))
+        ttk.Button(control_card, text="Verlauf laden", command=self._history_reload_current).pack(fill="x", padx=10, pady=(10, 6))
+        ttk.Button(control_card, text="Original oeffnen", command=self._open_reconstructed_original).pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Button(
+            control_card,
+            text="Browser-Fenster",
+            command=lambda: (self.browser_dock_var.set(not bool(self.browser_dock_var.get())), self._toggle_browser_main_dock()),
+        ).pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Button(control_card, text="Sicherheits-Audit", command=self._open_security_audit).pack(fill="x", padx=10, pady=(0, 6))
         self.ae_stop_button = tk.Button(
-            ae_row,
+            control_card,
             textvariable=self.ae_stop_button_var,
             command=self._stop_ae_evolution,
             bg="#AA2E25",
@@ -5125,7 +5237,8 @@ class VeiraGUI:
             pady=6,
             cursor="hand2",
         )
-        self.ae_stop_button.pack(fill="x", expand=True)
+        self.ae_stop_button.pack(fill="x", padx=10, pady=(0, 10))
+
         tk.Label(
             self.left_frame,
             textvariable=self.ae_iteration_var,
@@ -5136,23 +5249,10 @@ class VeiraGUI:
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        tk.Label(
-            self.left_frame,
-            text="Kamera-Raster aktivierst du im KAMERA-Tab. Audio bleibt deaktiviert.",
-            bg="#111A4A",
-            fg="#8FB5FF",
-            wraplength=345,
-            justify="left",
-            font=("Segoe UI", 9, "bold"),
-        ).pack(anchor="w", padx=12, pady=(0, 8))
-
-        export_row = tk.Frame(self.left_frame, bg="#111A4A")
-        export_row.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Button(export_row, text="Voxel-CSV exportieren", command=self._export_voxel_csv).pack(fill="x", expand=True)
-
         restore_row = tk.Frame(self.left_frame, bg="#111A4A")
         restore_row.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Button(restore_row, text="Original oeffnen", command=self._open_reconstructed_original).pack(fill="x", expand=True)
+        ttk.Button(restore_row, text="◀ Verlauf", command=self._history_prev).pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(restore_row, text="Verlauf ▶", command=self._history_next).pack(side="left", fill="x", expand=True, padx=(4, 0))
         tk.Label(
             self.left_frame,
             textvariable=self.restore_status_var,
@@ -5180,9 +5280,19 @@ class VeiraGUI:
 
         history_row = tk.Frame(self.left_frame, bg="#111A4A")
         history_row.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Button(history_row, text="◀ Verlauf", command=self._history_prev).pack(side="left", fill="x", expand=True, padx=(0, 4))
-        ttk.Button(history_row, text="Verlauf laden", command=self._history_reload_current).pack(side="left", fill="x", expand=True, padx=4)
-        ttk.Button(history_row, text="Verlauf ▶", command=self._history_next).pack(side="left", fill="x", expand=True, padx=(4, 0))
+        ttk.Checkbutton(
+            history_row,
+            text="Low-Power-Mode",
+            variable=self.low_power_mode_var,
+            command=self._on_low_power_toggle,
+        ).pack(side="left")
+        tk.Label(
+            history_row,
+            text="256 KB Chunks, reduzierte Fraktalmetrik",
+            bg="#111A4A",
+            fg="#8FB5FF",
+            font=("Segoe UI", 8),
+        ).pack(side="right")
         tk.Label(
             self.left_frame,
             textvariable=self.history_status_var,
@@ -5212,27 +5322,11 @@ class VeiraGUI:
         layer_box.pack(fill="x", padx=12, pady=(4, 8))
         layer_box.bind("<<ComboboxSelected>>", self._on_storage_layer_changed)
 
-        power_row = tk.Frame(self.left_frame, bg="#111A4A")
-        power_row.pack(fill="x", padx=12, pady=(0, 8))
-        ttk.Checkbutton(
-            power_row,
-            text="Low-Power-Mode",
-            variable=self.low_power_mode_var,
-            command=self._on_low_power_toggle,
-        ).pack(side="left")
-        tk.Label(
-            power_row,
-            text="256 KB Chunks, reduzierte Fraktalmetrik",
-            bg="#111A4A",
-            fg="#8FB5FF",
-            font=("Segoe UI", 8),
-        ).pack(side="right")
-
-        tk.Label(self.left_frame, text="Datei oder CSV per Drag & Drop ins Fenster ziehen startet sofort die passende Analyse bzw. den 4D-Voxel-Import.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+        tk.Label(self.left_frame, text="Datei per Drag & Drop ins Fenster ziehen startet sofort die Analyse. CSV-Dateien werden dabei wie normale Dateien behandelt; es gibt keinen separaten 3D-Importpfad mehr.", bg="#111A4A", fg="#8FB5FF", font=("Segoe UI", 9, "italic"), wraplength=345, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
 
         tk.Label(
             self.left_frame,
-            text="Live-Raster-Hinweis: Shanway schreibt nach abgeschlossenen Iterationen direkt, was stabil ist und was noch fehlt.",
+            text="Shanway schreibt nach abgeschlossenen Iterationen direkt, was stabil ist, was fehlt und wie Datei-, Screen- und Prozesskontext zusammenhaengen.",
             bg="#111A4A",
             fg="#C7D7FF",
             wraplength=345,
@@ -5244,11 +5338,6 @@ class VeiraGUI:
         self.wavelength_canvas = tk.Canvas(self.left_frame, width=320, height=22, bg="#111A4A", highlightthickness=0, bd=0)
         self.wavelength_canvas.pack(anchor="w", padx=12, pady=(0, 10))
         self.wavelength_rect = self.wavelength_canvas.create_rectangle(0, 0, 320, 22, fill="#304060", outline="")
-
-        tk.Label(self.left_frame, text="Dateipfad manuell eingeben (Enter startet Analyse):", bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 9)).pack(anchor="w", padx=12)
-        self.path_entry = ttk.Entry(self.left_frame, textvariable=self.path_var)
-        self.path_entry.pack(fill="x", padx=12, pady=(4, 8))
-        self.path_entry.bind("<Return>", lambda _event: self._start_analysis_from_entry())
 
         self.progress = ttk.Progressbar(
             self.left_frame,
@@ -5272,6 +5361,181 @@ class VeiraGUI:
     def _build_right_panel(self) -> None:
         """Der rechte Bereich wird spaeter komplett als eingebettetes Modul-Notebook aufgebaut."""
         return
+
+    def _draw_shanway_face(self, mood: str = "bereit") -> None:
+        """Zeichnet ein einfaches Shanway-Gesicht als statische Leitfigur links oben."""
+        canvas = getattr(self, "shanway_face_canvas", None)
+        if canvas is None:
+            return
+        normalized = str(mood or "bereit").strip().lower()
+        eye_color = "#8FD6FF"
+        mouth_color = "#F6E7A7"
+        if any(token in normalized for token in ("warn", "krit", "toxic", "sensitiv", "anom")):
+            eye_color = "#FF8C69"
+            mouth_color = "#FFB347"
+        elif any(token in normalized for token in ("stabil", "bereit", "harmon", "ok")):
+            eye_color = "#7DE8A7"
+            mouth_color = "#9AD7C8"
+        canvas.delete("all")
+        canvas.create_rectangle(0, 0, 316, 176, fill="#07111F", outline="")
+        canvas.create_oval(26, 18, 290, 168, outline="#233A5A", width=2, fill="#0B1628")
+        canvas.create_arc(52, 28, 264, 134, start=200, extent=140, style="arc", outline="#233A5A", width=2)
+        canvas.create_oval(86, 72, 126, 112, fill=eye_color, outline="")
+        canvas.create_oval(190, 72, 230, 112, fill=eye_color, outline="")
+        canvas.create_oval(98, 84, 114, 100, fill="#07111F", outline="")
+        canvas.create_oval(202, 84, 218, 100, fill="#07111F", outline="")
+        canvas.create_line(158, 92, 148, 118, fill="#8FB5FF", width=3, smooth=True)
+        canvas.create_line(148, 118, 166, 122, fill="#8FB5FF", width=3, smooth=True)
+        canvas.create_arc(104, 108, 212, 150, start=200, extent=140, style="arc", outline=mouth_color, width=4)
+        canvas.create_text(158, 152, text="SHANWAY", fill="#CFE8FF", font=("Segoe UI", 10, "bold"))
+
+    def _set_main_preview_image(self, rgb_array: np.ndarray | None, fallback_text: str = "") -> None:
+        """Zeigt die zentrale Dateivorschau als 2D-Bild statt als 3D-Raster an."""
+        label = getattr(self, "main_preview_label", None)
+        if label is None:
+            return
+        if rgb_array is None:
+            label.configure(image="", text=(fallback_text or "Keine Dateivorschau verfuegbar."))
+            self.main_preview_image_ref = None
+            return
+        try:
+            image = Image.fromarray(np.asarray(rgb_array, dtype=np.uint8), mode="RGB")
+            image = image.resize((640, 360), Image.Resampling.NEAREST)
+            photo = ImageTk.PhotoImage(image=image)
+            label.configure(image=photo, text="")
+            self.main_preview_image_ref = photo
+        except Exception:
+            label.configure(image="", text=(fallback_text or "Dateivorschau konnte nicht erzeugt werden."))
+            self.main_preview_image_ref = None
+
+    @staticmethod
+    def _set_text_widget(widget: tk.Text | None, text: str) -> None:
+        """Beschreibt ein readonly-Textfeld kompakt neu."""
+        if widget is None:
+            return
+        widget.configure(state="normal")
+        widget.delete("1.0", tk.END)
+        widget.insert("1.0", str(text or "").strip() + "\n")
+        widget.configure(state="disabled")
+
+    def _active_chat_scope(self) -> str:
+        """Liefert den aktuell sichtbaren Chat-Bereich."""
+        return str(getattr(self, "chat_scope_var", tk.StringVar(value="private")).get() or "private").strip().lower()
+
+    def _chat_descriptor_matches_scope(self, descriptor: dict[str, object], scope: str) -> bool:
+        """Filtert Kanaele fuer Privat-, Gruppen- und Shanway-Tabs."""
+        kind = str(descriptor.get("kind", "public") or "public").strip().lower()
+        if scope == "shanway":
+            return kind == "private_shanway"
+        if scope == "private":
+            return kind in {"private", "private_shanway"}
+        return kind in {"public", "group"}
+
+    def _select_chat_scope(self, scope: str) -> None:
+        """Synchronisiert den sichtbaren Chat-Scope auch mit dem Notebook."""
+        normalized = str(scope or "private").strip().lower()
+        self.chat_scope_var.set(normalized)
+        notebook = getattr(self, "chat_scope_notebook", None)
+        if notebook is None:
+            return
+        try:
+            current_label = str(notebook.tab(notebook.select(), "text") or "").strip().lower()
+        except Exception:
+            current_label = ""
+        if current_label == normalized:
+            return
+        for tab_id in notebook.tabs():
+            try:
+                if str(notebook.tab(tab_id, "text")).strip().lower() == normalized:
+                    notebook.select(tab_id)
+                    break
+            except Exception:
+                continue
+
+    def _refresh_center_detail_panels(self, fingerprint: AetherFingerprint | None, register_entry: dict[str, object] | None = None) -> None:
+        """Aktualisiert Datei-, Prozess- und Ankertext fuer die kompakte Zentrumsvorschau."""
+        if fingerprint is None:
+            self.preview_title_var.set("Keine Datei geladen")
+            self.preview_context_var.set("Dateivorschau: warte auf Drag & Drop")
+            self.preview_relation_var.set("Screen / Hintergrund: noch kein Bezug aktiv")
+            self.preview_register_var.set("Register: keine Auswahl")
+            self._set_text_widget(self.center_file_text, "Noch keine aktive Analyse.")
+            self._set_text_widget(self.center_process_text, "Noch keine Prozess- oder Screen-Daten.")
+            self._set_text_widget(self.center_anchor_text, "Noch keine Ankerdaten.")
+            return
+
+        source_name = Path(str(getattr(fingerprint, "source_label", "") or "aktueller_datensatz")).name or str(getattr(fingerprint, "source_label", "") or "aktueller_datensatz")
+        file_profile = dict(getattr(fingerprint, "file_profile", {}) or {})
+        observer_payload = dict(getattr(fingerprint, "observer_payload", {}) or {})
+        screen_payload = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
+        self_reflection = dict(getattr(fingerprint, "self_reflection_delta", {}) or {})
+        verification = dict(getattr(fingerprint, "reconstruction_verification", {}) or {})
+        anchors = list(dict(getattr(fingerprint, "ae_lab_summary", {}) or {}).get("anchors", []) or [])
+        if not anchors:
+            anchors, _, _ = self._fingerprint_anchors_with_interference(fingerprint)
+
+        delta_ratio = float(getattr(fingerprint, "delta_ratio", 0.0) or 0.0)
+        file_size = int(getattr(fingerprint, "file_size", 0) or 0)
+        compressed_size = int(round(file_size * delta_ratio))
+        compression_gain = max(0.0, min(100.0, (1.0 - delta_ratio) * 100.0))
+        source_kind = str(file_profile.get("category", getattr(fingerprint, "source_type", "file")) or "file")
+        self.preview_title_var.set(f"{source_name} | {source_kind}")
+        self.preview_context_var.set(
+            f"Original {file_size} B | Delta {compressed_size} B | Kompression {compression_gain:.1f}% | Verdict {str(getattr(fingerprint, 'verdict', '') or '--')}"
+        )
+        convergence = float(screen_payload.get("CONVERGENCE", screen_payload.get("convergence", 0.0)) or 0.0)
+        process_name = str(observer_payload.get("process_residuum", {}).get("name", "") or observer_payload.get("process_name", "") or "")
+        self.preview_relation_var.set(
+            f"Screen-Konvergenz {convergence:.3f} | Prozess {process_name or '--'} | H_lambda {float(getattr(fingerprint, 'h_lambda', 0.0) or 0.0):.3f}"
+        )
+        if register_entry is not None:
+            self.preview_register_var.set(
+                f"Register-Eintrag ID {int(register_entry.get('id', 0) or 0)} | {str(register_entry.get('source_type', '') or '')} | {source_name}"
+            )
+        else:
+            self.preview_register_var.set(f"Aktiver Datensatz | {source_name}")
+
+        file_lines = [
+            f"Quelle: {source_name}",
+            f"Typ: {source_kind}",
+            f"Originalgroesse: {file_size} Byte",
+            f"Delta-/aktuelle Groesse: {compressed_size} Byte",
+            f"Kompressionsrate: {compression_gain:.1f}%",
+            f"Rekonstruktion: {str(getattr(fingerprint, 'verdict_reconstruction', '') or '--')}",
+            f"Coverage: {float(verification.get('anchor_coverage_ratio', 0.0) or 0.0):.3f}",
+            f"Residual: {float(verification.get('unresolved_residual_ratio', 0.0) or 0.0):.3f}",
+            f"Integrity: {str(getattr(fingerprint, 'integrity_text', '') or '--')}",
+        ]
+        process_residuum = dict(observer_payload.get("process_residuum", {}) or {})
+        file_anchor_values = list(screen_payload.get("FILE_ANCHORS", screen_payload.get("file_anchors", [])) or [])
+        visual_anchor_values = list(screen_payload.get("VISUAL_ANCHORS", screen_payload.get("visual_anchors", [])) or [])
+        process_lines = [
+            f"Observer-Prozess: {process_name or '--'}",
+            f"CPU: {float(process_residuum.get('cpu_percent', observer_payload.get('process_cpu', 0.0)) or 0.0):.2f}%",
+            f"Threads: {int(process_residuum.get('threads', observer_payload.get('process_threads', 0)) or 0)}",
+            f"Screen-Vision: {str(screen_payload.get('SCREEN_VISION', screen_payload.get('screen_vision', '--')) or '--')}",
+            f"Aktives Fenster: {str(screen_payload.get('ACTIVE_WINDOW', screen_payload.get('active_window', '--')) or '--')}",
+            f"Konvergenz: {convergence:.3f}",
+            f"Datei-Anker sichtbar: {', '.join(str(item) for item in file_anchor_values[:6]) or '--'}",
+            f"Bildschirm-Anker sichtbar: {', '.join(str(item) for item in visual_anchor_values[:6]) or '--'}",
+        ]
+        ttd_candidates = [dict(item) for item in list(self_reflection.get("ttd_candidates", []) or []) if isinstance(item, dict)]
+        ttd_line = "--"
+        if ttd_candidates:
+            first = dict(ttd_candidates[0] or {})
+            ttd_line = (
+                f"{str(first.get('hash', ''))[:12]}... | "
+                f"Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%"
+            )
+        anchor_lines = [
+            f"Ankerzahl: {len(anchors)}",
+            f"Anker-Vorschau: {self._ae_anchor_preview(list(anchors), limit=4) or '--'}",
+            f"TTD-Kandidat: {ttd_line}",
+            f"Gelernte Insight: {str(self_reflection.get('learned_insight', getattr(fingerprint, 'observer_state', '--')) or '--')}",
+        ]
+        self._set_text_widget(self.center_file_text, "\n".join(file_lines))
+        self._set_text_widget(self.center_process_text, "\n".join(process_lines))
+        self._set_text_widget(self.center_anchor_text, "\n".join(anchor_lines))
 
     def _create_integrity_row(
         self,
@@ -7973,12 +8237,8 @@ class VeiraGUI:
             self.chat_semantic_var.set(
                 f"Semantik: {reply.semantics_label} | Schoenheit: {reply.beauty_label} | Boundary: {shanway_assessment.boundary}"
             )
-            if self.animation_scene is not None and self.current_fingerprint is fingerprint:
-                self.renderer.apply_fingerprint_to_scene(self.animation_scene, fingerprint)
-                self.renderer.update_dynamic_scene(self.animation_scene)
-                self.audio_engine.update_audiovisual_frame(self.animation_scene.audiovisual_frame)
-                if self.current_canvas is not None:
-                    self.current_canvas.draw_idle()
+            if self.current_fingerprint is fingerprint:
+                self._refresh_center_detail_panels(fingerprint)
         except Exception:
             shanway_assessment = None
         self._update_graph_field(fingerprint)
@@ -8038,159 +8298,53 @@ class VeiraGUI:
         return palette[sum(ord(ch) for ch in name) % len(palette)]
 
     def _render_placeholder(self) -> None:
-        """Zeigt eine initiale leere Raumzeitdarstellung."""
-        fig = plt.Figure(figsize=(8, 6), facecolor="#050816")
-        ax = fig.add_subplot(111, projection="3d")
-        ax.set_facecolor("#0A0F2E")
-        grid = np.arange(16, dtype=np.float64)
-        grid_x, grid_y = np.meshgrid(grid, grid)
-        base_z = (np.sin(grid_x / 2.4) * 0.45) + (np.cos(grid_y / 3.1) * 0.35)
-        ax.plot_wireframe(
-            grid_x,
-            grid_y,
-            base_z,
-            rstride=1,
-            cstride=1,
-            color="#2DE2E6",
-            linewidth=0.8,
-            alpha=0.55,
-        )
-        ax.contourf(
-            grid_x,
-            grid_y,
-            base_z,
-            zdir="z",
-            offset=-2.2,
-            levels=14,
-            cmap="winter",
-            alpha=0.32,
-        )
-
-        delta_paths = [
-            np.array([[1.0, 2.0, -1.5], [4.0, 5.0, -0.2], [7.0, 7.0, 0.9], [10.0, 10.0, 1.4], [13.0, 13.0, 0.3]]),
-            np.array([[13.0, 2.0, -1.4], [10.0, 4.0, -0.3], [8.0, 7.0, 0.8], [5.0, 10.0, 1.3], [2.0, 13.0, 0.4]]),
-            np.array([[3.0, 12.0, -1.1], [5.5, 10.0, -0.1], [8.0, 8.0, 1.0], [10.5, 6.0, 1.6], [13.0, 4.0, 0.5]]),
-        ]
-        path_colors = ["#67D5FF", "#F2C14E", "#90BE6D"]
-        for path, color in zip(delta_paths, path_colors):
-            ax.plot(path[:, 0], path[:, 1], path[:, 2], color=color, linewidth=2.2, alpha=0.95)
-            ax.scatter(path[:, 0], path[:, 1], path[:, 2], color=color, s=18, alpha=0.9, depthshade=False)
-
-        anchor_points = np.array(
-            [
-                [4.0, 4.0, 1.7],
-                [8.0, 8.0, 2.1],
-                [12.0, 11.0, 1.9],
-            ],
-            dtype=np.float64,
-        )
-        ax.scatter(
-            anchor_points[:, 0],
-            anchor_points[:, 1],
-            anchor_points[:, 2],
-            s=[180, 220, 180],
-            color="#FFFFFF",
-            edgecolors="#F6E7A7",
-            linewidths=1.4,
-            alpha=0.98,
-            depthshade=False,
-        )
-
-        ax.set_xlim(0, 15)
-        ax.set_ylim(0, 15)
-        ax.set_zlim(-2.2, 2.4)
-        ax.view_init(elev=26.0, azim=46.0)
-        ax.set_title("Aether Raster | 4D Raumzeit-Deltafeld", color="#DDF9FF", pad=14)
-        ax.set_xlabel("X", color="#C5D4FF")
-        ax.set_ylabel("Y", color="#C5D4FF")
-        ax.set_zlabel("Z / Zeit", color="#C5D4FF")
-        ax.tick_params(colors="#A7B7E2")
-        try:
-            ax.xaxis.pane.set_facecolor((0.04, 0.08, 0.18, 0.95))
-            ax.yaxis.pane.set_facecolor((0.04, 0.08, 0.18, 0.95))
-            ax.zaxis.pane.set_facecolor((0.02, 0.04, 0.09, 0.95))
-        except Exception:
-            pass
-        ax.text2D(
-            0.03,
-            0.96,
-            "Mitte bleibt fuer Drag-and-Drop, Kamera und Live-Raster.\nBrowser und Shanway-Chat greifen dieses Raster nicht live an.",
-            transform=ax.transAxes,
-            color="#CFE8FF",
-            fontsize=9,
-            bbox={"facecolor": "#091426", "edgecolor": "#1F3558", "boxstyle": "round,pad=0.35", "alpha": 0.88},
-        )
-        self._set_figure(fig)
-
-    def _set_figure(self, figure) -> None:
-        """Ersetzt die eingebettete Matplotlib-Figur im Zentrum."""
-        self._stop_scene_animation()
-        if self.current_canvas is not None:
-            self.current_canvas.get_tk_widget().destroy()
-        if self.current_figure is not None and self.current_figure is not figure:
-            plt.close(self.current_figure)
-        self.current_figure = figure
-        self.current_canvas = FigureCanvasTkAgg(figure, master=self.scene_frame)
-        self.current_canvas.get_tk_widget().pack(fill="both", expand=True)
-        self.current_canvas.draw()
+        """Zeigt eine initiale leere 2D-Dateivorschau."""
+        placeholder = np.zeros((180, 320, 3), dtype=np.uint8)
+        placeholder[:, :, 0] = 8
+        placeholder[:, :, 1] = 16
+        placeholder[:, :, 2] = 28
+        for x_pos in range(24, 296, 32):
+            placeholder[32:148, max(0, x_pos - 1) : min(320, x_pos + 1), :] = np.array([40, 82, 124], dtype=np.uint8)
+        for y_pos in range(40, 144, 24):
+            placeholder[max(0, y_pos - 1) : min(180, y_pos + 1), 34:286, :] = np.array([40, 82, 124], dtype=np.uint8)
+        placeholder[54:126, 68:252, :] = np.array([18, 34, 54], dtype=np.uint8)
+        placeholder[62:118, 78:242, :] = np.array([26, 52, 82], dtype=np.uint8)
+        self._set_main_preview_image(placeholder, fallback_text="Dateivorschau erscheint nach Drag & Drop.")
+        self._refresh_center_detail_panels(None)
 
     def _set_scene_from_fingerprint(self, fingerprint: AetherFingerprint) -> None:
-        """Initialisiert eine dynamische Szene aus einem Fingerprint."""
+        """Aktualisiert die zentrale Dateivorschau aus dem aktuellen Fingerprint."""
         self.current_fingerprint = fingerprint
         self._sync_chat_analysis_state()
         self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
         self._refresh_current_dna_share_status(fingerprint)
         self._update_miniature_preview(fingerprint)
-        scene = self.renderer.create_dynamic_scene(fingerprint)
-        self._set_figure(scene.figure)
-        self.animation_scene = scene
-        self.audio_engine.update_audiovisual_frame(scene.audiovisual_frame)
-        self._start_scene_animation()
+        miniature_rgb = getattr(fingerprint, "_miniature_rgb", None)
+        if miniature_rgb is None:
+            miniature_rgb = self.renderer.build_low_res_miniature(
+                str(getattr(fingerprint, "source_label", "") or ""),
+                fingerprint=fingerprint,
+                size=160,
+            )
+            setattr(fingerprint, "_miniature_rgb", np.asarray(miniature_rgb, dtype=np.uint8))
+        self._set_main_preview_image(np.asarray(miniature_rgb, dtype=np.uint8), fallback_text="Dateivorschau konnte nicht geladen werden.")
+        self._refresh_center_detail_panels(fingerprint)
 
     def _update_scene_fingerprint(self, fingerprint: AetherFingerprint) -> None:
-        """Aktualisiert die laufende Szene mit neuen Fingerprint-Daten."""
-        self.current_fingerprint = fingerprint
-        self._sync_chat_analysis_state()
-        self._refresh_ae_anchor_panel(self._resolve_ae_anchor_entries(fingerprint))
-        self._refresh_current_dna_share_status(fingerprint)
-        self._update_miniature_preview(fingerprint)
-        if self.animation_scene is None or self.current_canvas is None:
-            self._set_scene_from_fingerprint(fingerprint)
-            return
-        self.renderer.apply_fingerprint_to_scene(self.animation_scene, fingerprint)
-        self.renderer.update_dynamic_scene(self.animation_scene)
-        self.audio_engine.update_audiovisual_frame(self.animation_scene.audiovisual_frame)
-        self.current_canvas.draw_idle()
+        """Leitet Updates auf dieselbe 2D-Dateivorschau weiter."""
+        self._set_scene_from_fingerprint(fingerprint)
 
     def _start_scene_animation(self) -> None:
-        """Startet den periodischen Animations-Refresh."""
-        if self.animation_scene is None:
-            return
-        self._animate_scene()
+        """Es gibt keinen 3D-Animationspfad mehr."""
+        return
 
     def _animate_scene(self) -> None:
-        """Fuehrt einen einzelnen Animationsschritt aus und plant den naechsten."""
-        if self.animation_scene is None or self.current_canvas is None:
-            return
-        loop_start = time.perf_counter()
-        try:
-            self.renderer.update_dynamic_scene(self.animation_scene)
-            self.audio_engine.update_audiovisual_frame(self.animation_scene.audiovisual_frame)
-            self.current_canvas.draw_idle()
-            self._refresh_runtime_adaptation("animation", time.perf_counter() - loop_start)
-            self.animation_job = self.root.after(self._loop_delay_ms("animation"), self._animate_scene)
-        except Exception:
-            self.animation_job = None
+        """Es gibt keinen 3D-Animationspfad mehr."""
+        self.animation_job = None
 
     def _stop_scene_animation(self) -> None:
-        """Beendet laufende Animations-Timer sauber."""
-        if self.animation_job is not None:
-            try:
-                self.root.after_cancel(self.animation_job)
-            except Exception:
-                self.animation_job = None
-            self.animation_job = None
-        self.audio_engine.stop_audiovisual_stream()
+        """Beendet alte Szenenpfade; die GUI nutzt nur noch statische 2D-Vorschauen."""
+        self.animation_job = None
         self.animation_scene = None
 
     def _on_low_power_toggle(self) -> None:
@@ -8295,21 +8449,8 @@ class VeiraGUI:
         self.wavelength_var.set(f"Dominante Wellenlaenge: {wavelength_nm:.1f} nm")
 
     def _decorate_fingerprint_with_voxels(self, fingerprint: AetherFingerprint) -> AetherFingerprint:
-        """Reichert einen Fingerprint mit dem aktuellen 4D-Voxel-Zustand an."""
-        if len(self.voxel_grid) <= 0:
-            fingerprint.voxel_points = None
-            return fingerprint
-
-        fingerprint.voxel_points = self.voxel_grid.render_points(limit=900)
-        heatmap_blocks = self.voxel_grid.build_entropy_blocks(size=16)
-        if heatmap_blocks:
-            fingerprint.entropy_blocks = heatmap_blocks
-            fingerprint.entropy_mean = float(sum(heatmap_blocks) / len(heatmap_blocks))
-            merged = list(fingerprint.anomaly_coordinates)
-            for coordinate in self.voxel_grid.anomaly_coordinates(size=16):
-                if coordinate not in merged:
-                    merged.append(coordinate)
-            fingerprint.anomaly_coordinates = merged
+        """Der fruehere 3D-Voxel-Pfad ist deaktiviert; Fingerprints bleiben dateibasiert."""
+        fingerprint.voxel_points = None
         return fingerprint
 
     def _open_file_dialog(self) -> None:
@@ -8330,14 +8471,14 @@ class VeiraGUI:
             self._start_spectrum_analysis(file_path)
 
     def _open_csv_dialog(self) -> None:
-        """Oeffnet einen Dateidialog fuer 4D-Voxel-CSV-Import."""
+        """CSV-Dateien werden wie normale Dateien behandelt; kein separater 3D-Importdialog mehr."""
         file_path = filedialog.askopenfilename(
-            title="CSV fuer 4D-Voxel-Import auswaehlen",
+            title="CSV-Datei auswaehlen",
             filetypes=[("CSV-Dateien", "*.csv"), ("Alle Dateien", "*.*")],
         )
         if file_path:
             self.path_var.set(file_path)
-            self._start_csv_import(file_path)
+            self._start_analysis(file_path)
 
     def _open_aelab_dna_dialog(self) -> None:
         """Oeffnet einen Dateidialog fuer den Import alter AELAB-DNA-Dateien."""
@@ -8362,7 +8503,8 @@ class VeiraGUI:
             self.loading_var.set("Bereit. Drag & Drop ist nicht installiert.")
             return
         try:
-            for widget in [self.root, self.left_frame, self.center_frame, self.path_entry]:
+            widgets = [self.root, self.left_frame, self.center_frame]
+            for widget in widgets:
                 widget.drop_target_register(DND_FILES)
                 widget.dnd_bind("<<Drop>>", self._on_drop_event)
             self.loading_var.set("Bereit. Drag & Drop ist aktiv.")
@@ -8422,9 +8564,6 @@ class VeiraGUI:
         if suffix == ".dna":
             self.loading_var.set("AELAB-DNA per Drag & Drop erkannt. Legacy-Import startet ...")
             self._start_dna_import(normalized)
-        elif suffix == ".csv":
-            self.loading_var.set("CSV per Drag & Drop erkannt. 4D-Voxel-Import startet ...")
-            self._start_csv_import(normalized)
         elif suffix in {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}:
             self.loading_var.set("Bild per Drag & Drop erkannt. Spektrumanalyse startet ...")
             self._start_spectrum_analysis(normalized)
@@ -8489,8 +8628,6 @@ class VeiraGUI:
         suffix = Path(candidate).suffix.lower() if candidate else ""
         if suffix == ".dna":
             self._start_dna_import(candidate)
-        elif suffix == ".csv":
-            self._start_csv_import(candidate)
         elif suffix in {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".tif", ".tiff"}:
             self._start_spectrum_analysis(candidate)
         else:
@@ -8613,25 +8750,8 @@ class VeiraGUI:
         self.analysis_thread.start()
 
     def _start_csv_import(self, file_path: str) -> None:
-        """Startet den 4D-Voxel-Import aus CSV in einem separaten Thread."""
-        if not self.session_context.security_allows("allow_analysis", True):
-            messagebox.showwarning(
-                "Sicherheitsmodus",
-                "Die lokale Sicherheitsdiagnose blockiert CSV-Import derzeit. Im DEV-Modus sollte das nicht mehr auftreten.",
-            )
-            return
-        if self.csv_thread is not None and self.csv_thread.is_alive():
-            self.loading_var.set("CSV-Import laeuft bereits.")
-            return
-        if not file_path or not Path(file_path).is_file():
-            messagebox.showwarning("Hinweis", "Bitte einen gueltigen CSV-Pfad angeben.")
-            return
-        if self.theremin_engine.is_running:
-            self._stop_theremin()
-        self.loading_var.set("CSV-Import laeuft ...")
-        self._set_loading(True)
-        self.csv_thread = threading.Thread(target=self._csv_worker, args=(file_path,), daemon=True)
-        self.csv_thread.start()
+        """CSV-Dateien laufen jetzt durch den normalen Datei-Analysepfad."""
+        self._start_analysis(file_path)
 
     def _start_spectrum_analysis(self, file_path: str) -> None:
         """Startet die Bild-Spektrumanalyse in einem separaten Thread."""
@@ -9182,27 +9302,44 @@ class VeiraGUI:
 
     def _refresh_local_register(self) -> None:
         """Aktualisiert das sichtbare persoenliche Register rekonstruierbarer und analysierter Datensaetze."""
-        if self.local_register_listbox is None:
+        if self.local_register_tree is None:
             return
-        self.local_register_listbox.delete(0, tk.END)
+        for item_id in self.local_register_tree.get_children():
+            self.local_register_tree.delete(item_id)
         self._local_register_entries = list(self.history_entries_cache or [])
         if not self._local_register_entries:
             self.local_register_status_var.set("Register: noch keine lokalen Analysen")
             self._selected_local_register_id = None
+            self.preview_register_var.set("Register: keine Auswahl")
             return
         selected_index = 0
         for index, entry in enumerate(self._local_register_entries):
             entry_id = int(entry.get("id", 0) or 0)
             source_type = str(entry.get("source_type", "") or "")
             source_name = Path(str(entry.get("source_label", "") or "")).name or str(entry.get("source_label", "") or "")
-            line = f"{entry_id:05d} | {source_type[:12]:12} | {source_name[:44]}"
-            self.local_register_listbox.insert(tk.END, line)
+            file_size = int(entry.get("file_size", 0) or 0)
+            delta_ratio = float(entry.get("delta_ratio", 0.0) or 0.0)
+            delta_size = int(round(file_size * delta_ratio))
+            compression_gain = max(0.0, min(100.0, (1.0 - delta_ratio) * 100.0))
+            self.local_register_tree.insert(
+                "",
+                "end",
+                iid=str(entry_id),
+                values=(
+                    f"{entry_id:05d}",
+                    source_type[:12],
+                    source_name[:44],
+                    f"{file_size}",
+                    f"{delta_size}",
+                    f"{compression_gain:.1f}%",
+                ),
+            )
             if self._selected_local_register_id is not None and entry_id == int(self._selected_local_register_id):
                 selected_index = index
         try:
-            self.local_register_listbox.selection_clear(0, tk.END)
-            self.local_register_listbox.selection_set(selected_index)
-            self.local_register_listbox.activate(selected_index)
+            selected_id = str(int(self._local_register_entries[selected_index].get("id", 0) or 0))
+            self.local_register_tree.selection_set(selected_id)
+            self.local_register_tree.focus(selected_id)
         except Exception:
             pass
         self._selected_local_register_id = int(self._local_register_entries[selected_index].get("id", 0) or 0)
@@ -9211,17 +9348,20 @@ class VeiraGUI:
         self.local_register_status_var.set(
             f"Register: {len(self._local_register_entries)} Eintraege | aktiv {selected_name} | ID {int(selected_entry.get('id', 0) or 0)}"
         )
+        self.preview_register_var.set(
+            f"Register-Fokus | {selected_name} | Original {int(selected_entry.get('file_size', 0) or 0)} B | "
+            f"Kompression {max(0.0, min(100.0, (1.0 - float(selected_entry.get('delta_ratio', 0.0) or 0.0)) * 100.0)):.1f}%"
+        )
 
     def _selected_local_register_entry(self) -> dict[str, object] | None:
         """Liefert den aktuell markierten Registereintrag."""
         if not self._local_register_entries:
             return None
-        if self.local_register_listbox is not None:
-            selection = list(self.local_register_listbox.curselection())
+        if self.local_register_tree is not None:
+            selection = list(self.local_register_tree.selection())
             if selection:
-                index = int(selection[0])
-                if 0 <= index < len(self._local_register_entries):
-                    return self._local_register_entries[index]
+                selected_id = int(selection[0] or 0)
+                return next((item for item in self._local_register_entries if int(item.get("id", 0) or 0) == selected_id), None)
         selected_id = int(self._selected_local_register_id or 0)
         if selected_id > 0:
             return next((item for item in self._local_register_entries if int(item.get("id", 0) or 0) == selected_id), None)
@@ -9238,6 +9378,10 @@ class VeiraGUI:
         self.local_register_status_var.set(
             f"Register-Auswahl: ID {int(entry.get('id', 0) or 0)} | {str(entry.get('source_type', '') or '')} | {source_name}"
         )
+        self.preview_register_var.set(
+            f"Register-Auswahl | {source_name} | Original {int(entry.get('file_size', 0) or 0)} B | "
+            f"Kompression {max(0.0, min(100.0, (1.0 - float(entry.get('delta_ratio', 0.0) or 0.0)) * 100.0)):.1f}%"
+        )
 
     def _load_local_register_entry(self) -> None:
         """Laedt den markierten Registereintrag zurueck in Szene und Shanway."""
@@ -9252,6 +9396,7 @@ class VeiraGUI:
         self._selected_local_register_id = int(entry.get("id", 0) or 0)
         self._set_scene_from_fingerprint(fingerprint)
         self._update_miniature_preview(fingerprint)
+        self._refresh_center_detail_panels(fingerprint, register_entry=entry)
         self._update_integrity_monitor(fingerprint)
         self._update_semantic_status(fingerprint, source_text=str(entry.get("source_label", "") or ""))
         self.loading_var.set(

@@ -4064,8 +4064,8 @@ class AetherRegistry:
         """Liefert die gespeicherte Analysehistorie eines Nutzers ueber alle Logins."""
         rows = self.connection.execute(
             """
-            SELECT f.id, f.session_id, f.timestamp, f.source_type, f.source_label, f.file_hash, f.verdict,
-                   f.integrity_state, s.username, s.login_at
+            SELECT f.id, f.session_id, f.timestamp, f.source_type, f.source_label, f.file_hash, f.file_size,
+                   f.delta_ratio, f.verdict, f.integrity_state, s.username, s.login_at
             FROM fingerprints AS f
             JOIN app_sessions AS s ON s.session_id = f.session_id
             WHERE s.user_id = ?
@@ -4082,6 +4082,8 @@ class AetherRegistry:
                 "source_type": str(row["source_type"]),
                 "source_label": str(row["source_label"]),
                 "file_hash": str(row["file_hash"]),
+                "file_size": int(row["file_size"]),
+                "delta_ratio": float(row["delta_ratio"]),
                 "verdict": str(row["verdict"]),
                 "integrity_state": str(row["integrity_state"]),
                 "username": str(row["username"]),
