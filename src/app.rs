@@ -1,11 +1,11 @@
 use crate::aef::{
     AefEncoder, AefInspector, AefProjection, AefReport, EnginePipeline, SignalType, VaultStore,
 };
-use crate::bus_ipc;
 use crate::auth::{AuthStore, UserRecord};
 use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
 };
+use crate::bus_ipc;
 use crate::chat_sync::{ChatRelayClient, ChatRelayConfig, ChatRelayEnvelope, ChatRelayStateStore};
 use crate::gfx::AetherGfx;
 use crate::inter_layer_bus::{BusEvent, BusPublisher, InterLayerBus, PackInstalledEvent};
@@ -28,7 +28,8 @@ use crate::vault_access::VaultAccessLayer;
 use crate::workflow_anchor::WorkflowSignalCollector;
 use chrono::Utc;
 use eframe::egui::{
-    self, Color32, ColorImage, RichText, Sense, Stroke, TextEdit, TextureHandle, Vec2,
+    self, Align2, Color32, ColorImage, FontId, Pos2, Rect, RichText, Sense, Stroke, TextEdit,
+    TextureHandle, Vec2,
 };
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -46,6 +47,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopTab {
     Analyse,
+    Struktur,
     Browser,
     Chats,
     Register,
@@ -99,6 +101,24 @@ struct ProcessedFile {
     process_summary: String,
     preview_note: String,
     excerpt: String,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VisualizationMetrics {
+    entropy_norm: f32,
+    symmetry: f32,
+    drift_norm: f32,
+    compression_gain: f32,
+    residual_ratio: f32,
+    coherence: f32,
+    trust: f32,
+    hit_rate: f32,
+    coverage: f32,
+    anchor_density: f32,
+    projection_gain: f32,
+    resonance: f32,
+    godel_zone: f32,
+    network_pressure: f32,
 }
 
 pub struct AetherRustShell {
@@ -402,6 +422,96 @@ impl AetherRustShell {
         self.current_file
             .as_ref()
             .map(|file| domain_from_source_kind(&file.source_kind))
+    }
+
+    fn active_visualization_file(&self) -> Option<ProcessedFile> {
+        self.current_file.as_ref().cloned().or_else(|| {
+            self.browser_probe
+                .as_ref()
+                .map(build_browser_processed_file)
+        })
+    }
+
+    fn current_visualization_metrics(&self) -> Option<VisualizationMetrics> {
+        let file = self.active_visualization_file()?;
+        let residual_ratio =
+            (file.delta_size as f32 / file.original_size.max(1) as f32).clamp(0.0, 1.0);
+        let drift_norm = (file.drift / 255.0).clamp(0.0, 1.0);
+        let entropy_norm = (file.entropy / 8.0).clamp(0.0, 1.0);
+        let hit_rate = self.current_hit_rate().clamp(0.0, 1.0);
+        let coherence = self
+            .last_aef_report
+            .as_ref()
+            .map(|report| report.coherence_index as f32)
+            .unwrap_or_else(|| {
+                (0.48 * file.symmetry + 0.26 * (1.0 - drift_norm) + 0.26 * (1.0 - residual_ratio))
+                    .clamp(0.0, 1.0)
+            })
+            .clamp(0.0, 1.0);
+        let trust = self
+            .last_aef_report
+            .as_ref()
+            .map(|report| report.trust_score)
+            .unwrap_or_else(|| {
+                (0.42 * file.symmetry
+                    + 0.24 * (1.0 - drift_norm)
+                    + 0.18 * (1.0 - residual_ratio)
+                    + 0.16 * (file.compression_gain_percent / 100.0))
+                    .clamp(0.0, 1.0)
+            })
+            .clamp(0.0, 1.0);
+        let coverage = self
+            .last_aef_report
+            .as_ref()
+            .map(|report| report.vault_coverage)
+            .unwrap_or(hit_rate)
+            .clamp(0.0, 1.0);
+        let anchor_density = self
+            .last_aef_report
+            .as_ref()
+            .map(|report| (report.anchor_count as f32 / 28.0).clamp(0.0, 1.0))
+            .unwrap_or_else(|| {
+                ((file.compression_gain_percent / 100.0) * 0.65 + coverage * 0.35).clamp(0.0, 1.0)
+            });
+        let projection_gain = self
+            .last_aef_projection
+            .as_ref()
+            .map(|projection| {
+                1.0 - (projection.projected_delta_size as f32
+                    / projection.current_delta_size.max(1) as f32)
+            })
+            .unwrap_or_else(|| ((file.compression_gain_percent / 100.0) * 0.55).clamp(0.0, 1.0))
+            .clamp(0.0, 1.0);
+        let network_pressure = self
+            .browser_probe
+            .as_ref()
+            .map(|probe| probe.risk_score)
+            .unwrap_or_else(|| (drift_norm * 0.45 + (1.0 - trust) * 0.35).clamp(0.0, 1.0))
+            .clamp(0.0, 1.0);
+        let resonance = (0.30 * coherence
+            + 0.24 * trust
+            + 0.18 * coverage
+            + 0.16 * (1.0 - drift_norm)
+            + 0.12 * projection_gain)
+            .clamp(0.0, 1.0);
+        let godel_zone = (0.45 * (1.0 - file.symmetry) + 0.32 * entropy_norm + 0.23 * drift_norm)
+            .clamp(0.0, 1.0);
+        Some(VisualizationMetrics {
+            entropy_norm,
+            symmetry: file.symmetry.clamp(0.0, 1.0),
+            drift_norm,
+            compression_gain: (file.compression_gain_percent / 100.0).clamp(0.0, 1.0),
+            residual_ratio,
+            coherence,
+            trust,
+            hit_rate,
+            coverage,
+            anchor_density,
+            projection_gain,
+            resonance,
+            godel_zone,
+            network_pressure,
+        })
     }
 
     fn current_ttd_candidate(&self) -> Option<(PublicTtdSubmission, PublicTtdCandidateValidation)> {
@@ -824,13 +934,14 @@ impl AetherRustShell {
     }
 
     fn drain_bus_publish_requests(&mut self) {
-        let (events, next_offset) = match bus_ipc::read_publish_requests_from(self.bus_publish_offset) {
-            Ok(value) => value,
-            Err(err) => {
-                self.append_log(format!("Bus-Bridge lesen fehlgeschlagen: {err}"));
-                return;
-            }
-        };
+        let (events, next_offset) =
+            match bus_ipc::read_publish_requests_from(self.bus_publish_offset) {
+                Ok(value) => value,
+                Err(err) => {
+                    self.append_log(format!("Bus-Bridge lesen fehlgeschlagen: {err}"));
+                    return;
+                }
+            };
         self.bus_publish_offset = next_offset;
         for event in events {
             self.bus_publisher.publish(event);
@@ -1285,6 +1396,7 @@ impl AetherRustShell {
         ui.horizontal(|ui| {
             for (tab, label) in [
                 (TopTab::Analyse, "Datei"),
+                (TopTab::Struktur, "Struktur"),
                 (TopTab::Browser, "Browser"),
                 (TopTab::Chats, "Chats"),
                 (TopTab::Register, "Register"),
@@ -1574,6 +1686,114 @@ impl AetherRustShell {
                     ui.label("Noch keine Anker erkannt.");
                 }
             });
+        });
+    }
+
+    fn ui_struktur_tab(&mut self, ui: &mut egui::Ui) {
+        ui.group(|ui| {
+            ui.label(RichText::new("Struktur-Visualisierung").strong());
+            ui.label(
+                "Separater Tab fuer Interferenz, Raster, Symmetriebruch und Resonanz. Die Module zeigen die Wirkung der Struktur, nicht den Rohinhalt.",
+            );
+        });
+        ui.add_space(8.0);
+        let Some(file) = self.active_visualization_file() else {
+            ui.group(|ui| {
+                ui.label("Noch keine Quelle aktiv.");
+                ui.label(
+                    "Ziehe eine Datei ins Fenster oder fuehre eine Browser-Probe aus. Danach erscheinen die Strukturmodule hier in einem eigenen Tab.",
+                );
+            });
+            return;
+        };
+        let Some(metrics) = self.current_visualization_metrics() else {
+            return;
+        };
+        ui.columns(4, |cols| {
+            cols[0].group(|ui| {
+                ui.label(RichText::new("Quelle").strong());
+                ui.label(&file.file_name);
+                ui.label(&file.source_kind);
+            });
+            cols[1].group(|ui| {
+                ui.label(RichText::new("Resonanz").strong());
+                ui.label(format!("{:.0}%", metrics.resonance * 100.0));
+                ui.label(format!("Trust {:.0}%", metrics.trust * 100.0));
+            });
+            cols[2].group(|ui| {
+                ui.label(RichText::new("Delta").strong());
+                ui.label(format!("{:.0}%", metrics.residual_ratio * 100.0));
+                ui.label(format!("Drift {:.0}%", metrics.drift_norm * 100.0));
+            });
+            cols[3].group(|ui| {
+                ui.label(RichText::new("Goedel-Zone").strong());
+                ui.label(format!("{:.0}%", metrics.godel_zone * 100.0));
+                ui.label(format!("Coverage {:.0}%", metrics.coverage * 100.0));
+            });
+        });
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            cols[0].group(|ui| {
+                ui.label(RichText::new("Interferenz-Map").strong());
+                ui.label("Ordnung, Knoten und Verlustzonen im Feld.");
+                let desired = Vec2::new(ui.available_width().max(260.0), 230.0);
+                let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
+                render_interference_map(ui.painter_at(rect), rect, metrics);
+            });
+            cols[1].group(|ui| {
+                ui.label(RichText::new("Delta-Heatmap").strong());
+                ui.label("Raster der aktiven Systembereiche.");
+                let desired = Vec2::new(ui.available_width().max(260.0), 230.0);
+                let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
+                render_delta_heatmap(ui.painter_at(rect), rect, metrics);
+            });
+        });
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            cols[0].group(|ui| {
+                ui.label(RichText::new("Symmetriebruch-Radar").strong());
+                ui.label("Soll-Feld gegen emergente Ausreisser.");
+                let desired = Vec2::new(ui.available_width().max(260.0), 230.0);
+                let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
+                render_symmetry_break_radar(ui.painter_at(rect), rect, metrics);
+            });
+            cols[1].group(|ui| {
+                ui.label(RichText::new("Resonanz-Spektrum").strong());
+                ui.label("Peaks, Taeler und globale Verstaerkung.");
+                let desired = Vec2::new(ui.available_width().max(260.0), 230.0);
+                let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
+                render_resonance_spectrum(ui.painter_at(rect), rect, metrics);
+            });
+        });
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.label(RichText::new("Goedel-Modus").strong());
+            ui.label(
+                "Graubereich fuer Muster, die Aether als wirksam erkennt, aber nur teilweise erklaeren kann.",
+            );
+            let unresolved = metrics.godel_zone;
+            let explained = (1.0 - unresolved).clamp(0.0, 1.0);
+            ui.add(
+                egui::ProgressBar::new(explained)
+                    .desired_width(ui.available_width())
+                    .text(format!(
+                        "erklaerbar {:.0}% | emergent {:.0}%",
+                        explained * 100.0,
+                        unresolved * 100.0
+                    )),
+            );
+            ui.label(format!(
+                "Boundary: {} | Hit-Rate {:.0}% | Projektion {:.0}%",
+                if metrics.godel_zone >= 0.58 {
+                    "GOEDEL_LIMIT"
+                } else if metrics.godel_zone >= 0.34 {
+                    "STRUCTURAL_HYPOTHESIS"
+                } else {
+                    "RECONSTRUCTABLE"
+                },
+                metrics.hit_rate * 100.0,
+                metrics.projection_gain * 100.0
+            ));
         });
     }
 
@@ -2154,6 +2374,7 @@ impl eframe::App for AetherRustShell {
         egui::TopBottomPanel::top("main_tabs_top").show(ctx, |ui| self.ui_top_tabs(ui));
         egui::CentralPanel::default().show(ctx, |ui| match self.top_tab {
             TopTab::Analyse => self.ui_analyse_tab(ui),
+            TopTab::Struktur => self.ui_struktur_tab(ui),
             TopTab::Browser => self.ui_browser_tab(ui),
             TopTab::Chats => self.ui_chats_tab(ui),
             TopTab::Register => self.ui_register_tab(ui, ctx),
@@ -2407,6 +2628,359 @@ fn build_process_summary(
         entropy,
         symmetry * 100.0
     )
+}
+
+fn render_interference_map(painter: egui::Painter, rect: Rect, metrics: VisualizationMetrics) {
+    painter.rect_filled(rect, 12.0, Color32::from_rgb(9, 14, 24));
+    let inner = rect.shrink2(Vec2::new(10.0, 10.0));
+    for step in 0..10 {
+        let x = lerp_f32(inner.left(), inner.right(), step as f32 / 9.0);
+        painter.line_segment(
+            [Pos2::new(x, inner.top()), Pos2::new(x, inner.bottom())],
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(72, 102, 136, 20)),
+        );
+    }
+    for step in 0..7 {
+        let y = lerp_f32(inner.top(), inner.bottom(), step as f32 / 6.0);
+        painter.line_segment(
+            [Pos2::new(inner.left(), y), Pos2::new(inner.right(), y)],
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(72, 102, 136, 16)),
+        );
+    }
+    for line_idx in 0..4 {
+        let mut points = Vec::new();
+        let base_y = inner.center().y + (line_idx as f32 - 1.5) * 28.0;
+        let amplitude = 10.0 + metrics.resonance * 24.0 + line_idx as f32 * 3.0;
+        let phase = metrics.entropy_norm * std::f32::consts::TAU * (1.0 + line_idx as f32 * 0.12);
+        let frequency = 1.1 + metrics.anchor_density * 2.8 + line_idx as f32 * 0.35;
+        for step in 0..72 {
+            let t = step as f32 / 71.0;
+            let x = lerp_f32(inner.left(), inner.right(), t);
+            let wave = (t * std::f32::consts::TAU * frequency + phase).sin() * amplitude;
+            let drift = (t * std::f32::consts::TAU * 0.65 + metrics.drift_norm * 5.0).cos()
+                * metrics.drift_norm
+                * 12.0;
+            points.push(Pos2::new(x, base_y + wave + drift));
+        }
+        let color = mix_color(
+            Color32::from_rgb(42, 120, 152),
+            Color32::from_rgb(130, 244, 255),
+            (metrics.resonance * 0.75 + line_idx as f32 * 0.08).clamp(0.0, 1.0),
+        );
+        painter.add(egui::Shape::line(points, Stroke::new(1.6, color)));
+    }
+    for node_idx in 0..5 {
+        let t = 0.12 + node_idx as f32 * 0.19;
+        let x = lerp_f32(inner.left(), inner.right(), t);
+        let y = inner.center().y
+            + ((t * std::f32::consts::TAU * (1.4 + metrics.coverage) + metrics.resonance * 2.2)
+                .sin()
+                * 22.0);
+        let radius = 3.0 + metrics.coherence * 5.5 + node_idx as f32 * 0.25;
+        painter.circle_filled(
+            Pos2::new(x, y),
+            radius,
+            Color32::from_rgba_unmultiplied(190, 250, 255, 220),
+        );
+        painter.circle_stroke(
+            Pos2::new(x, y),
+            radius + 4.0,
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(110, 210, 255, 60)),
+        );
+    }
+    for hole_idx in 0..3 {
+        let t = 0.18 + hole_idx as f32 * 0.28;
+        let x = lerp_f32(inner.left(), inner.right(), t);
+        let y = inner.bottom() - 42.0 - hole_idx as f32 * 24.0 + metrics.drift_norm * 18.0;
+        let radius = 10.0 + metrics.drift_norm * 16.0 + hole_idx as f32 * 2.0;
+        painter.circle_filled(
+            Pos2::new(x, y),
+            radius,
+            Color32::from_rgba_unmultiplied(4, 6, 9, 180),
+        );
+        painter.circle_stroke(
+            Pos2::new(x, y),
+            radius + 3.0,
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 90, 64, 46)),
+        );
+    }
+    painter.text(
+        Pos2::new(inner.left() + 4.0, inner.top() + 2.0),
+        Align2::LEFT_TOP,
+        "in phase",
+        FontId::proportional(11.0),
+        Color32::from_rgb(150, 225, 235),
+    );
+    painter.text(
+        Pos2::new(inner.right() - 4.0, inner.bottom() - 2.0),
+        Align2::RIGHT_BOTTOM,
+        "drift / loss",
+        FontId::proportional(11.0),
+        Color32::from_rgb(214, 114, 96),
+    );
+}
+
+fn render_delta_heatmap(painter: egui::Painter, rect: Rect, metrics: VisualizationMetrics) {
+    painter.rect_filled(rect, 12.0, Color32::from_rgb(11, 16, 26));
+    let labels = ["CPU", "IO", "RAM", "VRAM", "Netz", "Scheduler"];
+    let values = [
+        (0.46 * metrics.drift_norm + 0.28 * metrics.entropy_norm + 0.26 * (1.0 - metrics.trust))
+            .clamp(0.0, 1.0),
+        (0.44 * metrics.residual_ratio
+            + 0.32 * metrics.projection_gain
+            + 0.24 * (1.0 - metrics.coverage))
+            .clamp(0.0, 1.0),
+        (0.40 * metrics.entropy_norm + 0.34 * metrics.drift_norm + 0.26 * metrics.godel_zone)
+            .clamp(0.0, 1.0),
+        (0.52 * (1.0 - metrics.hit_rate)
+            + 0.28 * metrics.anchor_density
+            + 0.20 * metrics.resonance)
+            .clamp(0.0, 1.0),
+        (0.56 * metrics.network_pressure + 0.24 * metrics.godel_zone + 0.20 * metrics.drift_norm)
+            .clamp(0.0, 1.0),
+        (0.36 * (1.0 - metrics.coherence)
+            + 0.34 * metrics.projection_gain
+            + 0.30 * metrics.resonance)
+            .clamp(0.0, 1.0),
+    ];
+    let inner = rect.shrink2(Vec2::new(12.0, 12.0));
+    let gap = 8.0;
+    let cell_w = (inner.width() - gap * 2.0) / 3.0;
+    let cell_h = (inner.height() - gap) / 2.0;
+    for index in 0..labels.len() {
+        let row = index / 3;
+        let col = index % 3;
+        let x = inner.left() + col as f32 * (cell_w + gap);
+        let y = inner.top() + row as f32 * (cell_h + gap);
+        let cell = Rect::from_min_size(Pos2::new(x, y), Vec2::new(cell_w, cell_h));
+        let fill = heat_color(values[index]);
+        painter.rect_filled(cell, 10.0, fill);
+        painter.rect_filled(
+            Rect::from_min_max(
+                cell.min,
+                Pos2::new(cell.max.x, cell.min.y + cell.height() * 0.26),
+            ),
+            10.0,
+            Color32::from_rgba_unmultiplied(255, 255, 255, 18),
+        );
+        painter.text(
+            Pos2::new(cell.left() + 10.0, cell.top() + 10.0),
+            Align2::LEFT_TOP,
+            labels[index],
+            FontId::proportional(13.0),
+            Color32::WHITE,
+        );
+        painter.text(
+            cell.center(),
+            Align2::CENTER_CENTER,
+            format!("{:.0}%", values[index] * 100.0),
+            FontId::proportional(22.0),
+            Color32::from_rgb(246, 248, 250),
+        );
+        let state = if values[index] < 0.35 {
+            "stabil"
+        } else if values[index] < 0.68 {
+            "drift"
+        } else {
+            "emergent"
+        };
+        painter.text(
+            Pos2::new(cell.left() + 10.0, cell.bottom() - 10.0),
+            Align2::LEFT_BOTTOM,
+            state,
+            FontId::proportional(11.0),
+            Color32::from_rgba_unmultiplied(255, 255, 255, 210),
+        );
+    }
+}
+
+fn render_symmetry_break_radar(painter: egui::Painter, rect: Rect, metrics: VisualizationMetrics) {
+    painter.rect_filled(rect, 12.0, Color32::from_rgb(10, 15, 24));
+    let labels = ["IO", "CPU", "Memory", "Network", "Telemetry", "GPU"];
+    let values = [
+        (0.30 + 0.44 * metrics.coverage + 0.26 * (1.0 - metrics.residual_ratio)).clamp(0.0, 1.0),
+        (0.24 + 0.36 * metrics.coherence + 0.40 * (1.0 - metrics.drift_norm)).clamp(0.0, 1.0),
+        (0.28 + 0.40 * metrics.symmetry + 0.32 * (1.0 - metrics.entropy_norm)).clamp(0.0, 1.0),
+        (0.20 + 0.58 * (1.0 - metrics.network_pressure) + 0.22 * metrics.trust).clamp(0.0, 1.0),
+        (0.22 + 0.44 * (1.0 - metrics.godel_zone) + 0.34 * metrics.trust).clamp(0.0, 1.0),
+        (0.24 + 0.42 * metrics.anchor_density + 0.34 * metrics.hit_rate).clamp(0.0, 1.0),
+    ];
+    let center = rect.center();
+    let radius = rect.width().min(rect.height()) * 0.30;
+    for ring in [0.25, 0.50, 0.75, 1.0] {
+        let mut ring_points = Vec::new();
+        for idx in 0..labels.len() {
+            let angle = std::f32::consts::FRAC_PI_2
+                - idx as f32 / labels.len() as f32 * std::f32::consts::TAU;
+            ring_points.push(polar_point(center, radius * ring, angle));
+        }
+        ring_points.push(ring_points[0]);
+        painter.add(egui::Shape::line(
+            ring_points,
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(110, 136, 160, 36)),
+        ));
+    }
+    let expected_radius = (0.56 + metrics.resonance * 0.14).clamp(0.0, 1.0);
+    let mut expected_points = Vec::new();
+    let mut actual_points = Vec::new();
+    for idx in 0..labels.len() {
+        let angle =
+            std::f32::consts::FRAC_PI_2 - idx as f32 / labels.len() as f32 * std::f32::consts::TAU;
+        let outer = polar_point(center, radius * 1.08, angle);
+        painter.line_segment(
+            [center, outer],
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(110, 136, 160, 34)),
+        );
+        painter.text(
+            polar_point(center, radius * 1.24, angle),
+            Align2::CENTER_CENTER,
+            labels[idx],
+            FontId::proportional(11.0),
+            Color32::from_rgb(206, 216, 228),
+        );
+        expected_points.push(polar_point(center, radius * expected_radius, angle));
+        actual_points.push(polar_point(center, radius * values[idx], angle));
+    }
+    expected_points.push(expected_points[0]);
+    painter.add(egui::Shape::line(
+        expected_points.clone(),
+        Stroke::new(1.2, Color32::from_rgba_unmultiplied(150, 180, 220, 110)),
+    ));
+    painter.add(egui::Shape::convex_polygon(
+        actual_points.clone(),
+        Color32::from_rgba_unmultiplied(86, 214, 199, 26),
+        Stroke::new(2.0, Color32::from_rgb(88, 224, 206)),
+    ));
+    for idx in 0..labels.len() {
+        let gap = (expected_radius - values[idx]).abs();
+        if gap > 0.12 {
+            painter.line_segment(
+                [expected_points[idx], actual_points[idx]],
+                Stroke::new(1.2, Color32::from_rgba_unmultiplied(255, 102, 90, 110)),
+            );
+            painter.circle_stroke(
+                actual_points[idx],
+                4.0,
+                Stroke::new(1.5, Color32::from_rgb(255, 120, 96)),
+            );
+        } else {
+            painter.circle_filled(actual_points[idx], 3.0, Color32::from_rgb(198, 255, 240));
+        }
+    }
+}
+
+fn render_resonance_spectrum(painter: egui::Painter, rect: Rect, metrics: VisualizationMetrics) {
+    painter.rect_filled(rect, 12.0, Color32::from_rgb(8, 13, 24));
+    let inner = rect.shrink2(Vec2::new(14.0, 14.0));
+    let baseline = inner.bottom() - 18.0;
+    painter.line_segment(
+        [
+            Pos2::new(inner.left(), baseline),
+            Pos2::new(inner.right(), baseline),
+        ],
+        Stroke::new(1.0, Color32::from_rgba_unmultiplied(150, 170, 196, 52)),
+    );
+    let bins = 18;
+    let step_w = inner.width() / bins as f32;
+    for idx in 0..bins {
+        let t = idx as f32 / (bins.saturating_sub(1)) as f32;
+        let constructive = ((t * std::f32::consts::TAU * (1.2 + metrics.anchor_density * 2.4)
+            + metrics.resonance * std::f32::consts::TAU)
+            .sin()
+            .abs()
+            * 0.54
+            + metrics.resonance * 0.30
+            + metrics.coverage * 0.16)
+            .clamp(0.0, 1.0);
+        let destructive = ((t * std::f32::consts::TAU * (1.8 + metrics.godel_zone * 2.0)
+            + metrics.drift_norm * 3.8)
+            .cos()
+            .abs()
+            * 0.24
+            + metrics.residual_ratio * 0.10)
+            .clamp(0.0, 1.0);
+        let amplitude = (constructive - destructive * 0.72).clamp(0.05, 1.0);
+        let x = inner.left() + step_w * idx as f32 + step_w * 0.18;
+        let bar_w = step_w * 0.64;
+        let bar_h = amplitude * (inner.height() - 26.0);
+        let bar = Rect::from_min_max(
+            Pos2::new(x, baseline - bar_h),
+            Pos2::new(x + bar_w, baseline),
+        );
+        let fill = mix_color(
+            Color32::from_rgb(42, 112, 182),
+            Color32::from_rgb(255, 214, 92),
+            amplitude,
+        );
+        let fill = mix_color(
+            fill,
+            Color32::from_rgb(255, 120, 82),
+            metrics.godel_zone * 0.35,
+        );
+        painter.rect_filled(bar, 4.0, fill);
+        if amplitude > 0.78 {
+            painter.circle_filled(
+                Pos2::new(bar.center().x, bar.top() - 4.0),
+                3.5,
+                Color32::from_rgb(255, 244, 192),
+            );
+        }
+        if amplitude < 0.22 {
+            painter.line_segment(
+                [
+                    Pos2::new(bar.left(), baseline - 8.0),
+                    Pos2::new(bar.right(), baseline - 8.0),
+                ],
+                Stroke::new(1.2, Color32::from_rgba_unmultiplied(110, 150, 196, 120)),
+            );
+        }
+    }
+    painter.text(
+        Pos2::new(inner.left(), inner.top()),
+        Align2::LEFT_TOP,
+        "constructive",
+        FontId::proportional(11.0),
+        Color32::from_rgb(255, 220, 122),
+    );
+    painter.text(
+        Pos2::new(inner.right(), baseline + 10.0),
+        Align2::RIGHT_TOP,
+        "destructive valleys",
+        FontId::proportional(11.0),
+        Color32::from_rgb(120, 166, 214),
+    );
+}
+
+fn heat_color(value: f32) -> Color32 {
+    let value = value.clamp(0.0, 1.0);
+    let cold = Color32::from_rgb(38, 104, 184);
+    let warm = Color32::from_rgb(246, 208, 76);
+    let hot = Color32::from_rgb(236, 86, 64);
+    if value <= 0.5 {
+        mix_color(cold, warm, value * 2.0)
+    } else {
+        mix_color(warm, hot, (value - 0.5) * 2.0)
+    }
+}
+
+fn mix_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let r = lerp_f32(from.r() as f32, to.r() as f32, t).round() as u8;
+    let g = lerp_f32(from.g() as f32, to.g() as f32, t).round() as u8;
+    let b = lerp_f32(from.b() as f32, to.b() as f32, t).round() as u8;
+    let a = lerp_f32(from.a() as f32, to.a() as f32, t).round() as u8;
+    Color32::from_rgba_unmultiplied(r, g, b, a)
+}
+
+fn polar_point(center: Pos2, radius: f32, angle: f32) -> Pos2 {
+    Pos2::new(
+        center.x + radius * angle.cos(),
+        center.y - radius * angle.sin(),
+    )
+}
+
+fn lerp_f32(start: f32, end: f32, t: f32) -> f32 {
+    start + (end - start) * t.clamp(0.0, 1.0)
 }
 
 fn load_local_vault_store() -> VaultStore {
