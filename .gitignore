@@ -3,6 +3,10 @@ build_repack/
 build_repack2/
 dist/
 target/
+.cargo-home/
+.rustup-home/
+rustup-init.exe
+rustup-init-local.exe
 __pycache__/
 *.pyc
 *.pyo

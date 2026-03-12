@@ -268,6 +268,16 @@ impl VaultStore {
     }
 }
 
+impl Default for VaultStore {
+    fn default() -> Self {
+        Self {
+            path: PathBuf::from("data").join("rust_shell").join("vault_store.json"),
+            version: 1,
+            entries: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct EnginePipeline {
     signing_key: SigningKey,
@@ -397,7 +407,7 @@ struct AnchorCandidate {
 }
 
 impl AefEncoder {
-    pub async fn encode(&self, input_path: &Path, output_path: &Path) -> Result<AefEncodeResult, AefError> {
+    pub fn encode_sync(&self, input_path: &Path, output_path: &Path) -> Result<AefEncodeResult, AefError> {
         let original = fs::read(input_path)?;
         let original_hash = sha256_bytes(&original);
         let signal_type = signal_type_from_path(input_path);
@@ -506,10 +516,14 @@ impl AefEncoder {
             delta_size: file.delta_layer.data.len() as u64,
         })
     }
+
+    pub async fn encode(&self, input_path: &Path, output_path: &Path) -> Result<AefEncodeResult, AefError> {
+        self.encode_sync(input_path, output_path)
+    }
 }
 
 impl AefDecoder {
-    pub async fn decode(&self, aef_path: &Path, output_path: &Path) -> Result<AefDecodeResult, AefError> {
+    pub fn decode_sync(&self, aef_path: &Path, output_path: &Path) -> Result<AefDecodeResult, AefError> {
         let file = AefFile::read_from_path(aef_path)?;
         let engine = EnginePipeline::new();
         engine.verify(&file.signable_bytes()?, &file.trust_metadata.shanway_signature)?;
@@ -536,6 +550,10 @@ impl AefDecoder {
             coherence_index: file.trust_metadata.coherence_index,
             missing_vault_refs: missing_refs,
         })
+    }
+
+    pub async fn decode(&self, aef_path: &Path, output_path: &Path) -> Result<AefDecodeResult, AefError> {
+        self.decode_sync(aef_path, output_path)
     }
 }
 
@@ -572,7 +590,7 @@ impl AefInspector {
         })
     }
 
-    pub async fn project_future_compression(
+    pub fn project_future_compression_sync(
         aef_path: &Path,
         vault: &VaultStore,
         projected_vault_size: usize,
@@ -598,6 +616,14 @@ impl AefInspector {
             projected_delta_size,
             vault_size_needed_for_lossless,
         })
+    }
+
+    pub async fn project_future_compression(
+        aef_path: &Path,
+        vault: &VaultStore,
+        projected_vault_size: usize,
+    ) -> Result<AefProjection, AefError> {
+        Self::project_future_compression_sync(aef_path, vault, projected_vault_size)
     }
 }
 
@@ -1097,4 +1123,59 @@ fn fourier_score(data: &[u8]) -> f32 {
         .sum::<f32>()
         / data.len() as f32;
     (1.0 - (variance.sqrt() / 128.0)).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let base = PathBuf::from("target").join("aef_tests").join(name);
+        let _ = fs::create_dir_all(&base);
+        base
+    }
+
+    #[test]
+    fn aef_roundtrip_sync_preserves_hash() {
+        let base = temp_dir("roundtrip_sync");
+        let input_path = base.join("probe.txt");
+        let output_path = base.join("probe.aef");
+        let decoded_path = base.join("decoded.txt");
+        fs::write(&input_path, b"Aether test payload for roundtrip.\nSymmetry and drift.\n").unwrap();
+
+        let vault = Arc::new(RwLock::new(VaultStore::load_from(base.join("vault.json")).unwrap_or_default()));
+        let engine = Arc::new(EnginePipeline::new());
+        let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
+        let decoder = AefDecoder::new(Arc::clone(&vault));
+
+        let encoded = encoder.encode_sync(&input_path, &output_path).unwrap();
+        assert!(encoded.aef_size > 0);
+
+        let decoded = decoder.decode_sync(&output_path, &decoded_path).unwrap();
+        assert!(decoded.original_hash_verified);
+        assert!(decoded.reconstruction_complete);
+
+        let original = fs::read(&input_path).unwrap();
+        let reconstructed = fs::read(&decoded_path).unwrap();
+        assert_eq!(sha256_bytes(&original), sha256_bytes(&reconstructed));
+    }
+
+    #[test]
+    fn aef_inspector_reports_metrics() {
+        let base = temp_dir("inspect_sync");
+        let input_path = base.join("inspect.md");
+        let output_path = base.join("inspect.aef");
+        fs::write(&input_path, b"# Aether\n\nInspector payload.\n").unwrap();
+
+        let vault = Arc::new(RwLock::new(VaultStore::load_from(base.join("vault.json")).unwrap_or_default()));
+        let engine = Arc::new(EnginePipeline::new());
+        let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
+        encoder.encode_sync(&input_path, &output_path).unwrap();
+
+        let report = AefInspector::inspect(&output_path).unwrap();
+        assert_eq!(report.original_filetype, "md");
+        assert!(report.anchor_count >= 1);
+        assert!(report.aef_size_bytes > 0);
+        assert!(!report.engine_flags_readable.is_empty());
+    }
 }

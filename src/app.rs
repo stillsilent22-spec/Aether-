@@ -1,3 +1,4 @@
+use crate::aef::{AefEncoder, AefInspector, AefReport, EnginePipeline, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::shanway::{render_reply as render_shanway_reply, ShanwayInput};
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
@@ -6,7 +7,8 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TopTab {
@@ -54,6 +56,9 @@ pub struct AetherRustShell {
     browser_note: String,
     preview_texture: Option<TextureHandle>,
     current_file: Option<ProcessedFile>,
+    last_aef_report: Option<AefReport>,
+    aef_vault: Arc<RwLock<VaultStore>>,
+    aef_engine: Arc<EnginePipeline>,
     selected_register_id: Option<u64>,
     selected_private_partner: String,
     private_partner_input: String,
@@ -68,6 +73,8 @@ pub struct AetherRustShell {
 impl AetherRustShell {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        let aef_vault = Arc::new(RwLock::new(load_local_vault_store()));
+        let aef_engine = Arc::new(EnginePipeline::new());
         Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -82,6 +89,9 @@ impl AetherRustShell {
             browser_note: "Browser-Tab ist vorbereitet. Netzpfade bleiben fail-closed, bis der Transport portiert ist.".to_owned(),
             preview_texture: None,
             current_file: None,
+            last_aef_report: None,
+            aef_vault,
+            aef_engine,
             selected_register_id: None,
             selected_private_partner: "Kontakt".to_owned(),
             private_partner_input: String::new(),
@@ -96,6 +106,15 @@ impl AetherRustShell {
 
     fn current_username(&self) -> Option<String> {
         self.current_user.as_ref().map(|user| user.username.clone())
+    }
+
+    fn encode_aef_for_path(&self, path: &Path) -> Result<AefReport, String> {
+        let output_path = aef_output_path(path);
+        let encoder = AefEncoder::new(Arc::clone(&self.aef_vault), Arc::clone(&self.aef_engine));
+        encoder
+            .encode_sync(path, &output_path)
+            .map_err(|err| format!("AEF-Encoding fehlgeschlagen: {err}"))?;
+        AefInspector::inspect(&output_path).map_err(|err| format!("AEF-Inspektion fehlgeschlagen: {err}"))
     }
 
     fn current_shanway_input(&self) -> Option<ShanwayInput> {
@@ -222,6 +241,7 @@ impl AetherRustShell {
             if ui.button("Aktive Vorschau leeren").clicked() {
                 self.current_file = None;
                 self.preview_texture = None;
+                self.last_aef_report = None;
             }
             if ui.button("Shanway-Chat oeffnen").clicked() {
                 self.top_tab = TopTab::Chats;
@@ -321,7 +341,7 @@ impl AetherRustShell {
             ),
         );
 
-        let processed = ProcessedFile {
+        let mut processed = ProcessedFile {
             file_name: file_name.clone(),
             full_path: path.to_string_lossy().to_string(),
             source_kind: source_kind.clone(),
@@ -336,6 +356,22 @@ impl AetherRustShell {
             preview_note: preview_note.clone(),
             excerpt,
         };
+        if let Ok(report) = self.encode_aef_for_path(path) {
+            processed.process_summary = format!(
+                "{}\nAEF: {:.2}% | Delta {:.2}% | Lossless {}",
+                processed.process_summary,
+                report.compression_rate_percent,
+                report.delta_percent,
+                if report.lossless_confirmed { "JA" } else { "NEIN" }
+            );
+            self.last_aef_report = Some(report.clone());
+            self.append_log(format!(
+                ".aef geschrieben: {} | Lossless {} | Trust {:.2}",
+                report.filename,
+                if report.lossless_confirmed { "JA" } else { "NEIN" },
+                report.trust_score
+            ));
+        }
         self.current_file = Some(processed.clone());
 
         let entry = RegisterEntry {
@@ -381,6 +417,7 @@ impl AetherRustShell {
             preview_note: entry.preview_note.clone(),
             excerpt: "Originaldatei ist nicht mehr lokal vorhanden. Es werden Registermetadaten angezeigt.".to_owned(),
         });
+        self.last_aef_report = None;
         self.preview_texture = Some(
             ctx.load_texture(
                 format!("register::{}", entry.id),
@@ -415,6 +452,15 @@ impl AetherRustShell {
                     ui.label(format!("Gewinn: {:.2}%", file.compression_gain_percent));
                     ui.separator();
                     ui.label(&file.preview_note);
+                    if let Some(report) = &self.last_aef_report {
+                        ui.separator();
+                        ui.label(format!(
+                            ".aef: {} | Cover {:.1}% | Lossless {}",
+                            report.filename,
+                            report.vault_coverage * 100.0,
+                            if report.lossless_confirmed { "JA" } else { "NEIN" }
+                        ));
+                    }
                     ui.separator();
                     ui.label(&file.excerpt);
                 } else {
@@ -429,6 +475,15 @@ impl AetherRustShell {
                     ui.label(format!("Drift: {:.2}", file.drift));
                     ui.separator();
                     ui.label(&file.process_summary);
+                    if let Some(report) = &self.last_aef_report {
+                        ui.separator();
+                        ui.label(format!(
+                            "AEF Trust {:.2} | C(t) {:.3} | Delta {} B",
+                            report.trust_score,
+                            report.coherence_index,
+                            report.delta_size_bytes
+                        ));
+                    }
                 } else {
                     ui.label("Noch keine Prozessbeschreibung.");
                 }
@@ -803,6 +858,16 @@ fn build_process_summary(entropy: f32, symmetry: f32, compression_gain_percent: 
         entropy,
         symmetry * 100.0
     )
+}
+
+fn load_local_vault_store() -> VaultStore {
+    VaultStore::load_default().unwrap_or_default()
+}
+
+fn aef_output_path(path: &Path) -> PathBuf {
+    let stem = path.file_stem().and_then(|value| value.to_str()).unwrap_or("artifact");
+    let file_name = format!("{stem}.aef");
+    PathBuf::from("data").join("rust_shell").join("aef").join(file_name)
 }
 
 fn build_preview_image(path: &Path, bytes: &[u8]) -> ColorImage {
