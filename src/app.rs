@@ -15,6 +15,7 @@ use crate::public_ttd::{
     pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation,
     PublicTtdMetrics, PublicTtdPoolStore, PublicTtdSubmission, PublicTtdTransport,
 };
+use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
 use crate::shanway::{
     render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput,
     ShanwayObserverContext, ShanwayPackHint,
@@ -55,6 +56,7 @@ enum TopTab {
     Browser,
     Chats,
     Register,
+    Security,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +181,9 @@ pub struct AetherRustShell {
     chat_relay_node_id_input: String,
     relay_status_line: String,
     consent_dialog: Option<ConsentDialogState>,
+    security_monitor: SecurityMonitor,
+    security_snapshot: SecuritySnapshot,
+    security_audit_events: Vec<SecurityAuditEvent>,
 }
 
 impl AetherRustShell {
@@ -250,7 +255,7 @@ impl AetherRustShell {
                 chat_relay_config.node_id, chat_relay_config.base_url
             )
         };
-        Self {
+        let mut shell = Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
             current_user: None,
@@ -304,11 +309,70 @@ impl AetherRustShell {
             chat_relay_node_id_input: chat_relay_config.node_id.clone(),
             relay_status_line,
             consent_dialog: None,
-        }
+            security_monitor: SecurityMonitor::new(PathBuf::from(".")),
+            security_snapshot: SecuritySnapshot::default(),
+            security_audit_events: Vec::new(),
+        };
+        shell.refresh_security_snapshot(false, "startup");
+        shell
     }
 
     fn current_username(&self) -> Option<String> {
         self.current_user.as_ref().map(|user| user.username.clone())
+    }
+
+    fn security_mode(&self) -> String {
+        self.current_user
+            .as_ref()
+            .and_then(|user| user.user_settings.get("security_mode"))
+            .cloned()
+            .unwrap_or_else(|| "local".to_owned())
+    }
+
+    fn refresh_security_snapshot(&mut self, persist_audit: bool, reason: &str) {
+        let register_count = self
+            .current_username()
+            .map(|username| self.state_store.entries_for(&username).len())
+            .unwrap_or(0);
+        let relay_enabled = !self.chat_relay_config.base_url.trim().is_empty()
+            && !self.chat_relay_config.shared_secret.trim().is_empty();
+        let snapshot = self.security_monitor.evaluate(
+            self.current_user.as_ref(),
+            register_count,
+            self.current_file.is_some(),
+            relay_enabled,
+            self.public_ttd_transport.is_enabled(),
+        );
+        if persist_audit {
+            let _ = self.security_monitor.append_audit(&snapshot, reason);
+        }
+        self.security_snapshot = snapshot;
+        self.security_audit_events = self.security_monitor.load_recent_audit(24);
+    }
+
+    fn set_security_mode(&mut self, mode: &str) {
+        let Some(username) = self.current_username() else {
+            self.status_line =
+                "Security-Modus kann erst nach der Anmeldung gesetzt werden.".to_owned();
+            return;
+        };
+        match self
+            .auth_store
+            .update_user_setting(&username, "security_mode", mode)
+        {
+            Ok(()) => {
+                if let Some(user) = self.current_user.as_mut() {
+                    user.user_settings
+                        .insert("security_mode".to_owned(), mode.to_owned());
+                }
+                self.refresh_security_snapshot(true, "mode_change");
+                self.status_line = format!("Security-Modus auf {} gesetzt.", mode);
+                self.append_log(self.status_line.clone());
+            }
+            Err(err) => {
+                self.status_line = format!("Security-Modus konnte nicht gespeichert werden: {err}");
+            }
+        }
     }
 
     fn encode_aef_for_path(&self, path: &Path) -> Result<AefReport, String> {
@@ -685,6 +749,7 @@ impl AetherRustShell {
                     summary.trusted_anchor_count,
                     network_suffix
                 );
+                self.refresh_security_snapshot(true, "ttd_shared");
                 self.append_log(self.status_line.clone());
             }
             Err(err) => {
@@ -717,6 +782,7 @@ impl AetherRustShell {
                     summary.trusted_anchor_count,
                     summary.candidate_anchor_count
                 );
+                self.refresh_security_snapshot(true, "ttd_sync");
                 self.append_log(self.status_line.clone());
             }
             Err(err) => {
@@ -749,6 +815,7 @@ impl AetherRustShell {
                 self.chat_relay_config.node_id, self.chat_relay_config.base_url
             )
         };
+        self.refresh_security_snapshot(true, "relay_config");
         Ok(())
     }
 
@@ -1252,6 +1319,7 @@ impl AetherRustShell {
                             {
                                 Ok(user) => {
                                     self.current_user = Some(user);
+                                    self.refresh_security_snapshot(true, "login");
                                     self.status_line = "Anmeldung erfolgreich.".to_owned();
                                     self.append_log("Anmeldung erfolgreich.");
                                 }
@@ -1301,8 +1369,22 @@ impl AetherRustShell {
             ui.heading("Shanway");
             ui.label("Struktureller Beobachter. Dateien kommen lokal hinein, Antworten bleiben klarer und weniger unheimlich.");
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Sicherheitsfilter: aktiv").color(Color32::from_rgb(164, 232, 178)));
-                ui.label(RichText::new("Netzpfad: aus").color(Color32::from_rgb(255, 208, 120)));
+                let trust_color = match self.security_snapshot.trust_state.as_str() {
+                    "LOCK" => Color32::from_rgb(236, 116, 116),
+                    "DEV" => Color32::from_rgb(255, 208, 120),
+                    _ => Color32::from_rgb(164, 232, 178),
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "Security: {}",
+                        self.security_snapshot.trust_state
+                    ))
+                    .color(trust_color),
+                );
+                ui.label(
+                    RichText::new(format!("Mode: {}", self.security_snapshot.mode))
+                        .color(Color32::from_rgb(255, 208, 120)),
+                );
             });
             ui.label(
                 RichText::new(self.mind_model.observer_status(self.observer_id))
@@ -1314,6 +1396,12 @@ impl AetherRustShell {
                 ui.label(format!("Session-Key-Fingerprint: {}", user.live_session_fingerprint));
                 ui.label(format!("Storage-Key-Fingerprint: {}", user.raw_storage_fingerprint));
             }
+            ui.label(format!(
+                "Security-Node: {}",
+                &self.security_snapshot.node_id[..self.security_snapshot.node_id.len().min(16)]
+            ));
+            ui.label(format!("Maze: {}", self.security_snapshot.maze_state));
+            ui.label(RichText::new(&self.security_snapshot.summary).color(Color32::from_rgb(170, 184, 204)));
             let pack_count = self
                 .pack_registry
                 .read()
@@ -1379,10 +1467,18 @@ impl AetherRustShell {
                 self.preview_texture = None;
                 self.last_aef_report = None;
                 self.last_aef_projection = None;
+                self.refresh_security_snapshot(false, "preview_cleared");
             }
             if ui.button("Shanway-Chat oeffnen").clicked() {
                 self.top_tab = TopTab::Chats;
                 self.chat_tab = ChatTab::Shanway;
+            }
+            if ui.button("Security-Tab oeffnen").clicked() {
+                self.top_tab = TopTab::Security;
+            }
+            if ui.button("Security recheck").clicked() {
+                self.refresh_security_snapshot(true, "manual_recheck");
+                self.status_line = "Security-Recheck abgeschlossen.".to_owned();
             }
             if ui.button("Observer lokal behalten").clicked() {
                 self.mind_model.enable_persistent_local();
@@ -1544,6 +1640,7 @@ impl AetherRustShell {
                 (TopTab::Browser, "Browser"),
                 (TopTab::Chats, "Chats"),
                 (TopTab::Register, "Register"),
+                (TopTab::Security, "Security"),
             ] {
                 let selected = self.top_tab == tab;
                 let button = egui::Button::new(RichText::new(label).strong().color(if selected {
@@ -1725,6 +1822,7 @@ impl AetherRustShell {
         let entry_id = self.state_store.add_register_entry(entry)?;
         self.selected_register_id = Some(entry_id);
         self.record_file_workflow(&source_kind, &file_name, aef_verified);
+        self.refresh_security_snapshot(true, "file_loaded");
         Ok(processed)
     }
 
@@ -1734,6 +1832,7 @@ impl AetherRustShell {
             if let Ok(file) = self.preview_existing_file(Path::new(&entry.full_path), ctx) {
                 self.current_file = Some(file.clone());
                 self.refresh_projection_for_path(Path::new(&entry.full_path));
+                self.refresh_security_snapshot(false, "register_loaded");
                 self.status_line = format!("Registereintrag geladen: {}", file.file_name);
                 self.append_log(format!("Registereintrag geladen: {}", file.file_name));
                 return;
@@ -1762,6 +1861,7 @@ impl AetherRustShell {
             placeholder_preview_image(),
             egui::TextureOptions::LINEAR,
         ));
+        self.refresh_security_snapshot(false, "register_loaded");
     }
 
     fn ui_analyse_tab(&mut self, ui: &mut egui::Ui) {
@@ -2522,6 +2622,93 @@ impl AetherRustShell {
                 });
         });
     }
+
+    fn ui_security_tab(&mut self, ui: &mut egui::Ui) {
+        let mode = self.security_mode();
+        ui.group(|ui| {
+            ui.label(RichText::new("Security-Zustand").strong());
+            ui.label(
+                "Lokale Integritaet, Privacy-Boundary und Shell-Zustand laufen hier zusammen.",
+            );
+            ui.horizontal(|ui| {
+                let local_selected = mode.eq_ignore_ascii_case("local");
+                if ui.selectable_label(local_selected, "LOCAL").clicked() && !local_selected {
+                    self.set_security_mode("local");
+                }
+                let dev_selected = mode.eq_ignore_ascii_case("dev");
+                if ui.selectable_label(dev_selected, "DEV").clicked() && !dev_selected {
+                    self.set_security_mode("dev");
+                }
+                if ui.button("Recheck").clicked() {
+                    self.refresh_security_snapshot(true, "manual_recheck");
+                    self.status_line = "Security-Recheck abgeschlossen.".to_owned();
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(format!("Node-ID: {}", self.security_snapshot.node_id));
+            ui.label(format!("Mode: {}", self.security_snapshot.mode));
+            ui.label(format!("Trust: {}", self.security_snapshot.trust_state));
+            ui.label(format!("Maze: {}", self.security_snapshot.maze_state));
+            ui.label(format!("Geprueft: {}", self.security_snapshot.checked_at));
+            ui.label(format!(
+                "Audit: {}",
+                self.security_monitor.audit_path().display()
+            ));
+            ui.separator();
+            ui.label(
+                RichText::new(&self.security_snapshot.summary)
+                    .color(Color32::from_rgb(170, 206, 240)),
+            );
+        });
+        ui.add_space(8.0);
+        ui.columns(2, |cols| {
+            cols[0].group(|ui| {
+                ui.label(RichText::new("Selbstmetriken").strong());
+                for (key, value) in &self.security_snapshot.self_metrics {
+                    ui.label(format!("{key}: {value}"));
+                }
+            });
+            cols[1].group(|ui| {
+                ui.label(RichText::new("Findings").strong());
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for finding in &self.security_snapshot.findings {
+                            let color = match finding.severity.as_str() {
+                                "critical" => Color32::from_rgb(236, 116, 116),
+                                "warning" => Color32::from_rgb(255, 208, 120),
+                                _ => Color32::from_rgb(170, 206, 240),
+                            };
+                            ui.label(
+                                RichText::new(format!(
+                                    "{} | {} | {}",
+                                    finding.severity, finding.event_type, finding.message
+                                ))
+                                .color(color),
+                            );
+                        }
+                    });
+            });
+        });
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.label(RichText::new("Lokales Security-Audit").strong());
+            if self.security_audit_events.is_empty() {
+                ui.label("Noch keine Security-Audit-Eintraege.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        for event in &self.security_audit_events {
+                            ui.label(format!(
+                                "{} | {} | {} | {}",
+                                event.ts, event.reason, event.trust_state, event.summary
+                            ));
+                        }
+                    });
+            }
+        });
+    }
 }
 
 impl eframe::App for AetherRustShell {
@@ -2541,6 +2728,7 @@ impl eframe::App for AetherRustShell {
             TopTab::Browser => self.ui_browser_tab(ui),
             TopTab::Chats => self.ui_chats_tab(ui),
             TopTab::Register => self.ui_register_tab(ui, ctx),
+            TopTab::Security => self.ui_security_tab(ui),
         });
         self.ui_consent_dialog(ctx);
     }

@@ -1,8 +1,8 @@
 pub mod aef;
 pub mod app;
 pub mod auth;
-pub mod bus_ipc;
 pub mod browser;
+pub mod bus_ipc;
 pub mod chat_sync;
 pub mod delta_vault;
 pub mod gfx;
@@ -13,6 +13,7 @@ pub mod pack;
 pub mod priority;
 pub mod public_ttd;
 pub mod runtime_signal;
+pub mod security;
 pub mod shanway;
 pub mod state;
 pub mod theory_of_mind;

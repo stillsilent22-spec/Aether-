@@ -164,16 +164,36 @@ fn serialize_envelope(event: &BusEvent) -> Value {
 
 fn serialize_payload(event: &BusEvent) -> Value {
     match event {
-        BusEvent::WorkflowAnchorHit(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::WorkflowAnchorLearned(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::CrossProgramVramReuse(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::OfflineCachePrepared(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::PackRecommended(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::PackInstalled(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::VramPressureChanged(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::VramOptimized(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::TextureUploadCompleted(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
-        BusEvent::ShaderCacheHit(payload) => serde_json::to_value(payload).unwrap_or_else(|_| json!({})),
+        BusEvent::WorkflowAnchorHit(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::WorkflowAnchorLearned(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::CrossProgramVramReuse(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::OfflineCachePrepared(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::PackRecommended(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::PackInstalled(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::VramPressureChanged(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::VramOptimized(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::TextureUploadCompleted(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::ShaderCacheHit(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
         BusEvent::ShanwayUserMessage(payload) => json!({
             "process_id": payload.process_id,
             "message": payload.message,
@@ -216,7 +236,9 @@ fn parse_event(event_type: &str, payload: Value) -> Result<BusEvent, String> {
         "ShaderCacheHit" => serde_json::from_value::<ShaderCacheHitEvent>(payload)
             .map(BusEvent::ShaderCacheHit)
             .map_err(|err| err.to_string()),
-        "ShanwayUserMessage" => parse_shanway_user_message(payload).map(BusEvent::ShanwayUserMessage),
+        "ShanwayUserMessage" => {
+            parse_shanway_user_message(payload).map(BusEvent::ShanwayUserMessage)
+        }
         other => Err(format!("unsupported event type: {other}")),
     }
 }

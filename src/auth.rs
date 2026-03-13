@@ -110,6 +110,24 @@ impl AuthStore {
         Ok(issue_session(user, password))
     }
 
+    pub fn update_user_setting(
+        &mut self,
+        username: &str,
+        key: &str,
+        value: &str,
+    ) -> Result<(), String> {
+        let normalized = normalize_username(username)?;
+        let Some(user) = self
+            .users
+            .iter_mut()
+            .find(|candidate| candidate.username.eq_ignore_ascii_case(&normalized))
+        else {
+            return Err("Nutzer nicht gefunden.".to_owned());
+        };
+        user.user_settings.insert(key.to_owned(), value.to_owned());
+        self.save()
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let payload = StoredUsers {
             users: self.users.clone(),
