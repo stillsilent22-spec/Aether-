@@ -6,6 +6,7 @@ pub mod bus_ipc;
 pub mod chat_sync;
 pub mod delta_vault;
 pub mod gfx;
+pub mod iced_shell;
 pub mod inter_layer_bus;
 pub mod observation;
 pub mod offline_cache;
