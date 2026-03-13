@@ -269,7 +269,7 @@ class ShanwayInterface:
     @staticmethod
     def _fetch_manual(provider: str, url: str) -> dict[str, Any]:
         try:
-            raw_html = BrowserEngine._download_text(url, timeout=6.0)
+            raw_html = BrowserEngine.download_text(url, timeout=6.0)
             summary = BrowserEngine.strip_html_text(raw_html, limit_chars=1200)
             return {
                 "ok": bool(summary),

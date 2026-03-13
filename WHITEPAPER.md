@@ -206,7 +206,7 @@ mit:
 - `H_inf`: asymptotische Restunsicherheit
 - `k`: Lernrate
 
-## 10. Shanway als Miniatur-Beobachter
+## 10. Shanway als lokaler Sekundaerpfad
 
 Die aktuelle Architektur erweitert Shanway um einen lokalen Zusatzpfad, der bewusst vom normalen Fingerprint getrennt bleibt:
 
@@ -220,7 +220,7 @@ Shanway nutzt diesen Zusatzpfad nicht als "Rendering", sondern als lokale Reflex
 - Miniatur-Symmetrie und Auffaelligkeitsmarker
 - daraus abgeleitete Veraenderung von `M_t`
 
-Damit entsteht eine praktische Form von Selbstbeobachtung im engen technischen Sinn: Das System beobachtet einen von ihm selbst erzeugten Strukturzustand und schreibt dessen Effekt wieder auf den Beobachterzustand zurueck. Das ist keine Aussage ueber Bewusstsein, sondern eine instrumentierte Rueckkopplung.
+Damit entsteht ein instrumentierter Rueckkopplungspfad: Das System wertet einen von ihm selbst erzeugten Strukturzustand aus und schreibt dessen Effekt wieder auf den Beobachterzustand zurueck. Das ist eine technische Querpruefung, keine Aussage ueber Bewusstsein oder allgemeine Kognition.
 
 ## 11. Rekursive Reflexion und kontinuierliches Lernen
 
@@ -289,7 +289,7 @@ Ergaenzt wurde dieser Pfad jetzt um eine lokale URL-Probe vor dem Oeffnen. Aethe
 
 Auch das ist kein Cloud-Dienst, sondern nur eine weitere lokale Beobachtungsstufe ueber demselben `M_t`.
 
-## 12. Verbundenheit unter Governance
+## 12. Kontrollierte gemeinsame Strukturweitergabe
 
 Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 
@@ -304,9 +304,9 @@ Die aktuelle Peer-Logik ist bewusst consent-basiert und lokal kontrolliert:
 - fuer Vollfreigaben ist ein expliziter Consent-Schritt notwendig
 - optionaler echter Transport erfolgt nur ueber einen lokalen IPFS-HTTP-Knoten oder explizit konfigurierte Mirror-URLs
 
-Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich nicht-puzzlebar: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
+Das ist nicht als offene API fuer Fremdsysteme gedacht. Die Architektur bleibt absichtlich begrenzt: keine zentrale SaaS-Abhaengigkeit, keine erzwungene Cloud und kein stiller Auto-Export. Importierte oeffentliche Anker verbessern nur lokal `M_t` und damit `I_obs`.
 
-Diese Nicht-Puzzlebarkeit gilt auch fuer den Chat- und Browserpfad: Es gibt keine REST-Schicht, keine OpenAI-kompatible API und keinen verborgenen Cloud-Zwang. Aether bleibt ein eigenstaendiges lokales System fuer observer-relative Wissensverarbeitung und keine generische Schnittstelle fuer zentrale Cloud-Orchestrierung.
+Diese Begrenzung gilt auch fuer den Chat- und Browserpfad: Es gibt keine REST-Schicht, keine OpenAI-kompatible API und keinen verborgenen Cloud-Zwang. Aether bleibt ein eigenstaendiges lokales System und keine generische Schnittstelle fuer zentrale Cloud-Orchestrierung.
 
 Damit wird ein enger, aber wichtiger Unterschied festgehalten:
 
@@ -393,7 +393,7 @@ Das ist keine rhetorische Formel, sondern eine Sicherheitsregel.
 
 Aether erzwingt zentrale Bedingungen technisch.
 
-Die innere Systemphysik des Projekts lautet:
+Die internen Sicherheitsregeln des Projekts lauten:
 
 1. Unzulaessige Zustaende duerfen nicht bequem darstellbar sein.
 2. Kritische Zustandswechsel muessen validiert werden.
@@ -409,9 +409,9 @@ Die relevanten Module sind:
 
 Diese Schicht ist kein Zusatz. Sie ist Voraussetzung dafuer, dass Rekonstruktion und Teilen ueberhaupt verantwortbar sind.
 
-## 14. Warum Open Source hier methodisch richtig ist
+## 14. Warum Quelloffenheit hier methodisch richtig ist
 
-Open Source ist fuer Aether nicht nur politisch oder praktisch sinnvoll, sondern methodisch folgerichtig.
+Quelloffenheit ist fuer Aether nicht nur praktisch sinnvoll, sondern methodisch folgerichtig.
 
 Der Grund:
 
@@ -419,7 +419,7 @@ Der Grund:
 - Solche Aussagen muessen pruefbar sein.
 - Vertrauen in ein lokales Analyse- und Rekonstruktionssystem entsteht durch Einsicht in Code, Datenpfade und Randbedingungen, nicht durch Black-Box-Autoritaet.
 
-Open Source ermoeglicht hier:
+Quelloffenheit ermoeglicht hier:
 
 - Nachvollziehbarkeit
 - Reproduzierbarkeit
@@ -445,7 +445,7 @@ Die folgenden Aussagen sind im Projektkontext technisch pruefbar:
 Die wichtigsten Begrenzungen sind:
 
 - Die beobachterrelative Erweiterung ist derzeit ein Arbeitsmodell, keine abgeschlossene formale Theorie.
-- Die Beauty-Signatur ist diagnostisch, nicht ontologisch.
+- Die Beauty-Signatur ist diagnostisch und keine Aussage ueber Bedeutung oder Wesen eines Datensatzes.
 - Bayes-, Graph- und Resonanzschichten liefern modellabhaengige Zustandsnahe, keine absolute Wahrheit.
 - AELAB ist verifizierbar als interner evolutiver Mechanismus, nicht als allein ausreichender Erklaerungskern.
 - Die historische pi-Beobachtung ist in der aktuellen Codebasis nicht als harter, auditiert reproduzierbarer Beleg nachweisbar.
@@ -453,7 +453,7 @@ Die wichtigsten Begrenzungen sind:
 
 ## 17. Schlussfolgerung
 
-Aether ist der Versuch, eine aus Conway's Game of Life und aus einer beobachterkritischen Lesart von Shannon entstandene Frage in ein reales, technisches System zu ueberfuehren.
+Aether ueberfuehrt eine klar begrenzte technische Frage in ein konkretes Softwaresystem: Wie lassen sich Struktur, Rekonstruktion, modellrelative Restunsicherheit und Freigaberegeln in einem gemeinsamen lokalen Pfad untersuchen?
 
 Die entscheidende Struktur des Projekts ist:
 
@@ -462,7 +462,7 @@ Die entscheidende Struktur des Projekts ist:
 - Aether wurde als primaere Architektur gebaut.
 - Erst spaet wurde klar, dass das koharente System aus beiden Ebenen als Ganzes entsteht: Aether als Hauptsystem, AELAB als begrenzter Hintergrundpfad.
 
-Damit ist Aether weder ein Totalmodell noch ein beliebiges Softwarepaket. Es ist ein offenes technisches System zur pruefbaren Untersuchung von Regeln, Beobachtung, Restunsicherheit, Rekonstruktion und Governance.
+Damit ist Aether weder ein Totalmodell noch ein beliebiges Softwarepaket. Es ist ein technisches System zur pruefbaren Untersuchung von Regeln, Restunsicherheit, Rekonstruktion und Governance.
 
 ## 18. Rust-Architekturpfad: oeffentlicher Vault, Bus, Observation
 
@@ -523,7 +523,7 @@ Diese Schichtung ist wichtig, weil sie eine praktische Antwort auf Bandbreite un
 
 ### Rust-Weiterfuehrung: Theory of Mind
 
-Parallel dazu fuehrt der Rust-Shell-Schnitt einen observer-relativen Kommunikationslayer ein. Die mathematische Lesart verschiebt sich von:
+Parallel dazu fuehrt der Rust-Shell-Schnitt einen kommunikativen Anpassungspfad ein. Die mathematische Lesart verschiebt sich von:
 
 `H_lambda(X, t) = H(X | M_t)`
 
@@ -554,14 +554,14 @@ Privacy-by-default bleibt erhalten:
 
 Damit wird Shanway nicht zu einem Profiling-System, sondern zu einem lokalen Beobachter, der die kommunikative Luecke zwischen `O1` und `O2` klein haelt, ohne dafuer mehr Daten zu sammeln als noetig.
 
-### Anti-Puzzle Grenze
+### Architekturgrenze
 
-Mit Packs und Theory of Mind wird Aether nicht zu einem generischen Baukasten fuer fremde Plattformen. Die Architektur bleibt absichtlich nicht-puzzlebar:
+Mit Packs und Theory of Mind wird Aether nicht zu einem generischen Baukasten fuer fremde Plattformen. Die Architektur bleibt absichtlich begrenzt:
 
 - keine offene System-API als Fremd-Backend
 - keine automatische Integration in andere AGI-Orchestrierungen
 - keine Rohdatenuebergabe ueber Packs, Observer-Modelle oder Quarantaene-Pfade
-- nur lokale, auditierbare und fail-closed Erweiterung des bestehenden Paradigmas
+- nur lokale, auditierbare und fail-closed Erweiterung des bestehenden Systems
 
 ### Rust-Erweiterung: Browser-Probe und Public-TTD
 
@@ -572,4 +572,10 @@ Der Rust-Pfad erweitert die Shell nun auch an der Grenze zwischen lokalem Wissen
 - Consent bleibt vorgelagert. Ohne explizite Zustimmung gibt es weder Netzprobe noch Public-TTD-Sync.
 - Quorum bleibt lokal nachvollziehbar: Operator-Anker brauchen Peer-Validierungen, Admin-Anker koennen direkt vertrauenswuerdig werden.
 
-Damit bleibt der Demokratisierungspfad technisch offen, ohne den Zero-Knowledge- und fail-closed-Kern preiszugeben.
+Damit bleibt der gemeinsame Nutzungspfad technisch offen, ohne den Zero-Knowledge- und fail-closed-Kern preiszugeben.
+
+## 19. Schlusswort
+
+Dieses Whitepaper ist ein technisches Referenzdokument. Es beschreibt den aktuellen Stand eines lokalen Analyse- und Rekonstruktionssystems, seine Annahmen, seine Begrenzungen und seine Sicherheitsregeln.
+
+Die methodische Grundlage dieser Arbeit beruht auf Ergebnissen aus Mathematik, Informationstheorie, Statistik, Rekonstruktionstheorie und Informatik. Das Schlusswort gilt den Wissenschaftlerinnen und Wissenschaftlern, deren Erkenntnisse diesen Arbeitsstand erst moeglich gemacht haben.

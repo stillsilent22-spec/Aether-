@@ -1,6 +1,6 @@
 # Aether
 
-Aether ist ein lokales, source-available Analyse- und Rekonstruktionssystem fuer Dateien und Bytestroeme. Das System kombiniert Strukturmetriken, beobachterrelative Restunsicherheit, Rekonstruktionspfade und fail-closed Governance in einem gemeinsamen auditierbaren Workflow. Objektiv ungewoehnlich ist nicht ein einzelnes Modell, sondern die Kopplung dieser Ebenen: Analyse, Persistenz, Freigabeentscheidungen und lokale Assistenz arbeiten auf demselben Zustand statt in getrennten Werkzeugketten.
+Aether ist ein lokales, source-available Analyse- und Rekonstruktionssystem fuer Dateien und Bytestroeme. Das System kombiniert Strukturmetriken, modellrelative Restunsicherheit, Rekonstruktionspfade und fail-closed Freigaberegeln in einem gemeinsamen auditierbaren Workflow. Der technische Schwerpunkt liegt nicht auf einem einzelnen Modell, sondern auf der Kopplung von Analyse, Persistenz, Freigabeentscheidungen und lokaler Assistenz ueber denselben Zustand.
 
 Stand: 08.03.2026
 Autor: Kevin Hannemann
@@ -25,7 +25,7 @@ Die Lesbarkeit ist deshalb gewollt. Die freie Veraenderbarkeit ist es nicht.
 
 Aether ist kein einzelnes Spezialtool und kein generisches Chat-System. Es ist ein lokales System fuer strukturelle Analyse, Rekonstruktion, Beobachtung und kontrollierte Weitergabe von Datenzustaenden. Im Zentrum stehen auditierbare Metriken, explizite Rekonstruktionsgrenzen und deterministische Sicherheitsregeln.
 
-Das Projekt fuehrt mehrere sonst getrennte Ebenen zusammen: Dateianalyse, Delta- und Snapshot-Logik, beobachterrelative Unsicherheit, lokale Wissensverdichtung und kontrollierte Exportpfade. Dadurch lassen sich Aussagen ueber Struktur, Rekonstruierbarkeit und Teilbarkeit im selben technischen Kontext pruefen.
+Das Projekt fuehrt mehrere sonst getrennte Ebenen zusammen: Dateianalyse, Delta- und Snapshot-Logik, modellrelative Restunsicherheit, lokale Verdichtung und kontrollierte Exportpfade. Dadurch lassen sich Aussagen ueber Struktur, Rekonstruierbarkeit und Teilbarkeit im selben technischen Kontext pruefen.
 
 ## Lokale Privacy-Grenzen
 
@@ -47,7 +47,7 @@ Aether ist kein einzelnes Spezialtool, sondern ein lokales Analyse- und Beobacht
 - Delta-Pfade bilden und lokale Rekonstruktionsbedingungen abschaetzen
 - Analysezustaende, Deltas und Strukturverlaeufe visualisieren
 - visuelle Quellen und Laufzeitdaten als dynamische Strukturquellen verarbeiten
-- Anker, Frequenzmuster, Symmetrie, Entropie, Kohaerenz und Resonanz messen
+- interne Metriken wie Entropie, Symmetrie, Periodizitaet, Delta-Naehe und weitere diagnostische Kennzahlen berechnen
 - Bayes-, Graph- und Beobachterzustaende gemeinsam in einen Fingerprint ueberfuehren
 - Vault-, Chain- und Snapshot-Pfade lokal und kontrolliert fuehren
 - bestaetigte Anker als DNA-Share- und Public-Anchor-Library-Buendel ohne Rohdaten bereitstellen
@@ -79,14 +79,14 @@ Herkoemmliche Werkzeuge trennen diese Bereiche meist strikt:
 - Dateianalyse-Tools messen Signaturen oder bekannte Muster
 - Visualisierungstools zeigen Daten, ohne sie rekonstruktiv oder governance-seitig einzuordnen
 - Chat- oder KI-Systeme erzeugen Sprache, ohne denselben Datenpfad wie das eigentliche Messsystem zu teilen
-- Sicherheitswerkzeuge bewerten oft nur Bedrohungen, nicht Invarianz, Rekonstruktion und Beobachterlage zugleich
+- Sicherheitswerkzeuge bewerten oft nur Bedrohungen, nicht Rekonstruktion, Strukturstabilitaet und Modellgrenzen zugleich
 
 Aether geht einen anderen Weg:
 
 - es behandelt Daten primaer als Struktur und Zustandsraum, nicht nur als Dateiformat
 - es koppelt Analyse, Beobachtung, Rekonstruktion, Governance und Darstellung direkt
 - es trennt lokale Rohdaten strikt von teilbaren Anchor-/Strukturbuendeln fuer gemeinsame Bibliotheken und Chain-Attestierung
-- es fuehrt keine freie Modellmagie ein, sondern bindet kritische Pfade an Validatoren, Fail-Closed-Regeln und lokale Auditierbarkeit
+- es fuehrt keine ungebundenen Modellpfade ein, sondern bindet kritische Operationen an Validatoren, Fail-Closed-Regeln und lokale Auditierbarkeit
 - es versucht nicht, Bedeutung sofort semantisch zu labeln, sondern leitet zunaechst Struktur, Anker, Symmetriebruch und Restunsicherheit ab
 - Shanway ist keine vom System getrennte Sprach-KI, sondern eine lokale Schriftoberflaeche ueber denselben berechneten Zustaenden
 
@@ -113,19 +113,19 @@ Ziel von Aether ist nicht die automatische Erzeugung von "Bedeutung", sondern di
 - Rekonstruktionsbedingungen
 - Governance und Verantwortung
 
-Die Grundannahme ist:
+Arbeitsannahme:
 
-Komplexe Semantik kann nicht sinnvoll untersucht werden, wenn ihre strukturellen, dynamischen und beobachterabhaengigen Voraussetzungen ignoriert werden.
+Komplexere semantische Aussagen sollten erst dann gemacht werden, wenn die zugrunde liegenden strukturellen und rekonstruktiven Randbedingungen bestimmt wurden.
 
 ## Was Aether ist und was nicht
 
 Aether ist:
 
 - ein lokales Analyse- und Beobachtungssystem
-- ein Framework fuer beobachterrelative Information
+- ein Framework fuer modellrelative Restunsicherheit
 - ein Rekonstruktions- und Snapshot-System
 - ein Sicherheits- und Governance-System fuer sensible Datenpfade
-- ein Experimentierraum fuer die Frage, wie lokale Regeln globale Ordnung erzeugen
+- eine technische Arbeitsumgebung fuer die Untersuchung lokaler Regeln, Rekonstruktion und Freigabegrenzen
 
 Aether ist nicht:
 
@@ -273,9 +273,9 @@ und die resultierende Kompressionsnahe:
 
 `delta_ratio = |zlib(delta)| / |raw|`
 
-### 4. Beauty-Signatur
+### 4. Interne Mehrkomponentenmetrik ("Beauty-Signatur")
 
-Die Beauty-Signatur ist eine diagnostische Mehrkomponentenmetrik aus:
+Der interne Name `Beauty-Signatur` bezeichnet eine diagnostische Mehrkomponentenmetrik aus:
 
 - `alpha_1f`
 - `lyapunov`
@@ -285,7 +285,7 @@ Die Beauty-Signatur ist eine diagnostische Mehrkomponentenmetrik aus:
 - `zipf_z`
 - `symmetry_phi`
 
-Sie ist keine Aesthetik im subjektiven Sinn, sondern ein strukturierender Merkmalsraum.
+Sie beschreibt keine Aesthetik im umgangssprachlichen Sinn, sondern einen internen Merkmalsraum fuer vergleichende Diagnose.
 
 ### 5. Bayes- und Graph-Schicht
 
@@ -308,9 +308,9 @@ Wesentliche Datei:
 
 - [analysis_engine.py](modules/analysis_engine.py)
 
-### 2. Ethik- und Integritaetsschicht
+### 2. Integritaets- und Bewertungsschicht
 
-Die Ethik-Schicht ist keine moralphilosophische Instanz, sondern eine Integritaetslogik fuer:
+Diese Schicht ist keine moralphilosophische Instanz, sondern eine technische Bewertungslogik fuer:
 
 - Symmetrie
 - Kohaerenz
@@ -357,7 +357,7 @@ Wesentliche Dateien:
 
 ### 5. Sicherheits- und Governance-Schicht
 
-Diese Schicht erzwingt die innere Systemphysik:
+Diese Schicht erzwingt die internen Sicherheitsregeln:
 
 - unzulaessige Zustaende nicht darstellbar
 - zentrale Validierung
@@ -404,20 +404,20 @@ Shanway ist die lokale Assistenzschicht ueber diesem System.
 Praezise:
 
 - Shanway ist kein LLM.
-- Shanway ist kein autonomes Weltmodell.
+- Shanway ist kein autonomes Modell mit eigener Faktenbasis.
 - Shanway ist eine lokale Antwort- und Verdichtungsschicht, die auf den bereits berechneten Aether-Zustaenden arbeitet.
 
 Shanway verhaelt sich zu Aether wie eine interpretierende Oberflaeche zu einem tieferen Mess- und Regelsystem.
 
-## Ethik, KI und Verantwortung
+## Sicherheits- und Freigaberegeln
 
-Das zentrale Problem dieses Projekts mit Bezug auf Ethik und KI ist nicht die Frage, ob eine Maschine "gut" sein kann. Das waere fuer dieses Oekosystem zu unscharf.
+Die zentrale praktische Frage ist nicht, ob ein System "gut" ist, sondern ob es technisch sauber begrenzt ist.
 
-Die praezisere Frage lautet:
+Praeziser formuliert:
 
-Wie verhindert man, dass ein technisches System Strukturen behauptet, Rekonstruktionen verspricht, Daten teilt oder Entscheidungen trifft, fuer die es keine ausreichende Rechtfertigung, keine Auditierbarkeit und keine Verantwortungszuordnung gibt?
+Wie verhindert man, dass ein lokales Analyse- und Rekonstruktionssystem Aussagen, Rekonstruktionsversprechen, Datenfreigaben oder automatisierte Entscheidungen trifft, die nicht hinreichend begruendet und auditierbar sind?
 
-Darauf antwortet Aether mit mehreren Prinzipien:
+Aether antwortet darauf mit folgenden Regeln:
 
 - Keine unkontrollierten lossless-Behauptungen
 - Kein Teilen sensibler Daten ohne explizite Governance
@@ -425,7 +425,7 @@ Darauf antwortet Aether mit mehreren Prinzipien:
 - Keine stillen privilegierten Uebergaenge
 - Keine Sicherheitslogik, die heuristischen oder evolutiven Modulen ueberlassen wird
 
-Verantwortungsbewusstsein bedeutet hier:
+Die operative Prioritaet lautet:
 
 - Nachvollziehbarkeit vor Eindruck
 - Audit vor Behauptung
@@ -433,9 +433,9 @@ Verantwortungsbewusstsein bedeutet hier:
 - deterministische Sicherheitslogik vor kreativer Heuristik
 - menschliche Verantwortung fuer kritische Freigaben
 
-## Innere Systemphysik
+## Interne Sicherheitsregeln
 
-Wenn Aether als geschlossenes Oekosystem funktionieren soll, braucht es eigene harte Regeln. Diese Regeln sind keine Behauptung ueber die Aussenwelt, sondern interne Erhaltungssaetze des Systems.
+Wenn Aether als geschlossenes lokales System funktionieren soll, braucht es explizite technische Regeln. Diese Regeln beschreiben keine Aussenwelt, sondern nur zulaessige und unzulaessige Zustaende innerhalb des Systems.
 
 Sie lauten:
 
@@ -445,7 +445,7 @@ Sie lauten:
 - Alles Kritische ist append-only, gehasht und signiert.
 - Rohdaten, Pattern-Snapshots, Schluessel und Freigaberechte bleiben strikt getrennt.
 
-Das ist die systeminterne Form dessen, was in physikalischer Sprache Invarianz, Erhaltung und unzulaessiger Uebergang heissen wuerde.
+Das sind technische Konsistenzbedingungen, keine physikalischen Aussagen.
 
 ## Lossless, Sicherheit und Datenschutz
 
@@ -576,7 +576,7 @@ Im `VERIFY`-Tab gibt es jetzt ein persoenliches lokales Register:
 - `Original oeffnen` und `Exportieren` greifen auf denselben lokalen Rekonstruktionspfad zu, falls der Eintrag eine echte Datei referenziert
 - Browser-/Probe-Eintraege ohne rekonstruierbare Datei bleiben trotzdem lokal ladbar und auditierbar
 
-## Verbundenheit und demokratisiertes Lernen
+## Kontrollierte gemeinsame Strukturweitergabe
 
 Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der aktuelle Peer-Pfad ist bewusst lokal, auditable und consent-basiert:
 
@@ -592,16 +592,16 @@ Aether fuehrt keine Cloud-Pflicht und keine versteckte Plattformbindung ein. Der
 - optionaler echter Netztransport laeuft ueber einen lokalen IPFS-Knoten oder explizit konfigurierte HTTP-Mirror-URLs
 - ohne konfigurierte Transportziele bleibt der Pool strikt lokal und fail-closed
 
-Shanway kann dadurch sagen:
+Praktisch bedeutet das:
 
-- `Gelernte Insight aus vorheriger Session: Symmetrie-Delta verbessert um X%.`
+- lokale Modelle koennen aus frueheren Sitzungen konsistenter werden
 - `Von globalem Netz gelernt: +Y% Symmetrie-Delta durch importierte öffentliche Anker.`
-- `Anker von 3 Peers validiert -> globales Lernen: +1.2% Symmetrie-Delta, I_obs +0.8%.`
+- globale Validierung bleibt an Quorum und Trust-Regeln gebunden
 
 Der zentrale Governance-Punkt bleibt:
 
-- Aether ist kein Cloud-Agent und keine zentrale AGI-Plattform
-- Aether ist kein Baustein fuer fremde Plattformarchitekturen oder zentralisierte AGI-Sammelsysteme
+- Aether ist kein Cloud-Agent und keine zentrale Plattform fuer Fremdmodelle
+- Aether ist kein Backend-Baustein fuer fremde Plattformarchitekturen
 - Wissen wird lokal getragen, lokal bewertet und nur in consentierten, kompakten Anchor-Formen geteilt
 - das System bleibt source-available, fail-closed und append-only
 
@@ -625,9 +625,9 @@ Wichtig:
 - ohne bestaetigte Signatur und lokale Verifikation kommt kein Pack-Anker in den lokalen Vault
 - die Rust-Shell kann jetzt empfohlene Packs direkt lokal installieren, Packs aus der aktiven Domaene generieren und einen kleinen Offline-Cache vorbereiten
 
-## Theory of Mind
+## Kommunikationsanpassung
 
-Der Rust-Shell-Schnitt fuehrt jetzt einen kleinen observer-relativen Kommunikationslayer ein:
+Der Rust-Shell-Schnitt fuehrt jetzt einen kleinen kommunikativen Anpassungspfad ein:
 
 - `MindModelEngine` fuehrt pro Session ein anonymes Gegenueber-Modell
 - gespeichert werden nur Anchor-Familiarity, Domaenenniveau und Kommunikationsstil
@@ -643,14 +643,14 @@ Das bedeutet praktisch:
 - Shanway bleibt grundlegender, wenn dieselbe Struktur fuer das Gegenueber noch neu ist
 - es entsteht kein Personenprofil, sondern nur ein lokaler, fluechtiger Beobachterzustand
 
-## Anti-Puzzle Grenze
+## Architekturgrenze
 
-Die neue Rust-Schicht verhaelt sich weiterhin absichtlich nicht wie ein generischer AGI-Baustein:
+Die neue Rust-Schicht verhaelt sich weiterhin absichtlich nicht wie ein generischer Plattformbaustein:
 
 - keine offene API fuer fremde Plattformen
 - keine automatische Einbettung in zentralisierte Dienste
 - keine Rohdaten- oder Delta-Exports ueber Packs oder Observer-Modelle
-- Aether bleibt ein eigenstaendiges, dezentrales Paradigma und kein Puzzle-Teil fuer zentralisierte AGI-Systeme
+- Aether bleibt ein eigenstaendiges lokales System und kein austauschbarer Teil einer zentralisierten Plattform
 
 ## Windows ZIP Build
 
@@ -708,7 +708,7 @@ Fuer Aether bedeutet das konkret:
 
 Gerade fuer ein Programm, das sich mit Struktur, Beobachtung, Rekonstruktion und Vertrauen beschaeftigt, ist Einsicht in den Code kein Zusatz, sondern Teil der methodischen Konsistenz.
 
-## Methodischer Schlusspunkt
+## Methodische Zusammenfassung
 
 Das Projektmotiv laesst sich in drei Punkten zusammenfassen:
 
@@ -722,11 +722,11 @@ Aether priorisiert deshalb:
 - Beobachtung geht der fertigen Interpretation voraus.
 - Struktur geht der spaeteren Semantik voraus.
 
-## Inspirationen und offene Fragen
+## Methodische Bezugspunkte und offene Fragen
 
-Die wichtigsten methodischen Inspirationen hinter Aether sind:
+Die wichtigsten methodischen Bezugspunkte hinter Aether sind:
 
-- Conway: lokale Regeln, globale Emergenz
+- Conway: lokale Regeln und komplexes Gesamtverhalten
 - Shannon: formale Unsicherheit
 - Noether: Invarianz und Erhaltung
 - Bayes: lernende Aktualisierung unter Unsicherheit
@@ -734,18 +734,17 @@ Die wichtigsten methodischen Inspirationen hinter Aether sind:
 
 Die offenen Fragen sind:
 
-- Wie weit laesst sich observerrelative Information mathematisch strenger fassen?
+- Wie weit laesst sich modellrelative Information mathematisch strenger fassen?
 - Welche Klassen von Daten erlauben asymptotisch vollstaendige Modellierung?
 - Wo bleibt eine irreduzible Restunsicherheit bestehen?
 - Welche Invarianten muessen fuer sichere Rekonstruktionssysteme hart erzwungen werden?
 - Wie kann man Erkenntnis teilen, ohne Datenschutz, Sicherheit und Verantwortung zu verletzen?
 
-## Hauptmotiv
+## Schlusswort
 
-Das Hauptmotiv dieses Projekts ist einfach:
+Das Projekt verfolgt ein enges Ziel: ein lokales System bereitzustellen, in dem sich Struktur, Rekonstruktion, Unsicherheit und Freigaberegeln messbar und nachvollziehbar untersuchen lassen, ohne daraus weitergehende weltanschauliche Aussagen abzuleiten.
 
-Nicht mit unbelegten Totalmodellen beginnen.
-Sondern ein System bauen, in dem man lokal, messbar und nachvollziehbar untersuchen kann, wie Regeln, Invarianten, Beobachtung, Lernen und Rekonstruktion zusammenwirken.
+Die methodische Grundlage dieser Arbeit beruht auf Ergebnissen aus Mathematik, Informationstheorie, Statistik und Informatik. Das Schlusswort gilt den Wissenschaftlerinnen und Wissenschaftlern, deren Arbeit diese technische Richtung erst moeglich gemacht hat. Weitergehende Zuschreibungen sind nicht erforderlich.
 
 ## Rust-Pfad: Public Vault, Inter-Layer-Bus, Observation
 

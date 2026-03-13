@@ -1,4 +1,4 @@
-﻿"""Tkinter-GUI fuer Vera Aether Core inklusive Aether-Theremin."""
+"""Tkinter-GUI fuer Vera Aether Core inklusive Aether-Theremin."""
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from .analysis_engine import AetherFingerprint, AnalysisEngine
+from .agent_control import AgentControlEngine, AgentControlReport
 from .audio_engine import AudioEngine
 from .bayes_engine import BayesianBeliefEngine, BayesianBeliefSnapshot
 from .agent_loop import AgentLoopEngine
@@ -74,6 +75,21 @@ except Exception:
     DND_FILES = "DND_Files"
     TkinterDnD = None
     TKDND_AVAILABLE = False
+
+
+APP_BG = "#0E141A"
+APP_SURFACE = "#162028"
+APP_SURFACE_ALT = "#101920"
+APP_PANEL = "#121B22"
+APP_BORDER = "#1F2A33"
+APP_ACCENT = "#2FA3B5"
+APP_ACCENT_DIM = "#21444D"
+APP_TEXT = "#E8ECEF"
+APP_TEXT_MUTED = "#A7B0B7"
+APP_SUCCESS = "#74B89A"
+APP_WARN = "#D29B55"
+APP_DANGER = "#D36C6C"
+APP_EDITOR = "#0B1115"
 
 
 class VeiraGUI:
@@ -142,6 +158,7 @@ class VeiraGUI:
         self.language_engine = EvolvedLanguageEngine(str(Path("data") / "evolved_language.json"), session_context.seed)
         self.storage_gp_engine = DualModeStorageEngine(session_context.seed)
         self.agent_loop = AgentLoopEngine()
+        self.agent_control_engine = AgentControlEngine()
         self.augmentor = AetherAugmentor(session_context, registry)
         self.theremin_engine = ThereminEngine(
             session_context=session_context,
@@ -156,7 +173,7 @@ class VeiraGUI:
         self.root.title("Aether - Strukturanalyse")
         self.root.geometry("1560x900")
         self.root.minsize(1260, 760)
-        self.root.configure(bg="#0A0F2E")
+        self.root.configure(bg=APP_BG)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self.path_var = tk.StringVar(value="")
@@ -296,6 +313,12 @@ class VeiraGUI:
         self.preload_status_var = tk.StringVar(value="Preload: keine Empfehlungen")
         self.privacy_status_var = tk.StringVar(value="Privacy Monitor: bereit")
         self.privacy_monitor_enabled_var = tk.BooleanVar(value=False)
+        self.agent_control_status_var = tk.StringVar(value="Agentensteuerung: bereit | keine Eingriffe")
+        self.agent_control_mode_var = tk.StringVar(value="Agenten freigegeben | manuell steuerbar")
+        self.agent_control_policy_var = tk.StringVar(value="Policies: Strukturdrift, IO-Pulse, Netzrhythmus")
+        self.agent_control_auto_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("agent_control_auto", True))
+        )
         self.shanway_ttd_push_var = tk.BooleanVar(value=False)
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
@@ -422,9 +445,17 @@ class VeiraGUI:
         self.preload_text: tk.Text | None = None
         self.privacy_tree: ttk.Treeview | None = None
         self.privacy_response_text: tk.Text | None = None
+        self.agent_control_tree: ttk.Treeview | None = None
+        self.agent_control_log_text: tk.Text | None = None
         self.efficiency_job: str | None = None
+        self.agent_control_job: str | None = None
         self._efficiency_log_lines: list[str] = []
+        self._agent_log_lines: list[str] = []
         self._last_efficiency_warning_at = 0.0
+        self._agent_runtime_enabled = True
+        self._latest_privacy_snapshot: dict[str, Any] | None = None
+        self._latest_privacy_snapshot_at = 0.0
+        self._last_agent_report: AgentControlReport | None = None
         self.chat_channels_cache: list[dict[str, object]] = []
         self.chat_channel_map: dict[str, dict[str, object]] = {}
         self._last_dual_storage_decision: dict[str, object] = {}
@@ -457,6 +488,7 @@ class VeiraGUI:
         self._apply_raw_storage_mode_label(bool(self.raw_storage_enabled_var.get()))
         self._append_efficiency_log("Effizienzmonitor bereit.")
         self.root.after(500, self._poll_efficiency_monitor)
+        self.root.after(900, self._poll_agent_control)
         if self.device_profile.low_end:
             self.loading_var.set(
                 f"{self.device_profile.label}: Alle Funktionen bleiben aktiv, die Darstellung laeuft nur gedrosselt."
@@ -548,6 +580,8 @@ class VeiraGUI:
         self.root.after(0, lambda: self._handle_privacy_snapshot(snapshot))
 
     def _handle_privacy_snapshot(self, snapshot: dict[str, Any]) -> None:
+        self._latest_privacy_snapshot = dict(snapshot or {})
+        self._latest_privacy_snapshot_at = time.monotonic()
         try:
             result = self.shanway_interface.analyze_privacy_snapshot(snapshot)
         except Exception as exc:
@@ -583,6 +617,104 @@ class VeiraGUI:
             self.privacy_response_text,
             result.structured_response.render(),
         )
+
+    def _toggle_agent_auto_control(self) -> None:
+        enabled = bool(self.agent_control_auto_var.get())
+        self.session_context.user_settings["agent_control_auto"] = enabled
+        self.agent_control_policy_var.set(
+            "Policies: Strukturdrift, IO-Pulse, Netzrhythmus"
+            if enabled else
+            "Policies: nur beobachten, keine automatischen Eingriffe"
+        )
+        self._run_agent_control_cycle()
+
+    def _set_agent_runtime_enabled(self, enabled: bool) -> None:
+        self._agent_runtime_enabled = bool(enabled)
+        if self._agent_runtime_enabled:
+            self.agent_control_mode_var.set("Agenten freigegeben | Limits werden geloest")
+            release_notes = self.agent_control_engine.release_all()
+            for note in release_notes:
+                self._append_agent_control_log(note)
+        else:
+            self.agent_control_mode_var.set("Agenten deaktiviert | Strukturkandidaten werden gedrosselt")
+        self._run_agent_control_cycle()
+
+    def _run_agent_control_cycle(self) -> None:
+        snapshot = None
+        if self._latest_privacy_snapshot is not None and (time.monotonic() - float(self._latest_privacy_snapshot_at)) <= 8.0:
+            snapshot = dict(self._latest_privacy_snapshot)
+        else:
+            try:
+                snapshot = self.privacy_observer.take_snapshot()
+                self._latest_privacy_snapshot = dict(snapshot or {})
+                self._latest_privacy_snapshot_at = time.monotonic()
+            except Exception as exc:
+                self.agent_control_status_var.set(f"Agentensteuerung: Snapshot fehlgeschlagen ({exc})")
+                return
+        report = self.agent_control_engine.evaluate_snapshot(
+            dict(snapshot or {}),
+            runtime_pressure=self._runtime_pressure,
+            agents_enabled=self._agent_runtime_enabled,
+            automatic_policies=bool(self.agent_control_auto_var.get()),
+        )
+        self._last_agent_report = report
+        notes = self.agent_control_engine.enforce_report(report)
+        active = [decision for decision in report.decisions if str(decision.applied_action or "observe") != "observe"]
+        if not notes and active:
+            notes = [
+                f"{decision.process_name} ({decision.pid}) -> {decision.applied_action or decision.recommended_action}"
+                for decision in active[:3]
+            ]
+        for note in notes:
+            self._append_agent_control_log(note)
+        if not report.decisions and self._agent_runtime_enabled:
+            self._append_agent_control_log("Keine strukturell aktiven Hintergrund-Agenten erkannt.")
+        self._render_agent_control_report(report)
+
+    def _poll_agent_control(self) -> None:
+        self._run_agent_control_cycle()
+        self.agent_control_job = self.root.after(6000, self._poll_agent_control)
+
+    def _append_agent_control_log(self, message: str) -> None:
+        text = str(message or "").strip()
+        if not text:
+            return
+        timestamp = time.strftime("%H:%M:%S")
+        self._agent_log_lines.append(f"[{timestamp}] {text}")
+        self._agent_log_lines = self._agent_log_lines[-28:]
+        self._set_text_widget(self.agent_control_log_text, "\n".join(self._agent_log_lines))
+
+    def _render_agent_control_report(self, report: AgentControlReport) -> None:
+        self.agent_control_status_var.set(str(report.status_line))
+        self.agent_control_policy_var.set(
+            "Policies aktiv: drift -> Prioritaet runter | IO -> isolieren | Netz -> sperren | Last -> pausieren"
+            if bool(self.agent_control_auto_var.get()) else
+            "Policies aus: Strukturwerte sichtbar, Eingriffe nur manuell"
+        )
+        if self.agent_control_tree is None:
+            return
+        for item_id in self.agent_control_tree.get_children():
+            self.agent_control_tree.delete(item_id)
+        for decision in list(report.decisions)[:24]:
+            action = str(decision.applied_action or "observe")
+            state = str(decision.control_state or "idle")
+            if decision.note:
+                state = f"{state} | {decision.note[:48]}"
+            self.agent_control_tree.insert(
+                "",
+                "end",
+                values=(
+                    int(decision.pid),
+                    str(decision.process_name),
+                    f"{float(decision.structural_score):.2f}",
+                    f"{float(decision.cpu_drift):.2f}",
+                    f"{float(decision.io_pulse):.2f}",
+                    f"{float(decision.network_rhythm):.2f}",
+                    action,
+                    state,
+                ),
+                tags=(action,),
+            )
 
     def _build_structured_shanway_output(
         self,
@@ -1299,63 +1431,133 @@ class VeiraGUI:
         except Exception:
             pass
         style.configure(
+            ".",
+            background=APP_SURFACE,
+            foreground=APP_TEXT,
+            fieldbackground=APP_SURFACE_ALT,
+            bordercolor=APP_BORDER,
+        )
+        style.configure(
+            "TNotebook",
+            background=APP_BG,
+            borderwidth=0,
+            tabmargins=(6, 6, 6, 0),
+        )
+        style.configure(
+            "TNotebook.Tab",
+            background=APP_PANEL,
+            foreground=APP_TEXT_MUTED,
+            borderwidth=0,
+            padding=(14, 8),
+        )
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", APP_SURFACE), ("active", APP_SURFACE)],
+            foreground=[("selected", APP_TEXT), ("active", APP_TEXT)],
+        )
+        style.configure(
+            "TButton",
+            background=APP_PANEL,
+            foreground=APP_TEXT,
+            borderwidth=0,
+            focusthickness=0,
+            padding=(12, 6),
+        )
+        style.map(
+            "TButton",
+            background=[("active", APP_ACCENT), ("pressed", APP_ACCENT_DIM)],
+            foreground=[("active", APP_BG), ("pressed", APP_TEXT)],
+        )
+        style.configure(
+            "TCheckbutton",
+            background=APP_BG,
+            foreground=APP_TEXT_MUTED,
+            indicatorcolor=APP_SURFACE,
+            padding=4,
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", APP_BG)],
+            foreground=[("selected", APP_TEXT), ("active", APP_TEXT)],
+        )
+        style.configure(
+            "Treeview",
+            background=APP_SURFACE_ALT,
+            fieldbackground=APP_SURFACE_ALT,
+            foreground=APP_TEXT,
+            bordercolor=APP_BORDER,
+            rowheight=24,
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", APP_ACCENT_DIM)],
+            foreground=[("selected", APP_TEXT)],
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=APP_SURFACE,
+            foreground=APP_TEXT_MUTED,
+            bordercolor=APP_BORDER,
+            relief="flat",
+        )
+        style.configure(
             "Symmetry.Horizontal.TProgressbar",
-            troughcolor="#1B2552",
-            background="#2DE2E6",
-            bordercolor="#1B2552",
-            lightcolor="#2DE2E6",
-            darkcolor="#2DE2E6",
+            troughcolor=APP_PANEL,
+            background=APP_ACCENT,
+            bordercolor=APP_BORDER,
+            lightcolor=APP_ACCENT,
+            darkcolor=APP_ACCENT,
             thickness=10,
         )
         style.configure(
             "Coherence.Horizontal.TProgressbar",
-            troughcolor="#1B2552",
-            background="#67D5B5",
-            bordercolor="#1B2552",
-            lightcolor="#67D5B5",
-            darkcolor="#67D5B5",
+            troughcolor=APP_PANEL,
+            background=APP_SUCCESS,
+            bordercolor=APP_BORDER,
+            lightcolor=APP_SUCCESS,
+            darkcolor=APP_SUCCESS,
             thickness=10,
         )
         style.configure(
             "Resonance.Horizontal.TProgressbar",
-            troughcolor="#1B2552",
-            background="#7AB6FF",
-            bordercolor="#1B2552",
-            lightcolor="#7AB6FF",
-            darkcolor="#7AB6FF",
+            troughcolor=APP_PANEL,
+            background="#6D9FB5",
+            bordercolor=APP_BORDER,
+            lightcolor="#6D9FB5",
+            darkcolor="#6D9FB5",
             thickness=10,
         )
         style.configure(
             "ObserverCoherence.Horizontal.TProgressbar",
-            troughcolor="#14314F",
-            background="#2DE2E6",
-            bordercolor="#14314F",
-            lightcolor="#2DE2E6",
-            darkcolor="#67D5FF",
+            troughcolor=APP_PANEL,
+            background=APP_ACCENT,
+            bordercolor=APP_BORDER,
+            lightcolor=APP_ACCENT,
+            darkcolor=APP_ACCENT,
             thickness=8,
         )
         style.configure(
             "ObserverHobs.Horizontal.TProgressbar",
-            troughcolor="#4F2A14",
-            background="#FF8C42",
-            bordercolor="#4F2A14",
-            lightcolor="#FF8C42",
-            darkcolor="#FFB347",
+            troughcolor=APP_PANEL,
+            background=APP_WARN,
+            bordercolor=APP_BORDER,
+            lightcolor=APP_WARN,
+            darkcolor=APP_WARN,
             thickness=8,
         )
 
     def _build_layout(self) -> None:
         """Erzeugt die dreigeteilte Hauptstruktur der Oberflaeche."""
-        container = tk.Frame(self.root, bg="#0A0F2E")
+        container = tk.Frame(self.root, bg=APP_BG)
         container.pack(fill="both", expand=True, padx=12, pady=12)
         container.columnconfigure(0, weight=0, minsize=340)
         container.columnconfigure(1, weight=1)
         container.columnconfigure(2, weight=0, minsize=440)
         container.rowconfigure(0, weight=1)
 
-        self.left_frame = tk.Frame(container, bg="#111A4A", bd=1, relief="groove")
-        self.center_frame = tk.Frame(container, bg="#050816", bd=1, relief="groove")
-        self.right_frame = tk.Frame(container, bg="#111A4A", bd=1, relief="groove")
+        self.left_frame = tk.Frame(container, bg=APP_SURFACE, bd=1, relief="groove", highlightbackground=APP_BORDER)
+        self.center_frame = tk.Frame(container, bg=APP_EDITOR, bd=1, relief="groove", highlightbackground=APP_BORDER)
+        self.right_frame = tk.Frame(container, bg=APP_SURFACE, bd=1, relief="groove", highlightbackground=APP_BORDER)
         self.left_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         self.center_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
         self.right_frame.grid(row=0, column=2, sticky="nsew")
@@ -1482,28 +1684,30 @@ class VeiraGUI:
         self.ae_vault_text.configure(state="disabled")
         self._refresh_ae_vault_panel()
 
-        body = tk.Frame(self.right_frame, bg="#111A4A")
+        body = tk.Frame(self.right_frame, bg=APP_SURFACE)
         body.pack(fill="both", expand=True, padx=8, pady=(0, 8))
         self.right_notebook = ttk.Notebook(body)
         self.right_notebook.pack(fill="both", expand=True)
         self.right_notebook.bind("<<NotebookTabChanged>>", self._on_augment_tab_changed)
-        node_tab = tk.Frame(self.right_notebook, bg="#111A4A")
-        camera_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        efficiency_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        live_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        shanway_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        privacy_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        chat_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        browser_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        chain_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        vault_tab = tk.Frame(self.right_notebook, bg="#0D1930")
-        verify_tab = tk.Frame(self.right_notebook, bg="#0D1930")
+        node_tab = tk.Frame(self.right_notebook, bg=APP_SURFACE)
+        camera_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        efficiency_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        live_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        shanway_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        privacy_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        agent_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        chat_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        browser_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        chain_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        vault_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        verify_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         self.right_notebook.add(node_tab, text="NODE")
         self.right_notebook.add(camera_tab, text="KAMERA")
         self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
         self.right_notebook.add(live_tab, text="LIVE-FEEDBACK")
         self.right_notebook.add(shanway_tab, text="SHANWAY")
         self.right_notebook.add(privacy_tab, text="PRIVACY")
+        self.right_notebook.add(agent_tab, text="AGENTEN")
         self.right_notebook.add(chat_tab, text="CHATS")
         self.right_notebook.add(browser_tab, text="BROWSER")
         self.right_notebook.add(chain_tab, text="CHAIN")
@@ -1587,22 +1791,29 @@ class VeiraGUI:
         self.conway_canvas = tk.Canvas(camera_tab, width=400, height=220, bg="#060B14", highlightthickness=0)
         self.conway_canvas.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        tk.Label(efficiency_tab, text="Effizienz-Dashboard", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 8))
-        efficiency_card = tk.Frame(efficiency_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        tk.Label(efficiency_tab, text="Effizienz-Dashboard", bg=APP_BG, fg=APP_TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 8))
+        efficiency_card = tk.Frame(
+            efficiency_tab,
+            bg=APP_SURFACE,
+            bd=0,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=APP_BORDER,
+        )
         efficiency_card.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(efficiency_card, textvariable=self.efficiency_phase_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
-        tk.Label(efficiency_card, textvariable=self.efficiency_cpu_var, bg="#10223F", fg="#E7F4FF", font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_phase_var, bg=APP_SURFACE, fg=APP_ACCENT, wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(efficiency_card, textvariable=self.efficiency_cpu_var, bg=APP_SURFACE, fg=APP_TEXT, font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
         ttk.Progressbar(efficiency_card, maximum=100, variable=self.efficiency_cpu_live_var, style="ObserverCoherence.Horizontal.TProgressbar").pack(fill="x", padx=10, pady=(2, 6))
-        tk.Label(efficiency_card, textvariable=self.efficiency_ram_var, bg="#10223F", fg="#F6E7A7", font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_ram_var, bg=APP_SURFACE, fg=APP_WARN, font=("Consolas", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
         ttk.Progressbar(efficiency_card, maximum=100, variable=self.efficiency_ram_live_var, style="ObserverHobs.Horizontal.TProgressbar").pack(fill="x", padx=10, pady=(2, 6))
-        tk.Label(efficiency_card, textvariable=self.efficiency_process_var, bg="#10223F", fg="#9AD7C8", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
-        tk.Label(efficiency_card, textvariable=self.efficiency_threads_var, bg="#10223F", fg="#CFE8FF", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
-        tk.Label(efficiency_card, textvariable=self.efficiency_warning_var, bg="#10223F", fg="#FFB347", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 10))
-        tk.Label(efficiency_tab, text="Status-Log", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        tk.Label(efficiency_card, textvariable=self.efficiency_process_var, bg=APP_SURFACE, fg=APP_SUCCESS, font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_threads_var, bg=APP_SURFACE, fg=APP_TEXT_MUTED, font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(efficiency_card, textvariable=self.efficiency_warning_var, bg=APP_SURFACE, fg=APP_WARN, wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 10))
+        tk.Label(efficiency_tab, text="Status-Log", bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
         self.efficiency_text = tk.Text(
             efficiency_tab,
-            bg="#07111F",
-            fg="#D7E8FF",
+            bg=APP_EDITOR,
+            fg=APP_TEXT,
             relief="flat",
             wrap="word",
             font=("Consolas", 8),
@@ -1774,8 +1985,8 @@ class VeiraGUI:
             text="Leeren",
             command=lambda: self._clear_message_input("shanway"),
         ).pack(side="left", padx=(6, 0))
-        tk.Label(privacy_tab, text="Privacy Monitor", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
-        privacy_controls = tk.Frame(privacy_tab, bg="#0D1930")
+        tk.Label(privacy_tab, text="Privacy Monitor", bg=APP_BG, fg=APP_TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
+        privacy_controls = tk.Frame(privacy_tab, bg=APP_BG)
         privacy_controls.pack(fill="x", padx=10, pady=(0, 8))
         ttk.Button(privacy_controls, text="Snapshot jetzt", command=self._take_privacy_snapshot).pack(side="left")
         ttk.Checkbutton(
@@ -1784,7 +1995,7 @@ class VeiraGUI:
             variable=self.privacy_monitor_enabled_var,
             command=self._toggle_privacy_monitor,
         ).pack(side="left", padx=(8, 0))
-        tk.Label(privacy_tab, textvariable=self.privacy_status_var, bg="#0D1930", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
+        tk.Label(privacy_tab, textvariable=self.privacy_status_var, bg=APP_BG, fg=APP_ACCENT, wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
         self.privacy_tree = ttk.Treeview(
             privacy_tab,
             columns=("entity", "kind", "score", "class", "recommendation"),
@@ -1800,15 +2011,15 @@ class VeiraGUI:
         ]:
             self.privacy_tree.heading(column, text=label)
             self.privacy_tree.column(column, width=width, anchor="w", stretch=(column in {"entity", "recommendation"}))
-        self.privacy_tree.tag_configure("CONFIRMED", foreground="#FF7A7A")
-        self.privacy_tree.tag_configure("SUSPECTED", foreground="#F2C14E")
-        self.privacy_tree.tag_configure("DEFAULT", foreground="#D7E8FF")
+        self.privacy_tree.tag_configure("CONFIRMED", foreground=APP_DANGER)
+        self.privacy_tree.tag_configure("SUSPECTED", foreground=APP_WARN)
+        self.privacy_tree.tag_configure("DEFAULT", foreground=APP_TEXT)
         self.privacy_tree.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(privacy_tab, text="Shanway Structured Response", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        tk.Label(privacy_tab, text="Shanway Structured Response", bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
         self.privacy_response_text = tk.Text(
             privacy_tab,
-            bg="#07111F",
-            fg="#D7E8FF",
+            bg=APP_EDITOR,
+            fg=APP_TEXT,
             relief="flat",
             wrap="word",
             font=("Consolas", 8),
@@ -1818,6 +2029,77 @@ class VeiraGUI:
         )
         self.privacy_response_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
         self.privacy_response_text.configure(state="disabled")
+        tk.Label(agent_tab, text="Agenten-Kontrolle", bg=APP_BG, fg=APP_TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 4))
+        tk.Label(
+            agent_tab,
+            text="Erkennung ueber CPU-Drift, IO-Pulse, Netzrhythmus und Aktivitaetsprofil. Namen dienen nur der Anzeige.",
+            bg=APP_BG,
+            fg=APP_TEXT_MUTED,
+            wraplength=400,
+            justify="left",
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=10, pady=(0, 8))
+        agent_card = tk.Frame(
+            agent_tab,
+            bg=APP_SURFACE,
+            bd=0,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=APP_BORDER,
+        )
+        agent_card.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(agent_card, textvariable=self.agent_control_mode_var, bg=APP_SURFACE, fg=APP_TEXT, wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        tk.Label(agent_card, textvariable=self.agent_control_policy_var, bg=APP_SURFACE, fg=APP_TEXT_MUTED, wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=12, pady=(0, 2))
+        tk.Label(agent_card, textvariable=self.agent_control_status_var, bg=APP_SURFACE, fg=APP_ACCENT, wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=12, pady=(0, 10))
+        agent_controls = tk.Frame(agent_card, bg=APP_SURFACE)
+        agent_controls.pack(fill="x", padx=12, pady=(0, 12))
+        ttk.Button(agent_controls, text="Agenten aktivieren", command=lambda: self._set_agent_runtime_enabled(True)).pack(side="left")
+        ttk.Button(agent_controls, text="Agenten deaktivieren", command=lambda: self._set_agent_runtime_enabled(False)).pack(side="left", padx=(8, 0))
+        ttk.Checkbutton(
+            agent_controls,
+            text="Automatische Struktur-Policies",
+            variable=self.agent_control_auto_var,
+            command=self._toggle_agent_auto_control,
+        ).pack(side="left", padx=(12, 0))
+        ttk.Button(agent_controls, text="Jetzt pruefen", command=self._run_agent_control_cycle).pack(side="right")
+        self.agent_control_tree = ttk.Treeview(
+            agent_tab,
+            columns=("pid", "name", "score", "drift", "io", "net", "action", "state"),
+            show="headings",
+            height=9,
+        )
+        for column, label, width in [
+            ("pid", "PID", 56),
+            ("name", "Prozess", 128),
+            ("score", "Score", 62),
+            ("drift", "Drift", 58),
+            ("io", "IO", 54),
+            ("net", "Netz", 54),
+            ("action", "Aktion", 94),
+            ("state", "Status", 96),
+        ]:
+            self.agent_control_tree.heading(column, text=label)
+            self.agent_control_tree.column(column, width=width, anchor="w", stretch=(column == "name"))
+        self.agent_control_tree.tag_configure("pause", foreground=APP_DANGER)
+        self.agent_control_tree.tag_configure("network_block", foreground=APP_WARN)
+        self.agent_control_tree.tag_configure("isolate", foreground=APP_ACCENT)
+        self.agent_control_tree.tag_configure("deprioritize", foreground=APP_SUCCESS)
+        self.agent_control_tree.tag_configure("observe", foreground=APP_TEXT)
+        self.agent_control_tree.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(agent_tab, text="Policy-Log", bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        self.agent_control_log_text = tk.Text(
+            agent_tab,
+            bg=APP_EDITOR,
+            fg=APP_TEXT,
+            relief="flat",
+            wrap="word",
+            font=("Consolas", 8),
+            height=12,
+            padx=10,
+            pady=8,
+        )
+        self.agent_control_log_text.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        self.agent_control_log_text.configure(state="disabled")
         self.chain_text = tk.Text(chain_tab, bg="#07111F", fg="#D7E8FF", relief="flat", wrap="word", font=("Consolas", 9))
         self.chain_text.pack(fill="both", expand=True, padx=8, pady=(8, 6))
         self.chain_text.bind("<Button-1>", self._select_chain_entry)
@@ -5434,18 +5716,25 @@ class VeiraGUI:
 
     def _build_left_panel(self) -> None:
         """Baut den linken Bereich mit Shanway-Fokus, Drag-and-Drop-Hinweis und Loganzeige."""
-        tk.Label(self.left_frame, text="Shanway", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
+        tk.Label(self.left_frame, text="Shanway", bg=APP_SURFACE, fg=APP_TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
+        tk.Label(
+            self.left_frame,
+            text="Freundlicher lokaler Begleiter statt Schlafparalyse-Maske.",
+            bg=APP_SURFACE,
+            fg=APP_TEXT_MUTED,
+            font=("Segoe UI", 9),
+        ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        face_card = tk.Frame(self.left_frame, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        face_card = tk.Frame(self.left_frame, bg=APP_SURFACE_ALT, bd=0, relief="flat", highlightthickness=1, highlightbackground=APP_BORDER)
         face_card.pack(fill="x", padx=12, pady=(0, 8))
-        self.shanway_face_canvas = tk.Canvas(face_card, width=316, height=176, bg="#07111F", highlightthickness=0, bd=0)
+        self.shanway_face_canvas = tk.Canvas(face_card, width=316, height=176, bg=APP_EDITOR, highlightthickness=0, bd=0)
         self.shanway_face_canvas.pack(fill="x", padx=10, pady=(10, 6))
         self._draw_shanway_face("bereit")
         tk.Label(
             face_card,
             textvariable=self.shanway_sensitive_var,
-            bg="#10223F",
-            fg="#F6E7A7",
+            bg=APP_SURFACE_ALT,
+            fg=APP_WARN,
             wraplength=316,
             justify="left",
             font=("Segoe UI", 9, "bold"),
@@ -5454,14 +5743,14 @@ class VeiraGUI:
         tk.Label(
             self.left_frame,
             text="Dateien kommen nur noch per Drag & Drop in das Hauptfenster. So bleibt die Oberflaeche sauber und Shanway arbeitet immer auf dem sichtbaren Datensatz.",
-            bg="#111A4A",
-            fg="#8FB5FF",
+            bg=APP_SURFACE,
+            fg=APP_TEXT_MUTED,
             wraplength=345,
             justify="left",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        control_card = tk.Frame(self.left_frame, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        control_card = tk.Frame(self.left_frame, bg=APP_SURFACE_ALT, bd=0, relief="flat", highlightthickness=1, highlightbackground=APP_BORDER)
         control_card.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Button(control_card, text="Verlauf laden", command=self._history_reload_current).pack(fill="x", padx=10, pady=(10, 6))
         ttk.Button(control_card, text="Original oeffnen", command=self._open_reconstructed_original).pack(fill="x", padx=10, pady=(0, 6))
@@ -5475,9 +5764,9 @@ class VeiraGUI:
             control_card,
             textvariable=self.ae_stop_button_var,
             command=self._stop_ae_evolution,
-            bg="#AA2E25",
+            bg="#7A3734",
             fg="#FFFFFF",
-            activebackground="#7B241C",
+            activebackground="#672C2A",
             activeforeground="#FFFFFF",
             relief="flat",
             padx=10,
@@ -5489,14 +5778,14 @@ class VeiraGUI:
         tk.Label(
             self.left_frame,
             textvariable=self.ae_iteration_var,
-            bg="#111A4A",
-            fg="#F2C14E",
+            bg=APP_SURFACE,
+            fg=APP_WARN,
             wraplength=345,
             justify="left",
             font=("Segoe UI", 9),
         ).pack(anchor="w", padx=12, pady=(0, 8))
 
-        restore_row = tk.Frame(self.left_frame, bg="#111A4A")
+        restore_row = tk.Frame(self.left_frame, bg=APP_SURFACE)
         restore_row.pack(fill="x", padx=12, pady=(0, 8))
         ttk.Button(restore_row, text="◀ Verlauf", command=self._history_prev).pack(side="left", fill="x", expand=True, padx=(0, 4))
         ttk.Button(restore_row, text="Verlauf ▶", command=self._history_next).pack(side="left", fill="x", expand=True, padx=(4, 0))
@@ -5610,31 +5899,30 @@ class VeiraGUI:
         return
 
     def _draw_shanway_face(self, mood: str = "bereit") -> None:
-        """Zeichnet ein einfaches Shanway-Gesicht als statische Leitfigur links oben."""
+        """Zeichnet ein reduziertes Roboterzeichen im ruhigen Dark-Mode-Stil."""
         canvas = getattr(self, "shanway_face_canvas", None)
         if canvas is None:
             return
         normalized = str(mood or "bereit").strip().lower()
-        eye_color = "#8FD6FF"
-        mouth_color = "#F6E7A7"
+        accent_color = APP_ACCENT
         if any(token in normalized for token in ("warn", "krit", "toxic", "sensitiv", "anom")):
-            eye_color = "#FF8C69"
-            mouth_color = "#FFB347"
+            accent_color = APP_WARN
         elif any(token in normalized for token in ("stabil", "bereit", "harmon", "ok")):
-            eye_color = "#7DE8A7"
-            mouth_color = "#9AD7C8"
+            accent_color = APP_SUCCESS
         canvas.delete("all")
-        canvas.create_rectangle(0, 0, 316, 176, fill="#07111F", outline="")
-        canvas.create_oval(26, 18, 290, 168, outline="#233A5A", width=2, fill="#0B1628")
-        canvas.create_arc(52, 28, 264, 134, start=200, extent=140, style="arc", outline="#233A5A", width=2)
-        canvas.create_oval(86, 72, 126, 112, fill=eye_color, outline="")
-        canvas.create_oval(190, 72, 230, 112, fill=eye_color, outline="")
-        canvas.create_oval(98, 84, 114, 100, fill="#07111F", outline="")
-        canvas.create_oval(202, 84, 218, 100, fill="#07111F", outline="")
-        canvas.create_line(158, 92, 148, 118, fill="#8FB5FF", width=3, smooth=True)
-        canvas.create_line(148, 118, 166, 122, fill="#8FB5FF", width=3, smooth=True)
-        canvas.create_arc(104, 108, 212, 150, start=200, extent=140, style="arc", outline=mouth_color, width=4)
-        canvas.create_text(158, 152, text="SHANWAY", fill="#CFE8FF", font=("Segoe UI", 10, "bold"))
+        canvas.create_rectangle(0, 0, 316, 176, fill=APP_EDITOR, outline="")
+        canvas.create_rectangle(94, 34, 222, 110, fill=APP_SURFACE, outline=accent_color, width=2)
+        canvas.create_line(158, 18, 158, 34, fill=accent_color, width=2)
+        canvas.create_oval(152, 12, 164, 24, fill=accent_color, outline="")
+        canvas.create_oval(126, 60, 146, 80, fill=accent_color, outline="")
+        canvas.create_oval(170, 60, 190, 80, fill=accent_color, outline="")
+        canvas.create_line(132, 94, 184, 94, fill=accent_color, width=2)
+        canvas.create_rectangle(116, 118, 200, 146, fill=APP_SURFACE_ALT, outline=accent_color, width=2)
+        canvas.create_line(116, 124, 92, 144, fill=accent_color, width=2)
+        canvas.create_line(200, 124, 224, 144, fill=accent_color, width=2)
+        canvas.create_line(138, 146, 128, 162, fill=accent_color, width=2)
+        canvas.create_line(178, 146, 188, 162, fill=accent_color, width=2)
+        canvas.create_text(158, 156, text="AETHER", fill=APP_TEXT_MUTED, font=("Segoe UI", 10, "bold"))
 
     def _set_main_preview_image(self, rgb_array: np.ndarray | None, fallback_text: str = "") -> None:
         """Zeigt die zentrale Dateivorschau als statisches 2D-Bild an."""
@@ -9762,6 +10050,12 @@ class VeiraGUI:
             except Exception:
                 pass
             self.efficiency_job = None
+        if self.agent_control_job is not None:
+            try:
+                self.root.after_cancel(self.agent_control_job)
+            except Exception:
+                pass
+            self.agent_control_job = None
         try:
             self.registry.close_user_session(self.session_context.session_id)
             self.registry.save_security_event(
@@ -9781,6 +10075,10 @@ class VeiraGUI:
             pass
         try:
             self.privacy_observer.stop_continuous()
+        except Exception:
+            pass
+        try:
+            self.agent_control_engine.release_all()
         except Exception:
             pass
         try:

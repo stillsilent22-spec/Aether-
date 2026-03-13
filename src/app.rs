@@ -40,8 +40,12 @@ use std::future::Future;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::thread::JoinHandle;
 use tokio::runtime::Builder;
-use tokio::sync::broadcast::{error::TryRecvError, Receiver};
+use tokio::sync::broadcast::{
+    error::{RecvError, TryRecvError},
+    Receiver,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +167,7 @@ pub struct AetherRustShell {
     gfx: AetherGfx,
     bus_publisher: BusPublisher,
     bus_receiver: Receiver<BusEvent>,
+    bus_drain_handle: Option<JoinHandle<()>>,
     bus_publish_offset: u64,
     public_ttd_pool: PublicTtdPoolStore,
     public_ttd_transport: PublicTtdTransport,
@@ -178,7 +183,7 @@ pub struct AetherRustShell {
 
 impl AetherRustShell {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        apply_aether_theme(&cc.egui_ctx);
         let aef_vault = Arc::new(RwLock::new(load_local_vault_store()));
         let aef_engine = Arc::new(EnginePipeline::new());
         let observer_id = Uuid::new_v4();
@@ -187,7 +192,20 @@ impl AetherRustShell {
         let inter_layer_bus = InterLayerBus::new(128);
         let bus_publisher = inter_layer_bus.publisher();
         let bus_receiver = inter_layer_bus.subscriber();
+        let mut background_receiver = inter_layer_bus.subscriber();
         let _ = bus_ipc::ensure_transport_dir();
+        let bus_drain_handle = std::thread::Builder::new()
+            .name("aether-bus-drain".to_owned())
+            .spawn(move || loop {
+                match background_receiver.blocking_recv() {
+                    Ok(event) => {
+                        let _ = bus_ipc::append_event(&event);
+                    }
+                    Err(RecvError::Closed) => break,
+                    Err(RecvError::Lagged(_)) => continue,
+                }
+            })
+            .ok();
         let pack_registry = Arc::new(RwLock::new(
             PackRegistry::load_default().unwrap_or(PackRegistry {
                 index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
@@ -274,6 +292,7 @@ impl AetherRustShell {
             gfx,
             bus_publisher,
             bus_receiver,
+            bus_drain_handle,
             bus_publish_offset: 0,
             public_ttd_pool,
             public_ttd_transport,
@@ -949,7 +968,6 @@ impl AetherRustShell {
     }
 
     fn handle_bus_event(&mut self, event: BusEvent) {
-        let _ = bus_ipc::append_event(&event);
         match event {
             BusEvent::PackRecommended(payload) => {
                 self.append_log(format!(
@@ -1070,44 +1088,154 @@ impl AetherRustShell {
     }
 
     fn draw_shanway_face(&self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(220.0, 220.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(236.0, 220.0), Sense::hover());
         let painter = ui.painter_at(rect);
         let center = rect.center();
-        painter.circle_filled(center, 82.0, Color32::from_rgb(35, 46, 70));
-        painter.circle_stroke(
-            center,
-            82.0,
-            Stroke::new(2.0, Color32::from_rgb(120, 180, 255)),
+        painter.circle_filled(
+            egui::pos2(center.x + 6.0, center.y + 10.0),
+            88.0,
+            Color32::from_rgba_unmultiplied(4, 8, 16, 64),
+        );
+        painter.circle_filled(center, 92.0, Color32::from_rgb(12, 20, 34));
+
+        let antenna_top = egui::pos2(center.x, center.y - 92.0);
+        let antenna_base = egui::pos2(center.x, center.y - 70.0);
+        painter.line_segment(
+            [antenna_top, antenna_base],
+            Stroke::new(3.0, Color32::from_rgb(110, 214, 232)),
+        );
+        painter.circle_filled(antenna_top, 8.0, Color32::from_rgb(255, 196, 92));
+
+        let head = Rect::from_center_size(
+            egui::pos2(center.x, center.y - 18.0),
+            Vec2::new(132.0, 102.0),
+        );
+        painter.rect_filled(head, 26.0, Color32::from_rgb(54, 92, 132));
+        painter.rect_filled(
+            head.shrink2(Vec2::new(6.0, 6.0)),
+            22.0,
+            Color32::from_rgb(74, 122, 170),
+        );
+
+        let visor =
+            Rect::from_center_size(egui::pos2(center.x, center.y - 18.0), Vec2::new(92.0, 40.0));
+        painter.rect_filled(visor, 18.0, Color32::from_rgb(16, 32, 54));
+        painter.rect_filled(
+            Rect::from_center_size(egui::pos2(center.x, center.y - 26.0), Vec2::new(80.0, 12.0)),
+            8.0,
+            Color32::from_rgba_unmultiplied(180, 240, 255, 28),
         );
         painter.circle_filled(
-            egui::pos2(center.x - 28.0, center.y - 16.0),
-            10.0,
-            Color32::LIGHT_BLUE,
+            egui::pos2(center.x - 22.0, center.y - 16.0),
+            9.0,
+            Color32::from_rgb(148, 240, 255),
         );
         painter.circle_filled(
-            egui::pos2(center.x + 28.0, center.y - 16.0),
-            10.0,
-            Color32::LIGHT_BLUE,
+            egui::pos2(center.x + 22.0, center.y - 16.0),
+            9.0,
+            Color32::from_rgb(148, 240, 255),
+        );
+        painter.circle_filled(
+            egui::pos2(center.x - 22.0, center.y - 16.0),
+            3.0,
+            Color32::from_rgb(238, 250, 255),
+        );
+        painter.circle_filled(
+            egui::pos2(center.x + 22.0, center.y - 16.0),
+            3.0,
+            Color32::from_rgb(238, 250, 255),
+        );
+
+        let mouth_left = egui::pos2(center.x - 24.0, center.y + 10.0);
+        let mouth_mid = egui::pos2(center.x, center.y + 20.0);
+        let mouth_right = egui::pos2(center.x + 24.0, center.y + 10.0);
+        painter.line_segment(
+            [mouth_left, mouth_mid],
+            Stroke::new(3.0, Color32::from_rgb(214, 242, 255)),
+        );
+        painter.line_segment(
+            [mouth_mid, mouth_right],
+            Stroke::new(3.0, Color32::from_rgb(214, 242, 255)),
+        );
+
+        let body = Rect::from_center_size(
+            egui::pos2(center.x, center.y + 70.0),
+            Vec2::new(102.0, 56.0),
+        );
+        painter.rect_filled(body, 22.0, Color32::from_rgb(36, 66, 100));
+        painter.rect_filled(
+            Rect::from_center_size(egui::pos2(center.x, center.y + 70.0), Vec2::new(46.0, 16.0)),
+            8.0,
+            Color32::from_rgb(255, 196, 92),
+        );
+        painter.circle_filled(
+            egui::pos2(center.x - 18.0, center.y + 70.0),
+            3.0,
+            Color32::from_rgb(36, 66, 100),
+        );
+        painter.circle_filled(
+            egui::pos2(center.x + 18.0, center.y + 70.0),
+            3.0,
+            Color32::from_rgb(36, 66, 100),
         );
         painter.line_segment(
             [
-                egui::pos2(center.x - 34.0, center.y + 30.0),
-                egui::pos2(center.x + 34.0, center.y + 30.0),
+                egui::pos2(center.x - 50.0, center.y + 62.0),
+                egui::pos2(center.x - 78.0, center.y + 86.0),
             ],
-            Stroke::new(3.0, Color32::from_rgb(120, 180, 255)),
+            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center.x + 50.0, center.y + 62.0),
+                egui::pos2(center.x + 78.0, center.y + 86.0),
+            ],
+            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center.x - 24.0, center.y + 94.0),
+                egui::pos2(center.x - 34.0, center.y + 112.0),
+            ],
+            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(center.x + 24.0, center.y + 94.0),
+                egui::pos2(center.x + 34.0, center.y + 112.0),
+            ],
+            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
+        );
+        painter.text(
+            egui::pos2(center.x, rect.bottom() - 8.0),
+            Align2::CENTER_BOTTOM,
+            "friendly local robot",
+            FontId::proportional(12.0),
+            Color32::from_rgb(166, 196, 224),
         );
     }
 
     fn ui_auth(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
+            paint_aether_backdrop(ui.painter(), ui.max_rect());
             ui.vertical_centered(|ui| {
-                ui.add_space(120.0);
-                ui.heading("Aether Rust Shell");
-                ui.label("Lokale Anmeldung bleibt Pflicht.");
-                ui.add_space(20.0);
+                ui.add_space(92.0);
+                ui.label(
+                    RichText::new("AETHER")
+                        .size(13.0)
+                        .strong()
+                        .color(Color32::from_rgb(124, 210, 228)),
+                );
+                ui.heading("Rust Shell");
+                ui.label("Lokale Anmeldung bleibt Pflicht, die Oberfläche darf aber trotzdem freundlicher aussehen.");
+                ui.add_space(24.0);
                 ui.group(|ui| {
                     ui.set_max_width(420.0);
-                    ui.label(RichText::new("Anmeldung / Registrierung").strong());
+                    ui.label(
+                        RichText::new("Anmeldung / Registrierung")
+                            .strong()
+                            .color(Color32::from_rgb(226, 236, 248)),
+                    );
                     ui.label("Benutzername");
                     ui.add(TextEdit::singleline(&mut self.login_username).desired_width(320.0));
                     ui.label("Passwort");
@@ -1151,20 +1279,36 @@ impl AetherRustShell {
                         }
                     });
                 });
-                ui.add_space(12.0);
-                ui.label(RichText::new(&self.status_line).color(Color32::LIGHT_BLUE));
+                ui.add_space(16.0);
+                ui.label(
+                    RichText::new(&self.status_line)
+                        .color(Color32::from_rgb(138, 212, 255))
+                        .strong(),
+                );
             });
         });
     }
 
     fn ui_left_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("shanway_left").resizable(false).default_width(340.0).show(ctx, |ui| {
+        egui::SidePanel::left("shanway_left").resizable(false).default_width(356.0).show(ctx, |ui| {
             self.draw_shanway_face(ui);
+            ui.label(
+                RichText::new("LOCAL COMPANION")
+                    .size(11.0)
+                    .strong()
+                    .color(Color32::from_rgb(128, 204, 220)),
+            );
             ui.heading("Shanway");
-            ui.label("Struktureller Beobachter. Dateien werden nur per Drag and Drop eingefuehrt.");
-            ui.label(RichText::new("Sicherheitsfilter: aktiv").color(Color32::LIGHT_GREEN));
-            ui.label(RichText::new("Netzpfad: standardmaessig aus").color(Color32::LIGHT_YELLOW));
-            ui.label(self.mind_model.observer_status(self.observer_id));
+            ui.label("Struktureller Beobachter. Dateien kommen lokal hinein, Antworten bleiben klarer und weniger unheimlich.");
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("Sicherheitsfilter: aktiv").color(Color32::from_rgb(164, 232, 178)));
+                ui.label(RichText::new("Netzpfad: aus").color(Color32::from_rgb(255, 208, 120)));
+            });
+            ui.label(
+                RichText::new(self.mind_model.observer_status(self.observer_id))
+                    .color(Color32::from_rgb(194, 208, 228)),
+            );
+            ui.separator();
             if let Some(user) = &self.current_user {
                 ui.label(format!("Live-Session: {}", user.session_id));
                 ui.label(format!("Session-Key-Fingerprint: {}", user.live_session_fingerprint));
@@ -1190,7 +1334,7 @@ impl AetherRustShell {
                 if self.public_ttd_transport.is_enabled() { "aktiv" } else { "aus / fail-closed" }
             ));
             ui.label(format!("Chat-Relay-Node: {}", self.chat_relay_config.node_id));
-            ui.label(&self.relay_status_line);
+            ui.label(RichText::new(&self.relay_status_line).color(Color32::from_rgb(170, 184, 204)));
             ui.separator();
             if let Some(file) = &self.current_file {
                 ui.label(RichText::new("Aktive Datei").strong());
@@ -1393,7 +1537,7 @@ impl AetherRustShell {
     }
 
     fn ui_top_tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (tab, label) in [
                 (TopTab::Analyse, "Datei"),
                 (TopTab::Struktur, "Struktur"),
@@ -1401,7 +1545,26 @@ impl AetherRustShell {
                 (TopTab::Chats, "Chats"),
                 (TopTab::Register, "Register"),
             ] {
-                if ui.selectable_label(self.top_tab == tab, label).clicked() {
+                let selected = self.top_tab == tab;
+                let button = egui::Button::new(RichText::new(label).strong().color(if selected {
+                    Color32::from_rgb(246, 250, 255)
+                } else {
+                    Color32::from_rgb(188, 204, 224)
+                }))
+                .fill(if selected {
+                    Color32::from_rgb(48, 98, 168)
+                } else {
+                    Color32::from_rgb(18, 28, 42)
+                })
+                .stroke(Stroke::new(
+                    1.0,
+                    if selected {
+                        Color32::from_rgb(116, 218, 240)
+                    } else {
+                        Color32::from_rgb(44, 60, 84)
+                    },
+                ));
+                if ui.add_sized([104.0, 34.0], button).clicked() {
                     self.top_tab = tab;
                 }
             }
@@ -2628,6 +2791,69 @@ fn build_process_summary(
         entropy,
         symmetry * 100.0
     )
+}
+
+fn apply_aether_theme(ctx: &egui::Context) {
+    let mut visuals = egui::Visuals::dark();
+    visuals.override_text_color = Some(Color32::from_rgb(224, 234, 246));
+    visuals.panel_fill = Color32::from_rgb(8, 12, 20);
+    visuals.window_fill = Color32::from_rgb(10, 16, 26);
+    visuals.faint_bg_color = Color32::from_rgb(16, 24, 36);
+    visuals.extreme_bg_color = Color32::from_rgb(13, 20, 32);
+    visuals.code_bg_color = Color32::from_rgb(10, 16, 26);
+    visuals.selection.bg_fill = Color32::from_rgb(54, 114, 192);
+    visuals.selection.stroke = Stroke::new(1.0, Color32::from_rgb(150, 228, 248));
+    visuals.widgets.noninteractive.bg_fill = Color32::from_rgb(14, 20, 30);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(204, 216, 232));
+    visuals.widgets.inactive.bg_fill = Color32::from_rgb(18, 26, 40);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, Color32::from_rgb(194, 208, 226));
+    visuals.widgets.hovered.bg_fill = Color32::from_rgb(30, 44, 64);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::from_rgb(234, 242, 250));
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, Color32::from_rgb(112, 208, 232));
+    visuals.widgets.active.bg_fill = Color32::from_rgb(48, 96, 164);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, Color32::from_rgb(144, 226, 246));
+    ctx.set_visuals(visuals.clone());
+
+    let mut style = (*ctx.style()).clone();
+    style.visuals = visuals;
+    style.spacing.item_spacing = Vec2::new(10.0, 10.0);
+    style.spacing.button_padding = Vec2::new(14.0, 8.0);
+    style.spacing.window_margin = egui::Margin::same(12);
+    style.spacing.indent = 18.0;
+    ctx.set_style(style);
+}
+
+fn paint_aether_backdrop(painter: &egui::Painter, rect: Rect) {
+    painter.rect_filled(rect, 0.0, Color32::from_rgb(7, 11, 18));
+    painter.circle_filled(
+        egui::pos2(
+            rect.left() + rect.width() * 0.16,
+            rect.top() + rect.height() * 0.18,
+        ),
+        rect.width() * 0.18,
+        Color32::from_rgba_unmultiplied(38, 132, 168, 28),
+    );
+    painter.circle_filled(
+        egui::pos2(
+            rect.right() - rect.width() * 0.12,
+            rect.top() + rect.height() * 0.24,
+        ),
+        rect.width() * 0.14,
+        Color32::from_rgba_unmultiplied(248, 184, 88, 20),
+    );
+    painter.circle_filled(
+        egui::pos2(rect.center().x, rect.bottom() - rect.height() * 0.12),
+        rect.width() * 0.22,
+        Color32::from_rgba_unmultiplied(90, 114, 208, 20),
+    );
+    for step in 0..12 {
+        let x = lerp_f32(rect.left(), rect.right(), step as f32 / 11.0);
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            Stroke::new(1.0, Color32::from_rgba_unmultiplied(120, 146, 180, 10)),
+        );
+    }
 }
 
 fn render_interference_map(painter: egui::Painter, rect: Rect, metrics: VisualizationMetrics) {

@@ -478,6 +478,11 @@ class BrowserEngine:
         return payload.decode("utf-8", errors="replace")
 
     @staticmethod
+    def download_text(url: str, timeout: float = 6.0) -> str:
+        """Oeffentlicher Alias fuer _download_text. Stabil gegen Refactoring."""
+        return BrowserEngine._download_text(url, timeout=timeout)
+
+    @staticmethod
     def strip_html_text(raw_html: str, limit_chars: int = 1200) -> str:
         """Verdichtet HTML robust zu einem kurzen, lokal weiterverarbeitbaren Text."""
         markup = str(raw_html or "")

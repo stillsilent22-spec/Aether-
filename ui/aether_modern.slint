@@ -1,0 +1,332 @@
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+
+component ShellButton inherits Rectangle {
+    in property <string> label;
+    in property <color> fill-color;
+    in property <color> stroke-color;
+    in property <color> text-color;
+
+    width: 132px;
+    height: 38px;
+    border-radius: 12px;
+    background: fill-color;
+    border-width: 1px;
+    border-color: stroke-color;
+
+    Text {
+        text: label;
+        color: text-color;
+        font-size: 14px;
+        font-weight: 600;
+        font-family: "Inter";
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+component TabChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> active;
+
+    width: 108px;
+    height: 34px;
+    border-radius: 11px;
+    background: active ? #23343D : #162028;
+    border-width: 1px;
+    border-color: active ? #3FBAC2 : #1F2A33;
+
+    Text {
+        text: label;
+        color: active ? #E8ECEF : #A7B0B7;
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "Inter";
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+}
+
+component MetricTile inherits Rectangle {
+    in property <string> caption;
+    in property <string> value;
+    in property <string> meta;
+    in property <color> accent;
+
+    width: 176px;
+    height: 112px;
+    border-radius: 16px;
+    background: #162028;
+    border-width: 1px;
+    border-color: #1F2A33;
+
+    Rectangle { x: 0; y: 0; width: 4px; height: parent.height; background: accent; }
+
+    VerticalBox {
+        padding: 18px;
+        spacing: 6px;
+
+        Text { text: caption; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+        Text { text: value; color: #E8ECEF; font-size: 28px; font-weight: 700; font-family: "Inter"; }
+        Text { text: meta; color: accent; font-size: 12px; font-family: "Inter"; }
+    }
+}
+
+component MonitorRow inherits Rectangle {
+    in property <string> channel;
+    in property <string> score;
+    in property <string> verdict;
+    in property <string> linked;
+    in property <color> accent;
+
+    height: 48px;
+    border-radius: 12px;
+    background: #121B22;
+    border-width: 1px;
+    border-color: #1F2A33;
+
+    Text { x: 16px; y: 15px; width: 170px; text: channel; color: #E8ECEF; font-size: 13px; font-weight: 600; font-family: "Inter"; }
+    Text { x: 194px; y: 15px; width: 56px; text: score; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+
+    Rectangle {
+        x: 258px;
+        y: 10px;
+        width: 116px;
+        height: 28px;
+        border-radius: 10px;
+        background: #1A262E;
+        border-width: 1px;
+        border-color: accent;
+        Text {
+            text: verdict;
+            color: accent;
+            font-size: 12px;
+            font-weight: 600;
+            font-family: "Inter";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            width: parent.width;
+            height: parent.height;
+        }
+    }
+
+    Text { x: parent.width - 66px; y: 15px; width: 44px; text: linked; color: #A7B0B7; font-size: 13px; horizontal-alignment: right; font-family: "Inter"; }
+}
+
+export component AetherModernWindow inherits Window {
+    title: "Aether Slint Preview";
+    width: 1480px;
+    height: 920px;
+    min-width: 1220px;
+    min-height: 780px;
+    background: #0E141A;
+
+    Rectangle {
+        background: #0E141A;
+
+        HorizontalBox {
+            padding: 28px;
+            spacing: 24px;
+
+            Rectangle {
+                width: 320px;
+                border-radius: 20px;
+                background: #162028;
+                border-width: 1px;
+                border-color: #1F2A33;
+
+                VerticalBox {
+                    padding: 22px;
+                    spacing: 18px;
+
+                    HorizontalBox {
+                        spacing: 14px;
+                        Rectangle {
+                            width: 46px; height: 46px; border-radius: 14px; background: #10191F; border-width: 1px; border-color: #1F2A33;
+                            Image { source: @image-url("../assets/robot_mark.svg"); width: 26px; height: 26px; x: 10px; y: 10px; image-fit: contain; }
+                        }
+                        VerticalBox {
+                            spacing: 2px;
+                            Text { text: "AETHER"; color: #E8ECEF; font-size: 18px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "Modern Human Minimalism"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 110px;
+                        border-radius: 16px;
+                        background: #121B22;
+                        border-width: 1px;
+                        border-color: #1F2A33;
+                        VerticalBox {
+                            padding: 18px;
+                            spacing: 8px;
+                            Text { text: "Workspace Status"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "Calm, readable, professional dark surfaces."; color: #E8ECEF; wrap: word-wrap; font-size: 18px; font-weight: 600; font-family: "Inter"; }
+                        }
+                    }
+
+                    Text { text: "PRIMARY NAVIGATION"; color: #A7B0B7; font-size: 11px; font-weight: 700; font-family: "Inter"; }
+                    TabChip { label: "Overview"; active: true; }
+                    TabChip { label: "Signals"; active: false; }
+                    TabChip { label: "Anchors"; active: false; }
+                    TabChip { label: "Logs"; active: false; }
+                    TabChip { label: "YouTube"; active: false; }
+
+                    Rectangle { height: 1px; background: #1F2A33; }
+
+                    Text { text: "RUNTIME"; color: #A7B0B7; font-size: 11px; font-weight: 700; font-family: "Inter"; }
+                    Text { text: "Observer model: PersistentLocal"; color: #E8ECEF; font-size: 13px; font-family: "Inter"; }
+                    Text { text: "YT server: localhost:7384 active"; color: #3FBAC2; font-size: 13px; font-family: "Inter"; }
+                }
+            }
+
+            VerticalBox {
+                spacing: 22px;
+
+                HorizontalBox {
+                    spacing: 16px;
+                    VerticalBox {
+                        spacing: 4px;
+                        Text { text: "Aether Control Surface"; color: #E8ECEF; font-size: 32px; font-weight: 700; font-family: "Inter"; }
+                        Text { text: "A separate Slint preview with quiet dark panels and a restrained robot mark."; color: #A7B0B7; font-size: 14px; font-family: "Inter"; }
+                    }
+                    Rectangle { width: 1px; background: #00000000; }
+                    ShellButton { label: "Sync Graph"; fill-color: #23343D; stroke-color: #2FA3B5; text-color: #E8ECEF; }
+                    ShellButton { label: "Export JSON"; fill-color: #162028; stroke-color: #1F2A33; text-color: #A7B0B7; }
+                }
+
+                HorizontalBox {
+                    spacing: 12px;
+                    MetricTile { caption: "Anchor Coverage"; value: "82%"; meta: "Stable reconstruction window"; accent: #3FBAC2; }
+                    MetricTile { caption: "YT Monitor"; value: "31"; meta: "Flagged channels in graph"; accent: #2FA3B5; }
+                    MetricTile { caption: "Event Drain"; value: "Live"; meta: "Independent of frame cadence"; accent: #7FB8C7; }
+                    MetricTile { caption: "Push Queue"; value: "Idle"; meta: "Public queue clean"; accent: #5AAE84; }
+                }
+
+                Rectangle {
+                    height: 236px;
+                    border-radius: 20px;
+                    background: #162028;
+                    border-width: 1px;
+                    border-color: #1F2A33;
+                    VerticalBox {
+                        padding: 22px;
+                        spacing: 14px;
+                        Text { text: "System Overview"; color: #E8ECEF; font-size: 20px; font-weight: 700; font-family: "Inter"; }
+                        Text { text: "Flat layers, calm petrol accents, generous spacing, no neon or ornamental chrome."; color: #A7B0B7; wrap: word-wrap; font-size: 13px; font-family: "Inter"; }
+                        Rectangle { height: 42px; border-radius: 12px; background: #121B22; border-width: 1px; border-color: #1F2A33;
+                            Text { text: "Queue healthy  |  background drain online  |  channel graph ready"; color: #3FBAC2; font-size: 12px; font-weight: 600; font-family: "Inter"; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                        }
+                        HorizontalBox {
+                            spacing: 14px;
+                            Rectangle { height: 108px; border-radius: 16px; background: #121B22; border-width: 1px; border-color: #1F2A33;
+                                VerticalBox {
+                                    padding: 18px;
+                                    spacing: 8px;
+                                    Text { text: "Brand Mark"; color: #E8ECEF; font-size: 15px; font-weight: 600; font-family: "Inter"; }
+                                    Text { text: "Retro silhouette, modern geometry."; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                                    Rectangle { width: 72px; height: 40px; background: #00000000;
+                                        Image { source: @image-url("../assets/robot_mark.svg"); width: 36px; height: 36px; x: 0; y: 0; image-fit: contain; }
+                                    }
+                                }
+                            }
+                            Rectangle { height: 108px; border-radius: 16px; background: #121B22; border-width: 1px; border-color: #1F2A33;
+                                VerticalBox {
+                                    padding: 18px;
+                                    spacing: 8px;
+                                    Text { text: "Surface Notes"; color: #E8ECEF; font-size: 15px; font-weight: 600; font-family: "Inter"; }
+                                    Text { text: "No cartoon faces, no sci-fi rails, no retro toy styling."; color: #A7B0B7; wrap: word-wrap; font-size: 13px; font-family: "Inter"; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 286px;
+                    border-radius: 20px;
+                    background: #162028;
+                    border-width: 1px;
+                    border-color: #1F2A33;
+                    VerticalBox {
+                        padding: 22px;
+                        spacing: 14px;
+                        Text { text: "YouTube Monitor"; color: #E8ECEF; font-size: 20px; font-weight: 700; font-family: "Inter"; }
+                        Text { text: "Structured rows with subdued status colors and clear graph context."; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                        MonitorRow { channel: "FactsWorld Pro"; score: "0.82"; verdict: "CONFIRMED"; linked: "12"; accent: #3FBAC2; }
+                        MonitorRow { channel: "Daily Clips Hub"; score: "0.58"; verdict: "SUSPECTED"; linked: "5"; accent: #C7A04A; }
+                        MonitorRow { channel: "Travel Notes"; score: "0.12"; verdict: "CLEAN"; linked: "0"; accent: #5AAE84; }
+                        Rectangle { height: 1px; background: #1F2A33; }
+                        Text { text: "Status: localhost:7384 active  |  file fallback standby"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 360px;
+                border-radius: 20px;
+                background: #162028;
+                border-width: 1px;
+                border-color: #1F2A33;
+
+                VerticalBox {
+                    padding: 22px;
+                    spacing: 18px;
+                    Text { text: "Inspector"; color: #E8ECEF; font-size: 22px; font-weight: 700; font-family: "Inter"; }
+
+                    Rectangle {
+                        height: 126px;
+                        border-radius: 16px;
+                        background: #121B22;
+                        border-width: 1px;
+                        border-color: #1F2A33;
+                        VerticalBox {
+                            padding: 18px;
+                            spacing: 8px;
+                            Text { text: "Graph Summary"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "47 channels tracked"; color: #E8ECEF; font-size: 24px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "Largest cluster: 14  |  Shared anchors: 88"; color: #3FBAC2; font-size: 12px; font-family: "Inter"; }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 170px;
+                        border-radius: 16px;
+                        background: #121B22;
+                        border-width: 1px;
+                        border-color: #1F2A33;
+                        VerticalBox {
+                            padding: 18px;
+                            spacing: 10px;
+                            Text { text: "Command Surface"; color: #E8ECEF; font-size: 16px; font-weight: 600; font-family: "Inter"; }
+                            ShellButton { label: "Open Monitor"; fill-color: #23343D; stroke-color: #2FA3B5; text-color: #E8ECEF; }
+                            ShellButton { label: "Export Graph"; fill-color: #162028; stroke-color: #1F2A33; text-color: #A7B0B7; }
+                            ShellButton { label: "Inspect Queue"; fill-color: #162028; stroke-color: #1F2A33; text-color: #A7B0B7; }
+                        }
+                    }
+
+                    Rectangle {
+                        height: 184px;
+                        border-radius: 16px;
+                        background: #121B22;
+                        border-width: 1px;
+                        border-color: #1F2A33;
+                        VerticalBox {
+                            padding: 18px;
+                            spacing: 10px;
+                            Text { text: "Recent Activity"; color: #E8ECEF; font-size: 16px; font-weight: 600; font-family: "Inter"; }
+                            Text { text: "08:42  Anchor graph exported"; color: #E8ECEF; font-size: 13px; font-family: "Inter"; }
+                            Text { text: "08:31  Workflow hit persisted while minimized"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                            Text { text: "08:18  Slint preview refreshed"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                            Text { text: "07:57  Public queue idle"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
