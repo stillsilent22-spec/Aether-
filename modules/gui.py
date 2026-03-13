@@ -7,6 +7,8 @@ import gc
 import json
 import math
 import os
+import subprocess
+import sys
 import threading
 import time
 import webbrowser
@@ -5759,6 +5761,7 @@ class VeiraGUI:
             text="Browser-Fenster",
             command=lambda: (self.browser_dock_var.set(not bool(self.browser_dock_var.get())), self._toggle_browser_main_dock()),
         ).pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Button(control_card, text="Aether Dropper", command=self._launch_aether_dropper).pack(fill="x", padx=10, pady=(0, 6))
         ttk.Button(control_card, text="Sicherheits-Audit", command=self._open_security_audit).pack(fill="x", padx=10, pady=(0, 6))
         self.ae_stop_button = tk.Button(
             control_card,
@@ -9045,6 +9048,21 @@ class VeiraGUI:
         if directory_path:
             self.path_var.set(directory_path)
             self._start_dna_directory_import(directory_path)
+
+    def _launch_aether_dropper(self) -> None:
+        """Startet den separaten Aether-Dropper mit derselben Python-Installation."""
+        script_path = Path(__file__).resolve().parent.parent / "aether_dropper.py"
+        if not script_path.is_file():
+            messagebox.showerror("Aether Dropper", f"Die Datei wurde nicht gefunden:\n{script_path}", parent=self.root)
+            return
+        try:
+            subprocess.Popen(
+                [sys.executable, str(script_path)],
+                cwd=str(script_path.parent),
+            )
+            self.loading_var.set("Aether Dropper wurde in einem separaten Fenster gestartet.")
+        except Exception as exc:
+            messagebox.showerror("Aether Dropper", f"Der Dropper konnte nicht gestartet werden:\n{exc}", parent=self.root)
 
     def _setup_drag_and_drop(self) -> None:
         """Aktiviert Drag & Drop robust ueber tkinterdnd2."""

@@ -107,13 +107,30 @@ class ObserverEngine:
         self._previous_entropy = None
         self._previous_anchors = []
 
-    def _learning_state_path(self, session_context) -> Path:
-        """Leitet den lokalen Pfad fuer persistente Observer-Lernzustaende ab."""
+    @staticmethod
+    def _learning_state_identity(session_context) -> tuple[str, str]:
+        """Leitet die minimale Identitaet fuer den lokalen Lernpfad ab."""
         user_name = str(getattr(session_context, "username", "local") or "local")
         session_id = str(getattr(session_context, "session_id", "session") or "session")[:16]
+        return user_name, session_id
+
+    def _legacy_learning_state_path(self, session_context) -> Path:
+        """Bildet den frueheren Dateinamen ab, um alte lokale Dateien migrieren zu koennen."""
+        user_name, session_id = self._learning_state_identity(session_context)
         safe_user = "".join(char if char.isalnum() else "_" for char in user_name).strip("_") or "local"
         self.learning_store_dir.mkdir(parents=True, exist_ok=True)
         return self.learning_store_dir / f"{safe_user}_{session_id}_observer_learning.json"
+
+    def _learning_state_token(self, session_context) -> str:
+        """Leitet einen pseudonymen, lokalen Dateischluessel ohne Klartext-Nutzername ab."""
+        user_name, session_id = self._learning_state_identity(session_context)
+        material = f"{user_name}|{session_id}|observer_learning|v2"
+        return hashlib.blake2b(material.encode("utf-8"), digest_size=12).hexdigest()
+
+    def _learning_state_path(self, session_context) -> Path:
+        """Leitet den lokalen Pfad fuer persistente Observer-Lernzustaende ab."""
+        self.learning_store_dir.mkdir(parents=True, exist_ok=True)
+        return self.learning_store_dir / f"observer_learning_{self._learning_state_token(session_context)}.json"
 
     @staticmethod
     def _default_learning_state() -> dict[str, object]:
@@ -136,10 +153,12 @@ class ObserverEngine:
     def load_learning_state(self, session_context) -> dict[str, object]:
         """Laedt den persistenten Lernzustand fail-closed und entschluesselt lokal."""
         path = self._learning_state_path(session_context)
-        if not path.is_file():
+        legacy_path = self._legacy_learning_state_path(session_context)
+        source_path = path if path.is_file() else legacy_path if legacy_path.is_file() else None
+        if source_path is None:
             return self._default_learning_state()
         try:
-            envelope = json.loads(path.read_text(encoding="utf-8"))
+            envelope = json.loads(source_path.read_text(encoding="utf-8"))
         except Exception:
             return self._default_learning_state()
         payload = decrypt_device_scoped_payload(
@@ -151,6 +170,11 @@ class ObserverEngine:
         state = self._default_learning_state()
         if isinstance(payload, dict):
             state.update({str(key): value for key, value in payload.items()})
+            if source_path == legacy_path:
+                try:
+                    self.save_learning_state(session_context, state)
+                except Exception:
+                    pass
         return state
 
     def save_learning_state(self, session_context, state: dict[str, object]) -> dict[str, object]:
@@ -165,6 +189,12 @@ class ObserverEngine:
             session_salt=str(getattr(session_context, "session_id", "") or ""),
         )
         path.write_text(json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+        legacy_path = self._legacy_learning_state_path(session_context)
+        if legacy_path != path and legacy_path.is_file():
+            try:
+                legacy_path.unlink()
+            except Exception:
+                pass
         return normalized
 
     @staticmethod

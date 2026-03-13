@@ -36,6 +36,7 @@ data/*.log
 data/*.bin
 data/*.bak
 data/logs/
+data/observer_learning/
 data/screenshots/
 data/vault/
 data/sync_smoke/
