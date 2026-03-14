@@ -632,7 +632,170 @@ Die methodische Grundlage dieser Arbeit beruht auf Ergebnissen aus Mathematik, I
 
 ## 20. Erweiterungen und Vision: Aethernet, SEMS und Schwarmintelligenz
 
-Dieses Kapitel dokumentiert konzeptionelle Erweiterungen die über den aktuellen Implementierungsstand hinausgehen. Sie sind als Forschungshypothesen und Entwicklungsziele zu verstehen — nicht als implementierte Tatsachen.
+Dieses Kapitel dokumentiert den aktuellen Implementierungsstand sowie konzeptionelle Erweiterungen die darüber hinausgehen.
+
+### 20.1 Implementierungsstand — was bereits existiert
+
+Das System ist substantiell implementiert. Die folgenden Module existieren und sind funktional:
+
+**Rendering & Vision — bereits implementiert:**
+
+`screen_vision_engine.py` — Screenshot-Analyse mit vollständigen Privacy-Guards:
+- Erkennt automatisch private Kontexte: Emails, Passwortfelder, Chats, Messenger
+- Blockiert diese sofort — fail-closed, keine Ausnahmen
+- Analysiert ausschließlich explizit freigegebene Analysebereiche
+- Vergleicht Byte-Signatur der Rohdatei mit Pixel-Signatur des Renderings
+- Misst Konvergenz: wie stark stimmen Datei-Anker und visuelle Anker überein?
+
+`browser_engine.py` — Browser-Companion:
+- Hate/Scam/Fake Pattern Filter vor jeder Analyse
+- Rendering-Analyse von Web-Inhalten
+- Lokale Verarbeitung ohne Cloud-Abhängigkeit
+
+`spectrum_engine.py` — Frequenzspektrum für Bilder und Audio
+
+`spacetime_renderer.py` — 3D/4D Visualisierung von Strukturzuständen
+
+**Wissenssystem — bereits implementiert:**
+
+`symbol_grounding.py` — Bedeutungsverankerung:
+- Vergibt Maschinen-Token an Cluster
+- Baut semantisches Netz aus Strukturbeziehungen
+- Persistent, lokal, auditierbar
+
+`embedding_engine.py` — Strukturelle Einbettungen
+
+`preload_optimizer.py` — Logarithmische Anchor Pack Empfehlungen basierend auf Vault-Analyse
+
+**Netzwerk & Schwarm — bereits implementiert:**
+
+`p2p_anchor_pool.py` — P2P Anker-Pool mit Quorum-Logik:
+- Dreifach-Verifikation durch unabhängige Peers
+- Append-only, keine nachträglichen Änderungen
+
+`public_ttd_transport.py` — TTD-Anker Transport:
+- Teilt ausschließlich Hash und Metriken
+- Deltas bleiben lokal
+
+`telemetry_classifier.py` — Telemetrie-Klassifikation ohne Payload-Inspektion:
+- Erkennt Telemetrie-Domänen (Microsoft, Google, Adobe, Facebook)
+- Klassifiziert strukturell — liest nie den Inhalt
+
+`privacy_anchor_builder.py` — Baut Privacy-sichere Anker aus Telemetrie-Verdicts
+
+**Datenschutz — bereits implementiert:**
+
+`chat_crypto.py` — Verschlüsselte Kommunikation
+`local_secret_store.py` — Lokaler Schlüsselspeicher
+`privacy_observer.py` — Privacy-Boundary Enforcement zur Laufzeit
+
+### 20.2 Shanway — Ausgabefilter, nicht Wissensträger
+
+Shanway läuft mit TinyLLaMA 1.5B als lokalem Sprachmodell. Die entscheidende Architekturentscheidung:
+
+```
+Aether-Pipeline verifiziert → TinyLLaMA formuliert → Shanway spricht
+```
+
+TinyLLaMA ist kein Wissensträger. Er ist ein Übersetzer — von verifizierten Strukturmustern in menschlich lesbare Sprache.
+
+Warum Shanway nicht halluzinieren kann — auch wenn TinyLLaMA es könnte:
+
+**1. Kontrollierter Eingang** — TinyLLaMA sieht ausschließlich was die vollständige Aether-Pipeline durch alle Schichten als strukturell verifiziert eingestuft hat. Was nicht durch die Pipeline kommt existiert für TinyLLaMA nicht.
+
+**2. Wasserdichter System-Prompt** — Der Prompt verbietet jede Aussage die nicht im verifizierten Kontext steht. Ausgabelänge = Kontextlänge. Nie mehr als der Kontext hergibt.
+
+**3. Schweigen als valider Output** — Wenn kein Anker nah genug ist antwortet Shanway nicht. Schweigen ist Integrität, nicht Versagen.
+
+### 20.3 Session-Key Architektur
+
+Alle Deltas werden mit ephemeren Live-Session-Keys verschlüsselt:
+
+```
+Session startet    → 256-bit Key aus CSPRNG, nur RAM
+Deltas entstehen   → sofort verschlüsselt mit Session-Key
+Session endet      → secure zeroize — Key überschrieben
+Deltas auf Disk    → verschlüsselt, ohne Key permanent unlesbar
+```
+
+Zero-Knowledge by Architecture. Nicht by Promise.
+
+### 20.4 Filekeys und Datei-Register
+
+Jede Datei die durch Aether analysiert wird bekommt einen einmaligen einzigartigen Schlüssel — Kombination aus Struktursignatur und kryptographischer Zufallskomponente.
+
+Drei wissenschaftliche Konsequenzen:
+
+**Reproduzierbarkeit** — Manipulation bricht den Schlüssel sofort.
+
+**Provenienz** — Wann wurde dieser Datensatz erstellt? Durch welche Pipeline? Unveränderlich beweisbar. Das adressiert die Reproduzierbarkeitskrise in der Wissenschaft direkt.
+
+**Vergleich ohne Übertragung** — Nur Signaturen reisen. Nie Rohdaten.
+
+### 20.5 Meta-Anker und Emergenz-Ebenen
+
+Der Anker-Graph kennt keine feste Anzahl von Wissensebenen:
+
+```
+Ebene 1 — Basis-Anker
+  Direkt aus Rohdaten gemessen
+  Dreifach von unabhängigen Nutzern verifiziert
+  In Anchor Packs teilbar
+
+Ebene 2 — Konsens-Anker
+  Entstehen wenn Basis-Anker verschiedener Domänen
+  dieselbe Signatur zeigen
+  Dreifach verifiziert
+  Teilbar — optional in Anchor Packs oder direkt
+
+Ebene 3 — Meta-Anker
+  Entstehen wenn Konsens-Anker sich wiederholen
+  Niemals vordefiniert — immer lokal emergiert
+  Niemals in Anchor Packs
+
+Ebene N — Attraktor
+  Der Graph konvergiert auf wenige fundamentale
+  Strukturprinzipien — das ist eine messbare Hypothese
+```
+
+### 20.6 Anchor Packs und Preload
+
+Weil Aether Struktur komprimiert statt Inhalt sind Anker klein. Der `preload_optimizer.py` berechnet logarithmisch welche Packs für dieses Gerät relevant sind — basierend auf lokaler Vault-Analyse.
+
+Keine Rohdaten. Keine privaten Inhalte. Nur Strukturwissen das allen gehört.
+
+### 20.7 Demokratisierung — niemand wird zurückgelassen
+
+Ein zehn Jahre alter Windows-Rechner profitiert genauso wie ein Forschungsserver. Nicht als Versprechen — als Architektur.
+
+Systemoptimierungsanker sind lebende Konfigurationen die sich mit dem System weiterentwickeln — spezifisch für dieses Gerät, diesen Nutzer, diese Nutzungsweise.
+
+Linux-Fallback ist eingebaut. Dieselbe Pipeline. Dieselbe Logik. Andere Systemschicht darunter.
+
+### 20.8 Aethernet — lebende Schwarmintelligenz
+
+Die langfristige Vision: Aether ist kein einzelnes System. Er ist ein Schwarm.
+
+Drei lokale Regeln — wie Conway:
+- messe Struktur
+- verifiziere dreifach
+- teile nur Signaturen
+
+Das Aethernet ist das Internet of Structure — nicht das Internet of Things. Niemand besitzt das Netz. Rohdaten bleiben lokal. Strukturwissen gehört allen.
+
+### 20.9 Kernprinzipien
+
+```
+Kein Vertrauen nötig — nur Nachschauen
+Keine Blackbox — jeder Schritt auditierbar
+Keine Rohdaten teilen — nur Strukturwissen
+Schweigen ist valider Output
+Mensch entscheidet — immer
+Dezentralisierung ist kein Feature — sie ist das Fundament
+Datenschutz by Architecture — nicht by Promise
+Wissen gehört niemandem — und deshalb allen
+Niemand besitzt den Schwarm
+```
 
 ### 20.1 Shanway — Ausgabefilter, nicht Wissensträger
 
@@ -692,7 +855,8 @@ Ebene 1 — Basis-Anker
 Ebene 2 — Konsens-Anker
   Entstehen wenn Basis-Anker verschiedener Domänen
   dieselbe Signatur zeigen
-  Lokal berechnet, optional geteilt
+  Dreifach verifiziert
+  Teilbar — optional in Anchor Packs oder direkt
 
 Ebene 3 — Meta-Anker
   Entstehen wenn Konsens-Anker sich wiederholen
@@ -776,7 +940,139 @@ Niemand besitzt den Schwarm
 
 ---
 
-## 21. Schlusswort (aktualisiert)
+## 22. Wissenschaftliche Adaptionen — die Schultern auf denen Aether steht
+
+Aether ist kein isoliertes System. Es baut auf etablierten wissenschaftlichen Erkenntnissen auf und adaptiert sie für einen gemeinsamen Rahmen. Die folgende Übersicht zeigt welche Konzepte implementiert sind — nicht als Metapher, sondern als messbare Größen im Code.
+
+### Shannon — Informationstheorie
+
+**Was Shannon sagt:** Die Unsicherheit eines Systems ist messbar als `H(X) = -∑ p(x) log₂ p(x)`
+
+**Aethers Adaptation:** Shannon ist die Baseline. Aether erweitert sie um die beobachterrelative Restunsicherheit H_lambda — weil Shannon beobachteragnostisch ist und Aether einen lernenden Beobachter modelliert.
+
+**Im Code:** `analysis_engine.py` — Basis aller Strukturmessungen.
+
+---
+
+### Noether — Invarianz und Erhaltung
+
+**Was Noether sagt:** Jede kontinuierliche Symmetrie eines Systems entspricht einer Erhaltungsgröße.
+
+**Aethers Adaptation:** Strukturelle Invarianten sind Ankerkandidaten. Was sich erhält ist vertrauenswürdig. Was bricht ist ein Signal.
+
+**Im Code:** `vault_noether_profile()` in `analysis_engine.py` — misst Symmetrieerhaltung über Zeit.
+
+---
+
+### Heisenberg — Unschärfe
+
+**Was Heisenberg sagt:** Position und Impuls eines Teilchens können nicht gleichzeitig beliebig genau gemessen werden.
+
+**Aethers Adaptation:** `heisenberg_uncertainty` ist ein Evolutionsparameter im AELAB-Kern. Je höher die Unschärfe eines Ankerkandidaten, desto höher seine Instabilität. Anker mit niedriger Unschärfe sind stabile Kandidaten.
+
+**Im Code:** `ae_evolution_core.py` — steuert Selektion und Stabilität von Ankerkandidaten.
+
+---
+
+### Fourier — Frequenzanalyse
+
+**Was Fourier sagt:** Jedes Signal lässt sich als Summe von Sinuswellen darstellen.
+
+**Aethers Adaptation:** Fourier-Peaks sind Strukturmerkmale. Periodische Muster im Byteraum werden als Frequenzspektrum analysiert.
+
+**Im Code:** `_fourier_peaks()` in `analysis_engine.py`, vollständige Spektrumanalyse in `spectrum_engine.py`.
+
+---
+
+### Lyapunov — Stabilitätsmessung
+
+**Was Lyapunov sagt:** Der Lyapunov-Exponent misst wie schnell benachbarte Trajektorien in einem dynamischen System auseinanderdriften.
+
+**Aethers Adaptation:** Strukturelle Stabilität eines Ankers über Zeit. Niedriger Lyapunov-Proxy = stabil = höherer Trust.
+
+**Im Code:** `_lyapunov_proxy()` in `analysis_engine.py`.
+
+---
+
+### Mandelbrot — Fraktale Dimension
+
+**Was Mandelbrot sagt:** Komplexe Strukturen haben eine fraktale Dimension die zwischen ganzen Zahlen liegt.
+
+**Aethers Adaptation:** Die Katz-Fraktaldimension misst strukturelle Komplexität von Bytestömen. Fließt als `mandelbrot_d` in die Beauty-Signatur ein.
+
+**Im Code:** `_katz_fractal_dimension()` als `mandelbrot_d` in `analysis_engine.py`.
+
+---
+
+### Kolmogorov — Komplexität und Kompressibilität
+
+**Was Kolmogorov sagt:** Die Komplexität eines Strings ist die Länge des kürzesten Programms das ihn erzeugt.
+
+**Aethers Adaptation:** Kompressibilität als Proxy für Kolmogorov-Komplexität. Hoch komprimierbar = niedrige Komplexität = strukturell einfach. Fließt als `kolmogorov_k` in die Beauty-Signatur ein.
+
+**Im Code:** `_compressibility_proxy()` als `kolmogorov_k` in `analysis_engine.py`.
+
+---
+
+### Benford — Verteilungsgesetze
+
+**Was Benford sagt:** In vielen natürlichen Datensätzen beginnen Zahlen häufiger mit kleinen Ziffern. Abweichungen von dieser Verteilung deuten auf Anomalien hin.
+
+**Aethers Adaptation:** Benford-Ähnlichkeit als Anomalie-Detektor. Natürliche Strukturen folgen Benford. Manipulierte oder generierte Daten weichen ab.
+
+**Im Code:** `_benford_similarity()` und `vault_benford_profile()` in `analysis_engine.py`.
+
+---
+
+### Zipf — Potenzgesetze
+
+**Was Zipf sagt:** In natürlichen Systemen folgen Häufigkeitsverteilungen oft einem Potenzgesetz.
+
+**Aethers Adaptation:** Der Zipf-Alpha-Wert misst ob eine Byteverteilung einem natürlichen Potenzgesetz folgt. Natürliche Daten haben charakteristische Zipf-Werte.
+
+**Im Code:** `_zipf_alpha()` in `analysis_engine.py`.
+
+---
+
+### Bayes — Lernende Aktualisierung
+
+**Was Bayes sagt:** Wahrscheinlichkeiten werden durch neue Evidenz aktualisiert: `P(H|E) = P(E|H) * P(H) / P(E)`
+
+**Aethers Adaptation:** Anker-Trust wird bayesianisch aktualisiert. Jede neue Bestätigung erhöht den Posterior. Jede Widerlegung senkt ihn.
+
+**Im Code:** Vollständige `bayes_engine.py` — Prior, Phase, Alarm, Muster.
+
+---
+
+### Conway — Lokale Regeln, globale Emergenz
+
+**Was Conway sagt:** Drei einfache lokale Regeln im Game of Life erzeugen globale Muster die niemand explizit programmiert hat.
+
+**Aethers Adaptation:** Das ist der Ausgangspunkt des gesamten Projekts. Aether fragt: Welche minimalen lokalen Regeln beschreiben reale Datenräume so dass globale Ordnung emergiert?
+
+**Im Code:** `conway_engine.py` — und die gesamte Architektur als lebende Antwort auf diese Frage.
+
+---
+
+### Zusammenfassung
+
+```
+Shannon      →  H(X) als Baseline
+Noether      →  Invarianz als Vertrauenskriterium
+Heisenberg   →  Unschärfe als Stabilitätsmaß
+Fourier      →  Frequenzmuster als Strukturmerkmal
+Lyapunov     →  Trajektorienstabilität als Trust-Faktor
+Mandelbrot   →  Fraktaldimension als Komplexitätsmaß
+Kolmogorov   →  Kompressibilität als Komplexitätsproxy
+Benford      →  Verteilungskonformität als Anomaliedetektor
+Zipf         →  Potenzgesetz als Natürlichkeitsmessung
+Bayes        →  Lernende Trust-Aktualisierung
+Conway       →  Lokale Regeln als Emergenzprinzip
+```
+
+Keines dieser Konzepte wird als Metapher verwendet. Alle sind als messbare Größen implementiert und fließen in den Trust-Score und die Beauty-Signatur ein.
+
+Das ist der wissenschaftliche Stammbaum von Aether.
 
 Aether begann als technische Frage aus Conway's Game of Life.
 
