@@ -19,3 +19,4 @@ psutil
 pyautogui
 winshell
 pywin32
+llama-cpp-python
