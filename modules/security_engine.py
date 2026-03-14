@@ -10,6 +10,7 @@ import secrets
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Any
 from uuid import uuid4
@@ -23,6 +24,17 @@ LOCKOUT_THRESHOLD = 5
 LOCKOUT_MINUTES = 5
 PRIMARY_ALGO = "sha256"
 SECONDARY_ALGO = "blake2b"
+# Empirisch kalibriert auf Aether-Vault-Daten (Stand 2026-03)
+# Mindest-Symmetrie fuer strukturell stabile Anker
+TTD_MIN_SYMMETRY: float = 0.90
+# Maximaler Residualanteil fuer lossless-nahe Kandidaten
+TTD_MAX_RESIDUAL: float = 0.05
+# Mindest-Observer-Informationsanteil
+TTD_MIN_I_OBS_RATIO: float = 0.90
+# Mindest-Delta-Stabilitaet ueber rekursive Reflexionen
+TTD_MIN_DELTA_STABILITY: float = 0.90
+# Mindestanzahl rekursiver Reflexionsschritte
+TTD_MIN_RECURSIVE_COUNT: int = 3
 
 
 def _xor_bytes(left: bytes, right: bytes) -> bytes:
@@ -31,8 +43,36 @@ def _xor_bytes(left: bytes, right: bytes) -> bytes:
     return bytes(left[index] ^ right[index] for index in range(size))
 
 
+def _load_or_create_device_id(data_dir: str = "data") -> str:
+    """Liest eine stabile lokale Device-ID oder legt sie beim ersten Aufruf an."""
+    path = Path(data_dir) / "device_identity.json"
+    if path.is_file():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            device_id = str(dict(payload or {}).get("device_id", "") or "").strip()
+            if device_id:
+                return device_id
+        except Exception:
+            pass
+    device_id = secrets.token_hex(32)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "device_id": device_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return device_id
+
+
 def build_hardware_seed(session_like: Any | None = None, purpose: str = "", session_salt: str = "") -> str:
-    """Leitet einen robusten, lokalen Device-Seed fuer verschluesselte Zusatzpfade ab."""
+    """Leitet einen stabilen lokalen Device-Seed aus persistenter Device-ID und Kontext ab."""
+    device_id = _load_or_create_device_id()
     node_name = str(platform.node() or "")
     machine = str(platform.machine() or "")
     platform_label = str(platform.platform() or "")
@@ -45,6 +85,7 @@ def build_hardware_seed(session_like: Any | None = None, purpose: str = "", sess
         session_seed = int(getattr(session_like, "session_seed", 0) or 0)
     payload = "|".join(
         [
+            device_id,
             node_name,
             machine,
             platform_label,
@@ -232,16 +273,16 @@ def validate_public_ttd_candidate(
     boundary = str(fingerprint.get("boundary", "") or "")
 
     reasons: list[str] = []
-    if residual >= 0.05:
-        reasons.append(f"residual {residual:.3f} >= 0.050")
-    if symmetry <= 0.90:
-        reasons.append(f"symmetry {symmetry:.3f} <= 0.900")
-    if i_obs_ratio <= 0.90:
-        reasons.append(f"i_obs_ratio {i_obs_ratio:.3f} <= 0.900")
-    if delta_stability <= 0.90:
-        reasons.append(f"delta_stability {delta_stability:.3f} <= 0.900")
-    if recursive_count < 3:
-        reasons.append(f"recursive_count {recursive_count} < 3")
+    if residual >= TTD_MAX_RESIDUAL:
+        reasons.append(f"residual {residual:.3f} >= {TTD_MAX_RESIDUAL:.3f}")
+    if symmetry <= TTD_MIN_SYMMETRY:
+        reasons.append(f"symmetry {symmetry:.3f} <= {TTD_MIN_SYMMETRY:.3f}")
+    if i_obs_ratio <= TTD_MIN_I_OBS_RATIO:
+        reasons.append(f"i_obs_ratio {i_obs_ratio:.3f} <= {TTD_MIN_I_OBS_RATIO:.3f}")
+    if delta_stability <= TTD_MIN_DELTA_STABILITY:
+        reasons.append(f"delta_stability {delta_stability:.3f} <= {TTD_MIN_DELTA_STABILITY:.3f}")
+    if recursive_count < TTD_MIN_RECURSIVE_COUNT:
+        reasons.append(f"recursive_count {recursive_count} < {TTD_MIN_RECURSIVE_COUNT}")
     if boundary.upper() == "GOEDEL_LIMIT":
         reasons.append("boundary GOEDEL_LIMIT")
     if anomaly_count > 0:

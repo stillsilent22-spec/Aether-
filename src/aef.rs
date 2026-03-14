@@ -19,6 +19,27 @@ pub const AEF_FORMAT_VERSION: u16 = 1;
 pub const DEFAULT_CHUNK_SIZE: usize = 256;
 const DEFAULT_SIGNING_CONTEXT: &[u8] = b"aether/aef/shanway/signing-key/v1";
 
+mod serde_signature64 {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<S>(value: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        value.as_slice().serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; 64], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let bytes = <Vec<u8>>::deserialize(deserializer)?;
+        bytes
+            .try_into()
+            .map_err(|_| serde::de::Error::custom("expected exactly 64 signature bytes"))
+    }
+}
+
 pub mod engine_flags {
     pub const HEISENBERG: u64 = 1 << 0;
     pub const NOETHER: u64 = 1 << 1;
@@ -117,6 +138,7 @@ pub struct AefTrustMetadata {
     pub trust_score: f32,
     pub engine_flags: u64,
     pub confirmed_at: u64,
+    #[serde(with = "serde_signature64")]
     pub shanway_signature: [u8; 64],
 }
 

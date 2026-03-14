@@ -22,7 +22,7 @@ pub struct RawAnchorSubmission {
     pub anchor_id: Uuid,
     pub signal_type: SignalType,
     pub domain: String,
-    pub pi_positions: Vec<u64>,
+    pub pattern_positions: Vec<u64>,
     pub frequency_signature: Vec<f32>,
     pub fractal_dimension: f64,
     pub entropy_profile: f64,
@@ -64,7 +64,7 @@ pub struct PublicAnchorRecord {
     pub vault_ref: String,
     pub signal_type: SignalType,
     pub domain: String,
-    pub pi_positions: Vec<u64>,
+    pub pattern_positions: Vec<u64>,
     pub frequency_signature: Vec<f32>,
     pub fractal_dimension: f64,
     pub entropy_profile: f64,
@@ -91,12 +91,39 @@ pub enum VaultAccessError {
     PushError(String),
 }
 
+impl std::fmt::Display for VaultAccessError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::HardFail(result) => write!(f, "Hard fail: {:?}", result),
+            Self::TrustScoreTooLow(score) => write!(f, "Trust score too low: {score:.3}"),
+            Self::InvalidSignature => write!(f, "Invalid signature"),
+            Self::DatabaseError(message) => write!(f, "{message}"),
+            Self::PipelineError(message) => write!(f, "{message}"),
+            Self::PushError(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for VaultAccessError {}
+
 #[derive(Debug)]
 pub enum PushError {
     Serialization(String),
     Io(String),
     Http(String),
 }
+
+impl std::fmt::Display for PushError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Serialization(message) => write!(f, "{message}"),
+            Self::Io(message) => write!(f, "{message}"),
+            Self::Http(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+impl std::error::Error for PushError {}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VerificationResult {
@@ -188,7 +215,7 @@ impl VaultAccessLayer {
             vault_ref: hex_encode(&sha256_bytes(&canonical_anchor_bytes(&anchor))),
             signal_type: anchor.signal_type,
             domain: anchor.domain.clone(),
-            pi_positions: anchor.pi_positions.clone(),
+            pattern_positions: anchor.pattern_positions.clone(),
             frequency_signature: anchor.frequency_signature.clone(),
             fractal_dimension: anchor.fractal_dimension,
             entropy_profile: anchor.entropy_profile,
@@ -482,7 +509,7 @@ impl VaultAccessLayer {
             anchor_id: record.anchor_id,
             signal_type: record.signal_type,
             domain: record.domain.clone(),
-            pi_positions: record.pi_positions.clone(),
+            pattern_positions: record.pattern_positions.clone(),
             frequency_signature: record.frequency_signature.clone(),
             fractal_dimension: record.fractal_dimension,
             entropy_profile: record.entropy_profile,
@@ -725,7 +752,7 @@ pub async fn sync_public_vault(
                     anchor_id: record.anchor_id,
                     signal_type: record.signal_type,
                     domain: record.domain.clone(),
-                    pi_positions: record.pi_positions.clone(),
+                    pattern_positions: record.pattern_positions.clone(),
                     frequency_signature: record.frequency_signature.clone(),
                     fractal_dimension: record.fractal_dimension,
                     entropy_profile: record.entropy_profile,
@@ -791,7 +818,7 @@ fn parse_hex_32(value: &str) -> Option<[u8; 32]> {
 }
 
 fn derive_symmetry_index(anchor: &RawAnchorSubmission) -> f32 {
-    let repeat_factor = (anchor.pi_positions.len() as f32 / 8.0).clamp(0.0, 1.0);
+    let repeat_factor = (anchor.pattern_positions.len() as f32 / 8.0).clamp(0.0, 1.0);
     let benford = anchor.benford_score.clamp(0.0, 1.0);
     let fractal = (1.0 - ((anchor.fractal_dimension as f32 - 1.5).abs() / 1.5)).clamp(0.0, 1.0);
     ((0.42 * benford) + (0.28 * fractal) + (0.30 * repeat_factor)).clamp(0.0, 1.0)
@@ -820,10 +847,10 @@ fn derive_mandelbrot_score(anchor: &RawAnchorSubmission) -> f32 {
 }
 
 fn derive_bayes_score(anchor: &RawAnchorSubmission) -> f32 {
-    let pi = (anchor.pi_positions.len() as f32 / 16.0).clamp(0.0, 1.0);
+    let position_score = (anchor.pattern_positions.len() as f32 / 16.0).clamp(0.0, 1.0);
     let frequency = (anchor.frequency_signature.len() as f32 / 16.0).clamp(0.0, 1.0);
     let coherence = anchor.coherence_index.clamp(0.0, 1.0) as f32;
-    ((0.34 * pi) + (0.26 * frequency) + (0.40 * coherence)).clamp(0.0, 1.0)
+    ((0.34 * position_score) + (0.26 * frequency) + (0.40 * coherence)).clamp(0.0, 1.0)
 }
 
 fn parse_repo(repo_url: &str) -> Option<(String, String)> {

@@ -21,7 +21,7 @@ from modules.analysis_engine import AnalysisEngine
 from modules.browser_engine import BrowserEngine
 from modules.observer_engine import ObserverEngine
 from modules.public_ttd_transport import PublicTTDTransport
-from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine
+from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine, VaultMissError
 from modules.screen_vision_engine import is_private_context as is_private_screen_context
 from modules.session_engine import SessionContext
 from modules.shanway import ShanwayEngine
@@ -205,9 +205,14 @@ def test_vault_growth_reduces_delta_size() -> None:
     assert len(ref_ops_2) > 0
     assert engine.coherence_index(delta_2) > engine.coherence_index(delta_1)
 
-    reconstructed = engine.reconstruct_from_vault(delta_2)
+    try:
+        reconstructed = engine.reconstruct_from_vault(delta_2)
+    except VaultMissError as exc:
+        result = {"verified": False, "failure_reason": str(exc)}
+        reconstructed = b""
+    else:
+        result = engine.verify_lossless(sample, reconstructed)
     assert reconstructed == sample
-    result = engine.verify_lossless(sample, reconstructed)
     assert result["verified"] is True
     shutil.rmtree(tmp_dir, ignore_errors=True)
 
@@ -247,13 +252,6 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
         source_label="tests::recursive_raster_roundtrip",
         source_type="memory",
     )
-    fingerprint.observer_knowledge_ratio = max(0.96, float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0))
-    fingerprint.observer_mutual_info = max(
-        float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
-        float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
-    )
-    fingerprint.unresolved_residual_ratio = 0.02
-
     observer = ObserverEngine()
     temp_learning_dir = PROJECT_ROOT / "tests" / ".tmp_observer_learning"
     observer.learning_store_dir = temp_learning_dir
@@ -311,6 +309,24 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
     assert len(list(assessment.recursive_reflections)) >= 1
     assert len(list(assessment.recursive_reflections)) <= 5
     shutil.rmtree(temp_learning_dir, ignore_errors=True)
+
+
+def test_reconstruct_from_vault_reports_failed_result_on_missing_anchor() -> None:
+    """Fehlende Vault-Referenzen muessen explizit als FAILED statt als Leerbytes enden."""
+    engine = LosslessReconstructionEngine(vault_db_path=":memory:")
+    delta_log = [
+        {"op": "init", "size": 8},
+        {"op": "ref", "offset": 0, "length": 8, "anchor_hash": "missing-anchor"},
+    ]
+    try:
+        engine.reconstruct_from_vault(delta_log)
+    except VaultMissError as exc:
+        result = {"verified": False, "status": "FAILED", "reason": str(exc)}
+    else:
+        result = {"verified": True, "status": "CONFIRMED", "reason": ""}
+    assert result["verified"] is False
+    assert result["status"] == "FAILED"
+    assert "missing-anchor" in result["reason"]
 
 
 def test_ttd_auto_export_writes_dna_seed_and_jsonl() -> None:

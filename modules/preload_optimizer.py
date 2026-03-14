@@ -29,6 +29,7 @@ class PreloadOptimizer:
         self._lock = threading.Lock()
 
     def compute_anchor_weights(self, anchor_frequencies: dict[str, int]) -> dict[str, float]:
+        """Gewichtet Anker rein logarithmisch ohne konstantenspezifische Sonderregeln."""
         counts = {
             str(anchor): max(0, int(count))
             for anchor, count in dict(anchor_frequencies or {}).items()
@@ -44,12 +45,6 @@ class PreloadOptimizer:
                 result[anchor] = 0.0
                 continue
             weight = math.log(1.0 + float(count)) / math.log(1.0 + float(max_count))
-            try:
-                anchor_value = float(anchor)
-            except Exception:
-                anchor_value = 0.0
-            if abs(anchor_value - 3.14159) <= 0.01:
-                weight = min(1.0, weight * 1.2)
             result[anchor] = _round12(weight)
         return result
 

@@ -32,6 +32,7 @@ data/*.sqlite
 data/*.sqlite3
 data/*.jsonl
 data/*.json
+data/device_identity.json
 data/*.log
 data/*.bin
 data/*.bak

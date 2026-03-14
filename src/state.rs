@@ -141,21 +141,57 @@ impl StateStore {
     }
 
     pub fn private_threads_for(&self, username: &str) -> Vec<PrivateThread> {
-        self.state
+        let mut threads = self
+            .state
             .private_threads
             .iter()
             .filter(|thread| thread.owner_username == username)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        threads.sort_by(|left, right| left.partner_name.cmp(&right.partner_name));
+        threads
     }
 
     pub fn group_rooms_for(&self, username: &str) -> Vec<GroupRoom> {
-        self.state
+        let mut rooms = self
+            .state
             .group_rooms
             .iter()
             .filter(|room| room.owner_username == username)
             .cloned()
-            .collect()
+            .collect::<Vec<_>>();
+        rooms.sort_by(|left, right| left.name.cmp(&right.name));
+        rooms
+    }
+
+    pub fn add_private_message(
+        &mut self,
+        owner_username: &str,
+        partner_name: &str,
+        author: &str,
+        body: &str,
+    ) -> Result<(), String> {
+        let thread = self.private_thread(owner_username, partner_name);
+        thread.messages.push(ChatMessage {
+            author: author.to_owned(),
+            body: body.to_owned(),
+        });
+        self.save()
+    }
+
+    pub fn add_group_message(
+        &mut self,
+        owner_username: &str,
+        group_name: &str,
+        author: &str,
+        body: &str,
+    ) -> Result<(), String> {
+        let room = self.group_room(owner_username, group_name);
+        room.messages.push(ChatMessage {
+            author: author.to_owned(),
+            body: body.to_owned(),
+        });
+        self.save()
     }
 }
 

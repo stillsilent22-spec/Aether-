@@ -609,7 +609,7 @@ mod tests {
             anchor_id,
             signal_type: SignalType::Unknown,
             domain: "runtime".to_owned(),
-            pi_positions: vec![3, 14],
+            pattern_positions: vec![3, 14],
             frequency_signature: vec![0.4, 0.6],
             fractal_dimension: 1.1,
             entropy_profile: 2.8,

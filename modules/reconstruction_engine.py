@@ -35,6 +35,15 @@ class ReconstructionResult:
     unresolved_residual_ratio: float = 1.0
     residual_hash: str = ""
     coverage_verified: bool = False
+    failure_reason: str = ""
+
+
+class VaultMissError(RuntimeError):
+    """Signalisiert einen fehlenden Vault-Eintrag fuer einen referenzierten Anker."""
+
+    def __init__(self, anchor_hash: str):
+        super().__init__(f"Vault-Eintrag fehlt fuer Anker: {anchor_hash}")
+        self.anchor_hash = str(anchor_hash)
 
 
 @dataclass
@@ -53,12 +62,12 @@ class StructuralAnchor:
     signal_type: str
 
     def signature_dict(self) -> dict[str, Any]:
+        """Serialisiert nur stabile Strukturmetriken fuer die lokale Signaturansicht."""
         return {
             "entropy": round(self.entropy, 6),
             "dominant_frequency": round(self.dominant_frequency, 6),
             "fractal_dimension": round(self.fractal_dimension, 6),
             "benford_score": round(self.benford_score, 6),
-            "pi_positions": list(self.pi_positions[:8]),
             "symmetry": round(self.symmetry, 6),
             "signal_type": str(self.signal_type),
         }
@@ -71,6 +80,7 @@ class AnchorExtractor:
     PI_DIGITS = "14159265358979323846264338327950288"
 
     def extract_anchors(self, raw_bytes: bytes) -> list[StructuralAnchor]:
+        """Zerlegt einen Bytestrom in stabile Chunk-Anker fuer den lokalen Vault."""
         anchors: list[StructuralAnchor] = []
         for offset in range(0, len(raw_bytes), self.CHUNK_SIZE):
             chunk = raw_bytes[offset : offset + self.CHUNK_SIZE]
@@ -80,6 +90,14 @@ class AnchorExtractor:
         return anchors
 
     def _extract_single(self, chunk: bytes, offset: int) -> StructuralAnchor:
+        """
+        Extrahiert einen einzelnen Strukturanker fuer einen Chunk.
+
+        Der ``anchor_hash`` bleibt bewusst content-addressed: In die Signatur
+        fliesst ein SHA-256-Hash des Chunk-Inhalts ein. Damit ist der Anker pro
+        Byteinhalt eindeutig und fuer die Vault-Rekonstruktion korrekt, statt
+        nur ein allgemeiner Structure-Hash zu sein.
+        """
         entropy = self._shannon_entropy(chunk)
         dominant_freq = self._dominant_frequency(chunk)
         fractal_dim = self._katz_fractal_dimension(chunk)
@@ -193,32 +211,37 @@ class VaultAnchorStore:
 
     def __init__(self, db_path: str = "data/vault/anchors.db") -> None:
         self.db_path = str(db_path)
+        self._memory_connection: sqlite3.Connection | None = None
         db_file = Path(self.db_path)
         if self.db_path != ":memory:":
             db_file.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
+        if self.db_path == ":memory:":
+            if self._memory_connection is None:
+                self._memory_connection = sqlite3.connect(":memory:")
+            return self._memory_connection
         return sqlite3.connect(self.db_path)
 
     def _init_db(self) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS anchors (
-                    anchor_hash TEXT PRIMARY KEY,
-                    raw_bytes BLOB,
-                    signature_json TEXT NOT NULL,
-                    hit_count INTEGER DEFAULT 1,
-                    trust_score REAL DEFAULT 0.65,
-                    lossless_confirmed INTEGER DEFAULT 0,
-                    created_at INTEGER NOT NULL,
-                    last_seen INTEGER NOT NULL
-                )
-                """
+        conn = self._connect()
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS anchors (
+                anchor_hash TEXT PRIMARY KEY,
+                raw_bytes BLOB,
+                signature_json TEXT NOT NULL,
+                hit_count INTEGER DEFAULT 1,
+                trust_score REAL DEFAULT 0.65,
+                lossless_confirmed INTEGER DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                last_seen INTEGER NOT NULL
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_hit_count ON anchors(hit_count DESC)")
-            conn.commit()
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_hit_count ON anchors(hit_count DESC)")
+        conn.commit()
 
     def lookup(self, anchor_hash: str) -> dict[str, Any] | None:
         with self._connect() as conn:
@@ -304,11 +327,16 @@ class GoedelLoopTerminator:
         return False, "LOOP_FORTSETZUNG"
 
     def run_loop(self, raw_bytes: bytes, engine: "LosslessReconstructionEngine") -> dict[str, Any]:
+        """Fuehrt den Lernloop mit einem isolierten In-Memory-Vault aus."""
+        loop_engine = LosslessReconstructionEngine(
+            chunk_size=engine.chunk_size,
+            vault_db_path=":memory:",
+        )
         prev_coherence = 0.0
         result: dict[str, Any] = {}
         for depth in range(self.MAX_RECURSION_DEPTH + 1):
-            delta_log = engine.build_delta_log(raw_bytes)
-            coherence = engine.coherence_index(delta_log)
+            delta_log = loop_engine.build_delta_log(raw_bytes)
+            coherence = loop_engine.coherence_index(delta_log)
             delta_change = abs(coherence - prev_coherence)
             terminate, reason = self.should_terminate(coherence, depth, delta_change)
             result = {
@@ -451,8 +479,11 @@ class LosslessReconstructionEngine:
                     buffer[index] = 0
                 continue
             if op == "ref":
-                vault_entry = self.vault.lookup(str(entry.get("anchor_hash", "")))
-                chunk = bytes(vault_entry.get("raw_bytes", b"")) if vault_entry else b""
+                anchor_hash = str(entry.get("anchor_hash", "") or "")
+                vault_entry = self.vault.lookup(anchor_hash)
+                if vault_entry is None:
+                    raise VaultMissError(anchor_hash)
+                chunk = bytes(vault_entry.get("raw_bytes", b""))
                 end = min(len(buffer), offset + len(chunk))
                 buffer[offset:end] = chunk[: max(0, end - offset)]
                 continue
@@ -466,7 +497,7 @@ class LosslessReconstructionEngine:
         return bytes(buffer)
 
     def reconstruct_from_vault(self, delta_log: Sequence[dict[str, Any]]) -> bytes:
-        """Rekonstruiert Originalbytes aus vault-basiertem Delta-Log."""
+        """Rekonstruiert Originalbytes aus dem Vault oder wirft ``VaultMissError``."""
         return self.replay(delta_log)
 
     def coherence_index(self, delta_log: Sequence[dict[str, Any]]) -> float:
@@ -542,9 +573,19 @@ class LosslessReconstructionEngine:
 
     def verify(self, original_hash: str, delta_log: Sequence[dict[str, Any]]) -> ReconstructionResult:
         """Replayed den Delta-Log und prueft den SHA-256-Hash gegen das Original."""
-        reconstructed = self.replay(delta_log)
-        reconstructed_hash = hashlib.sha256(reconstructed).hexdigest()
         merkle_root = self.merkle_root(delta_log)
+        try:
+            reconstructed = self.replay(delta_log)
+        except VaultMissError as exc:
+            return ReconstructionResult(
+                delta_log=list(delta_log),
+                reconstructed_bytes=b"",
+                reconstructed_hash="",
+                merkle_root=merkle_root,
+                reconstruction_verified=False,
+                failure_reason=str(exc),
+            )
+        reconstructed_hash = hashlib.sha256(reconstructed).hexdigest()
         return ReconstructionResult(
             delta_log=list(delta_log),
             reconstructed_bytes=reconstructed,

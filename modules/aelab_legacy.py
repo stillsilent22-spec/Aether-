@@ -63,7 +63,7 @@ class LegacyDNARecord:
         ]
 
     @property
-    def pi_like_constants(self) -> list[float]:
+    def reference_like_constants(self) -> list[float]:
         return [
             float(value)
             for value in self.constants
@@ -96,7 +96,7 @@ class LegacyDNARecord:
             "dna_hash": str(self.dna_hash),
             "constants": [float(value) for value in self.constants],
             "constant_count": int(len(self.constants)),
-            "pi_like_constants": [float(value) for value in self.pi_like_constants],
+            "reference_like_constants": [float(value) for value in self.reference_like_constants],
             "opcode_histogram": self.opcode_histogram(),
             "branching_nodes": self.branching_nodes(),
             "nodes": [node.to_dict() for node in self.nodes],

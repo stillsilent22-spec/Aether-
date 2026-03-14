@@ -1,10 +1,10 @@
 from modules.preload_optimizer import PreloadOptimizer
 
 
-def test_compute_anchor_weights_with_pi_bonus() -> None:
+def test_compute_anchor_weights_are_purely_logarithmic() -> None:
     optimizer = PreloadOptimizer(vault_analysis_path="missing.json")
-    weights = optimizer.compute_anchor_weights({"3.141590000000": 10, "1.618030000000": 5, "0.0": 0})
-    assert weights["3.141590000000"] == 1.0
+    weights = optimizer.compute_anchor_weights({"10.000000000000": 10, "1.618030000000": 5, "0.0": 0})
+    assert weights["10.000000000000"] == 1.0
     assert weights["1.618030000000"] > 0.0
     assert weights["0.0"] == 0.0
 

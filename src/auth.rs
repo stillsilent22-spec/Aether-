@@ -128,6 +128,16 @@ impl AuthStore {
         self.save()
     }
 
+    pub fn usernames(&self) -> Vec<String> {
+        let mut usernames = self
+            .users
+            .iter()
+            .map(|user| user.username.clone())
+            .collect::<Vec<_>>();
+        usernames.sort();
+        usernames
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let payload = StoredUsers {
             users: self.users.clone(),

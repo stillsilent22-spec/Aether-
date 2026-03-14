@@ -320,9 +320,22 @@ class AetherBridge:
             if log_fn is not None:
                 log_fn("[RECON] Using modules.reconstruction_engine")
             delta_log = engine.build_delta_log(raw)
-            reconstructed = engine.replay(delta_log)
-            verification = engine.verify(original_hash, delta_log)
-            lossless = engine.verify_lossless(raw, reconstructed)
+            try:
+                reconstructed = engine.replay(delta_log)
+                verification = engine.verify(original_hash, delta_log)
+                lossless = engine.verify_lossless(raw, reconstructed)
+            except getattr(reconstruction_module, "VaultMissError", RuntimeError) as exc:
+                reconstructed = b""
+                verification = {
+                    "reconstruction_verified": False,
+                    "status": "FAILED",
+                    "reason": str(exc),
+                }
+                lossless = {
+                    "verified": False,
+                    "status": "FAILED",
+                    "reason": str(exc),
+                }
             delta_path = output_dir / f"{file_path.stem}_delta.json"
             delta_payload = {
                 "file": str(file_path),

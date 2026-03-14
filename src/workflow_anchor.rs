@@ -63,6 +63,7 @@ impl WorkflowSignalCollector {
     }
 
     pub async fn ingest_event(&mut self, program_id: &str, event_type: &str, timestamp_ms: u64) {
+        let idle_timeout_ms = self.idle_timeout_ms;
         let should_complete = {
             let events = self
                 .active_workflows
@@ -77,7 +78,7 @@ impl WorkflowSignalCollector {
                 event_type: event_type.to_string(),
                 delta_from_prev_ms: delta,
             });
-            self.is_complete(events)
+            Self::is_complete(events, idle_timeout_ms)
         };
         if should_complete {
             let completed = self.active_workflows.remove(program_id).unwrap_or_default();
@@ -90,13 +91,13 @@ impl WorkflowSignalCollector {
         self.process_workflow(program_id, &completed).await;
     }
 
-    fn is_complete(&self, events: &[TimedEvent]) -> bool {
+    fn is_complete(events: &[TimedEvent], idle_timeout_ms: u64) -> bool {
         if let Some(last) = events.last() {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|delta| delta.as_millis() as u64)
                 .unwrap_or(0);
-            now.saturating_sub(last.timestamp_ms) > self.idle_timeout_ms
+            now.saturating_sub(last.timestamp_ms) > idle_timeout_ms
         } else {
             false
         }

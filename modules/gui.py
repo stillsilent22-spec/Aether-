@@ -922,7 +922,7 @@ class VeiraGUI:
     def _ae_constant_display_label(raw_label: str) -> str:
         """Mappt interne Konstantenlabels auf lesbare UI-Namen."""
         mapping = {
-            "PI": "pi",
+            "REF_A": "ref-a",
             "E": "e",
             "PHI": "phi",
             "LOG2": "log2",
@@ -961,12 +961,12 @@ class VeiraGUI:
 
     def _build_ae_anchor_stars(self, anchors: list[dict[str, object]]) -> list[dict[str, object]]:
         """Mappt AE-Anker auf getrennte Sternpunkte fuer Renderer und AV-Schicht."""
-        nearest_seed = {"PI": 3, "E": 7, "PHI": 11, "LOG2": 13}
+        nearest_seed = {"REF_A": 3, "E": 7, "PHI": 11, "LOG2": 13}
         stars: list[dict[str, object]] = []
         for index, anchor in enumerate(list(anchors)[:24]):
             value = float(anchor.get("value", 0.0) or 0.0)
             deviation = float(anchor.get("deviation", 0.0) or 0.0)
-            nearest = str(anchor.get("nearest_constant", "PI") or "PI")
+            nearest = str(anchor.get("nearest_constant", "REF_A") or "REF_A")
             seed = int(nearest_seed.get(nearest, 5))
             x_norm = max(0.0, min(1.0, (((index * 3) + seed) % 16) / 15.0))
             y_norm = max(0.0, min(1.0, (((index * 2) + (seed * 2)) % 16) / 15.0))
@@ -1007,7 +1007,7 @@ class VeiraGUI:
             f"{' | ' + str(relationships.get('summary_text', '') or '') if relationships else ''}"
         )
         for anchor in list(anchors)[:12]:
-            nearest_label = self._ae_constant_display_label(str(anchor.get("nearest_constant", "PI")))
+            nearest_label = self._ae_constant_display_label(str(anchor.get("nearest_constant", "REF_A")))
             line = (
                 f"#{int(anchor.get('index', 0)):02d} "
                 f"{float(anchor.get('value', 0.0) or 0.0):.12f} | "
@@ -8038,12 +8038,12 @@ class VeiraGUI:
             boundary = "STRUCTURAL_HYPOTHESIS"
         else:
             boundary = "GOEDEL_LIMIT"
-        pi_resonance_confirmed = any(
-            str(anchor.get("nearest_constant", "")).upper() == "PI"
+        reference_alignment_confirmed = any(
+            str(anchor.get("nearest_constant", "")).upper() == "REF_A"
             and float(anchor.get("deviation", 1.0) or 1.0) <= 0.0001
             for anchor in ae_anchor_details
         )
-        it_from_bit_candidate = bool(goedel_signal < 0.3 and pi_resonance_confirmed)
+        it_from_bit_candidate = bool(goedel_signal < 0.3 and reference_alignment_confirmed)
         payload["token"] = self._latest_agent_token
         payload["token_name"] = str(token_info.get("human_name", "")) if token_info else ""
         payload["pattern_found"] = self.pattern_found_var.get().strip()
@@ -8051,7 +8051,7 @@ class VeiraGUI:
         payload["ae_anchors"] = [dict(item) for item in ae_anchor_details[:16]]
         payload["goedel_signal"] = float(goedel_signal)
         payload["boundary"] = str(boundary)
-        payload["pi_resonance_confirmed"] = bool(pi_resonance_confirmed)
+        payload["reference_alignment_confirmed"] = bool(reference_alignment_confirmed)
         payload["it_from_bit_candidate"] = bool(it_from_bit_candidate)
         payload["screen_vision"] = dict(getattr(fingerprint, "screen_vision_payload", {}) or {})
         payload["file_profile"] = dict(getattr(fingerprint, "file_profile", {}) or {})
@@ -8131,7 +8131,7 @@ class VeiraGUI:
                 },
                 "goedel_signal": float(goedel_signal),
                 "boundary": str(boundary),
-                "pi_resonance_confirmed": bool(pi_resonance_confirmed),
+                "reference_alignment_confirmed": bool(reference_alignment_confirmed),
                 "it_from_bit_candidate": bool(it_from_bit_candidate),
                 "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
                 "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
@@ -8195,7 +8195,7 @@ class VeiraGUI:
                 "ae_anchor_details": [dict(item) for item in ae_anchor_details[:16]],
                 "goedel_signal": float(goedel_signal),
                 "boundary": str(boundary),
-                "pi_resonance_confirmed": bool(pi_resonance_confirmed),
+                "reference_alignment_confirmed": bool(reference_alignment_confirmed),
                 "it_from_bit_candidate": bool(it_from_bit_candidate),
                 "screen_vision": dict(getattr(fingerprint, "screen_vision_payload", {}) or {}),
                 "file_profile": dict(getattr(fingerprint, "file_profile", {}) or {}),
@@ -9232,7 +9232,7 @@ class VeiraGUI:
         imported = 0
         failed = 0
         bucket_counts = {"main": 0, "sub": 0}
-        pi_like_total = 0
+        reference_like_total = 0
         first_error = ""
         for file_path in dna_files:
             try:
@@ -9241,7 +9241,9 @@ class VeiraGUI:
                 legacy = result.get("legacy")
                 bucket = str(getattr(legacy, "bucket", payload.get("bucket", "sub")) or "sub")
                 bucket_counts[bucket] = int(bucket_counts.get(bucket, 0)) + 1
-                pi_like_total += int(len(list(payload.get("pi_like_constants", [])) or []))
+                reference_like_total += int(
+                    len(list(payload.get("reference_like_constants", []) or []))
+                )
                 imported += 1
             except Exception as exc:
                 failed += 1
@@ -9255,7 +9257,7 @@ class VeiraGUI:
         summary = (
             f"AELAB-Vault importiert | Dateien {imported}/{len(dna_files)} | "
             f"Main {int(bucket_counts.get('main', 0))} | Sub {int(bucket_counts.get('sub', 0))} | "
-            f"pi-like {pi_like_total}"
+            f"reference-like {reference_like_total}"
         )
         if failed:
             summary = f"{summary} | Fehler {failed}"

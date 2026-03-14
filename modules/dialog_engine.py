@@ -112,7 +112,7 @@ class StructuralDialogEngine:
     )
 
     CONSTANT_LABELS = {
-        "PI": "pi",
+        "REF_A": "ref-a",
         "E": "e",
         "PHI": "phi",
         "LOG2": "log2",

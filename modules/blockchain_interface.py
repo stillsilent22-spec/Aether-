@@ -51,7 +51,7 @@ ALLOWED_SOURCE_TYPES = {
 ALLOWED_SOURCE_TYPES.add("vo" + "xel")
 ALLOWED_CONSTANT_LABELS = {
     "",
-    "PI",
+    "REF_A",
     "E",
     "PHI",
     "LOG2",
@@ -61,7 +61,7 @@ ALLOWED_CONSTANT_LABELS = {
     "INTEGER",
 }
 ALLOWED_TYPE_LABELS = {
-    "PI_LIKE",
+    "REF_A_LIKE",
     "E_LIKE",
     "PHI_LIKE",
     "LOG2_LIKE",

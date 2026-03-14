@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PI_RESONANCE_TOLERANCE = 0.0001
+REFERENCE_ALIGNMENT_TOLERANCE = 0.0001
 TEMPLATE_PROMPT = """
 Du bist Shanway, eine strukturorientierte Analyse-Engine.
 Du arbeitest nicht semantisch, sondern ueber Muster, Invarianten und Strukturen.
@@ -151,7 +151,7 @@ class ShanwayAssessment:
     bayes_priors: str
     goedel_signal: float
     boundary: str
-    pi_resonance_confirmed: bool
+    reference_alignment_confirmed: bool
     it_from_bit: bool
     vault_gap: str
     suggested_next: str
@@ -229,7 +229,7 @@ class ShanwayAssessment:
             "bayes_priors": str(self.bayes_priors),
             "goedel_signal": float(self.goedel_signal),
             "boundary": str(self.boundary),
-            "pi_resonance_confirmed": bool(self.pi_resonance_confirmed),
+            "reference_alignment_confirmed": bool(self.reference_alignment_confirmed),
             "it_from_bit": bool(self.it_from_bit),
             "vault_gap": str(self.vault_gap),
             "suggested_next": str(self.suggested_next),
@@ -462,7 +462,7 @@ class ShanwayEngine:
     )
 
     CONSTANTS = {
-        "PI": math.pi,
+        "REF_A": math.pi,
         "E": math.e,
         "PHI": (1.0 + math.sqrt(5.0)) / 2.0,
         "LOG2": math.log(2.0),
@@ -615,14 +615,13 @@ class ShanwayEngine:
         return signal, "GOEDEL_LIMIT"
 
     @staticmethod
-    def _pi_resonance_confirmed(anchor_details: list[dict[str, Any]] | None) -> bool:
+    def _reference_alignment_confirmed(anchor_details: list[dict[str, Any]] | None) -> bool:
+        """Kompatibilitaetsfeld: konstantspezifische Sonderbehauptungen bleiben deaktiviert."""
         for anchor in list(anchor_details or []):
             if not isinstance(anchor, dict):
                 continue
-            if str(anchor.get("nearest_constant", "")).upper() != "PI":
-                continue
             deviation = float(anchor.get("deviation", 1.0) or 1.0)
-            if deviation <= PI_RESONANCE_TOLERANCE:
+            if deviation <= REFERENCE_ALIGNMENT_TOLERANCE:
                 return True
         return False
 
@@ -1382,8 +1381,8 @@ class ShanwayEngine:
 
         anchor_constant, anchor_value, anchor_deviation, anchor_count = self._anchor_reference(anchor_details)
         goedel_signal, boundary = self._goedel_boundary(h_lambda, observer_mutual_info)
-        pi_resonance_confirmed = self._pi_resonance_confirmed(anchor_details)
-        it_from_bit = bool(goedel_signal < 0.3 and pi_resonance_confirmed)
+        reference_alignment_confirmed = self._reference_alignment_confirmed(anchor_details)
+        it_from_bit = bool(goedel_signal < 0.3 and reference_alignment_confirmed)
         vault_gap, suggested_next, suggestion_reason, structural_siblings, shared_geometry, semantic_distance = (
             self._resolve_vault_guidance(source_label=source_label, vault_analysis_path=vault_analysis_path)
         )
@@ -1541,7 +1540,7 @@ class ShanwayEngine:
             bayes_priors=str(bayes_priors),
             goedel_signal=float(goedel_signal),
             boundary=str(boundary),
-            pi_resonance_confirmed=bool(pi_resonance_confirmed),
+            reference_alignment_confirmed=bool(reference_alignment_confirmed),
             it_from_bit=bool(it_from_bit),
             vault_gap=str(vault_gap),
             suggested_next=str(suggested_next),
@@ -1589,27 +1588,15 @@ class ShanwayEngine:
                 else "I read a largely symmetric, repairable structure."
             )
         anchor_text = ""
-        if assessment.anchor_constant == "PI" and assessment.anchor_deviation <= 0.08:
-            anchor_text = (
-                " Pi schwingt als naher Referenzanker mit."
-                if language == "de"
-                else " Pi resonates as a near reference anchor."
-            )
-        elif assessment.anchor_constant == "PHI" and assessment.anchor_deviation <= 0.08:
-            anchor_text = (
-                " Phi wirkt hier als ruhiger Proportionsanker."
-                if language == "de"
-                else " Phi acts here as a calm proportion anchor."
-            )
-        elif assessment.anchor_constant:
+        if assessment.anchor_constant:
             anchor_text = (
                 (
-                    f" Der naechste harmonische Anker liegt bei {assessment.anchor_constant} "
+                    f" Der naechste strukturelle Referenzanker liegt bei {assessment.anchor_constant} "
                     f"mit D {assessment.anchor_deviation:.3f}."
                 )
                 if language == "de"
                 else (
-                    f" The nearest harmonic anchor is {assessment.anchor_constant} "
+                    f" The nearest structural reference anchor is {assessment.anchor_constant} "
                     f"with D {assessment.anchor_deviation:.3f}."
                 )
             )
@@ -1639,8 +1626,6 @@ class ShanwayEngine:
                 f"Symmetrie {assessment.noether_symmetry * 100.0:.0f}% und H_lambda {assessment.h_lambda:.2f} "
                 "halten den Befund aktuell gut rekonstruierbar."
             )
-            if str(assessment.anchor_constant).upper() in {"PI", "PHI"} and float(assessment.anchor_deviation) <= 0.08:
-                return lead + f" {assessment.anchor_constant} bleibt als ruhiger Referenzanker sichtbar. Keine semantische Extrapolation."
             if str(assistant_text or "").strip():
                 return lead + " Die Verdichtung bleibt kurz, strukturell und konsistent."
             return lead + " Aussagebasis: nur stabile Invarianten."
@@ -1649,8 +1634,6 @@ class ShanwayEngine:
             f"Symmetry at {assessment.noether_symmetry * 100.0:.0f}% and H_lambda {assessment.h_lambda:.2f} "
             "keep the finding reconstructable for now."
         )
-        if str(assessment.anchor_constant).upper() in {"PI", "PHI"} and float(assessment.anchor_deviation) <= 0.08:
-            return lead + f" {assessment.anchor_constant} remains visible as a calm reference anchor."
         if str(assistant_text or "").strip():
             return lead + " The condensation stays short and consistent."
         return lead

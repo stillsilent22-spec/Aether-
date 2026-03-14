@@ -34,8 +34,8 @@ def _to_number(value: Any) -> float:
     if isinstance(value, dict):
         if "value" in value:
             return _to_number(value.get("value"))
-        if "pi_resonance" in value:
-            return _to_number(value.get("pi_resonance"))
+        if "reference_alignment" in value:
+            return _to_number(value.get("reference_alignment"))
         return float(len(value))
     if isinstance(value, (list, tuple, set)):
         return float(len(value))
@@ -46,7 +46,7 @@ def _to_number(value: Any) -> float:
 
 
 KNOWN_CONSTANTS: dict[str, float] = {
-    "PI": math.pi,
+    "REF_A": math.pi,
     "E": math.e,
     "PHI": (1.0 + math.sqrt(5.0)) / 2.0,
     "LOG2": math.log(2.0),
@@ -119,7 +119,7 @@ def anchor_numeric_value(anchor: Any) -> float:
             return float(payload.get("dominant_constant", 0.0) or 0.0)
         if "value" in payload:
             return _to_number(payload.get("value"))
-        if "pi_resonance" in payload:
+        if "reference_alignment" in payload:
             return float(payload.get("dominant_constant", math.pi) or math.pi)
     return float(_to_number(payload))
 
@@ -127,8 +127,8 @@ def anchor_numeric_value(anchor: Any) -> float:
 def describe_anchor_value(anchor: Any) -> dict[str, Any]:
     """Beschreibt einen skalaren AE-Anker relativ zu bekannten Konstanten."""
     scalar = float(anchor_numeric_value(anchor))
-    nearest_label = "PI"
-    nearest_value = float(KNOWN_CONSTANTS["PI"])
+    nearest_label = "REF_A"
+    nearest_value = float(KNOWN_CONSTANTS["REF_A"])
     nearest_deviation = abs(scalar - nearest_value)
     for label, constant in KNOWN_CONSTANTS.items():
         deviation = abs(scalar - float(constant))
@@ -237,13 +237,13 @@ class AlgorithmCandidate:
             constants = [float(item) for item in list(spec.get("constants", []))]
             entropy_mean = float(data.get("entropy_mean", 0.0) or 0.0) if isinstance(data, dict) else 0.0
             h_lambda = float(data.get("h_lambda", 0.0) or 0.0) if isinstance(data, dict) else 0.0
-            pi_resonance = 0.0
+            reference_alignment = 0.0
             dominant_constant = float(constants[0]) if constants else 0.0
-            dominant_label = "PI"
+            dominant_label = "REF_A"
             dominant_deviation = abs(dominant_constant - math.pi) if constants else 0.0
             for constant in constants:
                 resonance = max(0.0, 1.0 - (abs(float(constant) - math.pi) / 0.25))
-                pi_resonance = max(pi_resonance, resonance)
+                reference_alignment = max(reference_alignment, resonance)
                 descriptor = describe_anchor_value(float(constant))
                 deviation = float(descriptor["deviation"])
                 if deviation < dominant_deviation:
@@ -254,7 +254,7 @@ class AlgorithmCandidate:
                 "legacy_id": str(spec.get("legacy_id", "")),
                 "node_count": int(spec.get("node_count", 0) or 0),
                 "constant_count": int(spec.get("constant_count", len(constants)) or 0),
-                "pi_resonance": float(pi_resonance),
+                "reference_alignment": float(reference_alignment),
                 "dominant_constant": float(dominant_constant),
                 "nearest_constant": str(dominant_label),
                 "deviation": float(dominant_deviation),
@@ -905,7 +905,7 @@ class AEAlgorithmVault:
             if str(candidate.source_kind) == "legacy_dna":
                 legacy_bonus = min(
                     0.4,
-                    0.1 * float(candidate.params.get("pi_like_constants", 0) or 0.0),
+                    0.1 * float(candidate.params.get("reference_like_constants", 0) or 0.0),
                 )
             detector_bonus = 0.0
             residual_bonus = 0.0
@@ -1115,7 +1115,7 @@ class AEAlgorithmVault:
     def integrate_legacy_dna(self, dna_payload: dict[str, Any], bucket: str = "sub") -> AlgorithmCandidate:
         """Uebernimmt ein altes DNA-Payload als serialisierbaren AELAB-Kandidaten."""
         constants = [float(item) for item in list(dna_payload.get("constants", []))]
-        pi_like = [
+        reference_like = [
             float(item)
             for item in constants
             if abs(float(item) - math.pi) <= 0.05
@@ -1124,7 +1124,7 @@ class AEAlgorithmVault:
             "legacy_id": str(dna_payload.get("legacy_id", "")),
             "header_metric": int(dna_payload.get("header_metric", 0) or 0),
             "node_count": int(dna_payload.get("node_count", len(list(dna_payload.get("nodes", [])))) or 0),
-            "pi_like_constants": int(len(pi_like)),
+            "reference_like_constants": int(len(reference_like)),
             "source_hash": str(dna_payload.get("dna_hash", "")),
             "source_kind": "legacy_dna",
             "bucket": str(bucket),
@@ -1149,19 +1149,19 @@ class AEAlgorithmVault:
         preview = {
             "legacy_id": params["legacy_id"],
             "node_count": params["node_count"],
-            "pi_like_constants": int(len(pi_like)),
+            "reference_like_constants": int(len(reference_like)),
             "bucket": str(bucket),
         }
         candidate.anchor_points = [preview]
-        candidate.fitness = 1.0 + (0.2 * float(len(pi_like)))
+        candidate.fitness = 1.0 + (0.2 * float(len(reference_like)))
         candidate.stable = True
         candidate.reproducible = True
         candidate.params.update(
             {
                 "dual_path_agreement": 0.82,
-                "noether_symmetry": min(0.96, 0.72 + (0.04 * float(len(pi_like)))),
-                "heisenberg_uncertainty": max(0.08, 0.28 - (0.02 * float(len(pi_like)))),
-                "vault_posterior_confidence": min(0.94, 0.58 + (0.04 * float(len(pi_like)))),
+                "noether_symmetry": min(0.96, 0.72 + (0.04 * float(len(reference_like)))),
+                "heisenberg_uncertainty": max(0.08, 0.28 - (0.02 * float(len(reference_like)))),
+                "vault_posterior_confidence": min(0.94, 0.58 + (0.04 * float(len(reference_like)))),
                 "noether_invariant_hash": str(spec.get("source_hash", "")),
                 "benford_guard": -1.0,
                 "benford_count": int(len(constants)),
@@ -1591,7 +1591,7 @@ class AetherAnchorInterpreter:
     def classify_anchor(self, result: Any, data: Any) -> str:
         if isinstance(result, (int, float)) and (abs(float(result)) < 0.01 or abs(float(result)) > 1000.0):
             return "Struktur-Anker"
-        if isinstance(result, dict) and "pi_resonance" in result:
+        if isinstance(result, dict) and "reference_alignment" in result:
             return "Legacy-DNA-Anker"
         if isinstance(result, str) and result in str(data):
             return "Themen-Anker"

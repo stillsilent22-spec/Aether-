@@ -3007,7 +3007,7 @@ fn apply_aether_theme(ctx: &egui::Context) {
     style.visuals = visuals;
     style.spacing.item_spacing = Vec2::new(10.0, 10.0);
     style.spacing.button_padding = Vec2::new(14.0, 8.0);
-    style.spacing.window_margin = egui::Margin::same(12);
+    style.spacing.window_margin = egui::Margin::same(12.0);
     style.spacing.indent = 18.0;
     ctx.set_style(style);
 }
@@ -3294,7 +3294,7 @@ fn render_resonance_spectrum(painter: egui::Painter, rect: Rect, metrics: Visual
         ],
         Stroke::new(1.0, Color32::from_rgba_unmultiplied(150, 170, 196, 52)),
     );
-    let bins = 18;
+    let bins: usize = 18;
     let step_w = inner.width() / bins as f32;
     for idx in 0..bins {
         let t = idx as f32 / (bins.saturating_sub(1)) as f32;
@@ -3435,7 +3435,10 @@ fn build_preview_image(path: &Path, bytes: &[u8]) -> ColorImage {
         let value = bytes.get(index).copied().unwrap_or(0);
         pixels.push(Color32::from_rgb(value, value, value));
     }
-    ColorImage::new([side, side], pixels)
+    ColorImage {
+        size: [side, side],
+        pixels,
+    }
 }
 
 fn color_image_rgba_bytes(image: &ColorImage) -> Vec<u8> {
@@ -3455,7 +3458,10 @@ fn placeholder_preview_image() -> ColorImage {
             pixels.push(Color32::from_rgb(value, value + 18, value + 28));
         }
     }
-    ColorImage::new([side, side], pixels)
+    ColorImage {
+        size: [side, side],
+        pixels,
+    }
 }
 
 fn preview_symmetry(image: &ColorImage) -> f32 {

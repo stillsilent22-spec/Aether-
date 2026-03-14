@@ -15,13 +15,13 @@ from typing import Any
 
 from .deep_scan_engine import DeepScanEngine
 
-PI_REFERENCE = 3.141592653590
+PRIMARY_REFERENCE = 3.141592653590
 PI_TOLERANCE = 0.0001
 BAND_TOLERANCE = 0.001
 INVARIANT_THRESHOLD = 0.60
 
 KNOWN_BANDS: tuple[tuple[str, float], ...] = (
-    ("PI", PI_REFERENCE),
+    ("REF_A", PRIMARY_REFERENCE),
     ("E", math.e),
     ("PHI", (1.0 + math.sqrt(5.0)) / 2.0),
     ("LOG2", math.log(2.0)),
@@ -51,8 +51,8 @@ class DNARecord:
         return {str(key): int(count) for key, count in sorted(counts.items(), key=lambda item: float(item[0]))}
 
     @property
-    def pi_resonance_confirmed(self) -> bool:
-        return any(abs(float(value) - PI_REFERENCE) <= PI_TOLERANCE for value in self.anchors)
+    def reference_alignment_confirmed(self) -> bool:
+        return any(abs(float(value) - PRIMARY_REFERENCE) <= PI_TOLERANCE for value in self.anchors)
 
 
 def _anchor_key(value: float) -> str:
@@ -171,8 +171,8 @@ def _classify_anchor_types(value: float, band_label: str = "") -> list[str]:
         types.append("micro")
     if absolute >= 10.0:
         types.append("large_magnitude")
-    if band_label == "PI_BAND" or abs(numeric - PI_REFERENCE) <= BAND_TOLERANCE:
-        types.append("pi_band")
+    if band_label == "REF_A_BAND" or abs(numeric - PRIMARY_REFERENCE) <= BAND_TOLERANCE:
+        types.append("reference_band")
     return sorted(set(types))
 
 
@@ -222,7 +222,7 @@ def _build_resonance_bands(
         bands.append(
             {
                 "band_label": str(label),
-                "classification": "PI_BAND" if str(label) == "PI_BAND" else "RESONANCE_BAND",
+                "classification": "REFERENCE_BAND" if str(label) == "REF_A_BAND" else "RESONANCE_BAND",
                 "center": round(float(center), 12),
                 "tolerance": float(BAND_TOLERANCE),
                 "members": member_keys,
@@ -305,10 +305,10 @@ def _build_vault_gaps(
     if len(pi_files) < 3:
         gaps.append(
             {
-                "gap_id": "PI_BAND_THIN",
+                "gap_id": "REFERENCE_BAND_THIN",
                 "classification": "VAULT_GAP",
                 "gap_score": round(float(_safe_log_weight(len(pi_files))), 12),
-                "vault_gap": "Das PI-Resonanzband ist noch duenn belegt.",
+                "vault_gap": "Der Referenzbereich ist noch duenn belegt.",
                 "suggested_next": "Mehr Binaerdateien mit zyklischen Strukturen",
                 "reason": f"pi_file_count={len(pi_files)}",
             }
@@ -401,11 +401,11 @@ def analyze_vault(vault_dir: str, output_path: str | None = None, deep: bool = F
         for key in record.unique_anchor_keys:
             file_occurrence_counter[str(key)] += 1
         for value in record.anchors:
-            deviation = abs(float(value) - PI_REFERENCE)
+            deviation = abs(float(value) - PRIMARY_REFERENCE)
             if deviation <= PI_TOLERANCE:
                 pi_hits.append(
                     {
-                        "classification": "PI_RESONANCE",
+                        "classification": "REFERENCE_ALIGNMENT",
                         "file": str(record.file_name),
                         "dna_id": str(record.dna_id),
                         "anchor_value": _anchor_key(value),
@@ -560,12 +560,12 @@ def analyze_vault(vault_dir: str, output_path: str | None = None, deep: bool = F
                 "anchor_count": int(len(record.anchors)),
                 "distinct_anchor_count": int(len(record.unique_anchor_keys)),
                 "header_fields": list(record.header_fields),
-                "pi_resonance_confirmed": bool(record.pi_resonance_confirmed),
+                "reference_alignment_confirmed": bool(record.reference_alignment_confirmed),
                 "h_lambda": round(float(h_lambda), 12),
                 "observer_mutual_info": round(float(observer_mutual_info), 12),
                 "goedel_signal": round(float(goedel_signal), 12),
                 "boundary": str(boundary),
-                "it_from_bit_candidate": bool(goedel_signal < 0.3 and record.pi_resonance_confirmed),
+                "it_from_bit_candidate": bool(goedel_signal < 0.3 and record.reference_alignment_confirmed),
             }
         )
 
