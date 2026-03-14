@@ -6,8 +6,14 @@ Ausgabe: menschlich lesbare Sprache — nie mehr als der Kontext hergibt.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 from shanway_pipeline import ConsensusResult, ANCHOR_MEANING
+
+DEFAULT_MODEL_CANDIDATES = (
+    "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+    "tinyllama-1.1b-chat.gguf",
+)
 
 SHANWAY_SYSTEM_PROMPT = """Du bist Shanway, ein Ausgabefilter für verifizierte Strukturdaten.
 
@@ -104,7 +110,7 @@ class ShanwayLLM:
 
     def __init__(self, model_path: Optional[str] = None,
                  n_ctx: int = 512, n_threads: int = 4):
-        self._model_path = model_path
+        self._model_path = _resolve_model_path(model_path)
         self._n_ctx      = n_ctx
         self._n_threads  = n_threads
         self._llm        = None
@@ -172,8 +178,22 @@ class ShanwayLLM:
 _instance: Optional[ShanwayLLM] = None
 
 
+def _resolve_model_path(model_path: Optional[str]) -> Optional[str]:
+    if model_path:
+        return model_path
+    base_dir = Path(__file__).resolve().parent
+    for candidate in DEFAULT_MODEL_CANDIDATES:
+        path = base_dir / candidate
+        if path.is_file():
+            return str(path)
+    return None
+
+
 def get_llm(model_path: Optional[str] = None) -> ShanwayLLM:
     global _instance
+    resolved = _resolve_model_path(model_path)
     if _instance is None:
-        _instance = ShanwayLLM(model_path=model_path)
+        _instance = ShanwayLLM(model_path=resolved)
+    elif resolved and not _instance._model_path:
+        _instance = ShanwayLLM(model_path=resolved)
     return _instance

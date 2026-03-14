@@ -17,7 +17,7 @@ from typing import Optional
 from shanway_web      import fetch_sources
 from shanway_pipeline import measure_consensus, ANCHOR_MEANING
 from shanway_registry import get_registry, CHANNEL_WEB, CHANNEL_FILE
-from shanway_llm      import get_llm, build_filter_context
+from shanway_llm      import get_llm, build_filter_context, DEFAULT_MODEL_CANDIDATES
 
 _SILENCE = ["...", "(Shanway schweigt.)", "", "", ""]
 
@@ -119,13 +119,22 @@ def drop_file(path: str, model_path: Optional[str] = None,
 
 if __name__ == "__main__":
     import sys
+    from pathlib import Path
 
     model = None
     if len(sys.argv) > 1 and sys.argv[1].endswith(".gguf"):
         model = sys.argv[1]
         print(f"[SHANWAY] Modell: {model}")
     else:
-        print("[SHANWAY] Template-Modus")
+        base_dir = Path(__file__).resolve().parent
+        for candidate in DEFAULT_MODEL_CANDIDATES:
+            default_model = base_dir / candidate
+            if default_model.is_file():
+                model = str(default_model)
+                print(f"[SHANWAY] Modell: {default_model.name}")
+                break
+        if model is None:
+            print("[SHANWAY] Template-Modus")
 
     registry = get_registry()
     print(f"[SHANWAY] Registry: {registry.stats()}")
