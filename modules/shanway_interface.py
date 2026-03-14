@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 from dataclasses import dataclass
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .browser_engine import BrowserEngine
 from .bus_bridge import BusBridgeEvent, RustBusBridge
@@ -17,6 +19,74 @@ from .privacy_anchor_builder import PrivacyAnchorBuilder
 from .shanway import ShanwayEngine
 from .shanway_response_builder import ShanwayResponseBuilder, ShanwayStructuredResponse
 from .telemetry_classifier import TelemetryClassifier, TelemetryVerdict
+
+SCIENTIFIC_WHITELIST = {
+    "arxiv.org",
+    "pubmed.ncbi.nlm.nih.gov",
+    "ncbi.nlm.nih.gov",
+    "semanticscholar.org",
+    "nature.com",
+    "science.org",
+    "sciencemag.org",
+    "springer.com",
+    "springerlink.com",
+    "wiley.com",
+    "jstor.org",
+    "who.int",
+    "cdc.gov",
+    "nih.gov",
+    "europa.eu",
+    "bmj.com",
+    "thelancet.com",
+    "cell.com",
+    "pnas.org",
+    "acs.org",
+    "ieee.org",
+    "acm.org",
+    "wikipedia.org",
+}
+GENERAL_BLACKLIST = {
+    "bild.de", "bild.com",
+    "bunte.de", "gala.de", "ok-magazin.de",
+    "buzzfeed.com", "buzzfeed.de",
+    "heftig.co",
+    "watson.de",
+    "reddit.com", "reddit.de",
+    "twitter.com", "x.com",
+    "facebook.com", "fb.com",
+    "instagram.com",
+    "tiktok.com",
+    "pinterest.com",
+    "tumblr.com",
+    "quora.com",
+    "medium.com",
+    "rt.com", "rt.de",
+    "sputniknews.com",
+    "epochtimes.de",
+    "compact-magazin.com",
+}
+GENERAL_QUERY_MARKERS = {
+    "rezept",
+    "wie",
+    "was ist",
+    "erklaere",
+    "erkläre",
+    "anleitung",
+}
+SCIENTIFIC_QUERY_MARKERS = {
+    "studie",
+    "forschung",
+    "paper",
+    "wissenschaft",
+    "klinisch",
+    "medizin",
+    "biologie",
+    "physik",
+    "chemie",
+    "astronomie",
+    "geologie",
+    "psychologie",
+}
 
 
 def _token_set(text: str) -> set[str]:
@@ -99,6 +169,8 @@ class ShanwayInterface:
         self.privacy_anchor_builder = privacy_anchor_builder or PrivacyAnchorBuilder()
         self.response_builder = response_builder or ShanwayResponseBuilder()
         self._interface_log: list[str] = []
+        self._analysis_engine: Any | None = None
+        self._analysis_lock = threading.RLock()
 
     def analyze_and_route(self, text: str, **kwargs: Any) -> ShanwayInterfaceResult:
         assessment = self.shanway_engine.detect_asymmetry(text, **kwargs)
@@ -151,6 +223,12 @@ class ShanwayInterface:
                 "vault_abgleich": "unbekannt",
                 "vault_detail": "Kein zusaetzlicher Web-Kontext angefordert",
             }
+        if bool(web_context.get("ok", False)) and str(web_context.get("summary", "") or "").strip():
+            assessment = self.shanway_engine.detect_asymmetry(
+                str(web_context.get("summary", "") or ""),
+                coherence_score=float(web_context.get("source_symmetry", 0.0) or 0.0) * 100.0,
+                source_label=f"web://{web_context.get('query_route', 'general')}",
+            )
         library_context = self._enrich_from_public_library(assessment)
         bus_events_received: list[dict[str, Any]] = []
         if self.bus_bridge is not None and self.bus_bridge.available():
@@ -165,6 +243,27 @@ class ShanwayInterface:
             bus_events_received=bus_events_received,
             interface_log=list(self._interface_log[-24:]),
         )
+
+    def analyze(self, text: str, **kwargs: Any) -> ShanwayInterfaceResult:
+        """Alias fuer den Shanway-Backend-Einstieg aus CLI und GUI."""
+        return self.analyze_and_route(text, **kwargs)
+
+    def _get_analysis_engine(self) -> Any:
+        """Initialisiert die bestehende AnalysisEngine lazy fuer Seiten-Byteanalysen."""
+        if self._analysis_engine is not None:
+            return self._analysis_engine
+        with self._analysis_lock:
+            if self._analysis_engine is not None:
+                return self._analysis_engine
+            from .analysis_engine import AnalysisEngine
+            from .blockchain_interface import AetherChain
+            from .session_engine import SessionContext
+
+            self._analysis_engine = AnalysisEngine(
+                session_context=SessionContext(),
+                chain=AetherChain(endpoint="local://shanway-web"),
+            )
+        return self._analysis_engine
 
     def analyze_privacy_snapshot(self, snapshot: dict[str, Any]) -> PrivacyAnalysisResult:
         verdicts = self.telemetry_classifier.classify_snapshot(snapshot)
@@ -210,78 +309,343 @@ class ShanwayInterface:
         )
 
     def _fetch_multi_source_web_context(self, query: str, assessment: Any | None = None) -> dict[str, Any]:
-        providers = ["duckduckgo", "bing", "brave"]
-        results: list[dict[str, Any]] = []
-        for provider in providers:
-            result = self._fetch_provider_context(query, provider=provider)
-            if result.get("ok"):
-                results.append(result)
-        if len(results) < 2:
+        cleaned_query = " ".join(str(query or "").split()).strip()
+        if not cleaned_query:
             return {"ok": False, "reason": "insufficient_sources"}
 
-        summaries = [str(item.get("summary", "") or "") for item in results]
-        per_source_scores: list[tuple[int, float]] = []
-        for index, summary in enumerate(summaries):
-            peers = [text for idx, text in enumerate(summaries) if idx != index]
-            scores = [self._pair_overlap(summary, other) for other in peers] or [0.0]
-            per_source_scores.append((index, sum(scores) / len(scores)))
+        route = self._detect_query_route(cleaned_query)
+        if route == "direct":
+            candidates = self._prepare_direct_candidates(cleaned_query)
+            required_consensus = 3
+        else:
+            search_payload = BrowserEngine.fetch_search_results(cleaned_query, provider="duckduckgo", timeout=6.0)
+            raw_results = [dict(item) for item in list(search_payload.get("results", []) or [])][:10]
+            candidates = self._prepare_search_candidates(raw_results, route)
+            required_consensus = 4
+        if not candidates:
+            return {"ok": False, "reason": "insufficient_sources", "query_route": route}
+
+        max_pages = 4 if route == "direct" else 7
+        selected = candidates[:max_pages]
+        fetched_pages = self._fetch_page_batch(selected, route)
+        ok_pages = [page for page in fetched_pages if bool(page.get("ok", False))]
+        if route == "scientific":
+            scientific_count = sum(1 for page in ok_pages if bool(page.get("scientific_domain", False)))
+            if scientific_count < 3:
+                return {
+                    "ok": False,
+                    "reason": "insufficient_scientific_sources",
+                    "query_route": route,
+                    "source_count": len(fetched_pages),
+                    "sources_used": 0,
+                    "source_symmetry": 0.0,
+                    "consistency": "low",
+                    "summary": "",
+                    "providers": ["duckduckgo"],
+                    "outlier_discarded": False,
+                    "vault_abgleich": "unbekannt",
+                    "vault_detail": "Weniger als 3 wissenschaftliche Quellen verfuegbar",
+                    "pages": fetched_pages,
+                    "warnings": self._page_warnings(fetched_pages),
+                }
+
+        summaries = [str(page.get("summary", "") or "") for page in ok_pages if str(page.get("summary", "") or "").strip()]
+        merged_all = self._merged_summary(summaries)
+        consensus_pages: list[dict[str, Any]] = []
         outlier_discarded = False
-        if len(results) >= 3:
-            lowest_index, lowest_score = min(per_source_scores, key=lambda item: (item[1], item[0]))
-            if lowest_score < 0.15:
+        for page in ok_pages:
+            summary = str(page.get("summary", "") or "")
+            overlap = self._pair_overlap(summary, merged_all)
+            eligible = bool(page.get("consensus_eligible", True)) and float(page.get("trust_score", 0.0) or 0.0) >= 0.35
+            if overlap >= 0.08 and eligible:
+                page["consensus_overlap"] = round(float(overlap), 12)
+                consensus_pages.append(page)
+            else:
                 outlier_discarded = True
-                results = [item for idx, item in enumerate(results) if idx != lowest_index]
-                summaries = [str(item.get("summary", "") or "") for item in results]
-        symmetry = self._source_symmetry(summaries)
-        if symmetry >= 0.55:
+        consensus_summaries = [str(page.get("summary", "") or "") for page in consensus_pages]
+        symmetry = self._source_symmetry(consensus_summaries if consensus_summaries else summaries)
+        if len(consensus_pages) >= required_consensus and symmetry >= 0.55:
             consistency = "high"
-        elif symmetry >= 0.25:
+        elif len(consensus_pages) >= required_consensus and symmetry >= 0.25:
             consistency = "medium"
         else:
             consistency = "low"
-        merged_summary = self._merged_summary(summaries)
+        merged_summary = self._merged_summary(consensus_summaries)
         vault_abgleich, vault_detail = self._vault_compare(assessment, merged_summary)
+        warnings = self._page_warnings(fetched_pages)
         return {
-            "ok": True,
-            "source_count": len(providers),
-            "sources_used": len(results),
+            "ok": bool(len(consensus_pages) >= required_consensus and consistency != "low" and bool(merged_summary.strip())),
+            "reason": "" if len(consensus_pages) >= required_consensus and consistency != "low" else "no_consensus",
+            "query_route": route,
+            "source_count": len(fetched_pages),
+            "sources_used": len(consensus_pages),
             "source_symmetry": round(float(symmetry), 12),
             "consistency": consistency,
             "summary": merged_summary,
-            "providers": [str(item.get("provider", "") or "") for item in results],
+            "verified_context": merged_summary,
+            "providers": ["duckduckgo"],
             "outlier_discarded": outlier_discarded,
             "vault_abgleich": vault_abgleich,
             "vault_detail": vault_detail,
+            "pages": fetched_pages,
+            "warnings": warnings,
+            "consensus_count": len(consensus_pages),
+            "required_consensus": int(required_consensus),
         }
 
-    def _fetch_provider_context(self, query: str, provider: str) -> dict[str, Any]:
-        normalized = str(provider or "duckduckgo").lower()
-        if normalized == "duckduckgo":
-            return BrowserEngine.fetch_search_context(query, provider="duckduckgo", timeout=6.0)
-        if normalized == "bing":
-            q = BrowserEngine.build_search_url(query, provider="bing").split("q=", 1)[-1]
-            return self._fetch_manual("bing", f"https://www.bing.com/search?q={q}")
-        if normalized == "brave":
-            q = BrowserEngine.build_search_url(query).split("?q=", 1)[-1]
-            return self._fetch_manual("brave", f"https://search.brave.com/search?q={q}")
-        return {"ok": False, "provider": normalized, "summary": "", "error": "unsupported_provider"}
+    @staticmethod
+    def _looks_like_direct_url(query: str) -> bool:
+        """Erkennt direkte URLs oder hostartige Einzeleingaben fuer den Vergleichspfad."""
+        cleaned = str(query or "").strip()
+        if re.match(r"(?i)^https?://", cleaned):
+            return True
+        if " " in cleaned or "." not in cleaned:
+            return False
+        parsed = urlparse(f"https://{cleaned}")
+        return bool(parsed.netloc and "." in parsed.netloc)
+
+    @classmethod
+    def _detect_query_route(cls, query: str) -> str:
+        """Leitet Query-Routing fuer allgemeine, wissenschaftliche und direkte Anfragen ab."""
+        cleaned = str(query or "").strip().lower()
+        if cls._looks_like_direct_url(cleaned):
+            return "direct"
+        if any(marker in cleaned for marker in SCIENTIFIC_QUERY_MARKERS):
+            return "scientific"
+        if any(marker in cleaned for marker in GENERAL_QUERY_MARKERS):
+            return "general"
+        return "general"
 
     @staticmethod
-    def _fetch_manual(provider: str, url: str) -> dict[str, Any]:
-        try:
-            raw_html = BrowserEngine.download_text(url, timeout=6.0)
-            summary = BrowserEngine.strip_html_text(raw_html, limit_chars=1200)
-            return {
-                "ok": bool(summary),
-                "provider": provider,
-                "query": "",
-                "url": url,
-                "summary": summary,
-                "search_url": url,
-                "error": "" if summary else "empty_summary",
+    def _domain_from_url(url: str) -> str:
+        """Extrahiert die Lowercase-Domain fuer Filter- und Trust-Entscheidungen."""
+        parsed = urlparse(str(url or ""))
+        domain = str(parsed.netloc or "").lower().strip()
+        if domain.startswith("www."):
+            domain = domain[4:]
+        return domain
+
+    @classmethod
+    def _matches_domain_set(cls, domain: str, domain_set: set[str]) -> bool:
+        """Prueft Domains inklusive Subdomains robust gegen eine definierte Menge."""
+        normalized = str(domain or "").lower().strip()
+        if not normalized:
+            return False
+        return any(normalized == item or normalized.endswith(f".{item}") for item in domain_set)
+
+    @classmethod
+    def _is_blacklisted_domain(cls, domain: str) -> bool:
+        """Blockiert generelle Blacklist-Domains fuer alle Query-Typen."""
+        normalized = str(domain or "").lower().strip()
+        if normalized.endswith(".edu") or normalized.endswith(".gov"):
+            return False
+        return cls._matches_domain_set(normalized, GENERAL_BLACKLIST)
+
+    @classmethod
+    def _is_scientific_domain(cls, domain: str) -> bool:
+        """Erlaubt wissenschaftliche Quellen ueber Whitelist sowie .edu/.gov."""
+        normalized = str(domain or "").lower().strip()
+        return (
+            normalized.endswith(".edu")
+            or normalized.endswith(".gov")
+            or cls._matches_domain_set(normalized, SCIENTIFIC_WHITELIST)
+        )
+
+    def _prepare_search_candidates(self, raw_results: list[dict[str, Any]], route: str) -> list[dict[str, Any]]:
+        """Filtert und sortiert DuckDuckGo-Ergebnisse vor dem eigentlichen Seitenfetch."""
+        candidates: list[dict[str, Any]] = []
+        for raw in list(raw_results or []):
+            url = str(raw.get("url", "") or "").strip()
+            domain = self._domain_from_url(url)
+            if not url or not domain or self._is_blacklisted_domain(domain):
+                continue
+            scientific_domain = self._is_scientific_domain(domain)
+            if route == "scientific" and not scientific_domain:
+                continue
+            snippet_probe = BrowserEngine.inspect_text_excerpt(
+                str(raw.get("snippet", "") or ""),
+                title=str(raw.get("title", "") or ""),
+                url=url,
+            )
+            candidates.append(
+                {
+                    "url": url,
+                    "domain": domain,
+                    "title": str(raw.get("title", "") or ""),
+                    "snippet": str(raw.get("snippet", "") or ""),
+                    "rank": int(raw.get("rank", len(candidates) + 1) or len(candidates) + 1),
+                    "scientific_domain": bool(scientific_domain),
+                    "snippet_ai_score": float(snippet_probe.get("ai_generation_score", 0.0) or 0.0),
+                    "snippet_ai_verdict": str(snippet_probe.get("ai_verdict", "human") or "human"),
+                }
+            )
+        return sorted(
+            candidates,
+            key=lambda item: (
+                0 if bool(item.get("scientific_domain", False)) else 1,
+                float(item.get("snippet_ai_score", 0.0) or 0.0),
+                int(item.get("rank", 0) or 0),
+            ),
+        )
+
+    def _prepare_direct_candidates(self, query: str) -> list[dict[str, Any]]:
+        """Fuehrt den Direktfetch plus drei Vergleichsseiten aus DuckDuckGo auf."""
+        direct_url = str(query or "").strip()
+        if not re.match(r"(?i)^https?://", direct_url):
+            direct_url = f"https://{direct_url}"
+        direct_domain = self._domain_from_url(direct_url)
+        if not direct_domain or self._is_blacklisted_domain(direct_domain):
+            return []
+        comparison_query = str(urlparse(direct_url).netloc or direct_url)
+        search_payload = BrowserEngine.fetch_search_results(comparison_query, provider="duckduckgo", timeout=6.0)
+        comparisons = self._prepare_search_candidates(
+            [dict(item) for item in list(search_payload.get("results", []) or [])][:10],
+            route="general",
+        )
+        deduped: list[dict[str, Any]] = [
+            {
+                "url": direct_url,
+                "domain": direct_domain,
+                "title": direct_domain,
+                "snippet": "",
+                "rank": 0,
+                "scientific_domain": self._is_scientific_domain(direct_domain),
+                "snippet_ai_score": 0.0,
+                "snippet_ai_verdict": "human",
             }
+        ]
+        for candidate in comparisons:
+            if str(candidate.get("url", "") or "") == direct_url:
+                continue
+            deduped.append(candidate)
+            if len(deduped) >= 4:
+                break
+        return deduped
+
+    def _fetch_page_batch(self, candidates: list[dict[str, Any]], route: str) -> list[dict[str, Any]]:
+        """Laedt Kandidatenseiten parallel und bewertet sie mit Browser- und AnalysisEngine-Pipeline."""
+        results: list[dict[str, Any] | None] = [None] * len(candidates)
+
+        def _runner(index: int, candidate: dict[str, Any]) -> None:
+            results[index] = self._fetch_single_page(candidate, route)
+
+        threads: list[threading.Thread] = []
+        for index, candidate in enumerate(candidates):
+            thread = threading.Thread(
+                target=_runner,
+                args=(index, dict(candidate)),
+                daemon=True,
+                name=f"ShanwayPageFetch-{index}",
+            )
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join(timeout=12.0)
+        return [dict(item) for item in results if isinstance(item, dict)]
+
+    def _fetch_single_page(self, candidate: dict[str, Any], route: str) -> dict[str, Any]:
+        """Analysiert genau eine Zielseite strukturell und bereitet sie fuer Konsensbildung auf."""
+        url = str(candidate.get("url", "") or "")
+        domain = str(candidate.get("domain", self._domain_from_url(url)) or "")
+        probe = BrowserEngine.inspect_url(url, timeout=6.0, max_bytes=524288)
+        page = {
+            "url": url,
+            "domain": domain,
+            "title": str(candidate.get("title", "") or ""),
+            "snippet": str(candidate.get("snippet", "") or ""),
+            "rank": int(candidate.get("rank", 0) or 0),
+            "scientific_domain": bool(candidate.get("scientific_domain", False)),
+            "ok": bool(probe.get("ok", False)),
+            "summary": str(probe.get("summary", "") or ""),
+            "ai_generation_score": float(probe.get("ai_generation_score", 0.0) or 0.0),
+            "ai_signals": [str(item) for item in list(probe.get("ai_signals", []) or []) if str(item).strip()],
+            "ai_verdict": str(probe.get("ai_verdict", "human") or "human"),
+            "risk_label": str(probe.get("risk_label", "") or ""),
+            "error": str(probe.get("error", "") or ""),
+            "consensus_eligible": True,
+        }
+        if not bool(probe.get("ok", False)):
+            page["consensus_eligible"] = False
+            return page
+        try:
+            with self._analysis_lock:
+                fingerprint = self._get_analysis_engine().analyze_bytes(
+                    bytes(probe.get("raw_bytes", b"") or b""),
+                    source_label=url,
+                    source_type="text_corpus" if str(probe.get("category", "") or "") in {"html", "text"} else "memory",
+                )
+            trust_score = self._derive_page_trust(fingerprint, page)
+            page.update(
+                {
+                    "trust_score": round(float(trust_score), 12),
+                    "coherence_score": float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
+                    "resonance_score": float(getattr(fingerprint, "resonance_score", 0.0) or 0.0),
+                    "ethics_score": float(getattr(fingerprint, "ethics_score", 0.0) or 0.0),
+                    "integrity_state": str(getattr(fingerprint, "integrity_state", "") or ""),
+                    "verdict": str(getattr(fingerprint, "verdict", "") or ""),
+                }
+            )
         except Exception as exc:
-            return {"ok": False, "provider": provider, "summary": "", "error": str(exc), "url": ""}
+            page["trust_score"] = 0.0
+            page["consensus_eligible"] = False
+            page["error"] = str(exc)
+            return page
+        if route == "scientific" and str(page.get("ai_verdict", "human")) == "ai":
+            page["consensus_eligible"] = False
+            page["discard_reason"] = "scientific_ai_discarded"
+        elif float(page.get("ai_generation_score", 0.0) or 0.0) > 0.70:
+            page["consensus_eligible"] = False
+            page["discard_reason"] = "ai_not_counted_for_consensus"
+        return page
+
+    def _derive_page_trust(self, fingerprint: Any, page: dict[str, Any]) -> float:
+        """Leitet einen normierten Seitentrust aus bestehenden Pipeline-Metriken ab."""
+        trust = (
+            (0.25 * float(getattr(fingerprint, "symmetry_score", 0.0) or 0.0))
+            + (0.25 * (float(getattr(fingerprint, "coherence_score", 0.0) or 0.0) / 100.0))
+            + (0.20 * (float(getattr(fingerprint, "resonance_score", 0.0) or 0.0) / 100.0))
+            + (0.20 * (float(getattr(fingerprint, "ethics_score", 0.0) or 0.0) / 100.0))
+            + (0.10 * float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0))
+        )
+        if bool(page.get("scientific_domain", False)) and self._matches_domain_set(str(page.get("domain", "") or ""), {"wikipedia.org"}):
+            trust -= 0.20
+        if str(page.get("ai_verdict", "human") or "human") == "ai":
+            trust -= 0.40
+        return max(0.0, min(1.0, float(trust)))
+
+    @staticmethod
+    def _page_warnings(pages: list[dict[str, Any]]) -> list[str]:
+        """Formuliert auditierbare KI-Warnungen fuer markierte Quellen."""
+        signal_labels = {
+            "typische_ki_phrasen": "typische KI-Phrasen",
+            "zu_glatte_struktur": "zu glatte Struktur",
+            "kein_autor": "kein Autor",
+            "uebermaessige_listenstruktur": "uebermaessige Listenstruktur",
+            "entropie_zu_gleichmaessig": "Entropie zu gleichmaessig",
+            "sehr_hohe_lesbarkeit": "sehr hohe Lesbarkeit",
+            "generische_sprache": "generische Sprache",
+            "title_clickbait": "clickbait Titelmuster",
+            "title_generic": "generischer Titel",
+            "title_ai_common": "explizite KI-Markierung",
+            "channel_generic": "generischer Kanalname",
+            "channel_new": "sehr neuer Kanal",
+            "channel_bulk": "ungewoehnlich hohe Upload-Frequenz",
+            "channel_ai_graph": "KI-Kanal-Cluster",
+        }
+        warnings: list[str] = []
+        for page in list(pages or []):
+            ai_score = float(page.get("ai_generation_score", 0.0) or 0.0)
+            if ai_score < 0.45:
+                continue
+            signals = ", ".join(
+                signal_labels.get(str(item), str(item))
+                for item in list(page.get("ai_signals", []) or [])[:4]
+            )
+            warnings.append(
+                "[WARNUNG: Diese Quelle zeigt KI-generierte Inhalte]\n"
+                f"[STRUKTURSIGNAL: ai_score={ai_score:.2f}, Signale: {signals or 'keine'}]"
+            )
+        return warnings
 
     @staticmethod
     def _pair_overlap(left: str, right: str) -> float:

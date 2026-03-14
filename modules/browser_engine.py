@@ -13,7 +13,7 @@ import threading
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 from urllib.request import Request, urlopen
 
 try:
@@ -61,6 +61,47 @@ FAKE_PATTERN_TERMS = {
     "geheime wahrheit",
     "wake up",
     "die medien",
+}
+AI_TEXT_PATTERNS = {
+    "in conclusion",
+    "in summary",
+    "it is worth noting",
+    "it is important to note",
+    "as an ai",
+    "as a language model",
+    "i cannot provide",
+    "certainly!",
+    "absolutely!",
+    "great question",
+    "of course!",
+    "sure!",
+    "i'd be happy to",
+    "als ki",
+    "als sprachmodell",
+    "natuerlich!",
+    "natürlich!",
+    "selbstverstaendlich!",
+    "selbstverständlich!",
+    "gerne!",
+    "tolle frage",
+    "zusammenfassend laesst sich sagen",
+    "zusammenfassend lässt sich sagen",
+    "es ist wichtig zu beachten",
+    "es sei darauf hingewiesen",
+}
+YOUTUBE_AI_PATTERNS = {
+    "title_clickbait": r"(top \d+|you won't believe|this will|shocking|exposed|revealed|secret|sie werden es nicht glauben|das wird)",
+    "title_generic": r"(complete guide|full tutorial|everything you need|ultimate guide|vollstaendige anleitung|vollständige anleitung|alles was du)",
+    "title_ai_common": r"(ai generated|made with ai|created by ai|using chatgpt)",
+}
+YOUTUBE_RELATED_AI_TERMS = {
+    "chatgpt",
+    "midjourney",
+    "suno",
+    "runway",
+    "ai generated",
+    "made with ai",
+    "created by ai",
 }
 
 
@@ -498,6 +539,280 @@ class BrowserEngine:
         return markup[: max(80, int(limit_chars))].rsplit(" ", 1)[0].strip()
 
     @staticmethod
+    def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
+        """Begrenzt Scores robust auf eine normierte 0..1-Spanne."""
+        return float(max(low, min(high, float(value))))
+
+    @staticmethod
+    def _tokenize_text(text: str) -> list[str]:
+        """Zerlegt Text in einfache, sprachneutrale Tokens fuer Strukturpruefungen."""
+        return re.findall(r"[A-Za-zÀ-ÿ0-9']+", str(text or "").lower())
+
+    @staticmethod
+    def _estimate_syllables(word: str) -> int:
+        """Leitet eine grobe Silbenzahl fuer Flesch-Naeherungen ohne Zusatzbibliotheken ab."""
+        cleaned = re.sub(r"[^a-zà-ÿ]", "", str(word or "").lower())
+        if not cleaned:
+            return 1
+        groups = re.findall(r"[aeiouyà-ÿ]+", cleaned)
+        return max(1, int(len(groups)))
+
+    @classmethod
+    def _flesch_reading_ease(cls, text: str) -> float:
+        """Berechnet einen approximierten Flesch-Score fuer Glattheitsindikatoren."""
+        words = cls._tokenize_text(text)
+        sentences = [part.strip() for part in re.split(r"[.!?]+", str(text or "")) if part.strip()]
+        if not words or not sentences:
+            return 0.0
+        syllables = sum(cls._estimate_syllables(word) for word in words)
+        words_per_sentence = float(len(words)) / float(max(1, len(sentences)))
+        syllables_per_word = float(syllables) / float(max(1, len(words)))
+        return float(206.835 - (1.015 * words_per_sentence) - (84.6 * syllables_per_word))
+
+    @staticmethod
+    def _extract_author_name(html_text: str, text_sample: str) -> str:
+        """Sucht nach einfachen Autorhinweisen ohne externe Parser."""
+        patterns = (
+            r'(?is)<meta[^>]+name=["\']author["\'][^>]+content=["\']([^"\']+)',
+            r'(?is)<meta[^>]+property=["\']article:author["\'][^>]+content=["\']([^"\']+)',
+            r'(?is)<meta[^>]+name=["\']parsely-author["\'][^>]+content=["\']([^"\']+)',
+            r'(?im)\bby\s+([A-ZÄÖÜ][\w.-]+(?:\s+[A-ZÄÖÜ][\w.-]+){0,3})',
+            r'(?im)\bvon\s+([A-ZÄÖÜ][\w.-]+(?:\s+[A-ZÄÖÜ][\w.-]+){0,3})',
+        )
+        sample = str(html_text or "")[:12000] + "\n" + str(text_sample or "")[:1200]
+        for pattern in patterns:
+            match = re.search(pattern, sample)
+            if match:
+                candidate = re.sub(r"\s+", " ", html.unescape(match.group(1))).strip()
+                if len(candidate) >= 3:
+                    return candidate
+        return ""
+
+    @classmethod
+    def _sentence_pattern_score(cls, text: str) -> float:
+        """Misst, wie stark sich Satzlaengen auffaellig angleichen."""
+        sentences = [part.strip() for part in re.split(r"[.!?]+", str(text or "")) if part.strip()]
+        lengths = [len(cls._tokenize_text(sentence)) for sentence in sentences if sentence.strip()]
+        if len(lengths) < 2:
+            return 0.0
+        mean = float(sum(lengths)) / float(len(lengths))
+        if mean <= 0.0:
+            return 0.0
+        variance = sum((float(length) - mean) ** 2 for length in lengths) / float(len(lengths))
+        stddev = math.sqrt(max(0.0, variance))
+        return cls._clamp(1.0 - (stddev / max(1.0, mean)))
+
+    @classmethod
+    def _entropy_smoothness_score(cls, text: str) -> float:
+        """Misst zu gleichmaessige Entropieverteilung ueber Textfenster."""
+        raw = str(text or "").encode("utf-8", errors="replace")
+        if len(raw) < 96:
+            return 0.0
+        entropies = [
+            cls._byte_entropy(raw[index : index + 64])
+            for index in range(0, len(raw), 64)
+            if raw[index : index + 64]
+        ]
+        if len(entropies) < 2:
+            return 0.0
+        mean = float(sum(entropies)) / float(len(entropies))
+        if mean <= 0.0:
+            return 0.0
+        variance = sum((value - mean) ** 2 for value in entropies) / float(len(entropies))
+        stddev = math.sqrt(max(0.0, variance))
+        return cls._clamp(1.0 - (stddev / max(1e-6, mean)))
+
+    @staticmethod
+    def _list_ratio_score(html_text: str, text_sample: str) -> float:
+        """Erkennt uebermaessige Listenlastigkeit im Seiteninhalt."""
+        markup = str(html_text or "")
+        plaintext = str(text_sample or "")
+        li_count = len(re.findall(r"(?is)<li\b", markup))
+        block_candidates = len(re.findall(r"(?is)<(?:p|div|section|article|li|h[1-6])\b", markup))
+        if block_candidates <= 0:
+            lines = [line.strip() for line in plaintext.splitlines() if line.strip()]
+            li_count = sum(1 for line in lines if re.match(r"^(?:[-*•]|\d+[.)])\s+", line))
+            block_candidates = len(lines) or max(1, len(re.split(r"[.!?]+", plaintext)))
+        ratio = float(li_count) / float(max(1, block_candidates))
+        if ratio <= 0.60:
+            return 0.0
+        return BrowserEngine._clamp((ratio - 0.60) / 0.40)
+
+    @classmethod
+    def inspect_text_excerpt(
+        cls,
+        text: str,
+        title: str = "",
+        url: str = "",
+        html_text: str = "",
+    ) -> dict[str, Any]:
+        """Bewertet Text- oder Snippetstruktur auf KI-Signale ohne Seitenfetch."""
+        merged = " ".join(part for part in (str(title or ""), str(text or "")) if part.strip()).strip()
+        lowered = merged.lower()
+        found_patterns = [pattern for pattern in sorted(AI_TEXT_PATTERNS) if pattern in lowered]
+        text_pattern_score = cls._clamp(float(len(found_patterns)) / 4.0)
+        flesch_score = cls._flesch_reading_ease(merged)
+        readability_signal = cls._clamp((flesch_score - 90.0) / 30.0)
+        sentence_pattern_score = cls._sentence_pattern_score(merged)
+        tokens = cls._tokenize_text(merged)
+        personal_voice = sum(1 for token in tokens if token in {"ich", "wir", "i", "we", "my", "our", "mein", "uns"})
+        generic_language_score = cls._clamp(1.0 - (float(personal_voice) / float(max(1, len(tokens) // 40 or 1))))
+        structural_symmetry = cls._clamp(
+            (0.45 * sentence_pattern_score)
+            + (0.35 * readability_signal)
+            + (0.20 * generic_language_score)
+        )
+        author_name = cls._extract_author_name(html_text, merged)
+        no_author_penalty = 0.0 if author_name else 1.0
+        list_ratio_score = cls._list_ratio_score(html_text, text)
+        entropy_smoothness = cls._entropy_smoothness_score(merged)
+        ai_signals: list[str] = []
+        if found_patterns:
+            ai_signals.append("typische_ki_phrasen")
+        if structural_symmetry >= 0.68:
+            ai_signals.append("zu_glatte_struktur")
+        if not author_name:
+            ai_signals.append("kein_autor")
+        if list_ratio_score > 0.0:
+            ai_signals.append("uebermaessige_listenstruktur")
+        if entropy_smoothness >= 0.70:
+            ai_signals.append("entropie_zu_gleichmaessig")
+        if readability_signal > 0.0:
+            ai_signals.append("sehr_hohe_lesbarkeit")
+        if generic_language_score >= 0.75:
+            ai_signals.append("generische_sprache")
+        ai_generation_score = cls._clamp(
+            (0.25 * float(text_pattern_score))
+            + (0.20 * float(structural_symmetry))
+            + (0.20 * 0.0)
+            + (0.15 * float(no_author_penalty))
+            + (0.12 * float(list_ratio_score))
+            + (0.08 * float(entropy_smoothness))
+        )
+        if ai_generation_score >= 0.70:
+            ai_verdict = "ai"
+        elif ai_generation_score >= 0.45:
+            ai_verdict = "likely_ai"
+        else:
+            ai_verdict = "human"
+        return {
+            "text_pattern_score": float(text_pattern_score),
+            "structural_symmetry": float(structural_symmetry),
+            "no_author_penalty": float(no_author_penalty),
+            "list_ratio_score": float(list_ratio_score),
+            "entropy_smoothness": float(entropy_smoothness),
+            "flesch_score": float(flesch_score),
+            "author_name": str(author_name),
+            "ai_generation_score": float(ai_generation_score),
+            "ai_verdict": str(ai_verdict),
+            "ai_signals": list(dict.fromkeys(ai_signals)),
+        }
+
+    @staticmethod
+    def _unwrap_duckduckgo_result_url(href: str) -> str:
+        """Loest DuckDuckGo-Redirect-Links in echte Ziel-URLs auf."""
+        candidate = html.unescape(str(href or "")).strip()
+        if not candidate:
+            return ""
+        parsed = urlparse(candidate)
+        if parsed.netloc.endswith("duckduckgo.com") and parsed.path.startswith("/l/"):
+            query = parse_qs(parsed.query)
+            uddg = query.get("uddg", [""])[0]
+            return unquote(str(uddg or "")).strip()
+        if candidate.startswith("/l/?"):
+            query = parse_qs(urlparse(f"https://duckduckgo.com{candidate}").query)
+            uddg = query.get("uddg", [""])[0]
+            return unquote(str(uddg or "")).strip()
+        if candidate.startswith("//"):
+            return f"https:{candidate}"
+        return candidate
+
+    @classmethod
+    def extract_duckduckgo_results(cls, raw_html: str) -> list[dict[str, Any]]:
+        """Extrahiert Titel, Snippet und Ziel-URL aus DuckDuckGo-HTML-Ergebnissen."""
+        markup = str(raw_html or "")
+        results: list[dict[str, Any]] = []
+        matches = re.finditer(
+            r'(?is)<a[^>]+class=["\'][^"\']*result__a[^"\']*["\'][^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>',
+            markup,
+        )
+        for rank, match in enumerate(matches, start=1):
+            href = cls._unwrap_duckduckgo_result_url(match.group(1))
+            if not href:
+                continue
+            title = cls.strip_html_text(match.group(2), limit_chars=240)
+            tail = markup[match.end() : match.end() + 1800]
+            snippet_match = re.search(
+                r'(?is)<(?:a|div|span)[^>]+class=["\'][^"\']*result__snippet[^"\']*["\'][^>]*>(.*?)</(?:a|div|span)>',
+                tail,
+            )
+            snippet = cls.strip_html_text(snippet_match.group(1), limit_chars=420) if snippet_match else ""
+            results.append(
+                {
+                    "rank": int(rank),
+                    "url": str(href),
+                    "title": str(title),
+                    "snippet": str(snippet),
+                }
+            )
+            if len(results) >= 20:
+                break
+        return results
+
+    @classmethod
+    def fetch_search_results(
+        cls,
+        query: str,
+        provider: str = "duckduckgo",
+        timeout: float = 6.0,
+        searx_base_url: str = "",
+    ) -> dict[str, Any]:
+        """Laedt Such-HTML und extrahiert Ergebnislinks fuer spaetere Seitenanalyse."""
+        cleaned_query = " ".join(str(query or "").split()).strip()
+        if not cleaned_query:
+            return {
+                "ok": False,
+                "provider": str(provider or "duckduckgo"),
+                "query": "",
+                "url": "",
+                "results": [],
+                "summary": "",
+                "error": "empty_query",
+            }
+        try:
+            fetch_url = cls.build_search_fetch_url(
+                cleaned_query,
+                provider=provider,
+                searx_base_url=searx_base_url,
+            )
+            raw_html = cls._download_text(fetch_url, timeout=timeout)
+            results = cls.extract_duckduckgo_results(raw_html) if str(provider or "").lower() == "duckduckgo" else []
+            summary = cls.strip_html_text(raw_html, limit_chars=1200)
+            return {
+                "ok": bool(summary),
+                "provider": str(provider or "duckduckgo"),
+                "query": cleaned_query,
+                "url": str(fetch_url),
+                "results": results,
+                "result_urls": [str(item.get("url", "") or "") for item in results],
+                "summary": str(summary),
+                "search_url": cls.build_search_url(cleaned_query, provider=provider),
+                "error": "" if summary else "empty_summary",
+            }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "provider": str(provider or "duckduckgo"),
+                "query": cleaned_query,
+                "url": "",
+                "results": [],
+                "result_urls": [],
+                "summary": "",
+                "search_url": cls.build_search_url(cleaned_query, provider=provider),
+                "error": str(exc),
+            }
+
+    @staticmethod
     def _byte_entropy(raw_bytes: bytes) -> float:
         """Berechnet eine robuste Shannon-Entropie fuer Bytestichproben."""
         payload = bytes(raw_bytes or b"")
@@ -659,6 +974,7 @@ class BrowserEngine:
         preview_summary = ""
         missing_data: list[str] = []
         risk_reasons: list[str] = []
+        html_text = ""
 
         if category == "html":
             html_text = raw_bytes.decode("utf-8", errors="replace")
@@ -719,6 +1035,7 @@ class BrowserEngine:
         ai_generation_score = 0.0
         frontend_symmetry = 0.0
         frontend_entropy = 0.0
+        frontend_smoothness = 0.0
         if preview_rgb is not None and np is not None:
             image = np.asarray(preview_rgb[:, :, :3], dtype=np.float64)
             gray = np.mean(image, axis=2)
@@ -726,15 +1043,85 @@ class BrowserEngine:
             histogram = np.histogram(gray, bins=16, range=(0, 255))[0].astype(np.float64)
             probabilities = histogram[histogram > 0.0] / max(1.0, float(histogram.sum()))
             frontend_entropy = float(-np.sum(probabilities * np.log2(probabilities))) if probabilities.size > 0 else 0.0
-            ai_generation_score = max(
-                0.0,
-                min(
-                    1.0,
-                    (0.22 * min(1.0, frontend_entropy / 4.0))
-                    + (0.18 * max(0.0, frontend_symmetry - 0.82))
-                    + (0.14 * min(1.0, max(0.0, entropy - 5.8) / 2.0)),
-                ),
+            frontend_smoothness = cls._clamp((frontend_symmetry - 0.80) / 0.20)
+
+        ai_probe = cls.inspect_text_excerpt(
+            summary or text_sample,
+            title=title,
+            url=str(download.get("final_url", normalized_url)),
+            html_text=html_text,
+        )
+        ai_signals = [str(item) for item in list(ai_probe.get("ai_signals", []) or []) if str(item).strip()]
+        ai_generation_score = cls._clamp(
+            (0.25 * float(ai_probe.get("text_pattern_score", 0.0) or 0.0))
+            + (0.20 * float(ai_probe.get("structural_symmetry", 0.0) or 0.0))
+            + (0.20 * float(frontend_smoothness))
+            + (0.15 * float(ai_probe.get("no_author_penalty", 0.0) or 0.0))
+            + (0.12 * float(ai_probe.get("list_ratio_score", 0.0) or 0.0))
+            + (0.08 * float(ai_probe.get("entropy_smoothness", 0.0) or 0.0))
+        )
+        final_url = str(download.get("final_url", normalized_url) or normalized_url)
+        parsed_final = urlparse(final_url)
+        host = str(parsed_final.netloc or "").lower()
+        if "youtube.com" in host or "youtu.be" in host:
+            title_lower = str(title or "").lower()
+            youtube_score = 0.0
+            for signal_name, pattern in YOUTUBE_AI_PATTERNS.items():
+                if re.search(pattern, title_lower):
+                    ai_signals.append(signal_name)
+                    youtube_score += 0.12
+            channel_name = ""
+            channel_match = re.search(
+                r'(?is)"ownerChannelName"\s*:\s*"([^"]+)"|(?is)<link[^>]+itemprop=["\']name["\'][^>]+content=["\']([^"\']+)',
+                html_text,
             )
+            if channel_match:
+                channel_name = str(channel_match.group(1) or channel_match.group(2) or "").strip()
+            generic_channel = bool(channel_name) and bool(
+                re.search(r"(?i)^(?:ai|tutorial|guide|media|hub|world|facts|stories|daily|news)(?:[\s_-]?\d+)?$", channel_name)
+            )
+            if generic_channel:
+                ai_signals.append("channel_generic")
+                youtube_score += 0.10
+            joined_match = re.search(r'(?i)(joined|beigetreten)\s+([a-zäöü]+)\s+(\d{4})', html_text)
+            if joined_match:
+                month_names = {
+                    "jan": 1, "january": 1, "januar": 1,
+                    "feb": 2, "february": 2, "februar": 2,
+                    "mar": 3, "march": 3, "maerz": 3, "märz": 3,
+                    "apr": 4, "april": 4,
+                    "may": 5, "mai": 5,
+                    "jun": 6, "june": 6, "juni": 6,
+                    "jul": 7, "july": 7, "juli": 7,
+                    "aug": 8, "august": 8,
+                    "sep": 9, "september": 9,
+                    "oct": 10, "okt": 10, "october": 10, "oktober": 10,
+                    "nov": 11, "november": 11,
+                    "dec": 12, "dez": 12, "december": 12, "dezember": 12,
+                }
+                month_value = int(month_names.get(str(joined_match.group(2) or "").lower(), 0) or 0)
+                year_value = int(joined_match.group(3) or 0)
+                current = time.gmtime()
+                joined_months = (year_value * 12) + max(1, month_value)
+                current_months = (int(current.tm_year) * 12) + int(current.tm_mon)
+                if month_value > 0 and (current_months - joined_months) < 6:
+                    ai_signals.append("channel_new")
+                    youtube_score += 0.10
+            videos_match = re.search(r'(?i)(\d{2,5})\s+videos?', html_text)
+            if videos_match and "channel_new" in ai_signals and int(videos_match.group(1) or 0) > 50:
+                ai_signals.append("channel_bulk")
+                youtube_score += 0.10
+            related_ai_hits = sum(1 for term in YOUTUBE_RELATED_AI_TERMS if term in html_text.lower())
+            if related_ai_hits >= 3:
+                ai_signals.append("channel_ai_graph")
+                youtube_score += 0.08
+            ai_generation_score = cls._clamp(ai_generation_score + youtube_score)
+        if ai_generation_score >= 0.70:
+            ai_verdict = "ai"
+        elif ai_generation_score >= 0.45:
+            ai_verdict = "likely_ai"
+        else:
+            ai_verdict = "human"
 
         hate_score = max(0.0, min(1.0, (0.55 * min(1.0, hate_hits / 2.0)) + (0.18 * min(1.0, fake_hits / 3.0))))
         fake_score = max(
@@ -765,7 +1152,7 @@ class BrowserEngine:
         if fake_score >= 0.50:
             risk_reasons.append("Inkonsistente oder sensationsgetriebene Struktur erhoeht Fakenews-Risiko")
         if ai_generation_score >= 0.46:
-            risk_reasons.append("Frontend-Signale wirken stark synthetisch oder uebermaessig glatt")
+            risk_reasons.append("KI-Signale erkannt: " + ", ".join(list(dict.fromkeys(ai_signals))[:4]))
         if not risk_reasons:
             risk_reasons.append("Keine dominante Anomalie erkannt; Struktur bleibt vorlaeufig konsistent")
 
@@ -817,6 +1204,8 @@ class BrowserEngine:
             "external_resources": int(external_resources),
             "obfuscation_score": float(obfuscation_score),
             "ai_generation_score": float(ai_generation_score),
+            "ai_signals": list(dict.fromkeys(ai_signals)),
+            "ai_verdict": str(ai_verdict),
             "hate_risk_score": float(hate_score),
             "fake_risk_score": float(fake_score),
             "scam_risk_score": float(scam_score),
@@ -875,43 +1264,23 @@ class BrowserEngine:
         searx_base_url: str = "",
     ) -> dict[str, Any]:
         """Laedt einen kurzen Netz-Kontext fuer Shanway ohne Rohdatenpersistenz."""
-        cleaned_query = " ".join(str(query or "").split()).strip()
-        if not cleaned_query:
-            return {
-                "ok": False,
-                "provider": str(provider or "duckduckgo"),
-                "query": "",
-                "url": "",
-                "summary": "",
-                "error": "empty_query",
-            }
-        try:
-            fetch_url = cls.build_search_fetch_url(
-                cleaned_query,
-                provider=provider,
-                searx_base_url=searx_base_url,
-            )
-            raw_html = cls._download_text(fetch_url, timeout=timeout)
-            summary = cls.strip_html_text(raw_html, limit_chars=1200)
-            return {
-                "ok": bool(summary),
-                "provider": str(provider or "duckduckgo"),
-                "query": cleaned_query,
-                "url": str(fetch_url),
-                "summary": str(summary),
-                "search_url": cls.build_search_url(cleaned_query, provider=provider),
-                "error": "" if summary else "empty_summary",
-            }
-        except Exception as exc:
-            return {
-                "ok": False,
-                "provider": str(provider or "duckduckgo"),
-                "query": cleaned_query,
-                "url": "",
-                "summary": "",
-                "search_url": cls.build_search_url(cleaned_query, provider=provider),
-                "error": str(exc),
-            }
+        result = cls.fetch_search_results(
+            query,
+            provider=provider,
+            timeout=timeout,
+            searx_base_url=searx_base_url,
+        )
+        return {
+            "ok": bool(result.get("ok", False)),
+            "provider": str(result.get("provider", provider) or provider),
+            "query": str(result.get("query", query) or query),
+            "url": str(result.get("url", "") or ""),
+            "summary": str(result.get("summary", "") or ""),
+            "search_url": str(result.get("search_url", "") or cls.build_search_url(query, provider=provider)),
+            "results": [dict(item) for item in list(result.get("results", []) or [])],
+            "result_urls": list(result.get("result_urls", []) or []),
+            "error": str(result.get("error", "") or ""),
+        }
 
     def back(self) -> None:
         """Geht in der Browserhistorie zurueck."""
