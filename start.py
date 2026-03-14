@@ -275,6 +275,17 @@ def confirm_local_update_rebaseline(summary: str) -> bool:
         return False
 
 
+def prefetch_shanway_model() -> None:
+    """Startet den TinyLLaMA-Erststart-Download im Hintergrund, ohne den Hauptstart zu blockieren."""
+    try:
+        from shanway_llm import schedule_default_model_download
+
+        schedule_default_model_download()
+        append_startup_trace("shanway_model_prefetch_started")
+    except Exception as exc:
+        append_startup_trace(f"shanway_model_prefetch_skipped {type(exc).__name__}: {exc}")
+
+
 def bootstrap(shanway_raster_insight: bool = False) -> None:
     """Initialisiert alle Kernmodule in der vorgegebenen Reihenfolge und startet die GUI."""
     os.chdir(PROJECT_ROOT)
@@ -402,6 +413,7 @@ def main(argv: list[str] | None = None) -> None:
                 raise RuntimeError("Roundtrip-Selbsttest fehlgeschlagen.")
             return
         ensure_desktop_shortcut()
+        prefetch_shanway_model()
         append_startup_trace("main_bootstrap")
         bootstrap(shanway_raster_insight=shanway_raster_insight)
     except KeyboardInterrupt:

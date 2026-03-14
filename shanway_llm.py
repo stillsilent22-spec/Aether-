@@ -6,6 +6,9 @@ Ausgabe: menschlich lesbare Sprache — nie mehr als der Kontext hergibt.
 """
 from __future__ import annotations
 
+import shutil
+import threading
+import urllib.request
 from pathlib import Path
 from typing import Optional
 from shanway_pipeline import ConsensusResult, ANCHOR_MEANING
@@ -14,6 +17,11 @@ DEFAULT_MODEL_CANDIDATES = (
     "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
     "tinyllama-1.1b-chat.gguf",
 )
+DEFAULT_MODEL_URL = (
+    "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/"
+    "resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf?download=true"
+)
+MODEL_DOWNLOAD_TIMEOUT_SEC = 60
 
 SHANWAY_SYSTEM_PROMPT = """Du bist Shanway, ein Ausgabefilter für verifizierte Strukturdaten.
 
@@ -118,9 +126,12 @@ class ShanwayLLM:
         self._tried      = False
 
     def _try_load(self) -> None:
+        """Laedt das Sprachmodell lazy und startet vorher bei Bedarf den Erststart-Download."""
         if self._tried:
             return
         self._tried = True
+        if not self._model_path:
+            self._model_path = ensure_default_model_downloaded()
         if not self._model_path:
             return
         try:
@@ -176,9 +187,68 @@ class ShanwayLLM:
 
 
 _instance: Optional[ShanwayLLM] = None
+_download_lock = threading.Lock()
+_download_thread: Optional[threading.Thread] = None
+
+
+def _default_model_target_path() -> Path:
+    """Liefert den lokalen Zielpfad fuer das automatisch geladene Standardmodell."""
+    return Path(__file__).resolve().parent / DEFAULT_MODEL_CANDIDATES[0]
+
+
+def ensure_default_model_downloaded() -> Optional[str]:
+    """Laedt das Standard-GGUF beim ersten Start automatisch, falls lokal noch keines existiert."""
+    existing = _resolve_model_path(None)
+    if existing:
+        return existing
+
+    target = _default_model_target_path()
+    temp_path = target.with_name(f"{target.name}.part")
+    with _download_lock:
+        existing = _resolve_model_path(None)
+        if existing:
+            return existing
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if temp_path.exists():
+                temp_path.unlink()
+            request = urllib.request.Request(
+                DEFAULT_MODEL_URL,
+                headers={"User-Agent": "Aether/1.0"},
+            )
+            with urllib.request.urlopen(request, timeout=MODEL_DOWNLOAD_TIMEOUT_SEC) as response:
+                with temp_path.open("wb") as handle:
+                    shutil.copyfileobj(response, handle, length=1024 * 1024)
+            temp_path.replace(target)
+            return str(target)
+        except Exception:
+            try:
+                if temp_path.exists():
+                    temp_path.unlink()
+            except Exception:
+                pass
+            return None
+
+
+def schedule_default_model_download() -> None:
+    """Startet den Erststart-Download des Standardmodells im Hintergrund genau einmal pro Prozess."""
+    global _download_thread
+    if _resolve_model_path(None):
+        return
+    thread = _download_thread
+    if thread is not None and thread.is_alive():
+        return
+    thread = threading.Thread(
+        target=ensure_default_model_downloaded,
+        name="shanway-model-download",
+        daemon=True,
+    )
+    _download_thread = thread
+    thread.start()
 
 
 def _resolve_model_path(model_path: Optional[str]) -> Optional[str]:
+    """Loest explizite oder lokal vorhandene GGUF-Pfade fuer Shanway auf."""
     if model_path:
         return model_path
     base_dir = Path(__file__).resolve().parent
@@ -190,8 +260,11 @@ def _resolve_model_path(model_path: Optional[str]) -> Optional[str]:
 
 
 def get_llm(model_path: Optional[str] = None) -> ShanwayLLM:
+    """Liefert die Singleton-Instanz und startet bei Bedarf den Hintergrund-Download des Standardmodells."""
     global _instance
     resolved = _resolve_model_path(model_path)
+    if resolved is None and model_path is None:
+        schedule_default_model_download()
     if _instance is None:
         _instance = ShanwayLLM(model_path=resolved)
     elif resolved and not _instance._model_path:

@@ -17,7 +17,12 @@ from typing import Optional
 from shanway_web      import fetch_sources
 from shanway_pipeline import measure_consensus, ANCHOR_MEANING
 from shanway_registry import get_registry, CHANNEL_WEB, CHANNEL_FILE
-from shanway_llm      import get_llm, build_filter_context, DEFAULT_MODEL_CANDIDATES
+from shanway_llm      import (
+    DEFAULT_MODEL_CANDIDATES,
+    build_filter_context,
+    ensure_default_model_downloaded,
+    get_llm,
+)
 
 _SILENCE = ["...", "(Shanway schweigt.)", "", "", ""]
 
@@ -134,7 +139,11 @@ if __name__ == "__main__":
                 print(f"[SHANWAY] Modell: {default_model.name}")
                 break
         if model is None:
-            print("[SHANWAY] Template-Modus")
+            model = ensure_default_model_downloaded()
+            if model is not None:
+                print(f"[SHANWAY] Modell: {Path(model).name}")
+            else:
+                print("[SHANWAY] Template-Modus")
 
     registry = get_registry()
     print(f"[SHANWAY] Registry: {registry.stats()}")

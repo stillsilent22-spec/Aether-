@@ -16,6 +16,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
 .pytest_cache/
 .pytest_cache_local/
 /.pytest_tmp/
