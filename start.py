@@ -438,3 +438,13 @@ def main(argv: list[str] | None = None) -> None:
 
 if __name__ == "__main__":
     main()
+    import sys
+    if len(sys.argv) > 1:
+        cmd = sys.argv[1]
+        if cmd == ":render" and len(sys.argv) > 2:
+            from modules.render_coordinator import RenderCoordinator
+            rc = RenderCoordinator()
+            with open(sys.argv[2], "rb") as f:
+                pixel_bytes = f.read()
+            features = rc.capture_pixel_data(pixel_bytes)
+            print(f"Render Features: {features}")

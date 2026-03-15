@@ -354,11 +354,11 @@ Kurzübersicht:
 | Phase | Inhalt | Status |
 |-------|--------|--------|
 | 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
-| 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | In Arbeit |
-| 3 | Process: Windows Prozessdynamik | Geplant |
-| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | Geplant |
+| 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
+| 3 | Process: Windows Prozessdynamik | ✓ Fertig |
+| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
 | 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | Geplant |
-| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Vision |
+| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
 
 ---
 
@@ -381,3 +381,7 @@ Kurzübersicht:
 
 Stand: 2026 — Autor: Kevin Hannemann
 Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
+
+## Usage Examples
+
+- Render process (Phase 4): `python start.py :render <pixel_bytes_file>`

@@ -5,7 +5,7 @@
 | 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
 | 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
 | 3 | Process: Windows Prozessdynamik | ✓ Fertig |
-| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | Geplant |
+| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
 | 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | Geplant |
 | 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
 

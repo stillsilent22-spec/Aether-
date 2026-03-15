@@ -16,6 +16,8 @@ import hashlib
 import time
 import networkx as nx
 from cryptography.fernet import Fernet
+import numpy as np
+from modules.render_coordinator import RenderCoordinator
 
 class GovernanceContext:
     def __init__(self, key=None):
@@ -1459,7 +1461,7 @@ def domain_delta(
         }
 
     def capture_process_snapshots(self) -> dict[str, bytes]:
-        \"\"\"Capture process states as 'process' data bytes.\"\"\"
+        """Capture process states as 'process' data bytes."""
         snapshots = capture_process_state()
         data = {}
         for snap in snapshots:
@@ -1475,7 +1477,7 @@ def domain_delta(
         observer: dict[str, Any] | None = None,
         timestamp: str | None = None,
     ) -> ReconstructionSnapshot:
-        \"\"\"Erzeugt Snapshot, optional mit process states.\"\"\"
+        """Erzeugt Snapshot, optional mit process states."""
         normalized_data = dict(data or {})
         if include_processes:
             normalized_data.update(self.capture_process_snapshots())
