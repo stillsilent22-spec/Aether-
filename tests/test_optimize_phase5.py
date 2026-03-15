@@ -1,3 +1,29 @@
+from modules.optimize_engine import PreloadOptimizer, EfficiencyMonitor
+from modules.reconstruction_engine import ReconstructionEngine, GovernanceContext
+def test_preload_optimizer():
+    po = PreloadOptimizer()
+    features = {"a": [1,2,3], "b": 5}
+    loaded = po.preload(features)
+    assert po.preloaded
+    assert isinstance(loaded["a"], np.ndarray)
+    assert loaded["b"] == 5
+
+def test_efficiency_monitor():
+    em = EfficiencyMonitor()
+    em.record({"drift_variance": 0.05})
+    em.record({"drift_variance": 0.10})
+    score = em.get_efficiency_score()
+    assert 0.8 < score < 1.0
+
+def test_optimize_pipeline():
+    engine = ReconstructionEngine(GovernanceContext())
+    features = {"a": [1,2,3,4], "b": [2,2,2,2], "c": 5}
+    result = engine.optimize_pipeline(features)
+    assert "preloaded" in result
+    assert "pruned" in result
+    assert "efficiency" in result
+    assert "recommendation" in result
+    assert isinstance(result["monitor_history"], list)
 import pytest
 import networkx as nx
 import numpy as np

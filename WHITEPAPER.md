@@ -1,5 +1,17 @@
 # Aether Whitepaper
 
+## Architektur-Update 2026
+Alle Engines und Kernfunktionen sind jetzt in `modules/` gekapselt. Die Rust-Shell übernimmt UI, IPC und Systemintegration. Die Python-Module werden über eine IPC-Bridge (`bus_bridge.py`/`bus_ipc.rs`) angebunden. Die Kommunikation erfolgt deterministisch und nachvollziehbar über JSONL-Events.
+## Integration
+- Python-Engines: `modules/`
+- Rust-Shell: `src/`
+- IPC: `data/interbus/`
+
+## Build/Run
+- Python: `pip install -r requirements.txt`
+- Rust: `cargo build --release`
+# Aether Whitepaper
+
 Stand: 08.03.2026
 Autor: Kevin Hannemann
 Status: Technisches Whitepaper fuer die source-available Veroeffentlichung

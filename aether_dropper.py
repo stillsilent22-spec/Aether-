@@ -87,17 +87,7 @@ session_module = _try_import("session_engine")
 blockchain_module = _try_import("blockchain_interface")
 
 
-def _entropy(data: bytes) -> float:
-    if not data:
-        return 0.0
-    freq = [0] * 256
-    for value in data:
-        freq[value] += 1
-    total = len(data)
-    entropy = 0.0
-    for count in freq:
-        if count <= 0:
-            continue
+
         probability = count / total
         entropy -= probability * math.log2(probability)
     return entropy

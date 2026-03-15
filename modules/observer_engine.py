@@ -1,3 +1,13 @@
+def observer_engine(O):
+    """Erzeugt Metadaten für ein gegebenes Objekt O im neuen Modulkontext."""
+    metadata = {
+        "length": O.get("length", None),
+        "byte_sum": sum(O.get("bytes", b"")),
+        "source": O.get("source", "aether"),
+        "timestamp": O.get("timestamp"),
+    }
+    return {"O": O, "metadata": metadata}
+
 def observer_learning_rate(t: int) -> float:
     """Deterministische Lernratenfunktion: lr = 1 / (1 + t)"""
     return 1.0 / (1 + int(t))

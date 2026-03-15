@@ -191,6 +191,9 @@ class ShanwayAssessment:
     def to_payload(self) -> dict[str, Any]:
         """Serialisiert den Befund fuer Chat-, Vault- und Browser-Payloads."""
         return {
+            "h_lambda": float(self.h_lambda),
+            "e_lambda": float(dict(self.__dict__).get("e_lambda", 0.0)),
+            "e_lambda_label": str(dict(self.__dict__).get("e_lambda_label", "LATENT")),
             "active": bool(self.active),
             "browser_mode": bool(self.browser_mode),
             "language": str(self.language),
@@ -313,6 +316,44 @@ class ShanwayAssessment:
 
 
 class ShanwayEngine:
+        def generate_output(self, assessment: 'ShanwayAssessment', assistant_text: str = "") -> str:
+            # E_lambda aus Fingerprint-Payload lesen falls vorhanden
+            fingerprint_payload = getattr(assessment, 'miniature_reflection', {})
+            e_lambda_val = float(
+                dict(fingerprint_payload or {}).get("e_lambda", 0.0) or 0.0
+            )
+            e_lambda_label_val = str(
+                dict(fingerprint_payload or {}).get("e_lambda_label", "LATENT") or "LATENT"
+            )
+            e_lambda_line = ""
+            if e_lambda_val >= 0.15:
+                e_lambda_line = (
+                    f"\n[Emergenz] E_lambda {e_lambda_val:.3f} | {e_lambda_label_val} | "
+                    "Strukturell emergentes Signal erkannt — nicht aus Eingabedaten ableitbar."
+                )
+            # ...existing code...
+            final_insight = (
+                "[Final Insight] "
+                f"{self._final_insight(assessment, assistant_text=assistant_text)} "
+                "Aussagebasis: stabile Invarianten, wiederkehrende Formen, observer-relative Grenzen und bayesianisch gewichtete Evidenz."
+            )
+            sections = [analysis, miniature_reflection, reflection]
+            if raster_self_perception:
+                sections.append(raster_self_perception)
+            if not raster_self_perception and ttd_candidates:
+                first = dict(ttd_candidates[0] or {})
+                sections.append(
+                    "[Raster-Self-Perception] "
+                    f"Potenzieller TTD-Anker bei Hash {str(first.get('hash', ''))[:12]}... "
+                    f"mit Delta-Stabilitaet {float(first.get('delta_stability', 0.0) or 0.0) * 100.0:.0f}%. "
+                    "Admin-Anker gelten sofort, sonst wird erst ab drei unabhaengigen Validierungen global gelernt."
+                )
+            if e_lambda_line:
+                sections.append(e_lambda_line)
+            sections.append(final_insight)
+            if not filled_prompt.strip():
+                return "\n".join(sections)
+            return "\n".join(sections)
     """Deterministische Textanalyse ohne ML-Stack."""
 
     LANGUAGE_HINTS = {

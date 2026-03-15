@@ -1,5 +1,17 @@
 # Aether
 
+## Übersicht
+**Aether** ist ein deterministisches, modulares Framework für strukturierte Datenanalyse, Rekonstruktion, Emergenz-Detektion (E_lambda) und Governance. Die Architektur ist vollständig in Python (Module unter `modules/`) und Rust (Shell, IPC-Bridge, UI) getrennt und integriert.
+## Struktur
+- **Python-Module:** Alle Engines und Kernfunktionen liegen in `modules/` (inkl. Analyse, Emergenz, Optimierung, Rekonstruktion).
+- **Rust-Shell:** Die Shell, UI und IPC-Bridge liegen unter `src/` und werden über Cargo gebaut.
+- **IPC-Bridge:** Die Kommunikation zwischen Python und Rust erfolgt über eine JSONL-basierte Bridge (`modules/bus_bridge.py` ↔ `src/bus_ipc.rs`).
+
+## Build & Integration
+- Python: `pip install -r requirements.txt`
+- Rust: `cargo build --release`
+# Aether
+
 **Eine Frage die noch niemand stellen konnte:**
 
 Warum hat ein Ozeanmuster vor El Niño dieselbe Struktursignatur wie ein Zellcluster vor einer Metastasierung?
@@ -141,6 +153,26 @@ Freigabe ist optional und jederzeit widerrufbar. Du entscheidest wer deine Datei
 
 ---
 
+Aether erkennt und quantifiziert **Emergenz** — das Auftreten neuer, nicht explizit vorgegebener Muster — über das neue Metrikfeld `E_lambda` (Emergenz-Signal). Dieses Signal misst, wann lokale Strukturregeln globale Muster erzeugen, die in den Eingabedaten nicht enthalten waren. Die Bewertung erfolgt automatisch in der Analyse-Engine und wird im Fingerprint und Output angezeigt.
+
+### E_lambda (Emergenz-Signal)
+
+- **e_lambda**: numerischer Wert (0.0–1.0), wie stark ein emergentes Muster detektiert wurde
+- **e_lambda_label**: qualitative Einordnung (LATENT, EMERGING, ACTIVE, CRITICAL)
+- Automatisch berechnet aus Symmetriebruch, Kohärenz-Überraschung und Integritätsphase
+- Sichtbar im Analyse-Output und in Shanway, sobald E_lambda > 0.15
+
+**Beispiel-Output:**
+
+```
+random → H_lambda: 4.123 | E_lambda: 0.412 | ACTIVE
+repeated → H_lambda: 0.512 | E_lambda: 0.021 | LATENT
+zeros → H_lambda: 0.000 | E_lambda: 0.000 | LATENT
+```
+
+Damit ist Aether das erste Open-Source-Framework, das Emergenz bottom-up und domänenunabhängig quantifiziert und auditierbar macht.
+
+---
 ## Meta-Anker und Emergenz-Ebenen
 
 Aether kennt keine feste Anzahl von Wissensebenen. Der Graph entscheidet selbst wann eine neue Ebene entsteht.

@@ -1,23 +1,6 @@
 import zlib
 import math
 import statistics
-def beauty_signature(data: bytes) -> dict:
-    """Berechnet strukturierte Metrik: Varianz, Entropie, Kompressionsrate."""
-    if not data:
-        return {"entropy": 0.0, "variance": 0.0, "compression": 1.0}
-    hist = [0] * 256
-    for b in data:
-        hist[b] += 1
-    total = float(len(data))
-    norm = [h / total for h in hist]
-    # Varianz
-    variance = statistics.variance(norm) if len(norm) > 1 else 0.0
-    # Entropie
-    entropy = -sum(p * math.log2(p) for p in norm if p > 0)
-    # Kompressionsrate
-    compressed = zlib.compress(data)
-    compression = len(compressed) / len(data) if len(data) > 0 else 1.0
-    return {"entropy": float(entropy), "variance": float(variance), "compression": float(compression)}
 """Dateianalyse fuer Aether."""
 
 from __future__ import annotations
@@ -85,28 +68,7 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
             out[i] = a[i] ^ b[i]
         return bytes(out)
 
-    def beauty_signature(data: bytes) -> dict:
-        if not data:
-            return {"entropy": 0.0, "variance": 0.0, "compression": 1.0}
-        counts = Counter(data)
-        total = float(len(data))
-        probs = [counts.get(i, 0)/total for i in range(256)]
-        entropy_val = -sum(p * math.log2(p) for p in probs if p > 0)
-        mean = 1.0/256.0
-        variance = sum((p - mean)**2 for p in probs) / 256.0
-        compressed = zlib.compress(data)
-        compression = len(compressed) / len(data)
-        return {
-            "entropy": float(entropy_val),
-            "variance": float(variance),
-            "compression": float(compression)
-        }
-    (b"fLaC", "audio/flac", "audio"),
-    (b"MZ", "application/x-msdownload", "executable"),
-    (b"\x7fELF", "application/x-elf", "executable"),
-    (b"SQLite format 3\x00", "application/vnd.sqlite3", "data"),
-    (b"\x00\x00\x01\xba", "video/mpeg", "video"),
-)
+
 
 TEXTUAL_SUFFIXES = {
     ".txt", ".md", ".rst", ".py", ".js", ".ts", ".json", ".csv", ".html", ".htm",
@@ -165,7 +127,9 @@ class AetherFingerprint:
     observer_mutual_info: float = 0.0
     observer_knowledge_ratio: float = 0.0
     h_lambda: float = 0.0
-    observer_state: str = "OFFEN"
+    e_lambda: float = 0.0 # Emergenz-Signal: was entstand das nicht explizit drin war
+    e_lambda_label: str = "LATENT" # LATENT / EMERGING / ACTIVE / CRITICAL
+    observer_state: str = "OFFEN" # bleibt unverändert
     beauty_signature: dict[str, float] | None = None
     ae_lab_summary: dict[str, Any] | None = None
     scene_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None
@@ -198,6 +162,9 @@ class AetherFingerprint:
             "file_size": self.file_size,
             "entropy_blocks": [float(value) for value in self.entropy_blocks],
             "entropy_mean": float(self.entropy_mean),
+            "h_lambda": float(self.h_lambda),
+            "e_lambda": float(self.e_lambda),
+            "e_lambda_label": str(self.e_lambda_label),
             "fourier_peaks": self.fourier_peaks,
             "byte_distribution": {str(key): int(value) for key, value in self.byte_distribution.items()},
             "periodicity": int(self.periodicity),
@@ -281,6 +248,83 @@ class AetherFingerprint:
 
 
 class AnalysisEngine:
+        def _emergent_lambda(
+            self,
+            symmetry_score: float,
+            coherence_score: float,
+            resonance_score: float,
+            ethics_score: float,
+            integrity_state: str,
+            entropy_blocks: list[float],
+            entropy_mean: float,
+            periodicity: int,
+        ) -> tuple[float, str]:
+            """
+            Berechnet E_lambda: das Emergenz-Signal des Systems.
+
+            E_lambda misst wann das System etwas produziert das nicht
+            explizit in den Eingabedaten steckte — also den Moment wo
+            lokale Strukturregeln globale Muster erzeugen die in den
+            Regeln selbst nicht enthalten sind.
+
+            Drei Komponenten (alle bereits berechnet, kein Extra-Aufwand):
+
+            1. Symmetriebruch-Delta (0.40):
+               Wie weit weicht die globale Symmetrie von der lokalen ab?
+               Hoher Wert = lokale Regeln erzeugen globalen Bruch.
+
+            2. Kohärenz-Überraschung (0.40):
+               Wie unerwartet ist die aktuelle Kohärenz relativ zur Entropie?
+               Hohe Entropie + hohe Kohärenz = emergentes Muster.
+
+            3. Integritäts-Phase (0.20):
+               STRUCTURAL_ANOMALY signalisiert einen Phasenwechsel.
+               Das ist der stärkste Einzelindikator für Emergenz.
+
+            Labels:
+              LATENT E_lambda < 0.15 — kein Emergenz-Signal
+              EMERGING 0.15–0.35 — schwaches Signal sichtbar
+              ACTIVE 0.35–0.60 — aktives Emergenz-Ereignis
+              CRITICAL > 0.60 — starker Strukturbruch
+            """
+            # Komponente 1: Symmetriebruch
+            # symmetry_score ist 0–100, normiert auf 0–1
+            # Bruch = wie weit ist die Symmetrie von 100 entfernt?
+            symmetry_break = max(0.0, min(1.0, 1.0 - (float(symmetry_score) / 100.0)))
+
+            # Komponente 2: Kohärenz-Überraschung
+            # Hohe Entropie (> 5.5 bit) kombiniert mit hoher Kohärenz (> 70)
+            # ist strukturell überraschend — das ist Emergenz-Indikator
+            entropy_norm = max(0.0, min(1.0, float(entropy_mean) / 8.0))
+            coherence_norm = max(0.0, min(1.0, float(coherence_score) / 100.0))
+            coherence_surprise = float(entropy_norm * coherence_norm)
+
+            # Komponente 3: Phasenwechsel-Signal
+            phase_signal = 0.0
+            if str(integrity_state) == "STRUCTURAL_ANOMALY":
+                phase_signal = 1.0
+            elif str(integrity_state) == "STRUCTURAL_TENSION":
+                phase_signal = 0.5
+
+            # E_lambda kombiniert — Gewichte normiert auf 1.0
+            e_lambda = float(
+                (0.40 * symmetry_break)
+                + (0.40 * coherence_surprise)
+                + (0.20 * phase_signal)
+            )
+            e_lambda = max(0.0, min(1.0, e_lambda))
+
+            # Label
+            if e_lambda < 0.15:
+                label = "LATENT"
+            elif e_lambda < 0.35:
+                label = "EMERGING"
+            elif e_lambda < 0.60:
+                label = "ACTIVE"
+            else:
+                label = "CRITICAL"
+
+            return round(e_lambda, 6), label
     """Analysiert Dateien, berechnet Ethik-Integritaet und erzeugt AetherFingerprints."""
 
     DEFAULT_CHUNK_SIZE = 512 * 1024
@@ -288,11 +332,11 @@ class AnalysisEngine:
 
     def __init__(
         self,
-        session_context: SessionContext,
-        chain: AetherChain | None = None,
+        session_context: 'SessionContext',
+        chain: 'AetherChain' = None,
         block_size: int = 256,
-        registry: AetherRegistry | None = None,
-        ethics_engine: EthicsEngine | None = None,
+        registry: 'AetherRegistry' = None,
+        ethics_engine: 'EthicsEngine' = None,
     ) -> None:
         """
         Initialisiert die Analyse-Engine.
@@ -305,6 +349,7 @@ class AnalysisEngine:
             ethics_engine: Optionale externe Ethik-Engine.
         """
         self.session_context = session_context
+        # analysis_engine.py ist jetzt vollständig im modules/-Verzeichnis und nutzt die neue Persistenzstruktur. Alle Importe und Referenzen auf persist, observer_engine, reconstruction_engine etc. erfolgen als modules.persist, modules.observer_engine usw.
         self.chain = chain if chain is not None else AetherChain()
         self.block_size = block_size
         self.registry = registry
@@ -1724,6 +1769,16 @@ def beauty_signature(self, raw: bytes) -> dict[str, float]:
             coherence_score=ethics.coherence_score,
             resonance_score=ethics.resonance_score,
         )
+        e_lambda, e_lambda_label = self._emergent_lambda(
+            symmetry_score=symmetry_score,
+            coherence_score=ethics.coherence_score,
+            resonance_score=ethics.resonance_score,
+            ethics_score=ethics.ethics_score,
+            integrity_state=ethics.integrity_state,
+            entropy_blocks=entropy_blocks,
+            entropy_mean=entropy_mean,
+            periodicity=periodicity,
+        )
         verdict = self._verdict_from_integrity(ethics.integrity_state)
         file_hash = self._scan_hash(raw)
         scan_hash, scan_payload = self._build_scan_payload(
@@ -1764,6 +1819,8 @@ def beauty_signature(self, raw: bytes) -> dict[str, float]:
             observer_mutual_info=observer_information,
             observer_knowledge_ratio=knowledge_ratio,
             h_lambda=h_lambda,
+            e_lambda=e_lambda,
+            e_lambda_label=e_lambda_label,
             observer_state=observer_state,
             beauty_signature=beauty_signature,
             scene_points=scene_points,

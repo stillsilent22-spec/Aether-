@@ -3,6 +3,34 @@ import numpy as np
 import hashlib
 import logging
 
+class PreloadOptimizer:
+    """Preloads and prepares optimization features for the pipeline."""
+    def __init__(self):
+        self.preloaded = False
+
+    def preload(self, features: dict) -> dict:
+        # Simulate preloading/normalization
+        self.preloaded = True
+        return {k: (np.array(v) if isinstance(v, list) else v) for k, v in features.items()}
+
+
+class EfficiencyMonitor:
+    """Monitors efficiency and resource usage in the optimize pipeline."""
+    def __init__(self):
+        self.history = []
+
+    def record(self, metrics: dict):
+        self.history.append(metrics)
+        return metrics
+
+    def get_efficiency_score(self) -> float:
+        if not self.history:
+            return 1.0
+        # Example: lower mean drift = higher efficiency
+        drift_vals = [m.get("drift_variance", 0.0) for m in self.history]
+        return max(0.0, 1.0 - np.mean(drift_vals))
+
+
 class OptimizeEngine:
     def isolate_components(self, graph: nx.Graph) -> list:
         # Vereinzelung: Isoliere Subgraphen (z. B. für Security)

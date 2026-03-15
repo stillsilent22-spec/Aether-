@@ -43,6 +43,462 @@ class Attractor:
         self.stability = stability
 
 class ReconstructionEngine:
+                        def optimize_pipeline(self, features: dict) -> dict:
+                            """
+                            Full optimize pipeline: preload, prune, monitor, recommend.
+                            Returns dict with all intermediate and final results.
+                            """
+                            preload = PreloadOptimizer()
+                            monitor = EfficiencyMonitor()
+                            loaded = preload.preload(features)
+                            pruned = OptimizeEngine().prune_redundancy(loaded)
+                            monitor.record({"drift_variance": np.var([float(np.mean(v)) if isinstance(v, np.ndarray) else float(v) for v in pruned.values() if isinstance(v, (list, np.ndarray, float, int))])})
+                            efficiency = monitor.get_efficiency_score()
+                            recommendation = OptimizeEngine().generate_recommendation({"drift_variance": monitor.history[-1]["drift_variance"]})
+                            return {
+                                "preloaded": loaded,
+                                "pruned": pruned,
+                                "efficiency": efficiency,
+                                "recommendation": recommendation,
+                                "monitor_history": monitor.history,
+                            }
+
+                    def render_governance_recommendations(
+                        self,
+                        render_meta: dict[str, any],
+                        governance: "GovernanceContext",
+                    ) -> dict[str, any]:
+                        """
+                        Leitet Governance-Empfehlungen aus einem render_meta_delta ab.
+                        ADVISE ONLY: Diese Methode gibt nur Empfehlungen zurück.
+                        Sie führt keine Aktionen aus, ändert keine Invarianten, greift
+                        nicht in den Prozess ein. Menschliche Freigabe bleibt zwingend.
+                        """
+                        severity = float(render_meta.get("combined_severity", 0.0))
+                        phase_shift = bool(render_meta.get("phase_shift", {}).get("phase_shift_detected", False))
+                        interference = bool(render_meta.get("interference", {}).get("interference_detected", False))
+                        drift_label = str(render_meta.get("drift", {}).get("drift_label", "UNKNOWN"))
+
+                        recommendations: list[dict[str, str]] = []
+
+                        if drift_label == "HIGH":
+                            recommendations.append({
+                                "type": "DRIFT_HIGH",
+                                "priority": "HIGH",
+                                "action": "ADVISE_ONLY",
+                                "message": (
+                                    "Render-Drift überschreitet HIGH-Schwelle. "
+                                    "Empfehlung: Snapshot-Intervall reduzieren und Attraktorgraphen manuell prüfen."
+                                ),
+                            })
+
+                        if interference:
+                            recommendations.append({
+                                "type": "RENDER_INTERFERENCE",
+                                "priority": "MEDIUM",
+                                "action": "ADVISE_ONLY",
+                                "message": (
+                                    f"Render-Interferenz erkannt (Score {render_meta.get('interference', {}).get('interference_score', 0.0):.3f}). "
+                                    "Empfehlung: Zwei aufeinanderfolgende Snapshots manuell vergleichen."
+                                ),
+                            })
+
+                        if phase_shift:
+                            recommendations.append({
+                                "type": "PHASE_SHIFT",
+                                "priority": "MEDIUM",
+                                "action": "ADVISE_ONLY",
+                                "message": (
+                                    "Attraktor-Wechsel erkannt. "
+                                    "Empfehlung: Attraktorgraph-Kante auf Anomalie prüfen."
+                                ),
+                            })
+
+                        if severity >= 0.30:
+                            recommendations.append({
+                                "type": "CRITICAL_SEVERITY",
+                                "priority": "HIGH",
+                                "action": "ADVISE_ONLY",
+                                "message": (
+                                    f"Render-Meta-Delta zeigt CRITICAL-Schwere ({severity:.3f}). "
+                                    "Empfehlung: Manuelle Audit-Prüfung vor weiterem Betrieb."
+                                ),
+                            })
+
+                        if not recommendations:
+                            recommendations.append({
+                                "type": "CLEAN",
+                                "priority": "LOW",
+                                "action": "NONE",
+                                "message": "Render-Layer ist stabil. Keine Handlungsempfehlung.",
+                            })
+
+                        return {
+                            "recommendations": recommendations,
+                            "recommendation_count": int(len(recommendations)),
+                            "highest_priority": (
+                                "HIGH" if any(r["priority"] == "HIGH" for r in recommendations)
+                                else "MEDIUM" if any(r["priority"] == "MEDIUM" for r in recommendations)
+                                else "LOW"
+                            ),
+                            "action_required": bool(severity >= 0.30 or drift_label == "HIGH"),
+                            "human_approval_required": True, # Immer — keine autonomen Aktionen
+                            "invariants": [
+                                "advise_only",
+                                "no_autonomous_action",
+                                "human_approval_required",
+                                "audit_logged",
+                            ],
+                        }
+
+                    def apply_render_delta_governance(
+                        self,
+                        render_meta: dict[str, any],
+                        governance: "GovernanceContext",
+                    ) -> dict[str, any]:
+                        """
+                        Prüft ob das Render-Meta-Delta innerhalb der Governance-Invarianten liegt.
+                        Kein Eingriff. Nur Bewertung (PASS / WARN / BLOCK).
+                        BLOCK bedeutet: Menschliche Freigabe erforderlich — keine automatische Sperre.
+                        """
+                        max_entropy_delta = float(
+                            governance.invariants.get("render.max_entropy_delta_per_time", 1.0) or 1.0
+                        )
+                        allowed_symmetry_break = float(
+                            governance.invariants.get("render.allowed_symmetry_break", 1.0) or 1.0
+                        )
+
+                        drift = dict(render_meta.get("drift", {}) or {})
+                        interference = dict(render_meta.get("interference", {}) or {})
+                        severity = float(render_meta.get("combined_severity", 0.0))
+
+                        entropy_drift = float(drift.get("entropy_drift", 0.0))
+                        symmetry_diff = float(interference.get("symmetry_diff", 0.0))
+
+                        violations: list[str] = []
+
+                        if entropy_drift > max_entropy_delta:
+                            violations.append(
+                                f"entropy_drift {entropy_drift:.4f} > invariant {max_entropy_delta:.4f}"
+                            )
+
+                        if symmetry_diff > allowed_symmetry_break:
+                            violations.append(
+                                f"symmetry_diff {symmetry_diff:.4f} > allowed {allowed_symmetry_break:.4f}"
+                            )
+
+                        if severity >= 0.50:
+                            violations.append(f"combined_severity {severity:.4f} >= 0.50 BLOCK threshold")
+
+                        if not violations:
+                            verdict = "PASS"
+                        elif severity >= 0.50:
+                            verdict = "BLOCK"
+                        else:
+                            verdict = "WARN"
+
+                        return {
+                            "verdict": str(verdict),
+                            "violations": violations,
+                            "violation_count": int(len(violations)),
+                            "entropy_drift_checked": float(entropy_drift),
+                            "symmetry_diff_checked": float(symmetry_diff),
+                            "severity_checked": float(severity),
+                            "human_approval_required": bool(verdict != "PASS"),
+                            "invariants": [
+                                "governance_checked",
+                                "fail_closed_on_violation",
+                                "no_autonomous_block",
+                                "human_approval_gate",
+                            ],
+                        }
+                def render_meta_delta(
+                    self,
+                    source: "ReconstructionSnapshot",
+                    target: "ReconstructionSnapshot",
+                ) -> dict[str, any]:
+                    """
+                    Berechnet ein vollständiges Render-Meta-Delta aus Pixel-Graph,
+                    Interference, Drift und Phase-Shift in einem einzigen Payload.
+                    Verwendet nur bereits berechnete Methoden. Keine neuen Metriken.
+                    Kann direkt in ReconstructionResidual.meta_delta eingebettet werden.
+                    """
+                    interference = self.detect_render_interference(source, target)
+                    drift = self.compute_render_drift([source, target])
+                    phase_shift = self.detect_render_phase_shift(source, target)
+
+                    # Pixel-Graph nur berechnen wenn RenderFingerprint vorhanden
+                    pixel_graph: dict[str, any] = {}
+                    render_src = source.modality_features.get("render")
+                    if render_src is not None:
+                        render_fp = RenderFingerprint(
+                            process_id=0,
+                            frame_resolution=(0, 0),
+                            pixel_regions=[
+                                {
+                                    "entropy": round(float(e), 6),
+                                    "index": int(i),
+                                }
+                                for i, e in enumerate(render_src.entropy_profile[:32])
+                            ],
+                            gpu_time=0.0,
+                            present_intervals=[],
+                            swapchain_pattern="unknown",
+                            entropy_profile=render_src.entropy_profile[:32],
+                            symmetry_profile=dict(render_src.symmetry_profile),
+                            resonance_profile=dict(render_src.resonance_profile),
+                            delta_profile=dict(render_src.delta_profile),
+                            graph_signature=dict(render_src.graph_signature),
+                            invariants=list(render_src.invariants),
+                        )
+                        pixel_graph = self.pixel_coordination_graph(render_fp)
+
+                    combined_severity = round(
+                        float(interference.get("interference_score", 0.0)) * 0.40
+                        + float(drift.get("combined_drift", 0.0)) * 0.40
+                        + (0.20 if bool(phase_shift.get("phase_shift_detected", False)) else 0.0),
+                        6,
+                    )
+
+                    return {
+                        "interference": interference,
+                        "drift": drift,
+                        "phase_shift": phase_shift,
+                        "pixel_graph": pixel_graph,
+                        "combined_severity": float(combined_severity),
+                        "severity_label": (
+                            "CLEAN" if combined_severity < 0.10
+                            else "SUSPICIOUS" if combined_severity < 0.30
+                            else "CRITICAL"
+                        ),
+                        "invariants": [
+                            "render_meta_delta_v1",
+                            "deterministic_composition",
+                            "advise_only",
+                            "audit_ready",
+                        ],
+                    }
+            def detect_render_interference(
+                self,
+                snapshot_a: "ReconstructionSnapshot",
+                snapshot_b: "ReconstructionSnapshot",
+            ) -> dict[str, any]:
+                """
+                Erkennt strukturelle Interferenz zwischen zwei Render-Snapshots.
+                Interferenz = signifikante Abweichung in Entropie, Symmetrie und Resonanz
+                bei gleichzeitig niedrigem Drift. Kein semantisches Urteil.
+                Invarianten: fail_closed, advise_only, deterministic.
+                """
+                render_a = snapshot_a.modality_features.get("render")
+                render_b = snapshot_b.modality_features.get("render")
+
+                if render_a is None or render_b is None:
+                    return {
+                        "interference_detected": False,
+                        "reason": "render_modality_missing",
+                        "interference_score": 0.0,
+                        "invariants": ["fail_closed"],
+                    }
+
+                entropy_diff = abs(_mean(render_a.entropy_profile) - _mean(render_b.entropy_profile))
+                symmetry_diff = abs(
+                    float(render_a.symmetry_profile.get("mirror", 0.0) or 0.0)
+                    - float(render_b.symmetry_profile.get("mirror", 0.0) or 0.0)
+                )
+                resonance_diff = abs(
+                    float(render_a.resonance_profile.get("energy", 0.0) or 0.0)
+                    - float(render_b.resonance_profile.get("energy", 0.0) or 0.0)
+                )
+
+                # Normiert auf [0,1]: Entropie max 8 bit, Symmetrie und Resonanz max 1
+                interference_score = round(
+                    (entropy_diff / 8.0) * 0.50
+                    + symmetry_diff * 0.30
+                    + resonance_diff * 0.20,
+                    6,
+                )
+                interference_detected = bool(interference_score >= 0.15)
+
+                return {
+                    "interference_detected": bool(interference_detected),
+                    "interference_score": float(interference_score),
+                    "entropy_diff": round(float(entropy_diff), 6),
+                    "symmetry_diff": round(float(symmetry_diff), 6),
+                    "resonance_diff": round(float(resonance_diff), 6),
+                    "reason": "threshold_exceeded" if interference_detected else "within_bounds",
+                    "invariants": [
+                        "deterministic_interference",
+                        "advise_only",
+                        "no_action_taken",
+                        "local_comparison",
+                    ],
+                }
+
+            def compute_render_drift(
+                self,
+                history: "Sequence[ReconstructionSnapshot]",
+            ) -> dict[str, any]:
+                """
+                Berechnet den akkumulierten Render-Drift über eine Snapshot-Historie.
+                Drift = Varianz der Entropie-Mittelwerte über alle Render-Frames.
+                Kein Eingriff. Reine Messung. Fail-closed bei fehlendem Render-Layer.
+                """
+                render_entropies: list[float] = []
+                render_symmetries: list[float] = []
+                render_resonances: list[float] = []
+
+                for snapshot in history:
+                    render = snapshot.modality_features.get("render")
+                    if render is None:
+                        continue
+                    render_entropies.append(_mean(render.entropy_profile))
+                    render_symmetries.append(float(render.symmetry_profile.get("mirror", 0.0) or 0.0))
+                    render_resonances.append(float(render.resonance_profile.get("energy", 0.0) or 0.0))
+
+                if not render_entropies:
+                    return {
+                        "drift_available": False,
+                        "reason": "no_render_snapshots",
+                        "entropy_drift": 0.0,
+                        "symmetry_drift": 0.0,
+                        "resonance_drift": 0.0,
+                        "combined_drift": 0.0,
+                    }
+
+                entropy_drift = round(_variance(render_entropies), 6)
+                symmetry_drift = round(_variance(render_symmetries), 6)
+                resonance_drift = round(_variance(render_resonances), 6)
+
+                # Gewichtetes kombiniertes Drift-Signal
+                combined_drift = round(
+                    entropy_drift * 0.50 + symmetry_drift * 0.30 + resonance_drift * 0.20,
+                    6,
+                )
+
+                return {
+                    "drift_available": True,
+                    "snapshot_count": int(len(render_entropies)),
+                    "entropy_drift": float(entropy_drift),
+                    "symmetry_drift": float(symmetry_drift),
+                    "resonance_drift": float(resonance_drift),
+                    "combined_drift": float(combined_drift),
+                    "drift_label": (
+                        "STABLE" if combined_drift < 0.02
+                        else "MODERATE" if combined_drift < 0.10
+                        else "HIGH"
+                    ),
+                    "invariants": ["deterministic_drift", "variance_based", "advise_only"],
+                }
+
+            def detect_render_phase_shift(
+                self,
+                previous_snapshot: "ReconstructionSnapshot",
+                current_snapshot: "ReconstructionSnapshot",
+                drift_threshold: float = 0.15,
+            ) -> dict[str, any]:
+                """
+                Erkennt einen Phasenwechsel im Render-Layer zwischen zwei aufeinander-
+                folgenden Snapshots. Phasenwechsel = Attraktor-ID wechselt UND
+                kombinierter Drift überschreitet Schwelle. Nur advise-only.
+                """
+                prev_attractor = self.detect_attractor(previous_snapshot)
+                curr_attractor = self.detect_attractor(current_snapshot)
+
+                attractor_changed = bool(
+                    prev_attractor is not None
+                    and curr_attractor is not None
+                    and str(prev_attractor) != str(curr_attractor)
+                )
+
+                drift_result = self.compute_render_drift([previous_snapshot, current_snapshot])
+                combined_drift = float(drift_result.get("combined_drift", 0.0))
+
+                phase_shift_detected = bool(
+                    attractor_changed and combined_drift >= float(drift_threshold)
+                )
+
+                return {
+                    "phase_shift_detected": bool(phase_shift_detected),
+                    "attractor_changed": bool(attractor_changed),
+                    "previous_attractor": str(prev_attractor or ""),
+                    "current_attractor": str(curr_attractor or ""),
+                    "combined_drift": float(combined_drift),
+                    "drift_threshold": float(drift_threshold),
+                    "drift_label": str(drift_result.get("drift_label", "UNKNOWN")),
+                    "invariants": [
+                        "attractor_based_phase",
+                        "drift_gated",
+                        "advise_only",
+                        "deterministic",
+                    ],
+                }
+        def detect_render_attractor(self, snapshots: list) -> dict:
+            """
+            Leitet Render-Attraktor-Stabilität aus einer Liste von Entropy-Snapshots ab.
+            Kompatibilitätsmethode für test_render_phase4.py.
+            snapshots: Liste von dicts mit mindestens {"entropy": float}
+            """
+            if not snapshots:
+                return {"drift_variance": 0.0, "attractor_stable": False, "entropy_mean": 0.0}
+            entropy_vals = [float(s.get("entropy", 0.0)) for s in snapshots]
+            entropy_mean = _mean(entropy_vals) if entropy_vals else 0.0
+            drift_variance = _variance(entropy_vals) if len(entropy_vals) > 1 else 0.0
+            attractor_stable = bool(drift_variance < 0.1 and len(snapshots) >= 2)
+            return {
+                "drift_variance": round(float(drift_variance), 6),
+                "attractor_stable": bool(attractor_stable),
+                "entropy_mean": round(float(entropy_mean), 6),
+                "invariants": ["deterministic", "observer_relative", "local_only"],
+            }
+        def pixel_coordination_graph(
+            self,
+            render_fingerprint: "RenderFingerprint",
+        ) -> dict[str, any]:
+            """
+            Erzeugt einen deterministischen Koordinationsgraphen aus Pixel-Regionen.
+            Kein semantisches Labeling. Nur strukturelle Kanten zwischen Regionen.
+            Invarianten: deterministic, local, append_only.
+            """
+            regions = list(render_fingerprint.pixel_regions or [])
+            if not regions:
+                return {
+                    "node_count": 0,
+                    "edge_count": 0,
+                    "density": 0.0,
+                    "coordination_score": 0.0,
+                    "invariants": ["empty_render_field"],
+                }
+
+            node_count = int(len(regions))
+            entropy_vals = [float(r.get("entropy", 0.0) or 0.0) for r in regions]
+            edges = 0
+            for i in range(len(entropy_vals)):
+                for j in range(i + 1, len(entropy_vals)):
+                    if abs(entropy_vals[i] - entropy_vals[j]) <= 0.5:
+                        edges += 1
+
+            max_possible_edges = max(1, node_count * (node_count - 1) // 2)
+            density = round(edges / max_possible_edges, 6)
+
+            entropy_mean = _mean(entropy_vals) if entropy_vals else 0.0
+            entropy_std = _variance(entropy_vals) ** 0.5 if len(entropy_vals) > 1 else 0.0
+            homogeneity = max(0.0, 1.0 - (entropy_std / max(0.001, entropy_mean)))
+            coordination_score = round(density * homogeneity, 6)
+
+            return {
+                "node_count": int(node_count),
+                "edge_count": int(edges),
+                "density": float(density),
+                "coordination_score": float(coordination_score),
+                "entropy_mean": round(float(entropy_mean), 6),
+                "entropy_homogeneity": round(float(homogeneity), 6),
+                "invariants": [
+                    "deterministic_pixel_graph",
+                    "local_only",
+                    "no_semantic_labels",
+                    "entropy_edges_only",
+                ],
+            }
     def __init__(self, governance_context: GovernanceContext):
         self.ctx = governance_context
 
