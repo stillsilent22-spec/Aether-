@@ -20,20 +20,6 @@ Aether ist der Versuch diese Grenze messbar zu machen.
 
 ---
 
-Descartes sagte: *„Ich denke, also bin ich."*
-Denken kommt zuerst. Bedeutung kommt zuerst.
-
-Aether sagt das Gegenteil:
-
-> **Ich bin, also denke ich.**
-
-Zustand geht dem Begriff voraus.
-Struktur geht der Semantik voraus.
-Sein geht dem Denken voraus.
-
-Das ist keine philosophische Spitzfindigkeit. Das ist eine andere Wissenschaft.
-
----
 
 ## Was Aether ist
 

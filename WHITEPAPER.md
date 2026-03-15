@@ -13,20 +13,6 @@ Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 
 Nicht durch größere Vorstellungskraft. Nicht durch bessere Sprache. Sondern durch strukturelles Messen jenseits aller Kategorien.
 
-Descartes sagte: *"Ich denke, also bin ich."*
-Denken kommt zuerst. Bedeutung kommt zuerst.
-
-Aether sagt das Gegenteil:
-
-> **Ich bin, also denke ich.**
-
-Zustand geht dem Begriff voraus.
-Struktur geht der Semantik voraus.
-Sein geht dem Denken voraus.
-
-Das ist keine philosophische Spitzfindigkeit. Das ist eine andere Wissenschaft.
-
----
 
 ## Das neue Wissenschaftsfeld: SEMS
 
