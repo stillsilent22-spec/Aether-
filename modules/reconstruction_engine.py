@@ -983,6 +983,23 @@ class Attractor:
 
 
 @dataclass
+class RenderFingerprint:
+    """Render-Aktivität pro Prozess (ETW/DXGI strukturell)."""
+    process_id: int
+    frame_resolution: tuple[int, int]
+    pixel_regions: list[dict[str, Any]]
+    gpu_time: float
+    present_intervals: list[float]
+    swapchain_pattern: str
+    entropy_profile: list[float]
+    symmetry_profile: dict[str, float]
+    resonance_profile: dict[str, float]
+    delta_profile: dict[str, float]
+    graph_signature: dict[str, Any]
+    invariants: list[str]
+
+
+@dataclass
 class AttractorGraph:
     """Gerichteter Graph aus Attraktoren und deterministischen Drift-Transitionen."""
 
@@ -1140,7 +1157,7 @@ class FileAdapter(BaseModalityAdapter):
 
 
 class UniversalAdapter(BaseModalityAdapter):
-    """Universal modalitaetsunabhaengiger Adapter fuer alle Domänen (image/music/audio/video/text/binary/process/stream)."""
+    """Universal modalitaetsunabhaengiger Adapter fuer alle Domänen (image/music/audio/video/text/binary/process/stream/render)."""
 
     modality_name = "universal"
 
@@ -1155,13 +1172,17 @@ class UniversalAdapter(BaseModalityAdapter):
             'binary': self._binary_extractor,
             'process': self._process_extractor,
             'stream': self._stream_extractor,
+            'render': self._render_extractor,
         }
 
     def detect_domain(self, payload: bytes) -> str:
-        """Detects domain deterministically via magic bytes (first 8-16 bytes)."""
+        """Detects domain deterministically via magic bytes (first 8-16 bytes), render fallback for ETW/DXGI data."""
         if len(payload) < 4:
             return 'binary'
         magic = payload[:8].hex().upper()
+        # Render ETW/DXGI dummy signature
+        if b'ETW' in payload[:16] or b'DXGI' in payload[:16]:
+            return 'render'
         # Image
         if magic.startswith('FFD8FF'): return 'image'  # JPEG
         if magic.startswith('89504E47'): return 'image'  # PNG
@@ -1242,6 +1263,15 @@ class UniversalAdapter(BaseModalityAdapter):
         features.invariants.append('stream_structure')
         return features
 
+    def _render_extractor(self, payload: bytes) -> ModalityFeatures:
+        # ETW/DXGI render events as pixel/graph heavy
+        features = self.extract(payload)
+        # Dummy pixel regions count
+        features.graph_signature['pixel_regions'] = payload.count(b'frame') + payload.count(b'present')
+        features.resonance_profile['gpu_resonance'] = _mean([float(b) for b in payload if b > 0]) / 255.0
+        features.invariants.append('render_structure')
+        return features
+
     def extract(self, payload: bytes) -> ModalityFeatures:
         domain = self.detect_domain(payload)
         extractor = self.domain_extractors.get(domain, self._binary_extractor)
@@ -1260,6 +1290,7 @@ self.modality_adapters: dict[str, BaseModalityAdapter] = {
             "audio": AudioAdapter(),
             "file": FileAdapter(),
             "universal": UniversalAdapter(),
+            "render": UniversalAdapter(),  # Reuse for ETW/DXGI data
         }
 
     def governance_from_session(self, session: SessionContext | None = None) -> GovernanceContext:
