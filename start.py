@@ -448,3 +448,13 @@ if __name__ == "__main__":
                 pixel_bytes = f.read()
             features = rc.capture_pixel_data(pixel_bytes)
             print(f"Render Features: {features}")
+        if cmd == ":optimize" and len(sys.argv) > 2:
+            from modules.optimize_engine import OptimizeEngine
+            import json
+            with open(sys.argv[2], "r") as f:
+                snapshot = json.load(f)
+            oe = OptimizeEngine()
+            optimized = oe.prune_redundancy(snapshot)
+            rec = oe.generate_recommendation(optimized)
+            print(f"Optimized: {optimized}")
+            print(f"Recommendation: {rec}")

@@ -18,6 +18,7 @@ import networkx as nx
 from cryptography.fernet import Fernet
 import numpy as np
 from modules.render_coordinator import RenderCoordinator
+from modules.optimize_engine import OptimizeEngine
 
 class GovernanceContext:
     def __init__(self, key=None):

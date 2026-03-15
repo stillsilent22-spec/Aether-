@@ -357,7 +357,7 @@ Kurzübersicht:
 | 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
 | 3 | Process: Windows Prozessdynamik | ✓ Fertig |
 | 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
-| 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | Geplant |
+| 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | ✓ Fertig |
 | 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
 
 ---
@@ -384,4 +384,37 @@ Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 
 ## Usage Examples
 
-- Render process (Phase 4): `python start.py :render <pixel_bytes_file>`
+- Optimize snapshot: `python start.py :optimize <snapshot_file>`
+
+## Roadmap
+
+| Phase | Inhalt | Status |
+|-------|--------|--------|
+| 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
+| 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
+| 3 | Process: Windows Prozessdynamik | ✓ Fertig |
+| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
+| 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | ✓ Fertig |
+| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
+
+---
+
+## Dokumentation
+
+- **[WHITEPAPER.md](WHITEPAPER.md)** — vollständige technische und philosophische Basis
+- **[SECURITY.md](SECURITY.md)** — Sicherheitsarchitektur und Governance
+- **[LICENSE](LICENSE)** — Lizenzstatus
+
+---
+
+*Aether — open, local, strukturell.*
+*Für Fragen die es noch nicht gibt.*
+*Für Rechner die noch nicht aufgegeben haben.*
+*Für Menschen die nachvollziehen wollen statt vertrauen müssen.*
+*Für Wissen das niemandem gehört — und deshalb allen.*
+*Für einen Schwarm der sich selbst gehört.*
+
+---
+
+Stand: 2026 — Autor: Kevin Hannemann
+Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
