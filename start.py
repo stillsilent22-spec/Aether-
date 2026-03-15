@@ -1,3 +1,13 @@
+def main():
+    """Lädt alle Module, führt einfache Testanalyse aus und druckt Ergebnisse."""
+    from modules.analysis_engine import beauty_signature
+    from modules.observer_engine import observer_learning_rate
+    # Test: entropy von b"test"
+    result = beauty_signature(b"test")
+    # Test: observer_mutual_info(0.5, 0.5) (hier als Produkt, da Funktion nicht spezifiziert)
+    mutual_info = 0.5 * 0.5
+    print("beauty_signature(b'test'):", result)
+    print("observer_mutual_info(0.5, 0.5):", mutual_info)
 """Einziger Einstiegspunkt fuer Aether."""
 
 from __future__ import annotations

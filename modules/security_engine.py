@@ -1,3 +1,15 @@
+def validate_input(text: str) -> bool:
+    """Verbotene Muster: ["../", "<script>", "DROP TABLE"]"""
+    forbidden = ["../", "<script>", "DROP TABLE"]
+    for pattern in forbidden:
+        if pattern in text:
+            return False
+    return True
+
+def secure_hash(text: str) -> str:
+    """SHA256(text.encode()).hexdigest()"""
+    import hashlib
+    return hashlib.sha256(text.encode()).hexdigest()
 """Lokales Sicherheitsmodell mit Nutzerlogin und Live-Session-Keys."""
 
 from __future__ import annotations

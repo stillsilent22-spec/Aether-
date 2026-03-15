@@ -1,3 +1,14 @@
+def ethics_score(text: str) -> float:
+    """Minimaler deterministischer Score: 1 - (matches / words), clamp [0,1]"""
+    if not text:
+        return 1.0
+    words = text.split()
+    n_words = len(words)
+    if n_words == 0:
+        return 1.0
+    matches = sum(1 for w in words if w.lower() in {"harm", "violence", "abuse"})
+    score = 1.0 - (matches / n_words)
+    return max(0.0, min(1.0, score))
 """Ethik-Engine zur strukturellen Integritaetsmessung ueber Entropiephysik."""
 
 from __future__ import annotations

@@ -1,3 +1,13 @@
+def reconstruct_state(deltas: list[bytes]) -> bytes:
+    """XOR alle Deltas nacheinander in leeres bytes-Objekt, gibt Ergebnis zurück."""
+    if not deltas:
+        return b""
+    maxlen = max(len(d) for d in deltas)
+    result = bytearray(maxlen)
+    for d in deltas:
+        for i in range(len(d)):
+            result[i] ^= d[i]
+    return bytes(result)
 """Verlustfreie Rekonstruktion aus Delta-Logs."""
 
 from __future__ import annotations
@@ -14,6 +24,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from .session_engine import SessionContext
+from .process_engine import capture_process_state, process_to_feature_vector
 
 try:
     import numpy as np
@@ -1291,7 +1302,9 @@ self.modality_adapters: dict[str, BaseModalityAdapter] = {
             "file": FileAdapter(),
             "universal": UniversalAdapter(),
             "render": UniversalAdapter(),  # Reuse for ETW/DXGI data
+            "process": FileAdapter(),  # Process vectors as bytes
         }
+        self.process_engine = ProcessEngine()
 
     def governance_from_session(self, session: SessionContext | None = None) -> GovernanceContext:
         """Erzeugt einen lokalen Governance-Kontext aus einer Session oder Defaultwerten."""
@@ -1400,21 +1413,33 @@ def domain_delta(
             "invariants": ["deterministic_cross_domain_delta", "local_metrics_only", "modal_independent"],
         }
 
+    def capture_process_snapshots(self) -> dict[str, bytes]:
+        \"\"\"Capture process states as 'process' data bytes.\"\"\"
+        snapshots = capture_process_state()
+        data = {}
+        for snap in snapshots:
+            vec = process_to_feature_vector(snap)
+            data[f'process_{snap.pid}'] = vec
+        return data
+
     def create_snapshot(
         self,
-        data: dict[str, bytes],
+        data: dict[str, bytes] = None,
+        include_processes: bool = True,
         governance: GovernanceContext | None = None,
         observer: dict[str, Any] | None = None,
         timestamp: str | None = None,
     ) -> ReconstructionSnapshot:
-        """Erzeugt einen auditierbaren Snapshot inklusive Rekonstruktionslage."""
-        normalized_data = {str(key): bytes(value or b"") for key, value in dict(data or {}).items()}
+        \"\"\"Erzeugt Snapshot, optional mit process states.\"\"\"
+        normalized_data = dict(data or {})
+        if include_processes:
+            normalized_data.update(self.capture_process_snapshots())
         governance_context = governance or self.governance_from_session(None)
-        modality_features = {
-            modality: self.modality_adapters[modality].extract(normalized_data.get(modality, b""))
-            for modality in self.modality_adapters
-            if modality in normalized_data
-        }
+        modality_features = {}
+        for modality, adapter in self.modality_adapters.items():
+            payload = normalized_data.get(modality)
+            if payload:
+                modality_features[modality] = adapter.extract(payload)
         feature_space = self.project_to_feature_space(list(modality_features.values()))
         ts = str(timestamp or _utc_now_iso())
         data_hashes = {key: hashlib.sha256(value).hexdigest() for key, value in normalized_data.items()}

@@ -1,3 +1,15 @@
+_module_registry = {}
+
+def register_module(name, module):
+    """Speichert Modulreferenz in dict, überschreibt nicht ohne Warnung."""
+    global _module_registry
+    if name in _module_registry:
+        print(f"Warnung: Modul '{name}' wird überschrieben.")
+    _module_registry[name] = module
+
+def get_module(name):
+    """Gibt Modul aus dict oder None zurück."""
+    return _module_registry.get(name, None)
 """Persistente SQLite-Registry fuer Aether."""
 
 from __future__ import annotations

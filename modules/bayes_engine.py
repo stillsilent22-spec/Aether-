@@ -1,3 +1,13 @@
+def update_posterior(prior: float, likelihood: float, evidence: float) -> float:
+    """Bayes-Update: posterior = (likelihood * prior) / evidence, clamp [1e-9, 1-1e-9]"""
+    if evidence == 0:
+        return max(1e-9, min(1 - 1e-9, prior))
+    posterior = (likelihood * prior) / evidence
+    return max(1e-9, min(1 - 1e-9, posterior))
+
+def compute_evidence(prior: float, likelihood: float) -> float:
+    """Berechnet evidence = likelihood * prior + (1 - likelihood) * (1 - prior)"""
+    return (likelihood * prior) + ((1 - likelihood) * (1 - prior))
 """Bayesianische Vertrauensschicht fuer AETHER-Metriken."""
 
 from __future__ import annotations

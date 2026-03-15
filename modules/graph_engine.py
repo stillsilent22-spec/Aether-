@@ -1,3 +1,17 @@
+import statistics
+def compute_stability(adjacency_matrix):
+    """Berechnet Stabilität: 1 / (1 + Varianz der Knotengrade)"""
+    if not adjacency_matrix:
+        return 1.0
+    degrees = [sum(row) for row in adjacency_matrix]
+    var = statistics.variance(degrees) if len(degrees) > 1 else 0.0
+    return 1.0 / (1.0 + var)
+
+def find_attractors(adjacency_matrix):
+    """Finde Knoten mit Self-Loop (i==j). Gibt Liste der Indizes zurück."""
+    if not adjacency_matrix:
+        return []
+    return [i for i, row in enumerate(adjacency_matrix) if i < len(row) and row[i]]
 """Additive Graph-Feldanalyse fuer lokale AETHER-Attraktoren."""
 
 from __future__ import annotations

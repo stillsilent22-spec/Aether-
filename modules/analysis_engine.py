@@ -1,3 +1,23 @@
+import zlib
+import math
+import statistics
+def beauty_signature(data: bytes) -> dict:
+    """Berechnet strukturierte Metrik: Varianz, Entropie, Kompressionsrate."""
+    if not data:
+        return {"entropy": 0.0, "variance": 0.0, "compression": 1.0}
+    hist = [0] * 256
+    for b in data:
+        hist[b] += 1
+    total = float(len(data))
+    norm = [h / total for h in hist]
+    # Varianz
+    variance = statistics.variance(norm) if len(norm) > 1 else 0.0
+    # Entropie
+    entropy = -sum(p * math.log2(p) for p in norm if p > 0)
+    # Kompressionsrate
+    compressed = zlib.compress(data)
+    compression = len(compressed) / len(data) if len(data) > 0 else 1.0
+    return {"entropy": float(entropy), "variance": float(variance), "compression": float(compression)}
 """Dateianalyse fuer Aether."""
 
 from __future__ import annotations
@@ -1556,54 +1576,22 @@ class AnalysisEngine:
         slope, _ = np.polyfit(np.log(ranks), np.log(frequencies), 1)
         return float(max(0.0, min(3.0, -float(slope))))
 
-    def _beauty_signature(
-        self,
-        raw: bytes,
-        entropy_blocks: list[float],
-        distribution: dict[int, int],
-        delta: bytes,
-        delta_ratio: float,
-        symmetry_score: float,
-        low_power: bool = False,
-    ) -> dict[str, float]:
-        """Berechnet eine additive 7D-Schoenheitssignatur fuer Diagnose und Visualisierung."""
-        alpha_1f = self._power_law_alpha(raw)
-        lyapunov = self._lyapunov_proxy(entropy_blocks)
-        fractal_source = list(entropy_blocks)
-        if low_power and len(fractal_source) > 32:
-            step = max(2, int(math.ceil(len(fractal_source) / 32.0)))
-            fractal_source = fractal_source[::step]
-        mandelbrot_d = self._katz_fractal_dimension(fractal_source)
-        kolmogorov_k = self._compressibility_proxy(raw)
-        benford_b = self._benford_similarity(delta)
-        zipf_z = self._zipf_alpha(distribution)
-        symmetry_phi = float(max(0.0, min(1.0, symmetry_score / 100.0)))
-
-        alpha_score = max(0.0, 1.0 - (abs(alpha_1f - 1.0) / 1.5))
-        lyapunov_score = max(0.0, 1.0 - (lyapunov / 2.0))
-        mandelbrot_score = max(0.0, 1.0 - (abs(mandelbrot_d - 1.5) / 0.8))
-        zipf_score = max(0.0, 1.0 - (abs(zipf_z - 1.0) / 1.2))
-        delta_stability = max(0.0, min(1.0, 1.0 - delta_ratio))
-        beauty_score = 100.0 * (
-            (0.15 * alpha_score)
-            + (0.10 * lyapunov_score)
-            + (0.18 * mandelbrot_score)
-            + (0.17 * kolmogorov_k)
-            + (0.12 * benford_b)
-            + (0.13 * zipf_score)
-            + (0.15 * symmetry_phi)
-        )
+def beauty_signature(self, raw: bytes) -> dict[str, float]:
+        \"\"\"Deterministische Schoenheitsmetrik aus Byte-Histogramm.\"\"\"
+        if not raw:
+            return {\"entropy\": 0.0, \"variance\": 0.0, \"compression\": 1.0}
+        hist, _ = np.histogram(np.frombuffer(raw, dtype=np.uint8), bins=256, range=(0, 256), density=True)
+        hist = hist[hist > 0]
+        if len(hist) == 0:
+            return {\"entropy\": 0.0, \"variance\": 0.0, \"compression\": 1.0}
+        entropy = float(-np.sum(hist * np.log2(hist + 1e-12)))
+        variance = float(np.var(hist))
+        compressed_len = len(zlib.compress(raw, level=9))
+        compression = float(compressed_len / max(1, len(raw)))
         return {
-            "alpha_1f": float(alpha_1f),
-            "lyapunov": float(lyapunov),
-            "mandelbrot_d": float(mandelbrot_d),
-            "kolmogorov_k": float(kolmogorov_k),
-            "benford_b": float(benford_b),
-            "zipf_z": float(zipf_z),
-            "symmetry_phi": float(symmetry_phi),
-            "delta_stability": float(delta_stability),
-            "beauty_score": float(max(0.0, min(100.0, beauty_score))),
-            "low_power_mode": float(1.0 if low_power else 0.0),
+            \"entropy\": round(float(entropy), 6),
+            \"variance\": round(float(variance), 6),
+            \"compression\": round(float(compression), 6)
         }
 
     def _observer_knowledge_state(

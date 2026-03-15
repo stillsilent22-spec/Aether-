@@ -1,3 +1,10 @@
+def observer_learning_rate(t: int) -> float:
+    """Deterministische Lernratenfunktion: lr = 1 / (1 + t)"""
+    return 1.0 / (1 + int(t))
+
+def observer_time_decay(value: float, t: int, half_life: int) -> float:
+    """Exponentieller Zerfall: value * (0.5 ** (t / half_life))"""
+    return float(value) * (0.5 ** (float(t) / float(half_life)))
 """Beobachter-Pipeline fuer Kameraanker, Metriken und Delta-Logs."""
 
 from __future__ import annotations

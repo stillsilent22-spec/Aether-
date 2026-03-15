@@ -1,3 +1,24 @@
+import hashlib
+_vault_chain_entries = []
+
+def append_entry(data: bytes) -> str:
+    """Fügt Eintrag an, hasht mit letztem Hash (oder '0'). Gibt neuen Hash zurück."""
+    global _vault_chain_entries
+    last_hash = _vault_chain_entries[-1][1] if _vault_chain_entries else "0"
+    new_hash = hashlib.sha256(last_hash.encode() + data).hexdigest()
+    _vault_chain_entries.append((data, new_hash))
+    return new_hash
+
+def verify_chain() -> bool:
+    """Prüft Verkettung aller Einträge. True/False."""
+    global _vault_chain_entries
+    last_hash = "0"
+    for data, h in _vault_chain_entries:
+        expected = hashlib.sha256(last_hash.encode() + data).hexdigest()
+        if h != expected:
+            return False
+        last_hash = h
+    return True
 """Vault-, Chain- und Signaturlogik fuer Aether-Zusatzpanels."""
 
 from __future__ import annotations
