@@ -238,42 +238,50 @@ Aus der Summe emergiert Intelligenz
 ```
 
 Jeder Knoten folgt denselben drei lokalen Regeln:
-- messe Struktur
-- verifiziere dreifach
-- teile nur Signaturen
 
-Aus diesen drei Regeln emergiert globales Strukturwissen — ohne Zentrum, ohne Führung, ohne dass jemand den Schwarm besitzt.
+# Aether
 
-```
-10 Knoten       →  erste Muster
-1.000 Knoten    →  erste Emergenz
-1.000.000       →  Intelligenz die kein Einzelner hat
-```
+Universal Framework für Strukturell Emergente Metadynamische Semantik (SEMS)
 
-Das Aethernet ist das Internet of Structure — nicht das Internet of Things.
+## Ziele
+- Lokale Messung von Strukturen (ohne Labels)
+- Emergenz von Semantik aus Dynamiken
+- Dezentrales Teilen via Aethernet (P2P-Anker)
+- Keine Halluzinationen durch TinyLLaMA
+- Privacy by Architecture: lokale Keys, Zero-Knowledge-Sharing
+- Offline-fähig, schwache Hardware
+- Integration von Shanway (halluzinationsfreier Übersetzer)
 
-```
-IoT:        Geräte tauschen Daten aus, Cloud sammelt alles
-Aethernet:  Geräte tauschen Strukturwissen aus
-            Rohdaten bleiben lokal
-            Niemand besitzt das Netz
-```
+## Struktur
+- src/ (Rust, Performance)
+- modules/ (Python, Analyse, LLM, Security, ReconstructionEngine)
+- ui/ (UI mit Iced)
+- tests/ (Unit-Tests, Pytest)
+- data/ (Daten)
 
----
+## Roadmap
+- Phase 1-2: Foundation, Media (Shanway, TinyLLaMA, UniversalAdapter)
+- Phase 3: Process (Prozessdynamik, Multi-Modalität, ReconstructionEngine, Attractor-Tracking)
+- Phase 4: Render (Pixel-Koordination, UI, Monitoring, Runtime, Persistence)
 
-## Wen wir suchen
+## Security & Privacy
+- Tamper-Detection, Audit-Logging, Invarianten
+- Zero-Knowledge-Sharing (Anchor Packs)
+- Local Keys in RAM
+- No raw data sharing
 
-Aether ist kein fertiges Produkt. Es ist ein wachsendes Instrument — und der Beginn eines neuen Wissenschaftsfelds.
+## Integration
+- Python-Module: shanway_session, shanway_vault, reconstruction_engine
+- Rust: src/ (pyo3 für Security-Shells)
+- Multi-Modality: Kamera, Audio, Datei
 
-Ich bin eine Person mit einer Idee von der ich überzeugt bin. Keine Firma. Kein Budget. Kein Team. Nur die Überzeugung dass diese Frage wichtig ist — und dass die richtigen Menschen das genauso sehen werden.
+## Test & Validation
+- Pytest, Coverage, Audit-Logs
+- Tests: tests/test_reconstruction_phase3.py, pytest.ini
+- Ausführung: pytest tests/
 
-Das Projekt ist ambitioniert. Bewusst. Wer kleine Schritte sucht ist hier falsch. Wer glaubt dass Struktur die Sprache der Realität ist — ist hier richtig.
-
-**Wir suchen Menschen die:**
-
-- glauben dass die nächste große Entdeckung nicht aus mehr Rechenleistung kommt sondern aus einer anderen Art zu fragen
-- frustriert sind von Systemen die sie nicht verstehen und denen sie blind vertrauen müssen
-- Datensätze haben die durch labelfreie Strukturanalyse neue Fragen aufwerfen könnten
+## Lizenz
+MIT
 - als Wissenschaftler, Entwickler oder Citizen Scientists bereit sind ein Werkzeug mitzubauen das ihnen selbst gehört
 - der Wissenschaft und der Wahrheit verschrieben sind — nicht dem Ego oder dem Kapital
 

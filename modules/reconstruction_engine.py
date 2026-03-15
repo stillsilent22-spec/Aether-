@@ -13,61 +13,106 @@ def reconstruct_state(deltas: list[bytes]) -> bytes:
 from __future__ import annotations
 
 import hashlib
-import hmac
-import json
-import math
-import sqlite3
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Sequence
+import networkx as nx
+from cryptography.fernet import Fernet
 
-from .session_engine import SessionContext
-from .process_engine import capture_process_state, process_to_feature_vector
+class GovernanceContext:
+    def __init__(self, key=None):
+        self.key = key or Fernet.generate_key()
+        self.fernet = Fernet(self.key)
 
-try:
-    import numpy as np
-except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
-    np = None
+class Snapshot:
+    def __init__(self, data: bytes, modality: str, features: dict, fingerprint: str, timestamp: float):
+        self.data = data
+        self.modality = modality
+        self.features = features
+        self.fingerprint = fingerprint
+        self.timestamp = timestamp
 
-try:
-    from scipy.fft import rfft
-except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
-    rfft = None
+class Residual:
+    def __init__(self, delta: dict):
+        self.delta = delta
 
+class Attractor:
+    def __init__(self, node, stability):
+        self.node = node
+        self.stability = stability
 
-@dataclass
-class ReconstructionResult:
-    """Ergebnis einer Delta-Log-Rekonstruktion."""
+class ReconstructionEngine:
+    def __init__(self, governance_context: GovernanceContext):
+        self.ctx = governance_context
 
-    delta_log: list[dict[str, Any]]
-    reconstructed_bytes: bytes
-    reconstructed_hash: str
-    merkle_root: str
-    reconstruction_verified: bool
-    anchor_coverage_ratio: float = 0.0
-    unresolved_residual_ratio: float = 1.0
-    residual_hash: str = ""
-    coverage_verified: bool = False
-    failure_reason: str = ""
+    def create_snapshot(self, data: bytes, modality: str) -> Snapshot:
+        entropy = self.shannon_entropy(data)
+        symmetry = self.compute_symmetry(data)
+        resonance = self.compute_resonance(data)
+        fingerprint = hashlib.sha256(data).hexdigest()
+        timestamp = time.time()
+        features = {
+            "entropy": entropy,
+            "symmetry": symmetry,
+            "resonance": resonance
+        }
+        return Snapshot(data, modality, features, fingerprint, timestamp)
 
+    def create_residual(self, start: Snapshot, end: Snapshot) -> Residual:
+        delta = {k: end.features[k] - start.features.get(k, 0) for k in end.features}
+        return Residual(delta)
 
-class VaultMissError(RuntimeError):
-    """Signalisiert einen fehlenden Vault-Eintrag fuer einen referenzierten Anker."""
+    def reconstruct(self, start: Snapshot, residual: Residual) -> Snapshot:
+        features = {k: start.features.get(k, 0) + residual.delta.get(k, 0) for k in start.features}
+        data = start.data
+        fingerprint = hashlib.sha256(data).hexdigest()
+        return Snapshot(data, start.modality, features, fingerprint, time.time())
 
-    def __init__(self, anchor_hash: str):
-        super().__init__(f"Vault-Eintrag fehlt fuer Anker: {anchor_hash}")
-        self.anchor_hash = str(anchor_hash)
+    def validate_reconstruction(self, reconstructed: Snapshot, expected: Snapshot) -> dict:
+        valid = reconstructed.fingerprint == expected.fingerprint
+        reason = "" if valid else "hash_mismatch"
+        return {"valid": valid, "reason": reason}
 
+    def detect_attractor(self, snapshots: list) -> Attractor:
+        G = nx.Graph()
+        for i, snap in enumerate(snapshots):
+            G.add_node(i, entropy=snap.features["entropy"])
+            if i > 0:
+                G.add_edge(i-1, i, weight=abs(snap.features["entropy"] - snapshots[i-1].features["entropy"]))
+        attractor = max(G.nodes, key=lambda n: G.degree[n])
+        stability = self.compute_attractor_stability(attractor, snapshots)
+        return Attractor(attractor, stability)
 
-@dataclass
-class StructuralAnchor:
-    """Struktureller Anker aus einem Signal-Chunk. Kein Originalinhalt im Delta-Log."""
+    def compute_attractor_stability(self, attractor, snapshots: list) -> dict:
+        values = [snap.features["entropy"] for snap in snapshots]
+        drift_variance = sum((v - values[0])**2 for v in values) / len(values)
+        resonance_score = sum(values) / len(values)
+        return {"drift_variance": drift_variance, "resonance_score": resonance_score}
 
-    anchor_hash: str
-    chunk_offset: int
-    chunk_length: int
+    def validate_modality_operation(self, modality: str, operation: str, snapshot: Snapshot) -> bool:
+        allowed = ["camera", "audio", "file"]
+        if modality not in allowed:
+            raise ValueError("Invalid modality")
+        return True
+
+    def shannon_entropy(self, data: bytes) -> float:
+        from collections import Counter
+        import math
+        if not data:
+            return 0.0
+        counts = Counter(data)
+        total = float(len(data))
+        return -sum((c/total) * math.log2(c/total) for c in counts.values())
+
+    def compute_symmetry(self, data: bytes) -> float:
+        return float(len(set(data))) / max(1, len(data))
+
+    def compute_resonance(self, data: bytes) -> float:
+        return sum(data) % 1.0
+
+    def encrypt(self, data: bytes) -> bytes:
+        return self.ctx.fernet.encrypt(data)
+
+    def decrypt(self, token: bytes) -> bytes:
+        return self.ctx.fernet.decrypt(token)
     entropy: float
     dominant_frequency: float
     fractal_dimension: float

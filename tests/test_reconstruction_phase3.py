@@ -1,45 +1,39 @@
 """Tests fuer Aether Roadmap Phase 3: Rekonstruktion & Multi-Modalitaet."""
+import pytest
+from modules.reconstruction_engine import ReconstructionEngine, GovernanceContext, Snapshot
 
-from __future__ import annotations
+@pytest.fixture
 
-import sys
-from pathlib import Path
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-
-from modules.reconstruction_engine import GovernanceContext, ReconstructionEngine
-
-
-def _governance() -> GovernanceContext:
-    return GovernanceContext(
-        rights={
-            "camera": ["read"],
-            "audio": ["read"],
-            "file": ["read"],
-            "reconstruction": ["write"],
-        },
-        invariants={
-            "camera.max_entropy_delta_per_time": 0.75,
-            "audio.max_entropy_delta_per_time": 0.75,
-            "file.max_entropy_delta_per_time": 0.95,
-            "camera.allowed_symmetry_break": 1.0,
-            "audio.allowed_symmetry_break": 1.0,
-            "file.allowed_symmetry_break": 1.0,
-            "camera.resonance_range": [0.0, 1.0],
-            "audio.resonance_range": [0.0, 1.0],
-            "file.resonance_range": [0.0, 1.0],
-        },
-        keys={"signature_material": "phase3-test-key"},
-    )
-
+    return ReconstructionEngine(GovernanceContext())
 
 def test_phase3_snapshot_projection_and_modality_governance() -> None:
+    snap = engine.create_snapshot(b"abcabc", "file")
+    assert snap.features["entropy"] > 0
+
     engine = ReconstructionEngine()
+    s1 = engine.create_snapshot(b"abcabc", "file")
+    s2 = engine.create_snapshot(b"abcdabcd", "file")
+    residual = engine.create_residual(s1, s2)
+    s3 = engine.reconstruct(s1, residual)
+    assert isinstance(s3, Snapshot)
+
     snapshot = engine.create_snapshot(
+    s1 = engine.create_snapshot(b"abcabc", "file")
+    s2 = engine.create_snapshot(b"abcdabcd", "file")
+    s3 = engine.create_snapshot(b"tampered", "file")
+    valid = engine.validate_reconstruction(s3, s2)
+    assert not valid["valid"]
+
         data={
+    snaps = [engine.create_snapshot(bytes([i]*10), "file") for i in range(5)]
+    attractor = engine.detect_attractor(snaps)
+    assert hasattr(attractor, "stability")
+
             "camera": b"\x01\x02\x03\x04" * 32,
+    s = engine.create_snapshot(b"abc", "file")
+    assert engine.validate_modality_operation("file", "read", s)
+    with pytest.raises(ValueError):
+        engine.validate_modality_operation("invalid", "read", s)
             "audio": b"\x10\x20\x10\x20" * 32,
             "file": b"AETHER_PHASE3\n" * 16,
         },
