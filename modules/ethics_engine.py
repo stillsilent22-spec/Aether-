@@ -1,224 +1,111 @@
-"""Ethik-Engine zur strukturellen Integritaetsmessung ueber Entropiephysik."""
+import re as _re
+import math as _math
+from collections import Counter as _Counter
+try:
+    import numpy as _np
+    _NP_OK = True
+except Exception:
+    _NP_OK = False
 
-from __future__ import annotations
+_STOP = {"der","die","das","und","in","ist","ein","eine","mit","auf","den",
+         "dem","des","von","zu","im","an","für","nicht","als","the","a","an",
+         "and","or","in","is","it","of","to","for","that","this","with","are",
+         "was","be","at","by","from","on"}
+_NEG = {"nicht","kein","keine","keinen","nie","niemals","never","no","not","without","ohne"}
+_ABS = {"immer","alle","alles","jeden","jeder","einzig","ausschließlich","always",
+        "never","nobody","everyone","everything","only","solely","100%","absolutely"}
 
-import math
-from dataclasses import dataclass
-from typing import Sequence
+def _zipf(words):
+    if not _NP_OK or len(words)<10: return 0.7
+    try:
+        ranked=[f for _,f in _Counter(words).most_common(min(50,len(_Counter(words))))]
+        if len(ranked)<5: return 0.7
+        c=_np.polyfit(_np.log(range(1,len(ranked)+1)),_np.log([max(1,f) for f in ranked]),1)
+        return float(max(0.0,1.0-abs(abs(c[0])-1.0)/0.8))
+    except: return 0.7
 
-import numpy as np
+def _benford(text):
+    try:
+        nums=_re.findall(r'\b[1-9][0-9]*\b',text)
+        if len(nums)<20: return 0.5
+        c=_Counter(int(n[0]) for n in nums)
+        t=sum(c.values())
+        chi2=sum(((c.get(d,0)/t-_math.log10(1+1/d))**2)/_math.log10(1+1/d) for d in range(1,10))
+        return float(max(0.0,1.0-chi2/15.0))
+    except: return 0.5
 
+def _fraktal(sents):
+    try:
+        import statistics
+        L=[len(s.split()) for s in sents if s.strip()]
+        if len(L)<3: return 0.6
+        std=statistics.stdev(L)
+        if 5<=std<=20: return 1.0
+        if std<3: return std/3*0.5
+        if std>40: return max(0.0,1.0-(std-40)/40)*0.5
+        if std<5: return (std-3)/2*0.5+0.5
+        return max(0.0,1.0-(std-20)/20)*0.5+0.5
+    except: return 0.6
 
-@dataclass
-class EthicsAssessment:
-    """Kapselt das Ergebnis der strukturellen Integritaetsanalyse."""
+def _noether(words):
+    try:
+        f=[w for w in words if w not in _STOP and len(w)>2]
+        if len(f)<20: return 0.6
+        t=len(f)//3
+        a=_Counter(f[:t]); b=_Counter(f[-t:])
+        all_w=set(list(a.keys())[:20])|set(list(b.keys())[:20])
+        if not all_w: return 0.6
+        if _NP_OK:
+            va=_np.array([a.get(w,0) for w in all_w],dtype=float)
+            vb=_np.array([b.get(w,0) for w in all_w],dtype=float)
+            na,nb=float(_np.linalg.norm(va)),float(_np.linalg.norm(vb))
+            sim=float(_np.dot(va,vb)/(na*nb)) if na>0 and nb>0 else 0.5
+        else:
+            ka=set(list(a.keys())[:20]); kb=set(list(b.keys())[:20])
+            sim=len(ka&kb)/len(ka|kb) if ka|kb else 0.5
+        return float(min(1.0,sim*2.0))
+    except: return 0.6
 
-    symmetry_component: float
-    coherence_score: float
-    resonance_score: float
-    ethics_score: float
-    integrity_state: str
-    integrity_text: str
+def _interferenz(words):
+    try:
+        if not words: return 0.6
+        d=sum(1 for w in words if w in _NEG)/len(words)
+        if d<0.01: return 0.5
+        if 0.02<=d<=0.08: return 1.0
+        if d>0.15: return 0.2
+        if d<0.02: return 0.5+(d-0.01)/0.01*0.5
+        return max(0.2,1.0-(d-0.08)/0.07*0.8)
+    except: return 0.6
 
-    def to_dict(self) -> dict[str, float | str]:
-        """Serialisiert die Ethikbewertung als Dictionary."""
-        return {
-            "symmetry_component": float(self.symmetry_component),
-            "coherence_score": float(self.coherence_score),
-            "resonance_score": float(self.resonance_score),
-            "ethics_score": float(self.ethics_score),
-            "integrity_state": self.integrity_state,
-            "integrity_text": self.integrity_text,
-        }
+def _heisenberg(sents,words):
+    try:
+        if not sents: return 0.6
+        d=sum(1 for w in words if w in _ABS)/max(1,len(sents))
+        if 0.1<=d<=0.8: return 1.0
+        if d>1.5: return max(0.0,1.0-(d-0.8)/2.2)
+        if d<0.1: return 0.8
+        return max(0.0,1.0-(d-0.8)/0.7*0.4)
+    except: return 0.6
 
+def structural_text_integrity(text: str, entropy_mean=None) -> dict:
+    """Misst strukturelle Integrität — kein Label, kein Keyword-Filter. Nur Struktur."""
+    if not text or not text.strip():
+        return {"score":1.0,"zipf":1.0,"benford":0.5,"fraktal":1.0,"noether":1.0,"interferenz":1.0,"heisenberg":1.0}
+    words=[w.lower().strip(".,!?;:\"'()[]{}") for w in text.split() if w.strip()]
+    sents=[s.strip() for s in _re.split(r'[.!?]+',text) if s.strip()]
+    z=_zipf(words); b=_benford(text); f=_fraktal(sents)
+    n=_noether(words); i=_interferenz(words); h=_heisenberg(sents,words)
+    if b==0.5:
+        total=z*0.30+f*0.25+n*0.25+i*0.12+h*0.08
+    else:
+        total=z*0.25+b*0.15+f*0.20+n*0.20+i*0.10+h*0.10
+    if entropy_mean is not None:
+        if float(entropy_mean)<3.5: total*=0.85
+        elif float(entropy_mean)>7.0: total*=0.90
+    return {"score":float(max(0.0,min(1.0,total))),"zipf":float(z),"benford":float(b),
+            "fraktal":float(f),"noether":float(n),"interferenz":float(i),"heisenberg":float(h)}
 
-class EthicsEngine:
-    """Berechnet Integritaet aus Symmetrie, Kohaerenz und Resonanz."""
-
-    def __init__(self, w_symmetry: float = 0.4, w_coherence: float = 0.4, w_resonance: float = 0.2) -> None:
-        """
-        Initialisiert Gewichte des kombinierten Ethik-Scores.
-
-        Args:
-            w_symmetry: Gewicht fuer den Symmetrieanteil.
-            w_coherence: Gewicht fuer den Kohaerenzanteil.
-            w_resonance: Gewicht fuer den Resonanzanteil.
-        """
-        self.w_symmetry = float(w_symmetry)
-        self.w_coherence = float(w_coherence)
-        self.w_resonance = float(w_resonance)
-
-    @staticmethod
-    def _clamp_score(value: float) -> float:
-        """Begrenzt einen Score robust auf den Bereich 0 bis 100."""
-        return float(max(0.0, min(100.0, value)))
-
-    def compute_coherence_score(self, entropy_blocks: Sequence[float]) -> float:
-        """
-        Misst die Stabilitaet der Entropiekurve als Kohaerenz.
-
-        Eine stabile, sanfte Kurve fuehrt zu hohen Werten.
-        Spruenge und abrupte Brueche reduzieren den Score.
-        """
-        if not entropy_blocks:
-            return 100.0
-        if len(entropy_blocks) == 1:
-            return 96.0
-
-        arr = np.array(list(entropy_blocks), dtype=np.float64)
-        diffs = np.diff(arr)
-        mean_entropy = float(arr.mean())
-        std_entropy = float(arr.std())
-        mean_jump = float(np.mean(np.abs(diffs)))
-        jump_std = float(np.std(diffs))
-
-        # Normalisierung auf den Entropieraum [0, 8]
-        normalized_std = min(1.0, std_entropy / 2.6)
-        normalized_jump = min(1.0, mean_jump / 2.0)
-        normalized_jump_std = min(1.0, jump_std / 2.0)
-
-        # In unnatuerlich niedriger Entropie steckt oft starres, manipuliertes Muster.
-        low_entropy_penalty = 0.0
-        if mean_entropy < 1.0:
-            low_entropy_penalty = min(0.3, (1.0 - mean_entropy) * 0.2)
-
-        instability = (
-            0.45 * normalized_std
-            + 0.35 * normalized_jump
-            + 0.20 * normalized_jump_std
-            + low_entropy_penalty
-        )
-        coherence = 100.0 * (1.0 - min(1.0, instability))
-        return self._clamp_score(coherence)
-
-    def compute_resonance_score(
-        self,
-        entropy_mean: float,
-        symmetry_score: float,
-        periodicity: int,
-        delta_ratio: float,
-        healthy_references: Sequence[dict[str, float | int]],
-    ) -> float:
-        """
-        Misst harmonische Naehe zu gesunden Referenzstroemen in der Registry.
-
-        Args:
-            entropy_mean: Mittlere Entropie des aktuellen Stroms.
-            symmetry_score: Symmetrie des aktuellen Stroms.
-            periodicity: Dominante Periodizitaet.
-            delta_ratio: Delta-Verhaeltnis.
-            healthy_references: Historische Referenzvektoren.
-        """
-        refs = list(healthy_references)
-        if not refs:
-            return 60.0
-
-        similarities: list[float] = []
-        for ref in refs:
-            ref_entropy = float(ref.get("entropy_mean", entropy_mean))
-            ref_symmetry = float(ref.get("symmetry_score", symmetry_score))
-            ref_periodicity = int(ref.get("periodicity", 0))
-            ref_delta = float(ref.get("delta_ratio", delta_ratio))
-            ref_integrity = float(ref.get("ethics_score", 75.0))
-
-            d_entropy = min(1.0, abs(entropy_mean - ref_entropy) / 8.0)
-            d_symmetry = min(1.0, abs(symmetry_score - ref_symmetry) / 100.0)
-            d_delta = min(1.0, abs(delta_ratio - ref_delta))
-
-            if periodicity > 0 and ref_periodicity > 0:
-                ratio = max(ref_periodicity, periodicity) / max(1.0, min(ref_periodicity, periodicity))
-                harmonic_distance = min(1.0, abs(math.log2(ratio)) / 4.0)
-            elif periodicity == ref_periodicity:
-                harmonic_distance = 0.0
-            else:
-                harmonic_distance = 0.5
-
-            distance = (
-                0.35 * d_entropy
-                + 0.35 * d_symmetry
-                + 0.20 * d_delta
-                + 0.10 * harmonic_distance
-            )
-            similarity = max(0.0, 1.0 - distance)
-            integrity_weight = max(0.4, min(1.0, ref_integrity / 100.0))
-            similarities.append(similarity * integrity_weight)
-
-        if not similarities:
-            return 58.0
-        similarities.sort(reverse=True)
-        top = similarities[: min(8, len(similarities))]
-        resonance = 100.0 * float(np.mean(top))
-        return self._clamp_score(resonance)
-
-    def integrity_state(self, ethics_score: float) -> tuple[str, str]:
-        """
-        Uebersetzt den Ethik-Score in einen strukturellen Zustandstext.
-
-        Returns:
-            Tupel aus internem Zustandscode und deutscher Beschreibung.
-        """
-        score = self._clamp_score(ethics_score)
-        if score < 40.0:
-            return "STRUCTURAL_ANOMALY", "Strukturelle Anomalie erkannt"
-        if score < 70.0:
-            return "STRUCTURAL_TENSION", "Strukturelle Spannung erkannt"
-        return "STRUCTURAL_HEALTH", "Strukturell gesund"
-
-    def evaluate(
-        self,
-        symmetry_score: float,
-        entropy_blocks: Sequence[float],
-        entropy_mean: float,
-        periodicity: int,
-        delta_ratio: float,
-        healthy_references: Sequence[dict[str, float | int]],
-    ) -> EthicsAssessment:
-        """
-        Fuehrt die komplette Integritaetsbewertung fuer einen Datenstrom durch.
-
-        Args:
-            symmetry_score: Symmetrieanteil aus der Analyse-Engine.
-            entropy_blocks: Blockweise Entropiekurve.
-            entropy_mean: Durchschnittliche Entropie.
-            periodicity: Dominante Periodizitaet.
-            delta_ratio: Delta-Verhaeltnis.
-            healthy_references: Gesunde Referenzstroeme aus der Registry.
-        """
-        symmetry_component = self._clamp_score(symmetry_score)
-        coherence_score = self.compute_coherence_score(entropy_blocks)
-        resonance_score = self.compute_resonance_score(
-            entropy_mean=entropy_mean,
-            symmetry_score=symmetry_component,
-            periodicity=periodicity,
-            delta_ratio=delta_ratio,
-            healthy_references=healthy_references,
-        )
-
-        ethics_score = (
-            self.w_symmetry * symmetry_component
-            + self.w_coherence * coherence_score
-            + self.w_resonance * resonance_score
-        )
-        ethics_score = self._clamp_score(ethics_score)
-        state, text = self.integrity_state(ethics_score)
-        return EthicsAssessment(
-            symmetry_component=symmetry_component,
-            coherence_score=coherence_score,
-            resonance_score=resonance_score,
-            ethics_score=ethics_score,
-            integrity_state=state,
-            integrity_text=text,
-        )
-
-
-def ethics_score(text: str) -> float:
-    """Minimaler deterministischer Score: 1 - (matches / words), clamp [0,1]"""
-    if not text:
-        return 1.0
-    words = text.split()
-    n_words = len(words)
-    if n_words == 0:
-        return 1.0
-    matches = sum(1 for w in words if w.lower() in {"harm", "violence", "abuse"})
-    score = 1.0 - (matches / n_words)
-    return max(0.0, min(1.0, score))
+def ethics_score(text: str, entropy_mean=None) -> float:
+    """Struktureller Integritätsscore — kein Label, nur Struktur."""
+    if not text or not text.strip(): return 1.0
+    return float(structural_text_integrity(text,entropy_mean=entropy_mean).get("score",1.0))
