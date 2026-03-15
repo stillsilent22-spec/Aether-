@@ -60,47 +60,47 @@ try:
     from PIL import Image, ImageStat
 except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
     Image = None
-    ImageStat = None
+    import math
+    import zlib
+    from collections import Counter
 
-try:
-    from pydub import AudioSegment
-except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
-    AudioSegment = None
+    def entropy(data: bytes) -> float:
+        if not data:
+            return 0.0
+        counts = Counter(data)
+        total = float(len(data))
+        return -sum((c/total) * math.log2(c/total) for c in counts.values())
 
-try:
-    from fontTools.ttLib import TTFont
-except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
-    TTFont = None
+    def gini(data: bytes) -> float:
+        if not data:
+            return 0.0
+        counts = Counter(data)
+        total = float(len(data))
+        return 1.0 - sum((c/total)**2 for c in counts.values())
 
-try:
-    from moviepy import VideoFileClip
-except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
-    VideoFileClip = None
+    def delta_path(a: bytes, b: bytes) -> bytes:
+        length = min(len(a), len(b))
+        out = bytearray(length)
+        for i in range(length):
+            out[i] = a[i] ^ b[i]
+        return bytes(out)
 
-from .ae_evolution_core import normalize_anchor_entries
-from .blockchain_interface import AetherChain
-from .ethics_engine import EthicsAssessment, EthicsEngine
-from .reconstruction_engine import LosslessReconstructionEngine
-from .session_engine import SessionContext
-
-if TYPE_CHECKING:
-    from .registry import AetherRegistry
-
-
-MAGIC_SIGNATURES: tuple[tuple[bytes, str, str], ...] = (
-    (b"%PDF-", "application/pdf", "document"),
-    (b"PK\x03\x04", "application/zip", "archive"),
-    (b"PK\x05\x06", "application/zip", "archive"),
-    (b"PK\x07\x08", "application/zip", "archive"),
-    (b"Rar!\x1a\x07", "application/vnd.rar", "archive"),
-    (b"7z\xbc\xaf'\x1c", "application/x-7z-compressed", "archive"),
-    (b"\x89PNG\r\n\x1a\n", "image/png", "image"),
-    (b"\xff\xd8\xff", "image/jpeg", "image"),
-    (b"GIF87a", "image/gif", "image"),
-    (b"GIF89a", "image/gif", "image"),
-    (b"RIFF", "application/riff", "container"),
-    (b"ID3", "audio/mpeg", "audio"),
-    (b"OggS", "application/ogg", "audio"),
+    def beauty_signature(data: bytes) -> dict:
+        if not data:
+            return {"entropy": 0.0, "variance": 0.0, "compression": 1.0}
+        counts = Counter(data)
+        total = float(len(data))
+        probs = [counts.get(i, 0)/total for i in range(256)]
+        entropy_val = -sum(p * math.log2(p) for p in probs if p > 0)
+        mean = 1.0/256.0
+        variance = sum((p - mean)**2 for p in probs) / 256.0
+        compressed = zlib.compress(data)
+        compression = len(compressed) / len(data)
+        return {
+            "entropy": float(entropy_val),
+            "variance": float(variance),
+            "compression": float(compression)
+        }
     (b"fLaC", "audio/flac", "audio"),
     (b"MZ", "application/x-msdownload", "executable"),
     (b"\x7fELF", "application/x-elf", "executable"),
