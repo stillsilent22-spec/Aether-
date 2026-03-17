@@ -8,45 +8,118 @@ Status: Technical Whitepaper for Source-Available Release
 
 ---
 
-## Introduction
+## 1. Introduction
 
-This whitepaper describes the technical foundations and architecture of Aether, a framework for local, structural data analysis with integrated privacy.
+This whitepaper describes the technical foundations and architecture of Aether ??? a local framework for structural data analysis with integrated privacy.
 
-Aether is a tool for hypothesis generation through structural comparison. It finds structural similarities in arbitrary data ??? cross-domain, label-free, locally. The interpretation of these patterns and their relevance to a specific question is the user's responsibility, or must be validated in the respective domain.
+Aether is not a classifier, not an AI model, and not an interpreter. It is a measurement instrument: it computes structural characteristics of arbitrary data and makes them comparable ??? without labels, without training, without revealing sensitive content.
 
-This document is not a proof of new natural laws, not product advertising, and not a metaphysical text. It documents a concrete software system and the assumptions on which it is built.
+**Core principle:** Structural similarity is an observation, not a statement. Whether it is relevant is decided by domain experts or further investigation ??? not by the system.
 
 ---
 
-## 1. Technical Classification
+## 2. Technical Classification
 
-Aether treats files, byte streams, and system processes as local states that can be described and compared via measurable structure. The technical core consists of:
+Aether treats files, byte streams, and system processes as local states that can be described and compared by measurable structure. The technical core:
 
-- **Analysis pipeline**: measures entropy, symmetry, periodicity, fractal dimension, Fourier spectrum, attractor states, and Benford distribution
-- **Reconstruction layer**: manages snapshots, deltas, and lossless reconstruction
-- **Persistence layer**: local SQLite database with append-only audit log
+- **Analysis pipeline**: measures entropy, symmetry, periodicity, fractal dimension, Fourier spectrum, attractor states, Benford distribution
+- **Reconstruction layer**: snapshots, deltas, lossless reconstruction
+- **Persistence layer**: local SQLite database, append-only audit log
 - **Governance layer**: fail-closed access rules, consent-bound releases
 - **Shanway**: local language path ??? formulates only verified structural findings
 - **Aethernet**: optional decentralized anchor path (consent-bound, no raw data export)
 
 ---
 
-## 2. The Approach: SEMS as a Working Term
+## 3. Domain-Specific Pattern Recognition
 
-Aether's approach ??? internally referred to as **Structurally Emergent Metadynamic Semantics (SEMS)** ??? assumes that the analysis of pure structure can be a first, important step toward identifying candidate patterns in complex data at all.
+### 3.1 Methodology
 
-These patterns must then be semantically interpreted in a second step.
+Within a domain, Aether detects anomalies through deviation from the observed structural baseline ??? without thresholds, without domain-specific training, without interpreting data content.
 
-**Important:** SEMS is an approach within the Aether project, not an established, externally recognized scientific field. The term serves internal clarity, not a claim to a new discipline.
+**Measured metrics:**
 
-What the approach says:
-- Structure is measurable before meaning is known
-- Structural comparison can generate hypotheses about relationships
-- These hypotheses are starting points, not statements about causality or universal meaning
+| Metric | Formula / Method | Interpretation |
+|---|---|---|
+| Shannon entropy | `H(X) = -?? p(x) log??? p(x)` | Information density, randomness |
+| Symmetry (Gini) | Normalized distribution inequality | Inner balance of byte distribution |
+| Fractal dimension | Katz dimension | Self-similarity, complexity level |
+| Dominant frequency | FFT, strongest spectrum | Periodicity, rhythmic recurrence |
+| Benford score | Leading digit distribution vs. log??????(1+1/d) | Naturalness of number distribution |
+| Attractor state | Graph-based stabilization | Convergence, long-term stability |
+| Observer I_obs | `H(X) - H(X|M_t)` | Observer's learning gain |
+
+### 3.2 Bioinformatics
+
+Genome sequences have characteristic entropy and periodicity profiles. Aether detects:
+- Entropy outliers (possible mutation clusters, insertions)
+- Benford deviations (unexpected codon frequency distributions)
+- Periodicity patterns (regulatory sequences, repetitive elements)
+
+**Privacy:** The sequence never leaves the device. The fingerprint contains no sequence information ??? it is non-invertible.
+
+### 3.3 Climate Research
+
+Climate time series show characteristic structural patterns (seasonal periodicity, attractor stability in stable climate regimes). Aether detects:
+- Structural breaks (regime changes without annotation)
+- Abnormal frequency patterns (non-periodic event clusters)
+- Attractor drift (shift of stable states over time)
+
+**Privacy:** Station data, coordinates, metadata stay local.
+
+### 3.4 System Optimization
+
+Running processes are described with the same metrics as other data sources:
+- CPU burst clusters ??? periodicity analysis
+- Memory usage ??? baseline attractor drift
+- I/O behavior ??? delta and frequency analysis
+- Render events ??? GPU resonance, frame structure
+
+Relevant modules: `modules/process_monitor.py`, `modules/efficiency_monitor.py`, `modules/preload_optimizer.py`, `modules/optimize_engine.py`
+
+### 3.5 Software Analysis
+
+Source code and binary structures have measurable structural properties:
+- Complexity distribution (entropy density per module)
+- Anomaly detection (deviations from the codebase baseline)
+- Structural similarity between modules (without reading content)
 
 ---
 
-## 3. Formal Base Model
+## 4. Cross-Domain Comparison
+
+### 4.1 What Aether Does
+
+When structural fingerprints from different domains are compared, Aether observes clusters. It does not interpret them.
+
+**Three-stage model:**
+
+```
+Stage 1: Observation   ??? Two fingerprints are structurally similar
+Stage 2: Accumulation  ??? Multiple independent datasets show the same cluster
+Stage 3: Hypothesis    ??? Testable conjecture for domain experts
+```
+
+Aether outputs only Stage 1. Stage 2 emerges through accumulation in the local vault or Aethernet swarm. Stage 3 is the user's task.
+
+### 4.2 What Aether Never Does
+
+- Express structural similarity as causality
+- Report cross-domain patterns as findings
+- Formulate unvalidated observations as results (Shanway protection)
+- Draw inferences about the content of compared data
+
+### 4.3 When Cross-Domain Comparisons Become Relevant
+
+Only when many independent structural hints accumulate does a reliable signal emerge:
+- A genome sequence and a climate time series share the same periodicity fingerprint ??? single hint
+- 200 independent genome sequences and 300 climate time series show the same cluster ??? testable hypothesis for domain experts
+
+The system makes this distinction explicit: single hints are not formulated as findings.
+
+---
+
+## 5. Formal Base Model
 
 **Lossless reconstruction condition:**
 ```
@@ -57,83 +130,19 @@ D(S_t, R_t) = X_t
 - `R_t` = residual (remaining information)
 - `D` = deterministic decoder
 
-If reconstruction information is missing, no claim about completeness is made. The formula only guarantees exact reconstruction when all information required for `D` is fully preserved.
-
 **Observer-relative residual uncertainty:**
 ```
 H_lambda(X, t) = H(X | M_t)
 I_obs(X, t) = H(X) - H_lambda(X, t)
 ```
-- `H(X)` = classical Shannon entropy (baseline, unchanged standard)
-- `M_t` = learned model state of the observer
-- `H_lambda` = remaining residual uncertainty for this observer
 
-This formulation is a working hypothesis of the project ??? implemented and operationalized, but not to be treated as a new theorem of information theory.
+This formulation is a working hypothesis of the project, not a new theorem of information theory.
 
 ---
 
-## 4. Structural Metrics
+## 6. Privacy by Architecture
 
-Aether computes the following metrics on raw data:
-
-| Metric | Description |
-|---|---|
-| Entropy (Shannon) | Raw information density |
-| Symmetry | Normalized Gini distribution of byte values |
-| Periodicity | Dominant frequency via FFT |
-| Fractal dimension | Katz dimension of the byte sequence |
-| Benford score | Leading digit distribution vs. Benford expectation |
-| Attractor state | Graph-based stabilization point |
-| Beauty signature | Diagnostic combination of multiple metrics |
-| Observer I_obs | Observer-relative information gain |
-
-These metrics form a coupled feature space for structural diagnosis. They do not produce truth statements, but measurable structural properties as starting points for investigation.
-
----
-
-## 5. Resource and Software Optimization
-
-A specific application domain of Aether is the structural analysis of running software and system resources.
-
-**What is analyzed:**
-- Memory usage patterns of processes over time
-- CPU load structure (burst patterns, periodicity, attractor)
-- I/O access patterns (read burst clustering, delta behavior)
-- Render events (GPU resonance, frame structure)
-- Preload efficiency (ratio of cached vs. newly loaded structures)
-
-**Relevant modules:**
-- `modules/process_monitor.py` ??? process monitoring with structural metrics
-- `modules/efficiency_monitor.py` ??? resource-related structural assessment
-- `modules/preload_optimizer.py` ??? adaptive preloading based on pattern baseline
-- `modules/optimize_engine.py` ??? detection and optimization suggestion logic
-- `modules/process_engine.py` ??? process snapshot and feature extraction
-
-**Methodology:** System states are described with the same structural metrics as genome data or climate models. Inefficiencies appear as structural deviations from the observer baseline, not as threshold violations. This enables adaptive, domain-independent detection.
-
-**Limits:** The detected structural patterns are starting points for optimization hypotheses. Whether a structural anomaly represents a real inefficiency must be validated in the context of the specific system.
-
----
-
-## 6. Non-Hallucinating Architecture: Shanway
-
-Shanway is Aether's local language output path. The core principle:
-
-> Shanway is a translator of structure into language, not a knowing system. It can only say what the Aether pipeline has validated.
-
-**Three protection mechanisms:**
-
-1. **Controlled input** ??? Shanway receives exclusively data that has been verified by the analysis pipeline. No direct user text as prompt injection vector.
-2. **Strict system prompt** ??? Shanway is instructed not to speculate and not to make statements beyond the verified structural finding.
-3. **Silence as option** ??? In case of uncertainty, missing context, or low structural score, Shanway produces no output. No "answering for the sake of answering".
-
-This architecture is the essential difference from general language models that operate on a broad, unverified context.
-
----
-
-## 7. Privacy by Architecture
-
-**Zero-knowledge principle as an architectural decision, not a feature:**
+**Zero-knowledge architecture:**
 
 ```
 Local (device)              Network
@@ -142,94 +151,77 @@ Raw data        ??? NEVER  ??? Network
 Deltas          ??? NEVER  ??? Network
 File keys       ??? NEVER  ??? Network
 Session seeds   ??? NEVER  ??? Network
+Sequence content ??? NEVER ??? Network
                               ???
-Structural anchors ??? Optional ??? Aethernet (non-invertible)
+Structural anchors ??? Optional ??? Aethernet
+                    (non-invertible, consent-bound)
 ```
 
-**Anchors, deltas, keys ??? simply explained:**
-- **File key**: A locally generated key that encrypts a file. Exists only on your device.
-- **Delta**: The structural difference between two states of a file. Contains no complete copy, stays local.
-- **Anchor**: A heavily compressed, non-invertible structural signature. Raw data cannot be recovered from an anchor.
+**Anchor ??? technical explanation:**
+An anchor is a SHA-256-based structural signature:
+```
+sig = f(entropy, dominant_freq, fractal_dim, benford_score, symmetry, signal_type, hash(chunk))
+anchor_hash = sha256(sig)
+```
+Neither the chunk nor the content of the analyzed file can be reconstructed from `anchor_hash`.
 
-**Consent layer:**
-- Every anchor release requires explicit consent
-- Three options: No / Anonymous only / With signature
-- Default: no sharing (fail-closed)
-
----
-
-## 8. Development Path: AELAB and Aether
-
-AELAB was the first strong development impulse ??? an evolutionary path for extracting stable candidates and anchors from runtime data.
-
-AELAB proved too unbounded as a sole explanatory core: it could supply candidates but offered no disciplined language for uncertainty, reconstruction, security boundaries, and governance.
-
-Aether was then conceived as an independent main architecture. AELAB is today an internal, bounded background path (`modules/ae_evolution_core.py`) that supplies additional anchors without replacing the main discipline of the system.
+**Consent layer before every release:**
+- Option 1: No sharing (default)
+- Option 2: Anonymous (anchor hash only, no user identity)
+- Option 3: With signature (explicit creator identification)
 
 ---
 
-## 9. Emergence and Meta-Anchors: Limits and Claims
+## 7. Non-Hallucinating Architecture: Shanway
 
-The emergence of meta-anchors (anchors from anchors) is a local, exploratory process.
+Shanway receives exclusively structurally verified data from the pipeline. The system prompt prevents speculation. On uncertainty, no output is produced.
 
-**Disclaimer:** The emergence of higher levels is a tool for **hypothesis generation**. Whether an emergent pattern has real, cross-domain meaning must always be externally validated. It could also be an artifact of the analysis method.
-
-The system makes no claims about causality, consciousness, or universal laws.
+**What this means in practice:**
+- When `H_lambda` is high (much residual uncertainty): Shanway is silent or marks output accordingly
+- When reconstruction condition `D(S_t, R_t) = X_t` is not met: Shanway produces no completeness statement
+- When governance conditions break: Shanway produces no output
 
 ---
 
-## 10. Security and Governance Model
+## 8. Security and Governance Model
 
 **Internal security rules:**
-1. Impermissible states must not be conveniently representable
+1. Impermissible states are not conveniently representable
 2. Critical state transitions are validated
-3. Default is `deny by default`
-4. Critical paths are append-only, hashed, and signed
-5. Raw data, snapshots, keys, and rights remain strictly separated
+3. Default: `deny by default`
+4. Critical paths: append-only, hashed, signed
+5. Raw data, snapshots, keys, and rights strictly separated
 
 **Relevant modules:**
-- `modules/security_engine.py` ??? SecurityManager, secure_zeroize
+- `modules/security_engine.py` ??? `SecurityManager`, `secure_zeroize`
 - `modules/security_monitor.py` ??? integrity check, baseline comparison
-- `modules/session_engine.py` ??? SessionContext, ephemeral keys
+- `modules/session_engine.py` ??? `SessionContext`, ephemeral keys
 
 ---
 
-## 11. Open Source: Methodological Necessity
+## 9. Development Path: AELAB and Aether
 
-Aether makes claims about rules, invariants, reconstruction, and security boundaries. Such claims must be verifiable. A proprietary core would be incompatible with the project's own claim.
+AELAB was the first development impulse ??? an evolutionary path for extracting stable structural candidates. It proved too unbounded for the system's requirements.
 
-Open source enables: traceability, reproducibility, independent critique, forks, local sovereignty.
-
----
-
-## 12. Verifiable Core Statements
-
-1. As model knowledge about a stable data class increases, `H_lambda` decreases on average.
-2. If reconstruction information is incomplete, no lossless statement is produced.
-3. If trust, hash, or genesis conditions break, the security state degrades.
-4. If only a snapshot without complete residual is present, exact reconstruction is not guaranteed.
-5. If only condensed pattern knowledge is shared, no inference about raw data is possible.
-6. If AELAB is operated as an internal path, it supplies additional anchors without replacing the main discipline.
+Aether is the main architecture. AELAB is today an internal background path (`modules/ae_evolution_core.py`) that supplies additional structural anchors.
 
 ---
 
-## 13. Limitations
+## 10. Limitations
 
+- Structural patterns are observations, not causal statements
 - The observer-relative extension is a working model, not a completed theory
-- SEMS is a working term, not an externally recognized scientific field
-- Detected patterns are hypotheses, not statements about causality
-- The historical pi observation (AELAB development history) is not demonstrable in the current codebase as a hard reproducible record
-- Beauty signature and attractor state are diagnostic aids, not truth statements
+- SEMS is a working term in the project, not a recognized scientific field
+- Cross-domain clusters are not reported as findings ??? only accumulation makes them testable
+- The historical pi finding (AELAB development history) is not reproducibly demonstrated in the current codebase
 
 ---
 
 ## Conclusion
 
-Aether is a technical system for structural analysis and lossless reconstruction of data ??? with integrated privacy, non-hallucinating language output, and decentralized learning capability.
+Aether measures structure. It does not interpret. It measures, stores locally, reveals nothing that has not been explicitly released ??? and formulates only what the pipeline has measured.
 
-It is not a total model. It is a tool that generates structural hypotheses. The validation of these hypotheses lies in the hands of those who use it.
-
-**Aether is a tool for everyone who wants to keep control of their data and explore patterns beyond preconceived categories. Help build it.**
+**Aether is a tool for everyone who wants to find patterns in data without giving up control of that data. Help build it.**
 
 ---
 

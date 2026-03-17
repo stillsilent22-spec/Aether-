@@ -1,8 +1,8 @@
 # Aether
 
-**Lokales Framework zur strukturellen Datenanalyse ??? ohne Labels, ohne Cloud, ohne Halluzinationen.**
+**Lokales Framework f??r strukturelle Datenanalyse ??? ohne Labels, ohne Cloud, ohne Halluzinationen.**
 
-Aether ??bersetzt beliebige Daten (Genomsequenzen, Klimamodelle, Systemprozesse, Marktdaten, Bilder, Code) in einen einheitlichen Strukturraum und macht Muster sichtbar, die sonst verborgen blieben. Die Analyse l??uft vollst??ndig lokal auf deinem Ger??t.
+Aether misst Struktur in beliebigen Daten: Entropie, Symmetrie, fraktale Dimension, Periodizit??t, Benford-Verteilung, Attraktor-Zust??nde. Es erkennt Anomalien und erzeugt Hypothesen ??? lokal, label-frei, ohne dass sensitive Inhalte das Ger??t verlassen.
 
 ??? [English version: README_EN.md](README_EN.md)
 
@@ -10,80 +10,96 @@ Aether ??bersetzt beliebige Daten (Genomsequenzen, Klimamodelle, Systemprozesse,
 
 ## Was Aether ist
 
-Aether ist ein **Messinstrument f??r Struktur**. Es wandelt Rohdaten in mathematische Metriken und Graphen um und vergleicht diese dom??nen??bergreifend ??? ohne vorher zu wissen, wonach es sucht, ohne Labels und ohne Kategorien.
+Aether ist ein **Messinstrument f??r Struktur**. Es wandelt Rohdaten in mathematische Metriken um und vergleicht diese dom??nen??bergreifend ??? ohne vorher zu wissen, wonach es sucht, ohne Labels, ohne Kategorien.
 
-> Strukturelle ??hnlichkeit bedeutet nicht automatisch gleiche Ursache oder gleiche Bedeutung.
-> Sie ist ein Ausgangspunkt f??r weitere Untersuchungen.
+**Zentrale Klarstellung:**
+> Strukturelle ??hnlichkeit ist eine **Beobachtung**, keine Bedeutung. Wenn zwei Datens??tze aus verschiedenen Dom??nen denselben Fingerprint zeigen, ist das ein Hinweis ??? kein Befund. Ob dieser Hinweis relevant ist, entscheidet der Nutzer, nicht das System.
 
-**Die drei Kernst??rken:**
-
-| St??rke | Was das bedeutet |
-|---|---|
-| **Nicht-halluzinierende Architektur** | Shanway formuliert nur, was die Pipeline als valide eingestuft hat. Keine Spekulation. |
-| **Datenschutz by Architecture** | Rohdaten verlassen niemals dein Ger??t. Nur anonymisierte Struktursignaturen (Anker) k??nnen optional geteilt werden. |
-| **Exploratives Analysetool** | Hypothesengenerierung durch Strukturvergleich ??? lokal, label-frei, dom??nen??bergreifend. |
+Aether ist ein Spektrometer, kein Interpret.
 
 ---
 
-## Kernf??higkeiten
+## Die vier Kernst??rken
 
-### 1. Strukturelle Mustererkennung (label-frei)
-Aether misst Entropie, Symmetrie, Periodizit??t, fraktale Dimension, Fourier-Spektrum und Attraktor-Zust??nde. Keine Vorwissen n??tig ??? kein Trainingsschritt, keine Kategorie-Definition.
+### 1. Dom??nenspezifische Mustererkennung ??? ohne sensitive Inhalte preiszugeben
 
-Einsatzgebiete: Genomdaten, Klimamuster, Marktentwicklungen, Prozesszust??nde, Quelltexte, Bilddaten.
+Innerhalb einer Dom??ne erkennt Aether Anomalien und Muster strukturell ??? ohne die Daten zu kennen, zu verstehen oder nach au??en zu geben:
 
-### 2. Ressourcen- und Softwareoptimierung
-Aether analysiert laufende Systemprozesse strukturell: Speicherbelegung, CPU-Muster, I/O-Bursts, Render-Events. Es erkennt strukturelle Ineffizienzen und Anomalien ??? nicht durch feste Schwellwerte, sondern durch Vergleich der Prozessstruktur mit der beobachteten Baseline.
+| Dom??ne | Was Aether strukturell misst |
+|---|---|
+| **Bioinformatik** | Entropieausrei??er in Genomsequenzen, Periodizit??tsmuster, Benford-Abweichungen ??? ohne Annotation, ohne Zugriffsrechte auf Sequenzinhalte |
+| **Klimaforschung** | Wiederkehrende Frequenzmuster in Zeitreihen, Attraktor-Stabilit??t, Strukturbr??che ??? ohne Metadaten oder Messstationsdaten preiszugeben |
+| **Systemoptimierung** | CPU-Burst-Cluster, I/O-Periodizit??t, Speicher-Attraktor ??? Abweichung von der Prozess-Baseline ohne Prozessinhalt zu lesen |
+| **Softwareanalyse** | Komplexit??tsverteilung, Entropiedichte, Strukturanomalien im Code ??? ohne Quellcode ins Netz zu senden |
+| **Finanzanalyse** | Strukturelle Muster in Kursdaten, Benford-Abweichungen als Auff??lligkeitsmarker ??? ohne Positionsdaten preiszugeben |
 
-- `modules/efficiency_monitor.py` ??? ressourcenbezogene Strukturmetriken
-- `modules/preload_optimizer.py` ??? adaptives Preloading auf Basis von Mustern
-- `modules/process_monitor.py` ??? kontinuierliche Prozess??berwachung
-- `modules/optimize_engine.py` ??? strukturbasierte Optimierungsvorschl??ge
+**Datenschutz-Mechanismus:** Aether analysiert nur die *Struktur* der Daten, nie ihren Inhalt. Rohdaten verlassen das Ger??t nie. Was nach au??en geht (optional, consent-gebunden), sind ausschlie??lich nicht-invertierbare Struktursignaturen ??? daraus lassen sich keine urspr??nglichen Daten rekonstruieren.
 
-Diese Schicht erm??glicht es, Software- und Systemverhalten mit denselben Werkzeugen zu analysieren wie Genomdaten oder Klimamodelle: strukturell, ohne Label, ohne hartcodierte Regeln.
+---
 
-### 3. Shanway ??? Sprache ohne Halluzinationen
-Shanway ist der lokale Sprachpfad von Aether. Er formuliert in nat??rlicher Sprache, was die Analysepipeline als valide eingestuft hat. Drei Schutzmechanismen:
+### 2. Dom??nen??bergreifender Vergleich ??? als Exploration, nicht als Aussage
 
-1. **Kontrollierter Eingang** ??? nur von der Pipeline verifizierte Daten kommen rein
-2. **Strikter System-Prompt** ??? Shanway darf nicht spekulieren, nur formulieren
-3. **Schweigen als Option** ??? bei Unsicherheit oder fehlendem Kontext keine Ausgabe
+Wenn strukturelle ??hnlichkeiten zwischen Dom??nen auftauchen, h??lt Aether sie fest ??? ohne eine Bedeutung zu behaupten.
 
-Shanway ist ein ??bersetzer von Struktur in Sprache, kein wissendes System.
+**Wie das funktioniert:**
+- Aether berechnet f??r jede Datei / jeden Datenstrom einen Strukturfingerprint (Entropie, Symmetrie, Fourier, Benford, fraktale Dimension)
+- Fingerprints aus verschiedenen Dom??nen k??nnen verglichen werden
+- Wenn mehrere unabh??ngige Datens??tze strukturell clustern, entsteht ein Hinweis
+- Erst wenn sich viele unabh??ngige Hinweise h??ufen, wird daraus eine pr??fbare Hypothese
+
+**Was Aether niemals tut:**
+- Struktur??hnlichkeit als Kausalit??t ausdr??cken
+- Dom??nen??bergreifende Muster als Befunde ausgeben
+- Unvalidiertes als Ergebnis formulieren (??? Shanway-Schutzmechanismus)
+
+---
+
+### 3. Nicht-halluzinierende Ausgabe: Shanway
+
+Shanway ist der lokale Sprachpfad. Er formuliert, was die Pipeline gemessen hat ??? nicht mehr.
+
+| Schutzmechanismus | Wirkung |
+|---|---|
+| **Kontrollierter Eingang** | Nur pipeline-verifizierte Strukturdaten gelangen in Shanway |
+| **Strikter System-Prompt** | Shanway darf nicht spekulieren, keine eigenen Schl??sse ziehen |
+| **Schweigen als Option** | Bei Unsicherheit oder niedrigem Strukturscore: keine Ausgabe |
+
+> Shanway ist ein ??bersetzer von Messwerten in Sprache ??? kein wissendes System, kein Interpret.
+
+---
 
 ### 4. Datenschutz by Architecture
-Das Zero-Knowledge-Prinzip ist keine Einstellung ??? es ist die Architektur:
 
-- **Rohdaten** bleiben immer lokal
-- **Deltas** (Unterschiede zwischen Zust??nden) bleiben immer lokal
-- **Filekeys** verschl??sseln Dateien lokal, werden nie in der Cloud gespeichert
-- **Anker** (Struktursignaturen) sind stark komprimiert und nicht invertierbar ??? daraus lassen sich keine Rohdaten zur??ckgewinnen
-- Vergleiche mit anderen Datens??tzen sind m??glich, ohne dass irgendjemand die Originaldaten sieht
+Das Zero-Knowledge-Prinzip ist keine Einstellung, sondern die Architektur.
 
-### 5. File Register & Rekonstruktion
-Der File Register verwaltet lokale Snapshots, Deltas und Rekonstruktionsinformation. Jede Datei wird als Strukturzustand beschrieben ??? nicht als Kopie. Das erm??glicht platzsparende Versionierung und verlustfreie Rekonstruktion aus dem lokalen Vault.
+```
+Lokal (Ger??t)               Netz
+???????????????????????????????????????               ????????????
+Rohdaten        ??? NIEMALS ??? Netz
+Deltas          ??? NIEMALS ??? Netz
+Filekeys        ??? NIEMALS ??? Netz
+Session-Seeds   ??? NIEMALS ??? Netz
+Sequenzinhalte  ??? NIEMALS ??? Netz
+                              ???
+Strukturanker   ??? Optional ??? Aethernet (nicht invertierbar, consent-gebunden)
+```
 
-### 6. Meta-Anker & dezentrales Lernen (Aethernet)
-Stabile Strukturmuster k??nnen als anonyme Anker optional in den dezentralen Aethernet-Schwarm geteilt werden. Der Schwarm lernt kollektiv, ohne dass Rohdaten oder pers??nliche Daten das Ger??t verlassen.
-
-**Aethernet-Regeln (unver??nderlich):**
-- Kein Node speichert Rohdaten fremder Nutzer
-- Anker sind nicht invertierbar
-- Consent-Schritt vor jeder Freigabe (Nein / Nur anonym / Mit Signatur)
-- Standardm????ig: kein Teilen (fail-closed)
+**Was ein Anker ist:** Eine stark komprimierte, mathematische Signatur der Struktur einer Datei. Kein Inhalt, kein Klartext, keine R??ckschl??sse auf das Original m??glich. Vergleichbar mit einem Fingerabdruck, der zwar identifiziert, aber keine Information ??ber den Menschen preisgibt.
 
 ---
 
-## Einsatzgebiete
+## Ressourcen- und Softwareoptimierung
 
-| Dom??ne | Was Aether beitr??gt |
-|---|---|
-| Bioinformatik | Strukturmuster in Genomsequenzen ohne vorherige Annotation |
-| Klimaforschung | Wiederkehrende Muster in Klimazeitreihen und Modelldaten |
-| Systemoptimierung | Prozess- und Ressourcenanomalien strukturell erkennen |
-| Softwareanalyse | Code-Strukturmuster, Komplexit??tsverteilung, Anomalien |
-| Finanzanalyse | Strukturelle ??hnlichkeiten in Marktdaten dom??nen??bergreifend |
-| Datenschutz | Lokale Verarbeitung sensibler Daten ohne Cloud-Pfad |
+Aether analysiert laufende Prozesse mit denselben Strukturmetriken wie Genomdaten:
+
+- **CPU-Muster**: Burst-Cluster, Periodizit??t, Attraktor-Stabilit??t
+- **Speicher**: Baseline-Abweichung, Delta-Verhalten
+- **I/O**: Leseburst-Clustering, strukturelle Anomalien
+- **Render-Events**: GPU-Resonanz, Frame-Struktur
+
+Erkennung erfolgt durch Abweichung von der strukturellen Baseline ??? keine festen Schwellwerte, keine hartcodierten Regeln.
+
+Relevante Module: `efficiency_monitor` ?? `preload_optimizer` ?? `process_monitor` ?? `optimize_engine`
 
 ---
 
@@ -93,51 +109,34 @@ Stabile Strukturmuster k??nnen als anonyme Anker optional in den dezentralen Aet
 Rohdaten
    ???
    ???
-analysis_engine      ??? Entropie, Symmetrie, Fourier, Attraktor, Beauty-Signatur
+analysis_engine      ??? Entropie, Symmetrie, Fourier, Benford, Attraktor
    ???
-   ?????? ethics_engine  ??? Strukturelle Textintegrit??t (Zipf, Benford, Noether)
+   ?????? ethics_engine  ??? Strukturelle Textintegrit??t
    ?????? delta_engine   ??? XOR-Delta, Session-Seed
    ?????? bayes_engine   ??? Bayesianische Posterioren
-   ?????? graph_engine   ??? Graph- und Attraktor-Zustand
+   ?????? graph_engine   ??? Graph- und Attraktorzustand
    ???
    ???
-reconstruction_engine ??? Snapshot ??? Residuum ??? Rekonstruktion
+reconstruction_engine ??? D(Snapshot, Residuum) = Original
    ???
    ???
-registry (SQLite)    ??? lokale Persistenz, Vault, Audit-Log
+registry (SQLite, lokal) ??? Vault, Audit-Log, append-only
    ???
-   ?????? shanway        ??? Sprachausgabe (nur verifizierte Daten)
-   ?????? aethernet      ??? optionaler Ankerpfad (consent-gebunden)
-```
-
-**Lossless-Garantie:** `D(Snapshot, Residuum) = Original` ??? wenn Rekonstruktionsinformation fehlt, wird keine Aussage gemacht.
-
----
-
-## Datenschutz-Architektur im Detail
-
-```
-Lokal (dein Ger??t)          ??ffentlich (optional, consent-bound)
-???????????????????????????????????????????????????           ??????????????????????????????????????????????????????????????????????????????????????????????????????
-Rohdaten         ????????? NIE ???  Netz
-Deltas           ????????? NIE ???  Netz
-Filekeys         ????????? NIE ???  Netz
-Session-Seeds    ????????? NIE ???  Netz
-                             ???
-Strukturanker    ?????????   ?????????  Aethernet (nicht invertierbar)
+   ?????? shanway        ??? Sprachausgabe (nur verifizierte Strukturdaten)
+   ?????? aethernet      ??? Ankerpfad (optional, consent-gebunden)
 ```
 
 ---
 
 ## Mitmachen
 
-Aether sucht Menschen, die:
-- an dezentralen, datenschutzkonformen Systemen arbeiten
-- in Bioinformatik, Klimaforschung oder verwandten Dom??nen explorative Werkzeuge f??r ungelabelte Daten brauchen
-- nach einer echten lokalen Alternative zu Cloud-KI suchen
-- an Systemoptimierung und ressourcenbewusster Software interessiert sind
+Aether sucht:
+- Entwickler, die an dezentralen, datenschutzkonformen Systemen arbeiten
+- Wissenschaftler (Bioinformatik, Klima, Physik), die explorative Werkzeuge f??r ungelabelte Daten brauchen
+- Menschen, die eine lokale Alternative zu Cloud-KI wollen
+- Alle, die Kontrolle ??ber ihre Daten behalten wollen
 
-**Aether ist ein Werkzeug f??r alle, die Kontrolle ??ber ihre Daten behalten und Muster jenseits vorgefasster Kategorien erkunden wollen. Hilf mit, es zu bauen.**
+**Aether ist ein Werkzeug f??r alle, die Muster in Daten finden wollen, ohne Kontrolle ??ber diese Daten aufzugeben. Hilf mit, es zu bauen.**
 
 ```bash
 git clone https://github.com/stillsilent22-spec/Aether-
@@ -155,10 +154,9 @@ python start.py
 | [WHITEPAPER.md](WHITEPAPER.md) | Technische Grundlagen und Architektur (DE) |
 | [WHITEPAPER_EN.md](WHITEPAPER_EN.md) | Technical foundations and architecture (EN) |
 | [ROADMAP.md](ROADMAP.md) | Entwicklungsphasen und offene Fragen |
-| [SECURITY.md](SECURITY.md) | Sicherheitsarchitektur und Responsible Disclosure |
+| [SECURITY.md](SECURITY.md) | Sicherheitsarchitektur |
 | [core_axioms.md](core_axioms.md) | Formale Grundaxiome |
 
 ---
 
-*Aether ist source-available unter der im Repo hinterlegten Lizenz.*
-*Stand: M??rz 2026 ??? Autor: Kevin Hannemann*
+*Source-available. Stand: M??rz 2026 ??? Autor: Kevin Hannemann*
