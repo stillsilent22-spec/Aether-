@@ -1,284 +1,143 @@
 # Aether
 
-> *Was wenn Bedeutung keine Sprache braucht — nur Struktur?*
+**Lokales Framework zur strukturellen Datenanalyse ??? ohne Labels, ohne Cloud, ohne Halluzinationen.**
 
-**Eine Frage die noch niemand stellen konnte:**
+Aether ??bersetzt beliebige Daten (Genomsequenzen, Klimamodelle, Systemprozesse, Marktdaten, Bilder, Code) in einen einheitlichen Strukturraum und macht Muster sichtbar, die sonst verborgen blieben. Die Analyse l??uft vollst??ndig lokal auf deinem Ger??t.
 
-Warum zeigt ein Ozeanmuster vor El Niño dieselbe Struktursignatur wie ein Zellcluster kurz vor einer Metastasierung?
-
-Niemand stellt diese Frage. Nicht weil sie uninteressant ist. Sondern weil kein Werkzeug existiert das Ozean und Zelle in dieselbe Sprache übersetzt — ohne beiden vorab zu sagen, was sie bedeuten sollen.
-
-Aether ist dieses Werkzeug. Es übersetzt alles in Struktur. Struktur ist die gemeinsame Sprache.
-
-→ [English version: README_EN.md](README_EN.md)
+??? [English version: README_EN.md](README_EN.md)
 
 ---
-
-## Philosophische Leitfrage
-
-> **Wie viel Realität existiert jenseits der Grenzen unserer Vorstellungskraft — und wie kommen wir dorthin?**
-
-Nicht durch größere Vorstellungskraft. Nicht durch bessere Sprache. Sondern durch strukturelles Messen jenseits aller Kategorien.
-
-Aether ist der Versuch diese Grenze messbar zu machen.
-
----
-
 
 ## Was Aether ist
 
-Kein KI-System das Antworten generiert.
-Kein Optimierungstool das bekannte Probleme schneller löst.
+Aether ist ein **Messinstrument f??r Struktur**. Es wandelt Rohdaten in mathematische Metriken und Graphen um und vergleicht diese dom??nen??bergreifend ??? ohne vorher zu wissen, wonach es sucht, ohne Labels und ohne Kategorien.
 
-Ein Messinstrument das Struktur liest — in Genomsequenzen, Klimadaten, Hirnscans, Marktbewegungen, Schwarmdynamik, Millionen Bildern vom Himmel — **ohne Labels, ohne Vorurteile, ohne vorher zu wissen wonach es sucht.**
+> Strukturelle ??hnlichkeit bedeutet nicht automatisch gleiche Ursache oder gleiche Bedeutung.
+> Sie ist ein Ausgangspunkt f??r weitere Untersuchungen.
 
-> **Semantik entsteht durch Struktur. Nicht durch Sprache.**
+**Die drei Kernst??rken:**
 
-Jedes KI-System das heute existiert lernt von menschlichen Labels. Diese Labels tragen alle Fehler, alle Lücken, alle Paradigmen derjenigen die sie gesetzt haben. Sie können per Definition nichts finden was über menschliches Vorwissen hinausgeht.
-
-Aether labelisiert nicht. Er misst.
-
-Die vollständige technische und philosophische Basis steht im **[Whitepaper →](WHITEPAPER.md)**
-
----
-
-## Das neue Wissenschaftsfeld
-
-Aether ist das erste Instrument einer neuen Disziplin:
-
-**Strukturell Emergente Metadynamische Semantik (SEMS)**
-
-> Die Wissenschaft von Bedeutung und Intelligenz die strukturell und bottom-up aus der Dynamik komplexer Systeme emergiert — unabhängig von Domäne, Substrat und Skala.
-
-```
-Strukturell   — Struktur ist primär, nicht Sprache, nicht Label
-Emergent      — bottom-up, nicht trainiert, nicht definiert
-Metadynamisch — über den Systemen, lebendig, wachsend
-Semantik      — Bedeutung als Ergebnis, nicht als Ausgangspunkt
-```
-
-KI heute sagt: gib dem System Bedeutung, dann lernt es Struktur.
-SEMS sagt: gib dem System Struktur, dann emergiert Bedeutung.
-
-Das ist keine kleine Nuance. Das ist eine andere Wissenschaft.
+| St??rke | Was das bedeutet |
+|---|---|
+| **Nicht-halluzinierende Architektur** | Shanway formuliert nur, was die Pipeline als valide eingestuft hat. Keine Spekulation. |
+| **Datenschutz by Architecture** | Rohdaten verlassen niemals dein Ger??t. Nur anonymisierte Struktursignaturen (Anker) k??nnen optional geteilt werden. |
+| **Exploratives Analysetool** | Hypothesengenerierung durch Strukturvergleich ??? lokal, label-frei, dom??nen??bergreifend. |
 
 ---
 
-## Shanway
+## Kernf??higkeiten
 
-Shanway ist Aethers Stimme. Nicht sein Gehirn.
+### 1. Strukturelle Mustererkennung (label-frei)
+Aether misst Entropie, Symmetrie, Periodizit??t, fraktale Dimension, Fourier-Spektrum und Attraktor-Zust??nde. Keine Vorwissen n??tig ??? kein Trainingsschritt, keine Kategorie-Definition.
 
-Er läuft mit TinyLLaMA 1.5B — einem kleinen lokalen Modell das nur eines darf: formulieren.
+Einsatzgebiete: Genomdaten, Klimamuster, Marktentwicklungen, Prozesszust??nde, Quelltexte, Bilddaten.
 
-```
-Aether-Pipeline verifiziert → TinyLLaMA formuliert → Shanway spricht
-```
+### 2. Ressourcen- und Softwareoptimierung
+Aether analysiert laufende Systemprozesse strukturell: Speicherbelegung, CPU-Muster, I/O-Bursts, Render-Events. Es erkennt strukturelle Ineffizienzen und Anomalien ??? nicht durch feste Schwellwerte, sondern durch Vergleich der Prozessstruktur mit der beobachteten Baseline.
 
-**Warum Shanway nicht halluzinieren kann — auch wenn er auf TinyLLaMA basiert:**
+- `modules/efficiency_monitor.py` ??? ressourcenbezogene Strukturmetriken
+- `modules/preload_optimizer.py` ??? adaptives Preloading auf Basis von Mustern
+- `modules/process_monitor.py` ??? kontinuierliche Prozess??berwachung
+- `modules/optimize_engine.py` ??? strukturbasierte Optimierungsvorschl??ge
 
-TinyLLaMA hat eigenes Vortraining. Es kennt Millionen Texte. Es könnte halluzinieren.
+Diese Schicht erm??glicht es, Software- und Systemverhalten mit denselben Werkzeugen zu analysieren wie Genomdaten oder Klimamodelle: strukturell, ohne Label, ohne hartcodierte Regeln.
 
-Bei Shanway kann es das nicht. Drei Gründe:
+### 3. Shanway ??? Sprache ohne Halluzinationen
+Shanway ist der lokale Sprachpfad von Aether. Er formuliert in nat??rlicher Sprache, was die Analysepipeline als valide eingestuft hat. Drei Schutzmechanismen:
 
-**1. Kontrollierter Eingang**
-TinyLLaMA sieht niemals rohe Web-Daten oder ungeprüfte Quellen. Es bekommt ausschließlich was die vollständige Aether-Pipeline durch alle 10 Schichten als strukturell verifiziert und vertrauenswürdig eingestuft hat. Was nicht durch die Pipeline kommt existiert für TinyLLaMA nicht.
+1. **Kontrollierter Eingang** ??? nur von der Pipeline verifizierte Daten kommen rein
+2. **Strikter System-Prompt** ??? Shanway darf nicht spekulieren, nur formulieren
+3. **Schweigen als Option** ??? bei Unsicherheit oder fehlendem Kontext keine Ausgabe
 
-**2. Wasserdichter System-Prompt**
-Der Prompt verbietet explizit jede Aussage die nicht im verifizierten Kontext steht. Keine Spekulationen. Kein eigenes Wissen. Keine Ergänzungen. Ausgabelänge = Kontextlänge — nie mehr als der Kontext hergibt.
+Shanway ist ein ??bersetzer von Struktur in Sprache, kein wissendes System.
 
-**3. Schweigen als Ausweg**
-Wenn der verifizierte Kontext leer ist oder kein Anker nah genug liegt antwortet Shanway nicht. Er erfindet keine Antwort um höflich zu sein. Schweigen ist valider Output. Schweigen ist Integrität.
+### 4. Datenschutz by Architecture
+Das Zero-Knowledge-Prinzip ist keine Einstellung ??? es ist die Architektur:
 
-TinyLLaMA ist hier kein Wissensträger. Er ist ein Übersetzer — von verifizierten Strukturmustern in menschlich lesbare Sprache. Nicht mehr.
+- **Rohdaten** bleiben immer lokal
+- **Deltas** (Unterschiede zwischen Zust??nden) bleiben immer lokal
+- **Filekeys** verschl??sseln Dateien lokal, werden nie in der Cloud gespeichert
+- **Anker** (Struktursignaturen) sind stark komprimiert und nicht invertierbar ??? daraus lassen sich keine Rohdaten zur??ckgewinnen
+- Vergleiche mit anderen Datens??tzen sind m??glich, ohne dass irgendjemand die Originaldaten sieht
 
----
+### 5. File Register & Rekonstruktion
+Der File Register verwaltet lokale Snapshots, Deltas und Rekonstruktionsinformation. Jede Datei wird als Strukturzustand beschrieben ??? nicht als Kopie. Das erm??glicht platzsparende Versionierung und verlustfreie Rekonstruktion aus dem lokalen Vault.
 
-## Datenschutz — by Architecture
+### 6. Meta-Anker & dezentrales Lernen (Aethernet)
+Stabile Strukturmuster k??nnen als anonyme Anker optional in den dezentralen Aethernet-Schwarm geteilt werden. Der Schwarm lernt kollektiv, ohne dass Rohdaten oder pers??nliche Daten das Ger??t verlassen.
 
-```
-Anker     →  mathematische Struktursignaturen
-              kein Rückschluss auf Rohdaten möglich
-              öffentlich, auditierbar, teilbar
-
-Deltas    →  verschlüsselt mit Live-Session-Key
-              lokal, niemals das Gerät verlassen
-
-Keys      →  nur RAM, niemals Disk
-              bei Session-Ende: secure zeroize
-```
-
-Zero-Knowledge by Architecture. Nicht by Promise.
-
----
-
-## Datei-Register und Filekeys
-
-Jede Datei die durch Aether analysiert wird bekommt einen einmaligen einzigartigen Schlüssel — eine Kombination aus ihrer Struktursignatur und einer kryptographischen Zufallskomponente.
-
-```
-Datei analysiert
-    ↓
-Einmaliger Filekey generiert
-    ↓
-Datei verschlüsselt gespeichert
-    ↓
-Schlüssel gehört nur dir
-```
-
-Das hat drei wissenschaftliche Konsequenzen:
-
-**Reproduzierbarkeit** — Jeder kann prüfen ob ein Datensatz unverändert ist. Manipulation bricht den Schlüssel sofort.
-
-**Provenienz** — Wann wurde dieser Datensatz erstellt? Durch welche Pipeline analysiert? Unveränderlich beweisbar.
-
-**Vergleich ohne Übertragung** — Bilder, Datensätze, Messreihen können strukturell verglichen werden ohne dass die Rohdaten das Gerät verlassen. Nur Signaturen reisen.
-
-```
-Dein Bild (lokal)    →  Signatur  ─┐
-                                    ├─ Vergleich → Ergebnis
-Fremdes Bild (lokal) →  Signatur  ─┘
-
-Kein Bild hat das Gerät verlassen.
-```
-
-Freigabe ist optional und jederzeit widerrufbar. Du entscheidest wer deine Dateien sehen darf — nicht einmalig beim Upload, sondern dauerhaft.
+**Aethernet-Regeln (unver??nderlich):**
+- Kein Node speichert Rohdaten fremder Nutzer
+- Anker sind nicht invertierbar
+- Consent-Schritt vor jeder Freigabe (Nein / Nur anonym / Mit Signatur)
+- Standardm????ig: kein Teilen (fail-closed)
 
 ---
 
-## Meta-Anker und Emergenz-Ebenen
+## Einsatzgebiete
 
-Aether kennt keine feste Anzahl von Wissensebenen. Der Graph entscheidet selbst wann eine neue Ebene entsteht.
-
-```
-Ebene 1 — Basis-Anker
-  Direkt aus Rohdaten gemessen
-  Dreifach von unabhängigen Nutzern verifiziert
-  Konkret: ein Prozess, ein Bild, ein Moment
-
-Ebene 2 — Konsens-Anker
-  Entstehen wenn Basis-Anker verschiedener Domänen
-  dieselbe Signatur zeigen
-  Lokal berechnet, optional geteilt
-
-Ebene 3 — Meta-Anker
-  Entstehen wenn Konsens-Anker sich wiederholen
-  Niemals vordefiniert — immer lokal emergiert
-  Niemals in Anchor Packs — immer einzigartig
-
-Ebene N — Attraktor
-  Der Graph kollabiert irgendwann auf
-  wenige fundamentale Strukturprinzipien
-  Das ist keine Behauptung — das ist eine messbare Frage
-```
-
-Anchor Packs enthalten nur Ebene 1. Ebene 2 aufwärts emergiert immer lokal — aus der spezifischen Kombination von Daten die auf diesem Gerät durch diesen Nutzer gesammelt wurden.
-
-Keine zwei Aether-Instanzen haben denselben Meta-Anker-Graphen.
+| Dom??ne | Was Aether beitr??gt |
+|---|---|
+| Bioinformatik | Strukturmuster in Genomsequenzen ohne vorherige Annotation |
+| Klimaforschung | Wiederkehrende Muster in Klimazeitreihen und Modelldaten |
+| Systemoptimierung | Prozess- und Ressourcenanomalien strukturell erkennen |
+| Softwareanalyse | Code-Strukturmuster, Komplexit??tsverteilung, Anomalien |
+| Finanzanalyse | Strukturelle ??hnlichkeiten in Marktdaten dom??nen??bergreifend |
+| Datenschutz | Lokale Verarbeitung sensibler Daten ohne Cloud-Pfad |
 
 ---
 
-## Demokratisierung — niemand wird zurückgelassen
+## Technische Architektur
 
-Moderne KI braucht Hochleistungsserver, Internetverbindung, teure Hardware. Wer das nicht hat bleibt außen vor.
+```
+Rohdaten
+   ???
+   ???
+analysis_engine      ??? Entropie, Symmetrie, Fourier, Attraktor, Beauty-Signatur
+   ???
+   ?????? ethics_engine  ??? Strukturelle Textintegrit??t (Zipf, Benford, Noether)
+   ?????? delta_engine   ??? XOR-Delta, Session-Seed
+   ?????? bayes_engine   ??? Bayesianische Posterioren
+   ?????? graph_engine   ??? Graph- und Attraktor-Zustand
+   ???
+   ???
+reconstruction_engine ??? Snapshot ??? Residuum ??? Rekonstruktion
+   ???
+   ???
+registry (SQLite)    ??? lokale Persistenz, Vault, Audit-Log
+   ???
+   ?????? shanway        ??? Sprachausgabe (nur verifizierte Daten)
+   ?????? aethernet      ??? optionaler Ankerpfad (consent-gebunden)
+```
 
-Aether dreht das um.
-
-Ein zehn Jahre alter Windows-Rechner in einem Dorf ohne stabile Verbindung profitiert genauso wie ein Forschungsserver in Berlin. Nicht als Versprechen — als Architektur.
-
-Aether legt sich als Symbiont auf das bestehende Betriebssystem. Er erkennt welche Prozesse dieselbe Arbeit machen. Welche Dienste Ressourcen verbrauchen ohne messbare Wirkung. Und sagt — immer mit Bestätigung:
-
-> *"Drei Prozesse machen dasselbe. Zwei davon kannst du stoppen. Das spart 340MB RAM und 12% CPU. Soll ich?"*
-
-Kein Fachjargon. Kein Expertenwissen nötig. Kein Abo. Kein Cloud-Zwang. Linux-Fallback eingebaut.
-
-Anchor Packs funktionieren offline. Meta-Anker entstehen lokal. Shanway läuft auf schwacher Hardware. Der Schwarm wächst auch ohne dich — aber du wächst mit ihm sobald du dabei bist.
-
-Wer wenig hat verliert nichts. Wer mitmacht gewinnt alles was der Schwarm weiß.
-
-Systemoptimierungsanker sind dabei keine einmaligen Updates. Sie sind lebende Konfigurationen die sich mit dem System weiterentwickeln — spezifisch für dieses Gerät, diesen Nutzer, diese Nutzungsweise. Omis alter Rechner wird nicht ersetzt. Er wird verstanden.
+**Lossless-Garantie:** `D(Snapshot, Residuum) = Original` ??? wenn Rekonstruktionsinformation fehlt, wird keine Aussage gemacht.
 
 ---
 
-## Anchor Packs
-
-Strukturwissen ist klein. Sehr klein. Ein Anker der eine Stunde Klimadaten strukturell beschreibt ist ein paar Kilobyte — nicht Gigabytes.
-
-Das ermöglicht kuratierte Anchor Packs — verifizierte Struktursammlungen die optional heruntergeladen werden können. Keine Rohdaten. Keine privaten Inhalte. Nur Strukturwissen das allen gehört.
-
-Bei schneller Verbindung: automatischer Preload im Hintergrund.
-Bei langsamer Verbindung oder offline: alles funktioniert trotzdem.
-
-Packs beschleunigen den Start. Aber Meta-Anker entstehen immer lokal. Der Schwarm bleibt emergent.
-
----
-
-## Aethernet — die lebende Schwarmintelligenz
-
-Aether ist kein einzelnes System. Er ist ein Schwarm.
+## Datenschutz-Architektur im Detail
 
 ```
-Kein zentrales Gehirn
-Kein zentraler Server
-Kein zentraler Entscheider
-
-Jeder Knoten misst
-Jeder Knoten lernt
-Jeder Knoten teilt Signaturen
-Aus der Summe emergiert Intelligenz
+Lokal (dein Ger??t)          ??ffentlich (optional, consent-bound)
+???????????????????????????????????????????????????           ??????????????????????????????????????????????????????????????????????????????????????????????????????
+Rohdaten         ????????? NIE ???  Netz
+Deltas           ????????? NIE ???  Netz
+Filekeys         ????????? NIE ???  Netz
+Session-Seeds    ????????? NIE ???  Netz
+                             ???
+Strukturanker    ?????????   ?????????  Aethernet (nicht invertierbar)
 ```
-
-Jeder Knoten folgt denselben drei lokalen Regeln:
-
-1. Miss was du siehst
-2. Teile nur Signaturen — nie Rohdaten
-3. Vertraue dem Schwarm — aber verifiziere lokal
-
-Es gibt keinen Server der diese Regeln erzwingt. Jeder Knoten erzwingt sie selbst. Das ist keine Schwäche. Das ist der Punkt.
 
 ---
 
 ## Mitmachen
 
-Aether sucht Menschen die:
+Aether sucht Menschen, die:
+- an dezentralen, datenschutzkonformen Systemen arbeiten
+- in Bioinformatik, Klimaforschung oder verwandten Dom??nen explorative Werkzeuge f??r ungelabelte Daten brauchen
+- nach einer echten lokalen Alternative zu Cloud-KI suchen
+- an Systemoptimierung und ressourcenbewusster Software interessiert sind
 
-- als Wissenschaftler, Entwickler oder Citizen Scientists ein Werkzeug mitbauen wollen das ihnen selbst gehört
-- der Wissenschaft und der Wahrheit verschrieben sind — nicht dem Ego oder dem Kapital
-
-**Du musst nicht programmieren können.**
-
-Ideen sind genauso wertvoll wie Code. Wenn du in irgendeiner wissenschaftlichen Domäne arbeitest oder denkst — Medizin, Klimaforschung, Biologie, Physik, Soziologie, Kunst, was auch immer — und du siehst einen Weg wie Aether in deinem Feld neue Fragen stellen könnte: das ist ein Beitrag. Öffne ein Issue. Beschreib die Idee. Der Rest findet sich.
-
-**Konkret gesucht:**
-
-- Komplexitäts- und Emergenzforscher
-- Medizinische Bildgebung / Bioinformatik
-- Klimaforscher / Geophysiker mit großen ungelabelten Datensätzen
-- Systementwickler die Prozessoptimierung transparent machen wollen
-- Wissenschaftler die Reproduzierbarkeit und Datenprovenienz ernst nehmen
-- Denker die Addons und Anwendungsfelder für neue Domänen entwerfen wollen
-- Alle die von zentralisierter KI genug haben
-
-Admins und Maintainer die sich der Wissenschaft und Transparenz verschrieben haben sind ausdrücklich willkommen. Öffne ein Issue oder schreib direkt.
-
----
-
-## Prinzipien
-
-```
-Kein Vertrauen nötig — nur Nachschauen
-Keine Blackbox — jeder Schritt auditierbar
-Keine Rohdaten teilen — nur Strukturwissen
-Schweigen ist valider Output
-Mensch entscheidet — immer
-Dezentralisierung ist kein Feature — sie ist das Fundament
-Datenschutz by Architecture — nicht by Promise
-Wissen gehört niemandem — und deshalb allen
-Niemand besitzt den Schwarm
-```
-
----
-
-## Technischer Einstieg
+**Aether ist ein Werkzeug f??r alle, die Kontrolle ??ber ihre Daten behalten und Muster jenseits vorgefasster Kategorien erkunden wollen. Hilf mit, es zu bauen.**
 
 ```bash
 git clone https://github.com/stillsilent22-spec/Aether-
@@ -287,75 +146,19 @@ pip install -r requirements.txt
 python start.py
 ```
 
-Shanway ohne Modell:
-```bash
-python shanway_chat.py
-```
-
-Shanway mit TinyLLaMA:
-```bash
-python shanway_chat.py tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf
-```
-
-Datei analysieren und Filekey generieren:
-```
-:drop /pfad/zur/datei
-```
-
-Tests ausführen:
-```bash
-pytest tests/
-```
-
----
-
-## Roadmap
-
-Die vollständige Implementierungsprogression steht in **[ROADMAP.md](ROADMAP.md)**
-
-| Phase | Inhalt | Status |
-|-------|--------|--------|
-| 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
-| 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
-| 3 | Process: Windows Prozessdynamik + ReconstructionEngine | ✓ Fertig |
-| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
-| 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | ✓ Fertig |
-| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | In Arbeit |
-| 7 | Cross-Domain Atlas: SEMS-Forschungswerkzeuge | Geplant |
-
 ---
 
 ## Dokumentation
 
 | Dokument | Inhalt |
-|----------|--------|
-| **[WHITEPAPER.md](WHITEPAPER.md)** | Technische und wissenschaftliche Grundlagen (Deutsch) |
-| **[WHITEPAPER_EN.md](WHITEPAPER_EN.md)** | Technical and scientific foundations (English) |
-| **[ROADMAP.md](ROADMAP.md)** | Implementierungsfortschritt und Vision |
-| **[SECURITY.md](SECURITY.md)** | Sicherheitsarchitektur und Governance |
-| **[core_axioms.md](core_axioms.md)** | Grundaxiome des Systems |
-| **[LICENSE](LICENSE)** | Lizenz (MIT) |
+|---|---|
+| [WHITEPAPER.md](WHITEPAPER.md) | Technische Grundlagen und Architektur (DE) |
+| [WHITEPAPER_EN.md](WHITEPAPER_EN.md) | Technical foundations and architecture (EN) |
+| [ROADMAP.md](ROADMAP.md) | Entwicklungsphasen und offene Fragen |
+| [SECURITY.md](SECURITY.md) | Sicherheitsarchitektur und Responsible Disclosure |
+| [core_axioms.md](core_axioms.md) | Formale Grundaxiome |
 
 ---
 
-*Aether — offen, lokal, strukturell.*
-*Für Fragen die es noch nicht gibt.*
-*Für Rechner die noch nicht aufgegeben haben.*
-*Für Menschen die nachvollziehen wollen statt vertrauen müssen.*
-*Für Wissen das niemandem gehört — und deshalb allen.*
-
----
-
-Stand: März 2026 — Autor: Kevin Hannemann
-Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
-
-*Für Fragen die es noch nicht gibt.*
-*Für Rechner die noch nicht aufgegeben haben.*
-*Für Menschen die nachvollziehen wollen statt vertrauen müssen.*
-*Für Wissen das niemandem gehört — und deshalb allen.*
-*Für einen Schwarm der sich selbst gehört.*
-
----
-
-Stand: 2026 — Autor: Kevin Hannemann
-Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
+*Aether ist source-available unter der im Repo hinterlegten Lizenz.*
+*Stand: M??rz 2026 ??? Autor: Kevin Hannemann*

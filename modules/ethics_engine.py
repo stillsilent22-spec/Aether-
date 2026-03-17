@@ -109,3 +109,68 @@ def ethics_score(text: str, entropy_mean=None) -> float:
     """Struktureller Integritätsscore — kein Label, nur Struktur."""
     if not text or not text.strip(): return 1.0
     return float(structural_text_integrity(text,entropy_mean=entropy_mean).get("score",1.0))
+
+
+# ---------------------------------------------------------------------------
+# Klassen-API (fuer Import von analysis_engine und theremin_engine)
+# ---------------------------------------------------------------------------
+
+try:
+    from dataclasses import dataclass as _dataclass, field as _field
+    _DC_OK = True
+except ImportError:
+    _DC_OK = False
+
+if _DC_OK:
+    @_dataclass
+    class EthicsAssessment:
+        """Struktureller Integritaetsbefund fuer einen Text-Payload."""
+        score: float = 0.0
+        zipf: float = 0.0
+        benford: float = 0.0
+        fraktal: float = 0.0
+        noether: float = 0.0
+        interferenz: float = 0.0
+        heisenberg: float = 0.0
+        notes: list = _field(default_factory=list)
+else:
+    class EthicsAssessment:  # type: ignore
+        def __init__(self, score=0.0, zipf=0.0, benford=0.0, fraktal=0.0,
+                     noether=0.0, interferenz=0.0, heisenberg=0.0, notes=None):
+            self.score = score; self.zipf = zipf; self.benford = benford
+            self.fraktal = fraktal; self.noether = noether
+            self.interferenz = interferenz; self.heisenberg = heisenberg
+            self.notes = notes or []
+
+
+class EthicsEngine:
+    """
+    Strukturelle Integritaetsanalyse auf Basis von Sprachgesetzen.
+
+    Bewertet Text ausschliesslich anhand messbarer Struktureigenschaften
+    (Zipf, Benford, fraktale Satzlaengenverteilung, thematische Konsistenz,
+    Negationsdichte, Absolute-Aussagen-Rate). Kein Keyword-Matching,
+    keine Labels, nur Struktur.
+    """
+
+    def assess(self, text: str, entropy_mean=None) -> EthicsAssessment:
+        """Vollstaendige Strukturanalyse — gibt EthicsAssessment zurueck."""
+        if not text or not text.strip():
+            return EthicsAssessment(score=1.0, zipf=1.0, benford=0.5,
+                                    fraktal=1.0, noether=1.0,
+                                    interferenz=1.0, heisenberg=1.0)
+        raw = structural_text_integrity(text, entropy_mean=entropy_mean)
+        return EthicsAssessment(
+            score=float(raw.get("score", 1.0)),
+            zipf=float(raw.get("zipf", 1.0)),
+            benford=float(raw.get("benford", 0.5)),
+            fraktal=float(raw.get("fraktal", 1.0)),
+            noether=float(raw.get("noether", 1.0)),
+            interferenz=float(raw.get("interferenz", 1.0)),
+            heisenberg=float(raw.get("heisenberg", 1.0)),
+            notes=[],
+        )
+
+    def score(self, text: str, entropy_mean=None) -> float:
+        """Kurzform: gibt nur den Gesamtscore zurueck."""
+        return float(self.assess(text, entropy_mean=entropy_mean).score)

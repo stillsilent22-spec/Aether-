@@ -7,13 +7,18 @@ import time
 import networkx as nx
 from cryptography.fernet import Fernet
 import numpy as np
-from modules.render_coordinator import RenderCoordinator
-from modules.optimize_engine import OptimizeEngine
-from modules.process_engine import (
-    capture_process_state,
-    process_to_feature_vector,
-    ProcessSnapshot,
-)
+try:
+    from .render_coordinator import RenderCoordinator
+except ImportError:
+    from modules.render_coordinator import RenderCoordinator  # type: ignore
+try:
+    from .optimize_engine import OptimizeEngine
+except ImportError:
+    from modules.optimize_engine import OptimizeEngine  # type: ignore
+try:
+    from .process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot
+except ImportError:
+    from modules.process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot  # type: ignore
 
 class GovernanceContext:
     def __init__(self, key=None):
@@ -111,15 +116,26 @@ class ReconstructionEngine:
 
     def decrypt(self, token: bytes) -> bytes:
         return self.ctx.fernet.decrypt(token)
+
+
+from dataclasses import dataclass as _dc, field as _dcfield
+
+
+@_dc
+class StructuralAnchor:
+    """Unveraenderlicher Strukturanker fuer einen Byte-Chunk."""
+    anchor_hash: str
+    chunk_offset: int
+    chunk_length: int
     entropy: float
     dominant_frequency: float
     fractal_dimension: float
     benford_score: float
-    pi_positions: list[int]
+    pi_positions: list
     symmetry: float
     signal_type: str
 
-    def signature_dict(self) -> dict[str, Any]:
+    def signature_dict(self) -> dict:
         """Serialisiert nur stabile Strukturmetriken fuer die lokale Signaturansicht."""
         return {
             "entropy": round(self.entropy, 6),
