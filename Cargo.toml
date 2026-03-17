@@ -45,32 +45,10 @@ tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", 
 uuid = { version = "1", features = ["serde", "v4"] }
 zeroize = "1.8"
 md5 = "0.7"
-[target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = [
-    # Basis
-    "Win32_Foundation",
-    "Win32_System_LibraryLoader",
-    "Win32_System_Threading",
-    "Win32_UI_WindowsAndMessaging",
-    # Phase 4: ETW (Event Tracing for Windows)
-    "Win32_System_Diagnostics_Etw",
-    # Phase 4: Prozess-Informationen
-    "Win32_System_ProcessStatus",
-    "Win32_Security",
-    "Win32_System_SystemInformation",
-    # Phase 4: DXGI Pixel-Koordination
-    "Win32_Graphics_Dxgi",
-    "Win32_Graphics_Dxgi_Common",
-    "Win32_Graphics_Direct3D",
-    "Win32_Graphics_Direct3D11",
-    # GUI
-    "Win32_UI_Controls",
-    "Win32_UI_Shell",
-] }
 
 # Python module integration and IPC bridge
 pyo3 = { version = "0.20", features = ["extension-module"] }
 maturin = "1.3"
-serde_pickle = "0.6"
+serde-pickle = "0.6"
 anyhow = "1.0"
 thiserror = "1.0"
