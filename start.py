@@ -12,6 +12,17 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+# ---------------------------------------------------------------------------
+# i18n frühzeitig initialisieren (vor allen anderen Importen)
+# ---------------------------------------------------------------------------
+try:
+    from modules.i18n import init as _i18n_init, t, get_language, set_language
+    _I18N_OK = True
+except Exception:
+    _I18N_OK = False
+    def t(key: str, **kwargs) -> str:  # type: ignore[misc]
+        return key
+
 try:
     import winshell
 except Exception:  # pragma: no cover - optionale Packaging-Abhaengigkeit
@@ -426,8 +437,30 @@ def run_roundtrip_smoke_trigger() -> int:
 def main(argv: list[str] | None = None) -> None:
     """Fuehrt Vorpruefungen aus und startet anschliessend Aether."""
     cli_args = list(sys.argv[1:] if argv is None else argv)
+
+    # -- i18n: Sprache laden und ggf. interaktiv waehlen -------------------
+    if _I18N_OK:
+        _i18n_init(settings_dir=PROJECT_ROOT / "data")
+        # --lang de / --lang en als CLI-Flag
+        for flag in cli_args:
+            if flag.startswith("--lang="):
+                set_language(flag.split("=", 1)[1].strip())
+            elif flag == "--lang" and cli_args.index(flag) + 1 < len(cli_args):
+                set_language(cli_args[cli_args.index(flag) + 1])
+        # Beim allerersten Start (keine gespeicherte Einstellung) fragen
+        import json as _json
+        _settings_path = PROJECT_ROOT / "data" / "settings.json"
+        if not _settings_path.exists() and "--no-lang-prompt" not in cli_args:
+            from modules.i18n import choose_language_cli
+            choose_language_cli()
+
+    # --- Modus-Flags analysieren ------------------------------------------
     test_roundtrip = "--test-roundtrip" in cli_args
     shanway_raster_insight = "--shanway-raster-insight" in cli_args
+    run_monitor = "--monitor" in cli_args
+    run_optimize = "--optimize" in cli_args
+    run_report = "--report" in cli_args
+
     try:
         append_startup_trace("main_begin")
         mp.freeze_support()
@@ -437,21 +470,41 @@ def main(argv: list[str] | None = None) -> None:
             missing = find_missing_dependencies()
             if missing:
                 names = ", ".join(missing)
-                print(f"Fehlende Abhaengigkeiten erkannt: {names}")
+                print(f"{t('warning')}: {names}")
                 print("Installation startet automatisch ...")
                 install_requirements()
                 print("Installation erfolgreich. Anwendung wird neu gestartet ...")
                 restart_application_with_args(cli_args)
                 return
+
+        # --- --test-roundtrip ------------------------------------------------
         if test_roundtrip:
             append_startup_trace("main_roundtrip_test")
             exit_code = run_roundtrip_smoke_trigger()
             if exit_code != 0:
                 raise RuntimeError("Roundtrip-Selbsttest fehlgeschlagen.")
             return
+
+        # --- --monitor -------------------------------------------------------
+        if run_monitor:
+            _cmd_monitor(cli_args)
+            return
+
+        # --- --optimize ------------------------------------------------------
+        if run_optimize:
+            _cmd_optimize(cli_args)
+            return
+
+        # --- --report --------------------------------------------------------
+        if run_report:
+            _cmd_report(cli_args)
+            return
+
+        # --- Normaler GUI-Start ----------------------------------------------
         ensure_desktop_shortcut()
         append_startup_trace("main_bootstrap")
         bootstrap(shanway_raster_insight=shanway_raster_insight)
+
     except KeyboardInterrupt:
         print("\nProgramm beendet. Auf Wiedersehen.")
     except subprocess.CalledProcessError:
@@ -460,6 +513,148 @@ def main(argv: list[str] | None = None) -> None:
         report_startup_error(exc)
         print(f"Fehler: {exc}")
         print("Die Anwendung konnte nicht gestartet werden. Bitte Konfiguration und Berechtigungen pruefen.")
+
+
+# ---------------------------------------------------------------------------
+# CLI-Kommandos
+# ---------------------------------------------------------------------------
+
+def _cmd_monitor(cli_args: list[str]) -> None:
+    """Startet Hintergrundüberwachung im Vordergrund (blockierend)."""
+    import signal
+    import time as _time
+
+    interval = 30.0
+    for a in cli_args:
+        if a.startswith("--interval="):
+            try:
+                interval = float(a.split("=", 1)[1])
+            except ValueError:
+                pass
+
+    db_path = PROJECT_ROOT / "data" / "process_anchors.db"
+    print(t("monitor_start"))
+    print(f"  Intervall: {interval:.0f}s | DB: {db_path}")
+
+    from modules.background_monitor import BackgroundMonitor
+
+    def _on_batch(n: int) -> None:
+        print(f"  [monitor] {n} {t('snapshots_stored')}", flush=True)
+
+    monitor = BackgroundMonitor(
+        db_path=db_path,
+        interval=interval,
+        on_snapshot_batch=_on_batch,
+    )
+    monitor.start()
+
+    def _shutdown(signum, frame):  # type: ignore[type-arg]
+        print(f"\n{t('monitor_stop')}")
+        monitor.stop()
+        sys.exit(0)
+
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT, _shutdown)
+
+    try:
+        while True:
+            _time.sleep(60)
+    except KeyboardInterrupt:
+        print(f"\n{t('monitor_stop')}")
+        monitor.stop()
+
+
+def _cmd_optimize(cli_args: list[str]) -> None:
+    """Einmalige Optimierungsanalyse mit optionalem --apply."""
+    auto_apply = "--apply" in cli_args
+
+    print(t("optimize_run"))
+    from modules.hardware_profiler import HardwareProfiler, HardwareOptimizer
+    from modules.process_anchor_store import ProcessAnchorStore
+    from modules.autopilot_engine import AutopilotEngine
+
+    hw = HardwareProfiler().profile()
+    lang = get_language() if _I18N_OK else "de"
+    if hw.is_old_hardware:
+        print(t("hw_old_detected"))
+    print(f"  CPU: {hw.cpu_name or '?'} | RAM: {hw.ram_total_mb} MB | Disk: {hw.disk_type}")
+
+    optimizer = HardwareOptimizer()
+    suggestions = optimizer.analyze()
+
+    if not suggestions:
+        print(t("optimize_no_issues"))
+        return
+
+    print(f"\n{t('report_suggestions')}:")
+    for i, sug in enumerate(suggestions, 1):
+        sev_marker = {"high": "(!)", "medium": "(*)", "low": "(i)"}[sug.severity]
+        print(f"  {i}. {sev_marker} {sug.title(lang)}")
+
+    if auto_apply:
+        store = ProcessAnchorStore(PROJECT_ROOT / "data" / "process_anchors.db")
+        engine = AutopilotEngine(store, autopilot=False)
+        results = engine.apply(
+            [s for s in suggestions if s.auto_applicable],
+            user_consented=True,
+        )
+        for r in results:
+            status = "OK" if r["success"] else "SKIP"
+            print(f"  [{status}] {r['action_type']} -> {r['target']}: {r['message']}")
+        rb = store.get_pending_rollbacks()
+        if rb:
+            print(f"\n{t('rollback_available')}: {len(rb)} {t('optimize_rollback')}")
+    else:
+        print(f"\n  Tipp: Mit --apply automatisch anwendbare Optimierungen ausfuehren.")
+
+    print(t("optimize_done"))
+
+
+def _cmd_report(cli_args: list[str]) -> None:
+    """Gibt Meta-Anker und Optimierungsvorschlaege als Text-Bericht aus."""
+    from modules.process_anchor_store import ProcessAnchorStore
+    from modules.hardware_profiler import HardwareProfiler, HardwareOptimizer
+
+    db_path = PROJECT_ROOT / "data" / "process_anchors.db"
+    lang = get_language() if _I18N_OK else "de"
+    store = ProcessAnchorStore(db_path)
+
+    print(f"\n=== {t('report_heading')} ===\n")
+
+    # Meta-Anker
+    meta = store.get_meta_anchors(limit=20)
+    print(f"--- {t('report_meta_anchors')} ({len(meta)}) ---")
+    if not meta:
+        print(f"  {t('report_no_anchors')}")
+    else:
+        for a in meta:
+            print(f"  [{a['trigger_name']} -> {a['effect_name']}] corr={a['correlation']:.2f}")
+            print(f"    {a['observation']}")
+
+    # Konsens-Anker
+    consensus = store.get_consensus_anchors(limit=10)
+    print(f"\n--- Konsens-Anker ({len(consensus)}) ---")
+    for c in consensus:
+        print(f"  {c['process_name']}: CPU={c['avg_cpu']:.1f}% RAM={c['avg_memory_rss']//1024//1024}MB n={c['sample_count']}")
+
+    # Optimierungsvorschläge
+    print(f"\n--- {t('report_suggestions')} ---")
+    suggestions = HardwareOptimizer().analyze()
+    if not suggestions:
+        print(f"  {t('optimize_no_issues')}")
+    else:
+        for sug in suggestions:
+            sev_marker = {"high": "(!)", "medium": "(*)", "low": "(i)"}[sug.severity]
+            print(f"  {sev_marker} {sug.title(lang)}")
+
+    # Snapshot-Statistik
+    count = store.count_snapshots()
+    rb_count = len(store.get_pending_rollbacks())
+    print(f"\n--- Stats ---")
+    print(f"  {t('snapshots_stored')}: {count}")
+    if rb_count:
+        print(f"  {t('rollback_available')}: {rb_count}")
 
 
 if __name__ == "__main__":

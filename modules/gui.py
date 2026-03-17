@@ -1716,6 +1716,11 @@ class VeiraGUI:
         self.right_notebook.add(vault_tab, text="VAULT")
         self.right_notebook.add(verify_tab, text="VERIFY")
 
+        # --- Einstellungen-Tab (Sprache + Monitor) ---
+        settings_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        self.right_notebook.add(settings_tab, text="EINSTELLUNGEN")
+        self._build_settings_tab(settings_tab)
+
         tk.Label(node_tab, text="Node-Status", bg="#111A4A", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=(12, 6))
         tk.Label(node_tab, text=f"Session-ID: {self.session_context.session_id[:8]}", bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 10)).pack(anchor="w", padx=12, pady=(0, 6))
         self.honeypot_label = tk.Label(node_tab, textvariable=self.honeypot_var, bg="#111A4A", fg="#7DE8A7", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left")
@@ -10120,6 +10125,117 @@ class VeiraGUI:
                 except Exception:
                     pass
             self.root.destroy()
+
+    def _build_settings_tab(self, parent: tk.Frame) -> None:
+        """Baut den Einstellungen-Tab mit Sprachauswahl und Monitor-Steuerung."""
+        try:
+            from modules.i18n import t as _t, get_language, set_language, choose_language_tk
+            _i18n_ok = True
+        except Exception:
+            _i18n_ok = False
+            def _t(k, **kw): return k  # type: ignore[misc]
+            def get_language(): return "de"  # type: ignore[misc]
+
+        BG = "#111A4A"
+        FG = "#E7F4FF"
+        FGDIM = "#C7D7FF"
+        FONT_H = ("Segoe UI", 11, "bold")
+        FONT_N = ("Segoe UI", 10)
+
+        tk.Label(parent, text=_t("settings"), bg=BG, fg=FG, font=FONT_H).pack(anchor="w", padx=12, pady=(14, 4))
+        tk.Frame(parent, bg="#2A3A7A", height=1).pack(fill="x", padx=8, pady=4)
+
+        # --- Sprache ---
+        tk.Label(parent, text=_t("language"), bg=BG, fg=FGDIM, font=FONT_N).pack(anchor="w", padx=16, pady=(8, 2))
+
+        lang_frame = tk.Frame(parent, bg=BG)
+        lang_frame.pack(anchor="w", padx=16, pady=4)
+
+        lang_var = tk.StringVar(value=get_language())
+
+        def _on_lang_change() -> None:
+            if _i18n_ok:
+                set_language(lang_var.get())
+                # Hinweis anzeigen
+                hint_label.config(text=_t("language_restart_hint"))
+
+        tk.Radiobutton(lang_frame, text="Deutsch", variable=lang_var, value="de",
+                       bg=BG, fg=FG, selectcolor="#1A2A6A",
+                       activebackground=BG, activeforeground=FG,
+                       command=_on_lang_change).pack(side="left", padx=(0, 16))
+        tk.Radiobutton(lang_frame, text="English", variable=lang_var, value="en",
+                       bg=BG, fg=FG, selectcolor="#1A2A6A",
+                       activebackground=BG, activeforeground=FG,
+                       command=_on_lang_change).pack(side="left")
+
+        hint_label = tk.Label(parent, text="", bg=BG, fg="#7AA0FF", font=("Segoe UI", 9, "italic"))
+        hint_label.pack(anchor="w", padx=16, pady=(0, 8))
+
+        tk.Frame(parent, bg="#2A3A7A", height=1).pack(fill="x", padx=8, pady=8)
+
+        # --- Hintergrundüberwachung ---
+        tk.Label(parent, text=_t("gui_tab_monitor"), bg=BG, fg=FGDIM, font=FONT_N).pack(anchor="w", padx=16, pady=(4, 2))
+
+        self._monitor_status_var = tk.StringVar(value=_t("monitor_stopped"))
+        self._monitor_instance = None
+
+        def _start_monitor() -> None:
+            if self._monitor_instance and self._monitor_instance.is_running():
+                return
+            try:
+                from modules.background_monitor import BackgroundMonitor
+                from pathlib import Path as _Path
+                db = _Path("data") / "process_anchors.db"
+                self._monitor_instance = BackgroundMonitor(db_path=db, interval=30)
+                self._monitor_instance.start()
+                self._monitor_status_var.set(_t("monitor_running"))
+            except Exception as exc:
+                self._monitor_status_var.set(f"Fehler: {exc}")
+
+        def _stop_monitor() -> None:
+            if self._monitor_instance:
+                self._monitor_instance.stop()
+                self._monitor_status_var.set(_t("monitor_stopped"))
+
+        mon_btn_frame = tk.Frame(parent, bg=BG)
+        mon_btn_frame.pack(anchor="w", padx=16, pady=4)
+        tk.Button(mon_btn_frame, text=_t("start"), command=_start_monitor,
+                  bg="#1E3A8A", fg=FG, relief="flat", padx=10, pady=4).pack(side="left", padx=(0, 8))
+        tk.Button(mon_btn_frame, text=_t("stop"), command=_stop_monitor,
+                  bg="#3A1A1A", fg=FG, relief="flat", padx=10, pady=4).pack(side="left")
+        tk.Label(parent, textvariable=self._monitor_status_var, bg=BG, fg=FGDIM, font=("Segoe UI", 9)).pack(anchor="w", padx=16)
+
+        tk.Frame(parent, bg="#2A3A7A", height=1).pack(fill="x", padx=8, pady=8)
+
+        # --- Optimierung Schnellaktion ---
+        tk.Label(parent, text=_t("gui_tab_optimize"), bg=BG, fg=FGDIM, font=FONT_N).pack(anchor="w", padx=16, pady=(4, 2))
+
+        self._opt_result_var = tk.StringVar(value="")
+
+        def _run_quick_optimize() -> None:
+            self._opt_result_var.set(_t("optimize_run"))
+
+            def _worker() -> None:
+                try:
+                    from modules.hardware_profiler import HardwareOptimizer
+                    suggestions = HardwareOptimizer().analyze()
+                    lang = get_language()
+                    if not suggestions:
+                        self._opt_result_var.set(_t("optimize_no_issues"))
+                        return
+                    lines = [s.title(lang) for s in suggestions[:5]]
+                    self._opt_result_var.set("\n".join(lines))
+                except Exception as exc:
+                    self._opt_result_var.set(f"Fehler: {exc}")
+
+            import threading
+            threading.Thread(target=_worker, daemon=True).start()
+
+        tk.Button(parent, text=_t("optimize_run").rstrip("…"),
+                  command=_run_quick_optimize,
+                  bg="#1E3A8A", fg=FG, relief="flat", padx=10, pady=4).pack(anchor="w", padx=16, pady=4)
+        tk.Label(parent, textvariable=self._opt_result_var, bg=BG, fg=FGDIM,
+                 font=("Segoe UI", 9), wraplength=320, justify="left").pack(anchor="w", padx=16)
 
     def run(self) -> None:
         """Startet die Tkinter-Hauptschleife."""
