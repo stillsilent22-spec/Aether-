@@ -1,5 +1,6 @@
 pub mod aef;
 pub mod app;
+pub mod py_entropy;
 pub mod auth;
 pub mod browser;
 pub mod browser_embed;

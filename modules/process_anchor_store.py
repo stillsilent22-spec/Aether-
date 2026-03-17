@@ -404,6 +404,138 @@ class ProcessAnchorStore:
             return [dict(row) for row in cur.fetchall()]
 
     # ------------------------------------------------------------------
+    # DBSCAN-Clustering von Konsens-Ankern (Ebene 2 → Meta-Ebene)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _dbscan(points: list[list[float]], eps: float, min_samples: int) -> list[int]:
+        """
+        Reines Python DBSCAN — O(n²), ausreichend für ≤ 500 Anker.
+
+        Rückgabe: Label-Liste (−1 = Rauschen, ≥ 0 = Cluster-ID).
+        """
+        n = len(points)
+        if n == 0:
+            return []
+        labels: list[int] = [-1] * n
+        visited: list[bool] = [False] * n
+        cluster_id = 0
+        dim = len(points[0])
+
+        def _dist(i: int, j: int) -> float:
+            return sum((points[i][k] - points[j][k]) ** 2 for k in range(dim)) ** 0.5
+
+        def _neighbors(idx: int) -> list[int]:
+            return [j for j in range(n) if j != idx and _dist(idx, j) <= eps]
+
+        for i in range(n):
+            if visited[i]:
+                continue
+            visited[i] = True
+            nbs = _neighbors(i)
+            if len(nbs) < min_samples:
+                continue  # Rauschen vorerst
+            labels[i] = cluster_id
+            seed = list(nbs)
+            while seed:
+                j = seed.pop(0)
+                if not visited[j]:
+                    visited[j] = True
+                    nbs2 = _neighbors(j)
+                    if len(nbs2) >= min_samples:
+                        seed.extend(nbs2)
+                if labels[j] == -1:
+                    labels[j] = cluster_id
+            cluster_id += 1
+        return labels
+
+    def cluster_consensus_anchors(
+        self,
+        eps: float = 12.0,
+        min_samples: int = 2,
+        window_hours: float = 168.0,
+    ) -> list[dict[str, Any]]:
+        """
+        Gruppiert Konsens-Anker mit DBSCAN im Feature-Raum
+        (avg_cpu, avg_memory_rss_MB, avg_threads).
+
+        eps        — Max. euklidischer Abstand (in normalisiertem Raum)
+        min_samples — Mindestanzahl Punkte für einen Core-Point
+        window_hours — Wie weit zurück Anker berücksichtigt werden
+
+        Rückgabe: Liste von Cluster-Deskriptoren
+          {
+            "cluster_id": int,          # −1 = Rauschen
+            "process_names": list[str],
+            "centroid_cpu": float,
+            "centroid_memory_mb": float,
+            "centroid_threads": float,
+            "size": int,
+            "dominant_label": str,
+          }
+        """
+        since = time.time() - window_hours * 3600.0
+        with self._lock, self._conn() as con:
+            cur = con.execute(
+                """SELECT process_name, avg_cpu, avg_memory_rss, avg_threads, pattern_label
+                   FROM consensus_anchors
+                   WHERE created_at >= ?
+                   ORDER BY created_at DESC""",
+                (since,),
+            )
+            rows = cur.fetchall()
+
+        if not rows:
+            return []
+
+        names: list[str] = [r[0] for r in rows]
+        labels_raw: list[str] = [r[4] for r in rows]
+
+        # Normalisierung: CPU 0–100, RAM → MB (/1024/1024), Threads 0–100
+        def _norm(cpu: float, ram: int, thr: float) -> list[float]:
+            return [cpu / 100.0 * 50.0, ram / (1024 * 1024), thr]
+
+        points = [_norm(r[1], r[2], r[3]) for r in rows]
+        cluster_labels = self._dbscan(points, eps=eps, min_samples=min_samples)
+
+        # Aggregiere nach Cluster
+        clusters: dict[int, dict[str, Any]] = {}
+        for idx, cid in enumerate(cluster_labels):
+            if cid not in clusters:
+                clusters[cid] = {
+                    "cluster_id": cid,
+                    "process_names": [],
+                    "_cpu": [],
+                    "_mem": [],
+                    "_thr": [],
+                    "_labels": [],
+                }
+            clusters[cid]["process_names"].append(names[idx])
+            clusters[cid]["_cpu"].append(rows[idx][1])
+            clusters[cid]["_mem"].append(rows[idx][2] / (1024 * 1024))
+            clusters[cid]["_thr"].append(rows[idx][3])
+            clusters[cid]["_labels"].append(labels_raw[idx])
+
+        result = []
+        for cid, data in sorted(clusters.items()):
+            n = len(data["_cpu"])
+            dominant = max(
+                set(l for l in data["_labels"] if l),
+                key=data["_labels"].count,
+                default="",
+            ) if any(data["_labels"]) else ""
+            result.append({
+                "cluster_id": cid,
+                "process_names": list(set(data["process_names"])),
+                "centroid_cpu": round(sum(data["_cpu"]) / n, 2),
+                "centroid_memory_mb": round(sum(data["_mem"]) / n, 2),
+                "centroid_threads": round(sum(data["_thr"]) / n, 2),
+                "size": n,
+                "dominant_label": dominant,
+            })
+        return result
+
+    # ------------------------------------------------------------------
     # Optimierungs-Log
     # ------------------------------------------------------------------
 
