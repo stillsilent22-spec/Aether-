@@ -1,12 +1,16 @@
 # Aether
 
+> *Was wenn Bedeutung keine Sprache braucht — nur Struktur?*
+
 **Eine Frage die noch niemand stellen konnte:**
 
-Warum hat ein Ozeanmuster vor El Niño dieselbe Struktursignatur wie ein Zellcluster vor einer Metastasierung?
+Warum zeigt ein Ozeanmuster vor El Niño dieselbe Struktursignatur wie ein Zellcluster kurz vor einer Metastasierung?
 
-Niemand stellt diese Frage. Nicht weil sie uninteressant ist. Sondern weil kein Werkzeug existiert das Ozean und Zelle in dieselbe Sprache übersetzt.
+Niemand stellt diese Frage. Nicht weil sie uninteressant ist. Sondern weil kein Werkzeug existiert das Ozean und Zelle in dieselbe Sprache übersetzt — ohne beiden vorab zu sagen, was sie bedeuten sollen.
 
-Aether übersetzt alles in Struktur. Struktur ist die gemeinsame Sprache.
+Aether ist dieses Werkzeug. Es übersetzt alles in Struktur. Struktur ist die gemeinsame Sprache.
+
+→ [English version: README_EN.md](README_EN.md)
 
 ---
 
@@ -225,50 +229,19 @@ Aus der Summe emergiert Intelligenz
 
 Jeder Knoten folgt denselben drei lokalen Regeln:
 
-# Aether
+1. Miss was du siehst
+2. Teile nur Signaturen — nie Rohdaten
+3. Vertraue dem Schwarm — aber verifiziere lokal
 
-Universal Framework für Strukturell Emergente Metadynamische Semantik (SEMS)
+Es gibt keinen Server der diese Regeln erzwingt. Jeder Knoten erzwingt sie selbst. Das ist keine Schwäche. Das ist der Punkt.
 
-## Ziele
-- Lokale Messung von Strukturen (ohne Labels)
-- Emergenz von Semantik aus Dynamiken
-- Dezentrales Teilen via Aethernet (P2P-Anker)
-- Keine Halluzinationen durch TinyLLaMA
-- Privacy by Architecture: lokale Keys, Zero-Knowledge-Sharing
-- Offline-fähig, schwache Hardware
-- Integration von Shanway (halluzinationsfreier Übersetzer)
+---
 
-## Struktur
-- src/ (Rust, Performance)
-- modules/ (Python, Analyse, LLM, Security, ReconstructionEngine)
-- ui/ (UI mit Iced)
-- tests/ (Unit-Tests, Pytest)
-- data/ (Daten)
+## Mitmachen
 
-## Roadmap
-- Phase 1-2: Foundation, Media (Shanway, TinyLLaMA, UniversalAdapter)
-- Phase 3: Process (Prozessdynamik, Multi-Modalität, ReconstructionEngine, Attractor-Tracking)
-- Phase 4: Render (Pixel-Koordination, UI, Monitoring, Runtime, Persistence)
+Aether sucht Menschen die:
 
-## Security & Privacy
-- Tamper-Detection, Audit-Logging, Invarianten
-- Zero-Knowledge-Sharing (Anchor Packs)
-- Local Keys in RAM
-- No raw data sharing
-
-## Integration
-- Python-Module: shanway_session, shanway_vault, reconstruction_engine
-- Rust: src/ (pyo3 für Security-Shells)
-- Multi-Modality: Kamera, Audio, Datei
-
-## Test & Validation
-- Pytest, Coverage, Audit-Logs
-- Tests: tests/test_reconstruction_phase3.py, pytest.ini
-- Ausführung: pytest tests/
-
-## Lizenz
-MIT
-- als Wissenschaftler, Entwickler oder Citizen Scientists bereit sind ein Werkzeug mitzubauen das ihnen selbst gehört
+- als Wissenschaftler, Entwickler oder Citizen Scientists ein Werkzeug mitbauen wollen das ihnen selbst gehört
 - der Wissenschaft und der Wahrheit verschrieben sind — nicht dem Ego oder dem Kapital
 
 **Du musst nicht programmieren können.**
@@ -329,71 +302,53 @@ Datei analysieren und Filekey generieren:
 :drop /pfad/zur/datei
 ```
 
+Tests ausführen:
+```bash
+pytest tests/
+```
+
 ---
 
 ## Roadmap
 
 Die vollständige Implementierungsprogression steht in **[ROADMAP.md](ROADMAP.md)**
 
-Kurzübersicht:
-
 | Phase | Inhalt | Status |
 |-------|--------|--------|
 | 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
 | 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
-| 3 | Process: Windows Prozessdynamik | ✓ Fertig |
+| 3 | Process: Windows Prozessdynamik + ReconstructionEngine | ✓ Fertig |
 | 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
 | 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | ✓ Fertig |
-| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
+| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | In Arbeit |
+| 7 | Cross-Domain Atlas: SEMS-Forschungswerkzeuge | Geplant |
 
 ---
 
 ## Dokumentation
 
-- **[WHITEPAPER.md](WHITEPAPER.md)** — vollständige technische und philosophische Basis
-- **[SECURITY.md](SECURITY.md)** — Sicherheitsarchitektur und Governance
-- **[LICENSE](LICENSE)** — Lizenzstatus
+| Dokument | Inhalt |
+|----------|--------|
+| **[WHITEPAPER.md](WHITEPAPER.md)** | Technische und wissenschaftliche Grundlagen (Deutsch) |
+| **[WHITEPAPER_EN.md](WHITEPAPER_EN.md)** | Technical and scientific foundations (English) |
+| **[ROADMAP.md](ROADMAP.md)** | Implementierungsfortschritt und Vision |
+| **[SECURITY.md](SECURITY.md)** | Sicherheitsarchitektur und Governance |
+| **[core_axioms.md](core_axioms.md)** | Grundaxiome des Systems |
+| **[LICENSE](LICENSE)** | Lizenz (MIT) |
 
 ---
 
-*Aether — open, local, strukturell.*
+*Aether — offen, lokal, strukturell.*
 *Für Fragen die es noch nicht gibt.*
 *Für Rechner die noch nicht aufgegeben haben.*
 *Für Menschen die nachvollziehen wollen statt vertrauen müssen.*
 *Für Wissen das niemandem gehört — und deshalb allen.*
-*Für einen Schwarm der sich selbst gehört.*
 
 ---
 
-Stand: 2026 — Autor: Kevin Hannemann
+Stand: März 2026 — Autor: Kevin Hannemann
 Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 
-## Usage Examples
-
-- Optimize snapshot: `python start.py :optimize <snapshot_file>`
-
-## Roadmap
-
-| Phase | Inhalt | Status |
-|-------|--------|--------|
-| 1 | Foundation: Web + Dateien + Registry + Graph + Session-Keys | ✓ Fertig |
-| 2 | Media: MP3 / MP4 / Bilder + Datei-Register + Filekeys | ✓ Fertig |
-| 3 | Process: Windows Prozessdynamik | ✓ Fertig |
-| 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess | ✓ Fertig |
-| 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung | ✓ Fertig |
-| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs | Temporär (GitHub), Vision |
-
----
-
-## Dokumentation
-
-- **[WHITEPAPER.md](WHITEPAPER.md)** — vollständige technische und philosophische Basis
-- **[SECURITY.md](SECURITY.md)** — Sicherheitsarchitektur und Governance
-- **[LICENSE](LICENSE)** — Lizenzstatus
-
----
-
-*Aether — open, local, strukturell.*
 *Für Fragen die es noch nicht gibt.*
 *Für Rechner die noch nicht aufgegeben haben.*
 *Für Menschen die nachvollziehen wollen statt vertrauen müssen.*
