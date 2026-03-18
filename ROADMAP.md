@@ -128,3 +128,124 @@ Diese Fragen treibt Aether an. Sie sind nicht beantwortet — sie sind der Grund
 
 Letzte Aktualisierung: März 2026
 
+---
+
+## Gesamtkonzept & Entwicklungs-Roadmap (Master-Plan)
+
+### Philosophie und Grundprinzipien
+
+Aether ist ein lokales, datenschutzzentriertes Framework für strukturelle Datenanalyse:
+
+- **Zero-Knowledge-Architektur**: Rohdaten verlassen niemals das Gerät. Nur nicht-invertierbare Struktursignaturen (Anker) werden optional geteilt.
+- **Struktur statt Semantik**: Aether erkennt Muster, interpretiert sie aber nicht. Bedeutung entsteht erst durch den Nutzer.
+- **Emergenz durch Schwarmintelligenz**: Muster gewinnen an Relevanz, wenn sie mehrfach unabhängig auftreten.
+- **Selbstverantwortung**: Nutzer verwalten ihre Schlüssel selbst; es gibt keine zentrale Wiederherstellung.
+- **Wissenschaftliche Bescheidenheit**: Alle Ergebnisse sind Hypothesen, keine Wahrheiten.
+
+### Erststart & Nutzerführung (Phase A.1) ✓ Implementiert
+
+- **Shanway-Erststart-Hinweis (DE/EN)**: Beim allerersten Start erscheint ein klarer Hinweis:
+  - Konto existiert nur lokal; privater Schlüssel wird auf dem Gerät erzeugt
+  - Keine Passwort-Wiederherstellung, kein Support
+  - Zero-Knowledge-Sicherheitsphilosophie (kein Bug)
+  - Backup-Pflicht: `%USERPROFILE%\.aether` (Windows) / `~/.aether` (Linux/macOS)
+- Anzeige als Konsolen-Dialog (CLI) und modaler Tkinter-Dialog (GUI)
+- Einmalig — nach Bestätigung in `data/settings.json` gespeichert, nicht wiederholt
+
+### Domänenübergreifende Muster (Phase C.1) ✓ Implementiert
+
+- **`modules/cross_domain_engine.py`**: CrossDomainEngine mit DBSCAN-Clustering
+  - Pure-Python DBSCAN (kein sklearn erforderlich), O(n²)
+  - Merkmalsraum-Normalisierung auf [0, 1]
+  - Relevanzbewertung: `relevance = (n^α · m^β · (1+g)) / (d + ε)`
+  - Wachstumsrate (letzte 7 Tage), Multi-Domänen-Filter
+  - SQLite-Persistenz: `cd_anchors`, `cd_clusters`, `cd_cluster_members`
+  - Shanway-Benachrichtigung bei Relevanz ≥ 70
+  - Meta-Anker-Export (kein Rohdaten-Austausch)
+- **GUI-Tab „DOMÄNEN"** in `modules/gui.py`:
+  - Persistenter Disclaimer (⚠️) immer sichtbar
+  - Konfigurierbare Parameter (eps, min_samples, Zeitfenster)
+  - Scrollbare Cluster-Liste mit Relevanz-Score
+  - Detail-Ansicht bei Selektion
+  - Export-Funktion nach `data/meta_anchors/`
+- **Jeder Eintrag enthält:**
+  > ⚠️ Strukturelle Auffälligkeit – keine gesicherte Erkenntnis. Dieses Muster basiert ausschließlich auf mathematischen Ähnlichkeiten.
+
+---
+
+## Detaillierter Entwicklungsplan
+
+### Phase A — Kurzfristig (1–2 Monate)
+
+- [x] Erststart-Hinweis (keine Kontowiederherstellung) — Shanway DE/EN
+- [x] Domänenübergreifende Muster-Engine (CrossDomainEngine)
+- [x] GUI-Tab „DOMÄNEN" mit Disclaimer
+- [ ] Automatische Ordnerüberwachung + Anker-Generierung (watchdog-Bibliothek)
+- [ ] Live-Session-Keys und widerrufbare Freigaben (PrivacyRegistry-Integration)
+- [ ] Tutorial-Modus (einfache Version: Datei-Analyse mit Shanway-Führung)
+
+### Phase B — Mittelfristig (3–6 Monate)
+
+- [ ] Gruppenchats: Ordner als Anker-Listen teilen
+- [ ] Vergleichsfunktion im Chat (Clustering, Heatmap-Visualisierung)
+- [ ] Automatische Konsens-Anker (Ebene 2): Schwelle 3 unabhängige Quellen
+- [ ] Aethernet-Erweiterung: neue Nachrichtentypen
+  - `ANCHOR_BATCH` — mehrere Anker auf einmal
+  - `ANCHOR_CONSENSUS` — promovierte Konsens-Anker mit Metadaten
+  - `SESSION_KEY` — temporäre Zugriffsrechte
+- [ ] Öffentliche Anker als Datenquelle für domänenübergreifende Cluster
+- [ ] Domänen-Tags (Freitext oder vordefiniert) mit Opt-in-Freigabe
+
+### Phase C — Langfristig (6–12 Monate)
+
+- [x] Domänenübergreifender Tab mit Clustering und Relevanzbewertung
+- [x] Meta-Anker-Exportfunktion
+- [ ] Ähnlichkeitsmatrix-Visualisierung (Heatmap) in Detailansicht
+- [ ] Fortgeschrittenes Tutorial (Prozessanalyse, Live-Demos)
+- [ ] Annäherungssuche für >1 Mio. Anker (annoy / faiss Vorfilter)
+- [ ] Umfassende Sicherheitsaudits (Penetrationstests Aethernet-Protokoll)
+- [ ] Cross-Domain Atlas: öffentliche kuratierte Anker-Bibliothek
+
+---
+
+## Technische Spezifikationen
+
+### Algorithmen und Bibliotheken
+
+| Aufgabe | Bibliothek | Status |
+|---------|------------|--------|
+| Clustering (klein) | Pure-Python DBSCAN | ✓ Implementiert |
+| Clustering (groß) | scikit-learn DBSCAN / hdbscan | Geplant |
+| Ähnlichkeitssuche (>1M Anker) | annoy / faiss | Phase C |
+| Ordnerüberwachung | watchdog | Phase A |
+| CLI-UI (Tabs, Farben) | rich / textual | Phase B |
+| Rust-Beschleunigung | PyO3 / maturin | ✓ Grundgerüst |
+
+### Datenbankerweiterungen (Registry)
+
+| Tabelle | Zweck | Status |
+|---------|-------|--------|
+| `cd_anchors` | Anker-Eingangsdaten | ✓ Cross-Domain-DB |
+| `cd_clusters` | Cluster-Metadaten | ✓ Cross-Domain-DB |
+| `cd_cluster_members` | Cluster-Mitglieder | ✓ Cross-Domain-DB |
+| `consensus_candidates` | Zählung ähnlicher Anker | Geplant Phase B |
+| `consensus_anchors` | Promovierte Konsens-Anker | Geplant Phase B |
+| `tutorial_state` | Tutorial-Fortschritt | Geplant Phase A |
+
+### Datenschutz-Invarianten (unveränderlich)
+
+| Eigenschaft | Garantie |
+|------------|----------|
+| Rohdaten | Verlassen niemals das Gerät |
+| Anker | SHA-256 nicht-invertierbar |
+| Filekeys | Nur Hash gespeichert, nie Klartext |
+| Cluster | Nur Strukturzusammenfassung exportiert |
+| Metadaten | Opt-in, nie an Identität geknüpft |
+
+### Offene Fragen (zur Diskussion)
+
+- Wie granular sollen Domänen-Tags sein? (Freitext, vordefinierte Liste, automatische Erkennung aus Ordneramen?)
+- Sollen Konsens-Anker nach einmaliger Zustimmung dauerhaft geteilt werden oder ist jede Übertragung ein neuer Opt-in?
+- Wie verhindert man Missbrauch des Aethernet (Flooding mit sinnlosen Ankern)? — Reputation, Proof-of-Work, manuelle Kurierung?
+- Soll es einen globalen „Ignore"-Filter für bestimmte Anker-Cluster geben (ähnlich Spam-Filter)?
+

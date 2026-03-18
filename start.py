@@ -334,6 +334,104 @@ def confirm_local_update_rebaseline(summary: str) -> bool:
         return False
 
 
+def _show_first_start_welcome_cli() -> None:
+    """
+    Gibt Shanways Erststart-Hinweis in der Konsole aus (keine GUI nötig).
+    Markiert den ersten Start als gesehen, damit der Text nicht wiederholt wird.
+    """
+    try:
+        from modules.i18n import t as _t, get_language
+        lang = get_language()
+        title = _t("first_start_title")
+        body = _t("first_start_body")
+        ack = _t("first_start_ack")
+        border = "=" * 64
+        print(f"\n{border}")
+        print(f"  Shanway: {title}")
+        print(border)
+        for line in body.splitlines():
+            print(f"  {line}")
+        print(border)
+        input(f"\n  [{ack}]  → Enter drücken / Press Enter\n")
+        # Merke, dass der Hinweis gezeigt wurde
+        settings_path = PROJECT_ROOT / "data" / "settings.json"
+        import json as _json
+        data: dict = {}
+        if settings_path.exists():
+            try:
+                data = _json.loads(settings_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        data["first_start_shown"] = True
+        settings_path.parent.mkdir(parents=True, exist_ok=True)
+        settings_path.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass  # Erststart-Hinweis ist nicht kritisch
+
+
+def show_first_start_welcome_tk(parent=None) -> None:
+    """
+    Zeigt Shanways Erststart-Hinweis als modalen Tkinter-Dialog.
+    Wird von der GUI beim ersten Öffnen aufgerufen.
+    """
+    try:
+        import tkinter as tk
+        from tkinter import ttk
+        from modules.i18n import t as _t, get_language
+
+        root_or_parent = parent
+        win = tk.Toplevel(root_or_parent) if root_or_parent else tk.Tk()
+        win.title(_t("first_start_title"))
+        win.configure(bg="#081120")
+        win.resizable(False, False)
+        try:
+            win.grab_set()
+        except Exception:
+            pass
+
+        BG, FG, ACCENT = "#081120", "#E7F4FF", "#7DE8A7"
+
+        tk.Label(win, text=f"  Shanway: {_t('first_start_title')}",
+                 bg=BG, fg=ACCENT, font=("Segoe UI", 13, "bold"),
+                 anchor="w").pack(fill="x", padx=16, pady=(16, 4))
+        tk.Frame(win, bg="#2A3A7A", height=1).pack(fill="x", padx=8)
+
+        txt = tk.Text(win, width=62, height=16,
+                      bg="#0C172B", fg=FG, font=("Segoe UI", 10),
+                      relief="flat", padx=12, pady=10, wrap="word",
+                      state="normal", cursor="arrow")
+        txt.insert("1.0", _t("first_start_body"))
+        txt.configure(state="disabled")
+        txt.pack(padx=16, pady=12)
+
+        def _ack() -> None:
+            # Merke, dass der Hinweis gezeigt wurde
+            try:
+                import json as _json
+                settings_path = PROJECT_ROOT / "data" / "settings.json"
+                data: dict = {}
+                if settings_path.exists():
+                    data = _json.loads(settings_path.read_text(encoding="utf-8"))
+                data["first_start_shown"] = True
+                settings_path.parent.mkdir(parents=True, exist_ok=True)
+                settings_path.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+            win.destroy()
+
+        tk.Button(win, text=f"✓  {_t('first_start_ack')}",
+                  command=_ack, bg="#1E3A6A", fg=ACCENT,
+                  font=("Segoe UI", 10, "bold"), relief="flat",
+                  padx=16, pady=8).pack(pady=(0, 16))
+
+        if root_or_parent:
+            win.wait_window()
+        else:
+            win.mainloop()
+    except Exception:
+        pass  # Dialog ist nicht kritisch
+
+
 def bootstrap(shanway_raster_insight: bool = False) -> None:
     """Initialisiert alle Kernmodule in der vorgegebenen Reihenfolge und startet die GUI."""
     os.chdir(PROJECT_ROOT)
@@ -403,6 +501,15 @@ def bootstrap(shanway_raster_insight: bool = False) -> None:
         ae_interpreter=ae_interpreter,
     )
     append_startup_trace("gui_run_begin")
+    # Ersten-Start-Hinweis anzeigen, falls noch nicht bestätigt
+    try:
+        import json as _json
+        _sp = PROJECT_ROOT / "data" / "settings.json"
+        _data = _json.loads(_sp.read_text(encoding="utf-8")) if _sp.exists() else {}
+        if not _data.get("first_start_shown"):
+            show_first_start_welcome_tk(parent=getattr(gui, "root", None))
+    except Exception:
+        pass
     gui.run()
 
 
@@ -450,9 +557,13 @@ def main(argv: list[str] | None = None) -> None:
         # Beim allerersten Start (keine gespeicherte Einstellung) fragen
         import json as _json
         _settings_path = PROJECT_ROOT / "data" / "settings.json"
-        if not _settings_path.exists() and "--no-lang-prompt" not in cli_args:
+        _is_first_start = not _settings_path.exists()
+        if _is_first_start and "--no-lang-prompt" not in cli_args:
             from modules.i18n import choose_language_cli
             choose_language_cli()
+        # Shanway-Begrüßung beim ersten Start (CLI)
+        if _is_first_start and "--no-lang-prompt" not in cli_args:
+            _show_first_start_welcome_cli()
 
     # --- Modus-Flags analysieren ------------------------------------------
     test_roundtrip = "--test-roundtrip" in cli_args

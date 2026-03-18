@@ -1716,6 +1716,11 @@ class VeiraGUI:
         self.right_notebook.add(vault_tab, text="VAULT")
         self.right_notebook.add(verify_tab, text="VERIFY")
 
+        # --- Domänenübergreifende Muster-Tab ---
+        cross_domain_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        self.right_notebook.add(cross_domain_tab, text="DOMÄNEN")
+        self._build_cross_domain_tab(cross_domain_tab)
+
         # --- Einstellungen-Tab (Sprache + Monitor) ---
         settings_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         self.right_notebook.add(settings_tab, text="EINSTELLUNGEN")
@@ -10125,6 +10130,216 @@ class VeiraGUI:
                 except Exception:
                     pass
             self.root.destroy()
+
+    # ------------------------------------------------------------------
+    # Domänenübergreifende Muster-Tab
+    # ------------------------------------------------------------------
+
+    def _build_cross_domain_tab(self, parent: tk.Frame) -> None:
+        """
+        Baut den Tab 'Domänenübergreifende Muster' mit DBSCAN-Clustering
+        und Relevanz-Score-Anzeige. Alle Ergebnisse sind Hypothesen;
+        jeder Eintrag enthält einen sichtbaren Disclaimer.
+        """
+        try:
+            from modules.i18n import t as _t, get_language
+        except Exception:
+            def _t(k, **kw): return k  # type: ignore[misc]
+            def get_language(): return "de"  # type: ignore[misc]
+
+        BG = "#081120"
+        BG2 = "#0C172B"
+        FG = "#E7F4FF"
+        FGDIM = "#8BAFD0"
+        ACCENT = "#7DE8A7"
+        WARN = "#F6C849"
+        FONT_H = ("Segoe UI", 11, "bold")
+        FONT_N = ("Segoe UI", 10)
+        FONT_S = ("Segoe UI", 9)
+
+        # --- Überschrift ---
+        tk.Label(parent, text=_t("cross_domain_heading"),
+                 bg=BG, fg=ACCENT, font=FONT_H).pack(anchor="w", padx=12, pady=(12, 2))
+        tk.Label(
+            parent,
+            text="Strukturelle Muster über verschiedene Domänen hinweg – stets als Hypothesen zu verstehen.",
+            bg=BG, fg=FGDIM, font=FONT_S, wraplength=480, justify="left",
+        ).pack(anchor="w", padx=12, pady=(0, 4))
+        tk.Frame(parent, bg="#2A3A7A", height=1).pack(fill="x", padx=8, pady=4)
+
+        # --- Persistenter Disclaimer (immer sichtbar) ---
+        disc_frame = tk.Frame(parent, bg="#1A0C00", bd=1, relief="flat")
+        disc_frame.pack(fill="x", padx=10, pady=(2, 6))
+        tk.Label(
+            disc_frame,
+            text=_t("cross_domain_disclaimer"),
+            bg="#1A0C00", fg=WARN, font=FONT_S, wraplength=470, justify="left",
+        ).pack(anchor="w", padx=10, pady=6)
+
+        # --- Parameter-Zeile ---
+        param_frame = tk.Frame(parent, bg=BG)
+        param_frame.pack(anchor="w", padx=12, pady=(0, 4), fill="x")
+
+        tk.Label(param_frame, text="eps:", bg=BG, fg=FGDIM, font=FONT_S).pack(side="left")
+        eps_var = tk.StringVar(value="0.35")
+        tk.Entry(param_frame, textvariable=eps_var, width=6,
+                 bg=BG2, fg=FG, insertbackground=FG, relief="flat").pack(side="left", padx=(2, 10))
+
+        tk.Label(param_frame, text="min_samples:", bg=BG, fg=FGDIM, font=FONT_S).pack(side="left")
+        min_s_var = tk.StringVar(value="3")
+        tk.Entry(param_frame, textvariable=min_s_var, width=4,
+                 bg=BG2, fg=FG, insertbackground=FG, relief="flat").pack(side="left", padx=(2, 10))
+
+        tk.Label(param_frame, text="Tage:", bg=BG, fg=FGDIM, font=FONT_S).pack(side="left")
+        days_var = tk.StringVar(value="365")
+        tk.Entry(param_frame, textvariable=days_var, width=5,
+                 bg=BG2, fg=FG, insertbackground=FG, relief="flat").pack(side="left", padx=(2, 10))
+
+        # --- Cluster-Liste (scrollbar) ---
+        list_frame = tk.Frame(parent, bg=BG)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=(2, 0))
+
+        scrollbar = tk.Scrollbar(list_frame, bg=BG, troughcolor=BG2)
+        scrollbar.pack(side="right", fill="y")
+
+        self._cd_listbox = tk.Listbox(
+            list_frame,
+            yscrollcommand=scrollbar.set,
+            bg=BG2, fg=FG, selectbackground="#1E3A6A",
+            font=("Consolas", 9), relief="flat",
+            activestyle="none",
+        )
+        self._cd_listbox.pack(fill="both", expand=True)
+        scrollbar.config(command=self._cd_listbox.yview)
+
+        # --- Detail-Anzeige ---
+        self._cd_detail_var = tk.StringVar(value="")
+        detail_label = tk.Label(
+            parent, textvariable=self._cd_detail_var,
+            bg=BG, fg=FGDIM, font=FONT_S,
+            wraplength=480, justify="left", anchor="w",
+        )
+        detail_label.pack(anchor="w", padx=12, pady=(4, 0), fill="x")
+
+        # --- Status ---
+        self._cd_status_var = tk.StringVar(value="")
+        tk.Label(parent, textvariable=self._cd_status_var,
+                 bg=BG, fg=FGDIM, font=FONT_S).pack(anchor="w", padx=12)
+
+        # Interner Zustand
+        self._cd_clusters: list = []
+        self._cd_engine = None
+
+        def _get_engine():
+            if self._cd_engine is None:
+                try:
+                    from modules.cross_domain_engine import CrossDomainEngine
+                    from pathlib import Path as _P
+                    self._cd_engine = CrossDomainEngine(_P("data") / "cross_domain.db")
+                except Exception as exc:
+                    self._cd_status_var.set(f"Engine-Fehler: {exc}")
+            return self._cd_engine
+
+        def _refresh() -> None:
+            engine = _get_engine()
+            if engine is None:
+                return
+            try:
+                eps = float(eps_var.get())
+                min_s = int(min_s_var.get())
+                days = float(days_var.get())
+            except ValueError:
+                self._cd_status_var.set("Ungültige Parameter.")
+                return
+
+            self._cd_status_var.set("Clustering läuft…")
+            parent.update_idletasks()
+            try:
+                clusters = engine.cluster(eps=eps, min_samples=min_s, window_days=days)
+                self._cd_clusters = clusters
+                self._cd_listbox.delete(0, "end")
+                if not clusters:
+                    self._cd_listbox.insert("end", _t("cross_domain_no_data"))
+                    self._cd_status_var.set("")
+                    return
+                for c in clusters:
+                    import datetime as _dt
+                    ts = _dt.datetime.fromtimestamp(c.first_seen).strftime("%d.%m.%Y")
+                    line = (
+                        f"  Cluster {c.cluster_id[:8]}  ·  "
+                        f"Relevanz {c.relevance_score:.0f}/100  ·  "
+                        f"{c.n_anchors} Anker  ·  {c.n_domains} Dom.  ·  "
+                        f"{c.domain_summary()}  ·  ab {ts}"
+                    )
+                    self._cd_listbox.insert("end", line)
+                lang = get_language()
+                notif = engine.shanway_notification(lang=lang)
+                self._cd_status_var.set(
+                    f"{len(clusters)} Cluster gefunden."
+                    + (f"\n{notif}" if notif else "")
+                )
+            except Exception as exc:
+                self._cd_status_var.set(f"Fehler: {exc}")
+
+        def _on_select(event=None) -> None:
+            sel = self._cd_listbox.curselection()
+            if not sel or not self._cd_clusters:
+                return
+            idx = sel[0]
+            if idx >= len(self._cd_clusters):
+                return
+            c = self._cd_clusters[idx]
+            detail = (
+                f"Cluster {c.cluster_id[:8]}\n"
+                f"Anker: {c.n_anchors}  |  Domänen: {c.domain_summary()}\n"
+                f"Relevanz: {c.relevance_score:.1f}/100  |  "
+                f"Mittl. Distanz: {c.mean_distance:.4f}\n"
+                f"\n{_t('cross_domain_disclaimer')}"
+            )
+            self._cd_detail_var.set(detail)
+
+        def _export() -> None:
+            sel = self._cd_listbox.curselection()
+            if not sel or not self._cd_clusters:
+                return
+            idx = sel[0]
+            if idx >= len(self._cd_clusters):
+                return
+            c = self._cd_clusters[idx]
+            engine = _get_engine()
+            if engine is None:
+                return
+            meta = engine.export_meta_anchor(c.cluster_id)
+            if meta is None:
+                return
+            try:
+                import json as _json
+                from pathlib import Path as _P
+                out_dir = _P("data") / "meta_anchors"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                out_path = out_dir / f"cluster_{c.cluster_id[:8]}.json"
+                out_path.write_text(_json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+                self._cd_status_var.set(f"Meta-Anker exportiert: {out_path}")
+            except Exception as exc:
+                self._cd_status_var.set(f"Export-Fehler: {exc}")
+
+        self._cd_listbox.bind("<<ListboxSelect>>", _on_select)
+
+        # --- Schaltflächen ---
+        btn_frame = tk.Frame(parent, bg=BG)
+        btn_frame.pack(anchor="w", padx=10, pady=(4, 10), fill="x")
+
+        tk.Button(
+            btn_frame, text=_t("cross_domain_refresh"),
+            command=_refresh,
+            bg="#1E3A8A", fg=FG, relief="flat", padx=10, pady=4,
+        ).pack(side="left", padx=(0, 8))
+
+        tk.Button(
+            btn_frame, text=_t("cross_domain_export"),
+            command=_export,
+            bg="#1A3A1A", fg=ACCENT, relief="flat", padx=10, pady=4,
+        ).pack(side="left")
 
     def _build_settings_tab(self, parent: tk.Frame) -> None:
         """Baut den Einstellungen-Tab mit Sprachauswahl und Monitor-Steuerung."""

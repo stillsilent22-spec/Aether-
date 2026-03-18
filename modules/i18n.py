@@ -259,6 +259,91 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Sprachänderung wird beim nächsten Neustart vollständig wirksam.",
         "en": "Language change takes full effect on next restart.",
     },
+    # --- Erster Start / First Start ---
+    "first_start_title": {
+        "de": "Willkommen bei Aether!",
+        "en": "Welcome to Aether!",
+    },
+    "first_start_body": {
+        "de": (
+            "Bevor es losgeht, eine wichtige Info: Dein Konto gibt es nur hier auf deinem\n"
+            "Gerät. Bei der ersten Nutzung wird ein privater Schlüssel erzeugt – er wird\n"
+            "niemals an uns oder in die Cloud übertragen. Das bedeutet: Es gibt keine\n"
+            "»Passwort vergessen«-Funktion, keinen Support, der dir wieder Zugang\n"
+            "verschaffen kann. Niemand kann dein Konto wiederherstellen, wenn du den\n"
+            "Schlüssel verlierst.\n\n"
+            "Das ist kein Bug, sondern Sicherheitsphilosophie: Nur du hast die Kontrolle.\n\n"
+            "Sichere daher regelmäßig dein Aether-Verzeichnis:\n"
+            "  · Windows : %USERPROFILE%\\.aether\n"
+            "  · Linux/macOS: ~/.aether\n\n"
+            "Mach ein Backup an einem geschützten Ort – das ist deine einzige Rettung.\n"
+            "Deine Daten, deine Verantwortung. 🌱"
+        ),
+        "en": (
+            "Before we start, one important thing: Your account exists only on your device.\n"
+            "Upon first use, a private key is generated locally – it is never sent to us or\n"
+            "to the cloud. This means there is no 'forgot password' function, no support\n"
+            "team that can restore your access. Nobody can recover your account if you lose\n"
+            "your key.\n\n"
+            "This isn't a bug – it's a security feature: You alone are in control.\n\n"
+            "So please back up your Aether directory regularly:\n"
+            "  · Windows : %USERPROFILE%\\.aether\n"
+            "  · Linux/macOS: ~/.aether\n\n"
+            "Store a backup in a safe place – it's your only safety net.\n"
+            "Your data, your responsibility. 🌱"
+        ),
+    },
+    "first_start_ack": {
+        "de": "Verstanden – Aether starten",
+        "en": "Understood – start Aether",
+    },
+    # --- Domänenübergreifende Muster ---
+    "gui_tab_cross_domain": {
+        "de": "DOMÄNEN",
+        "en": "DOMAINS",
+    },
+    "cross_domain_heading": {
+        "de": "Domänenübergreifende Muster",
+        "en": "Cross-Domain Patterns",
+    },
+    "cross_domain_disclaimer": {
+        "de": (
+            "\u26a0\ufe0f  Strukturelle Auffälligkeit – keine gesicherte Erkenntnis.\n"
+            "Dieses Muster basiert ausschließlich auf mathematischen Ähnlichkeiten.\n"
+            "Ob es eine gemeinsame Ursache oder Bedeutung gibt, muss in der jeweiligen\n"
+            "Fachrichtung erforscht werden."
+        ),
+        "en": (
+            "\u26a0\ufe0f  Structural anomaly – no confirmed finding.\n"
+            "This pattern is based solely on mathematical similarities.\n"
+            "Whether it has a common cause or meaning must be investigated\n"
+            "in the respective field of research."
+        ),
+    },
+    "cross_domain_no_data": {
+        "de": "Noch keine domänenübergreifenden Muster gefunden. Mehr Ankerdaten werden benötigt.",
+        "en": "No cross-domain patterns found yet. More anchor data needed.",
+    },
+    "cross_domain_refresh": {
+        "de": "Aktualisieren",
+        "en": "Refresh",
+    },
+    "cross_domain_export": {
+        "de": "Meta-Anker exportieren",
+        "en": "Export meta-anchor",
+    },
+    "cross_domain_relevance": {
+        "de": "Relevanz",
+        "en": "Relevance",
+    },
+    "cross_domain_anchors": {
+        "de": "Anker",
+        "en": "Anchors",
+    },
+    "cross_domain_domains": {
+        "de": "Domänen",
+        "en": "Domains",
+    },
 }
 
 
