@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import time
-import networkx as nx
 from cryptography.fernet import Fernet
 import numpy as np
+try:
+    import networkx as nx
+    _NX_AVAILABLE = True
+except ImportError:  # networkx ist optional — nur fuer detect_attractor() noetig
+    nx = None  # type: ignore[assignment]
+    _NX_AVAILABLE = False
 try:
     from .render_coordinator import RenderCoordinator
 except ImportError:
@@ -75,6 +80,11 @@ class ReconstructionEngine:
         return {"valid": valid, "reason": reason}
 
     def detect_attractor(self, snapshots: list) -> Attractor:
+        if not _NX_AVAILABLE:
+            raise RuntimeError(
+                "networkx ist nicht installiert. "
+                "'pip install networkx' ausfuehren oder detect_attractor() nicht verwenden."
+            )
         G = nx.Graph()
         for i, snap in enumerate(snapshots):
             G.add_node(i, entropy=snap.features["entropy"])
