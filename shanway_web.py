@@ -51,7 +51,7 @@ def _fetch_one(url: str) -> RawSource:
                          status="error", error=str(exc))
 
 
-def _ddg_urls(query: str, n: int = 5) -> list[str]:
+def _ddg_urls(query: str, n: int = TARGET_SOURCES) -> list[str]:
     """DuckDuckGo HTML — keine API, kein Key."""
     encoded = urllib.parse.quote_plus(query)
     try:
@@ -77,10 +77,15 @@ def _ddg_urls(query: str, n: int = 5) -> list[str]:
         return []
 
 
+# Shanway vergleicht immer mindestens TARGET_SOURCES Quellen (Standard: 10)
+TARGET_SOURCES: int = 10
+
+
 def fetch_sources(query: str, extra_urls: list[str] | None = None,
-                  n: int = 5) -> list[RawSource]:
-    """Holt n Quellen für query + optionale explizite URLs.
-    Gibt nur erfolgreiche Quellen mit Inhalt zurück.
+                  n: int = TARGET_SOURCES) -> list[RawSource]:
+    """Holt n Quellen fuer query + optionale explizite URLs.
+    Standard: 10 Quellen (Shanway-Regel: immer aus 10 Quellen vergleichen).
+    Gibt nur erfolgreiche Quellen mit Inhalt zurueck.
     """
     urls = _ddg_urls(query, n)
     for u in (extra_urls or []):

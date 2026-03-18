@@ -94,7 +94,17 @@ def chat(
         f"Konsistenz {web_context.get('consistency', 'none')}"
     )
     verified_context = _build_verified_context(interface_result)
-    raw_answer = llm.generate(verified_context, user_input) if verified_context else ""
+    h_lambda_val = float(web_context.get("mean_h_lambda", 0.0) or 0.0)
+    trust_val    = float(web_context.get("mean_trust", 1.0) or 1.0)
+    srcs_ok      = int(web_context.get("sources_confirmed", 0) or 0)
+    raw_answer = (
+        llm.generate(
+            verified_context, user_input,
+            h_lambda=h_lambda_val, trust=trust_val,
+            sources_confirmed=srcs_ok,
+        )
+        if verified_context else ""
+    )
     structured = response_builder.build(
         interface_result.assessment,
         interface_result,

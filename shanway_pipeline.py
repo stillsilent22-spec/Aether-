@@ -41,8 +41,13 @@ OBSERVER_KNOWLEDGE_RATIO = 0.15
 
 # ── Schwellwerte ──────────────────────────────────────────────────────────────
 TRUST_THRESHOLD       = 0.45
-CONSENSUS_MIN_SOURCES = 2
+CONSENSUS_MIN_SOURCES = 3       # mind. 3 Quellen muessen Anker bestaetigen
 DELTA_MIN_SOURCES     = 1
+TARGET_SOURCES        = 10      # Shanway vergleicht immer 10 Quellen
+
+# Unsicherheitsschwelle: h_lambda oberhalb dieses Werts → Schweigen
+H_LAMBDA_SILENCE_THRESHOLD = 5.5
+MIN_TRUST_SILENCE          = 0.45
 
 # ── Safety: verbotene Kategorien — deny by default ───────────────────────────
 _DENY_PATTERNS: list[re.Pattern] = [re.compile(p, re.IGNORECASE) for p in [
@@ -389,6 +394,11 @@ def measure_consensus(query: str, sources: list,
     status = ("ANKER" if consensus_anchors
               else "DELTA" if delta_anchors
               else "UNRESOLVED")
+
+    # Determinismus-Check: wenn Unsicherheit zu hoch → UNRESOLVED erzwingen
+    mean_h_lam_check = sum(p.h_lambda for p in confirmed) / len(confirmed) if confirmed else 0.0
+    if mean_h_lam_check > H_LAMBDA_SILENCE_THRESHOLD:
+        status = "UNRESOLVED"
 
     return ConsensusResult(
         query=query, status=status,

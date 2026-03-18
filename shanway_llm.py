@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import Optional
 from shanway_pipeline import ConsensusResult, ANCHOR_MEANING
 
+_SILENCE_RESPONSE = "Dazu habe ich keine verifizierten Informationen."
+
 DEFAULT_MODEL_CANDIDATES = (
     "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
     "tinyllama-1.1b-chat.gguf",
@@ -112,8 +114,16 @@ def build_filter_context(result: ConsensusResult,
 
 
 class ShanwayLLM:
-    """Eingekapselte TinyLLaMA Instanz. Lazy-loaded.
-    Fällt graceful auf Template-Modus zurück wenn kein Modell vorhanden.
+    """
+    Eingekapselte TinyLLaMA Instanz. Lazy-loaded.
+    Faellt graceful auf Template-Modus zurueck wenn kein Modell vorhanden.
+
+    DETERMINISTISCHER MODUS:
+    - temperature=0.0  (vollstaendig deterministisch, kein Sampling)
+    - top_p=1.0        (kein Nucleus-Sampling bei temperature=0)
+    - Sicherheitsfilter wird vor JEDER Ausgabe angewendet
+    - Medizinische Anfragen → SCHWEIGEN (keine Ausnahme)
+    - h_lambda zu hoch oder Trust zu niedrig → SCHWEIGEN
     """
 
     def __init__(self, model_path: Optional[str] = None,
@@ -141,25 +151,67 @@ class ShanwayLLM:
                 n_ctx          = self._n_ctx,
                 n_threads      = self._n_threads,
                 verbose        = False,
-                temperature    = 0.1,
-                top_p          = 0.85,
+                temperature    = 0.0,   # DETERMINISTISCH: kein Sampling
+                top_p          = 1.0,
                 repeat_penalty = 1.3,
             )
             self._available = True
         except Exception:
             self._available = False
 
-    def generate(self, context: str, user_question: str) -> str:
+    def generate(
+        self,
+        context: str,
+        user_question: str,
+        h_lambda: float = 0.0,
+        trust: float = 1.0,
+        sources_confirmed: int = 0,
+    ) -> str:
+        """
+        Erzeugt Antwort aus verifiziertem Kontext.
+        Wendet Sicherheits-Filterkette an (medical, blacklist, determinism, hedging).
+        Bei jedem Filterfehler: Schweigen.
+        """
+        try:
+            from modules.shanway_safety import get_safety_filter
+            safety = get_safety_filter()
+        except Exception:
+            safety = None
+
+        # Medical-Rule: ABSOLUT — vor jeder Verarbeitung pruefen
+        if safety is not None:
+            med = safety.check_medical(user_question)
+            if not med.passed:
+                return _SILENCE_RESPONSE
+
         self._try_load()
-        if self._available and self._llm is not None:
-            return self._llm_generate(context, user_question)
-        return self._template_generate(context)
+        raw = (
+            self._llm_generate(context, user_question)
+            if (self._available and self._llm is not None)
+            else self._template_generate(context)
+        )
+
+        if not raw or raw.strip() == _SILENCE_RESPONSE:
+            return _SILENCE_RESPONSE
+
+        # Sicherheits-Filterkette anwenden
+        if safety is not None:
+            result = safety.safe_generate(
+                query=user_question,
+                generated_text=raw,
+                h_lambda=h_lambda,
+                trust=trust,
+                sources_confirmed=sources_confirmed,
+            )
+            return result if result else _SILENCE_RESPONSE
+
+        return raw
 
     def _llm_generate(self, context: str, question: str) -> str:
         user_msg = (
             f"VERIFIZIERTER KONTEXT:\n{context}\n\n"
             f"FRAGE: {question}\n\n"
-            f"Formuliere ausschließlich aus dem Kontext."
+            f"Formuliere ausschließlich aus dem Kontext. Keine Spekulationen."
         )
         try:
             result = self._llm.create_chat_completion(
@@ -168,13 +220,13 @@ class ShanwayLLM:
                     {"role": "user",   "content": user_msg},
                 ],
                 max_tokens     = 400,
-                temperature    = 0.1,
-                top_p          = 0.85,
+                temperature    = 0.0,   # DETERMINISTISCH
+                top_p          = 1.0,
                 repeat_penalty = 1.3,
                 stop           = ["</s>", "Human:", "User:"],
             )
             text = result["choices"][0]["message"]["content"].strip()
-            return text if text else "Dazu habe ich keine verifizierten Informationen."
+            return text if text else _SILENCE_RESPONSE
         except Exception:
             return self._template_generate(context)
 
