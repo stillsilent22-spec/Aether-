@@ -447,13 +447,13 @@ class AetherSceneRenderer:
         prepared[:, 7] = np.clip(raw[:, 7], -1.0, 1.0) if raw.shape[1] > 7 else 0.0
         return prepared
 
-    def _beauty_metrics(self, fingerprint: AetherFingerprint | None) -> dict[str, float | bool]:
-        """Leitet synaesthetische Steuerwerte aus Beauty- und Beobachtermetriken ab."""
-        beauty = dict(getattr(fingerprint, "beauty_signature", {}) or {}) if fingerprint is not None else {}
-        alpha_1f = float(beauty.get("alpha_1f", 1.0) or 1.0)
-        mandelbrot_d = float(beauty.get("mandelbrot_d", 1.5) or 1.5)
+    def _sce_metrics(self, fingerprint: AetherFingerprint | None) -> dict[str, float | bool]:
+        """Leitet synaesthetische Steuerwerte aus SCE- und Beobachtermetriken ab."""
+        sce = dict(getattr(fingerprint, "sce_signature", {}) or {}) if fingerprint is not None else {}
+        alpha_1f = float(sce.get("alpha_1f", 1.0) or 1.0)
+        mandelbrot_d = float(sce.get("mandelbrot_d", 1.5) or 1.5)
         symmetry_phi = float(
-            beauty.get(
+            sce.get(
                 "symmetry_phi",
                 self._clamp(float(getattr(fingerprint, "symmetry_score", 100.0) or 100.0) / 100.0, 0.0, 1.0)
                 if fingerprint is not None else 1.0,
@@ -576,7 +576,7 @@ class AetherSceneRenderer:
     ) -> AudioRenderFrame:
         """Berechnet den gemeinsamen Bild-/Ton-Frame aus exakt demselben Datenstrom."""
         fingerprint = scene.fingerprint
-        metrics = self._beauty_metrics(fingerprint)
+        metrics = self._sce_metrics(fingerprint)
         observer_metrics = self._observer_frame_metrics(fingerprint)
         boundary_threshold = self._boundary_threshold(float(metrics["mandelbrot_d"]))
         min_z = float(np.min(dynamic_z))

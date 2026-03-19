@@ -109,9 +109,9 @@ def build_filter_context(result: ConsensusResult,
     if result.mean_h_lambda > 3.0:
         parts.append(f"Restunsicherheit vorhanden (h_lambda={result.mean_h_lambda}).")
 
-    if result.mean_beauty > 0.6:
+    if result.mean_sce > 0.6:
         parts.append("Strukturqualität hoch.")
-    elif result.mean_beauty < 0.3:
+    elif result.mean_sce < 0.3:
         parts.append("Strukturqualität niedrig — Ausgabe mit Vorsicht.")
 
     parts.append(

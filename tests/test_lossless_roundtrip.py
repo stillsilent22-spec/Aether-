@@ -95,7 +95,7 @@ def run_roundtrip_smoke_test() -> dict[str, Any]:
         source_label="tests::lossless_roundtrip",
         file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
         observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
         fingerprint_payload=_fingerprint_payload(fingerprint),
     )
     response = shanway.render_response(assessment)
@@ -141,7 +141,7 @@ def run_roundtrip_failure_smoke_test() -> dict[str, Any]:
         source_label="tests::lossless_roundtrip_failure",
         file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
         observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
         fingerprint_payload={
             "reconstruction_verification": verification,
             "verdict_reconstruction": "FAILED",
@@ -291,7 +291,7 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
         source_label="tests::recursive_raster_roundtrip",
         file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
         observer_payload={"learning_state": dict(learning_state)},
-        beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
         fingerprint_payload=_fingerprint_payload(fingerprint),
         miniature_payload=miniature_payload,
         raster_payload=raster_payload,

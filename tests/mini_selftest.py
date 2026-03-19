@@ -86,7 +86,7 @@ def _run_case(
         source_label=str(sample_path),
         file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
         observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
         fingerprint_payload={
             "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
             "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),

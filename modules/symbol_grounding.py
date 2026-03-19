@@ -109,7 +109,7 @@ class SymbolGroundingLayer:
 
             if int(token_record.get("member_updates", 0)) >= 5:
                 curves = [list(item.get("payload_json", {}).get("entropy_curve", [])) for item in entries]
-                d_values = [float(item.get("payload_json", {}).get("beauty_d", 1.0)) for item in entries]
+                d_values = [float(item.get("payload_json", {}).get("sce_d", 1.0)) for item in entries]
                 alarm_flags = [1.0 if bool(item.get("payload_json", {}).get("alarm", False)) else 0.0 for item in entries]
                 token_record["meaning"] = {
                     "shape": self._mean_shape(curves),

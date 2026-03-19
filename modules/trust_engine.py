@@ -87,8 +87,8 @@ class TrustScoreEngine:
         noether_score = _clamp(float(trust_inputs.get("noether_score", 0.0) or 0.0) / 100.0)
         benford_score = _clamp(trust_inputs.get("benford_score", 0.0))
         graph_score = _clamp(trust_inputs.get("graph_confidence_mean", 0.0))
-        beauty_score = _clamp(float(trust_inputs.get("beauty_score", 0.0) or 0.0) / 100.0)
-        expected_inputs = [value for value in (noether_score, benford_score, graph_score, beauty_score) if value > 0.0]
+        sce_score = _clamp(float(trust_inputs.get("sce_score", 0.0) or 0.0) / 100.0)
+        expected_inputs = [value for value in (noether_score, benford_score, graph_score, sce_score) if value > 0.0]
         expected_range = sum(expected_inputs) / max(1, len(expected_inputs)) if expected_inputs else posterior
 
         if expected_inputs and abs(posterior - expected_range) > 0.15:

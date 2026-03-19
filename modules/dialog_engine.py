@@ -17,8 +17,8 @@ class StructuralReply:
     """Verdichtete Beschreibung einer Analyse als dialogfaehige Antwort."""
 
     semantics_label: str
-    beauty_score: float
-    beauty_label: str
+    sce_score: float
+    sce_label: str
     response_text: str
 
 
@@ -328,7 +328,7 @@ class StructuralDialogEngine:
     def evaluate(
         self,
         fingerprint: AetherFingerprint,
-        beauty_d: float,
+        sce_d: float,
         anchor_count: int,
         source_text: str = "",
         callback: callable = None,
@@ -341,8 +341,8 @@ class StructuralDialogEngine:
             entropy = float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0)
             ethics = float(getattr(fingerprint, "ethics_score", 0.0) or 0.0)
 
-            fractal_alignment = self._clamp(1.0 - (abs(float(beauty_d) - 1.5) / 0.5), 0.0, 1.0)
-            beauty_score = round(
+            fractal_alignment = self._clamp(1.0 - (abs(float(sce_d) - 1.5) / 0.5), 0.0, 1.0)
+            sce_score = round(
                 100.0
                 * (
                     0.30 * (symmetry / 100.0)
@@ -354,12 +354,12 @@ class StructuralDialogEngine:
                 1,
             )
 
-            if beauty_score >= 75.0:
-                beauty_label = "harmonisch"
-            elif beauty_score >= 50.0:
-                beauty_label = "spannungsreich"
+            if sce_score >= 75.0:
+                sce_label = "harmonisch"
+            elif sce_score >= 50.0:
+                sce_label = "spannungsreich"
             else:
-                beauty_label = "rau"
+                sce_label = "rau"
 
             if ethics >= 72.0 and entropy <= 4.8 and coherence >= 60.0:
                 semantics_label = "verdichtete Ordnung"
@@ -373,13 +373,13 @@ class StructuralDialogEngine:
             tone_hint = "fragend" if "?" in str(source_text) else "aussagend"
             response_text = (
                 f"Shanway sieht {semantics_label}: Symmetrie {symmetry:.1f}, "
-                f"Kohaerenz {coherence:.1f}, Resonanz {resonance:.1f}, D {float(beauty_d):.2f}, "
+                f"Kohaerenz {coherence:.1f}, Resonanz {resonance:.1f}, D {float(sce_d):.2f}, "
                 f"Tonlage {tone_hint}."
             )
             reply = StructuralReply(
                 semantics_label=semantics_label,
-                beauty_score=beauty_score,
-                beauty_label=beauty_label,
+                sce_score=sce_score,
+                sce_label=sce_label,
                 response_text=response_text,
             )
             if callback:

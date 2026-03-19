@@ -24,7 +24,7 @@ Du nutzt folgende 10 integrierten Filter (SHANWAY_MASTER):
 - [4] Symmetry:    Noether — Verteilungssymmetrie, Erhaltungsgroessen, Invarianten.
 - [5] Delta:       XOR gegen Session-Seed — Rekonstruktionsabstand.
 - [6] Periodicity: Mandelbrot / Fourier — Selbstaehnlichkeit, fraktale Wiederkehr.
-- [7] Beauty:      diagnostische Signatur — Kompressibilitaet, Varianz, Entropie.
+- [7] SCE:      diagnostische Signatur — Kompressibilitaet, Varianz, Entropie.
 - [8] Bayes:       Posterior-Update ueber Anchor-Coverage — Evidenzgewichtung.
 - [9] Trust:       Gesamtscore — nur bei stabilen Invarianten aktiviert.
 
@@ -943,13 +943,13 @@ class ShanwayEngine:
         observer_payload = dict(state.get("observer_payload", {}) or {})
         bayes_payload = dict(state.get("bayes_payload", {}) or {})
         graph_payload = dict(state.get("graph_payload", {}) or {})
-        beauty_signature = dict(state.get("beauty_signature", {}) or {})
+        sce_signature = dict(state.get("sce_signature", {}) or {})
         source_label = str(state.get("source_label", "") or "")
         observer_ratio = float(state.get("observer_knowledge_ratio", 0.0) or 0.0)
         history_factor = float(state.get("history_factor", 1.0) or 1.0)
         k_value = max(0.05, min(1.5, observer_ratio + (history_factor * 0.02)))
         convergence = 1.0 - math.exp(-k_value * max(1.0, history_factor))
-        beauty_score = float(beauty_signature.get("beauty_score", 0.0) or 0.0) / 100.0
+        sce_score = float(sce_signature.get("sce_score", 0.0) or 0.0) / 100.0
         bayes_confidence = float(bayes_payload.get("overall_confidence", bayes_payload.get("confidence", 0.0)) or 0.0)
         graph_attractor = float(graph_payload.get("attractor_score", 0.0) or 0.0)
         graph_phase = str(graph_payload.get("phase_state", graph_payload.get("phase", "")) or "")
@@ -991,7 +991,7 @@ class ShanwayEngine:
             f"Hohe Invarianz bis t≈{convergence * 100.0:.0f} %, "
             f"Symmetriebruch mit H_lambda={h_lambda:.2f} bit, "
             f"dann Konvergenz zu stabilem Attraktor ({graph_phase or 'EMERGENT'}) "
-            f"mit Bayes {bayes_confidence:.2f} und Beauty {beauty_score:.2f}."
+            f"mit Bayes {bayes_confidence:.2f} und SCE {sce_score:.2f}."
         )
         return layers, narrative
 
@@ -1287,7 +1287,7 @@ class ShanwayEngine:
         observer_payload: dict[str, Any] | None = None,
         bayes_payload: dict[str, Any] | None = None,
         graph_payload: dict[str, Any] | None = None,
-        beauty_signature: dict[str, Any] | None = None,
+        sce_signature: dict[str, Any] | None = None,
         observer_knowledge_ratio: float = 0.0,
         history_factor: float = 1.0,
         fingerprint_payload: dict[str, Any] | None = None,
@@ -1447,7 +1447,7 @@ class ShanwayEngine:
                 "observer_payload": dict(observer_payload or {}),
                 "bayes_payload": dict(bayes_payload or {}),
                 "graph_payload": dict(graph_payload or {}),
-                "beauty_signature": dict(beauty_signature or {}),
+                "sce_signature": dict(sce_signature or {}),
                 "observer_knowledge_ratio": float(observer_knowledge_ratio),
                 "history_factor": float(history_factor),
                 "it_from_bit": bool(it_from_bit),
@@ -1462,7 +1462,7 @@ class ShanwayEngine:
         symmetry_gini = float(
             dict(fingerprint_payload or {}).get(
                 "symmetry_gini",
-                dict(beauty_signature or {}).get("symmetry_gini", noether_symmetry),
+                dict(sce_signature or {}).get("symmetry_gini", noether_symmetry),
             )
             or noether_symmetry
         )
@@ -1799,7 +1799,7 @@ class ShanwayEngine:
             f"Symmetry[{filter_trace['noether']}] | "
             f"Delta[{filter_trace['mandelbrot']}] | "
             f"Periodicity[{filter_trace['mandelbrot']}] | "
-            f"Beauty[{filter_trace['bayes']}] | "
+            f"SCE[{filter_trace['bayes']}] | "
             f"Bayes[{filter_trace['bayes']}] | "
             f"Trust[{filter_trace['heisenberg']}]"
         )

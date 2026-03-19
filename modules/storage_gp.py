@@ -67,7 +67,7 @@ class DualModeStorageEngine:
         return float(max(0.0, min(1.0, value)))
 
     def _feature_vector(self, fingerprint: Any) -> dict[str, float]:
-        beauty_signature = dict(getattr(fingerprint, "beauty_signature", {}) or {})
+        sce_signature = dict(getattr(fingerprint, "sce_signature", {}) or {})
         file_size = float(getattr(fingerprint, "file_size", 0) or 0.0)
         return {
             "delta_ratio": self._clamp(float(getattr(fingerprint, "delta_ratio", 0.0) or 0.0)),
@@ -79,9 +79,9 @@ class DualModeStorageEngine:
             "h_lambda": self._clamp(float(getattr(fingerprint, "h_lambda", 0.0) or 0.0) / 8.0),
             "knowledge": self._clamp(float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)),
             "file_size": self._clamp(math.log2(max(2.0, file_size + 1.0)) / 22.0),
-            "kolmogorov": self._clamp(float(beauty_signature.get("kolmogorov_k", 0.0) or 0.0)),
-            "benford": self._clamp(float(beauty_signature.get("benford_b", 0.0) or 0.0)),
-            "encryption": self._clamp(float(beauty_signature.get("encryption_flag", 0.0) or 0.0)),
+            "kolmogorov": self._clamp(float(sce_signature.get("kolmogorov_k", 0.0) or 0.0)),
+            "benford": self._clamp(float(sce_signature.get("benford_b", 0.0) or 0.0)),
+            "encryption": self._clamp(float(sce_signature.get("encryption_flag", 0.0) or 0.0)),
         }
 
     def _target_score(self, fingerprint: Any, features: dict[str, float]) -> float:

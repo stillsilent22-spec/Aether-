@@ -148,7 +148,7 @@ class AetherFingerprint:
     e_lambda: float = 0.0  # Emergenz-Signal: was entstand, das nicht explizit in den Eingaben steckte
     e_lambda_label: str = "LATENT"  # LATENT / EMERGING / ACTIVE / CRITICAL
     observer_state: str = "OFFEN"
-    beauty_signature: dict[str, float] | None = None
+    sce_signature: dict[str, float] | None = None
     ae_lab_summary: dict[str, Any] | None = None
     scene_points: list[tuple[float, float, float, float, float, float, float, float]] | None = None
     anchor_coverage_ratio: float = 0.0
@@ -200,8 +200,8 @@ class AetherFingerprint:
             "unresolved_residual_ratio": float(self.unresolved_residual_ratio),
             "residual_hash": str(self.residual_hash),
             "coverage_verified": bool(self.coverage_verified),
-            "beauty_signature": {
-                str(key): float(value) for key, value in dict(self.beauty_signature or {}).items()
+            "sce_signature": {
+                str(key): float(value) for key, value in dict(self.sce_signature or {}).items()
             },
             "ae_lab_summary": dict(self.ae_lab_summary or {}),
             "local_chain_tx_hash": str(self.local_chain_tx_hash),
@@ -1268,7 +1268,7 @@ class AnalysisEngine:
         periodicity: int,
         symmetry_score: float,
         scan_delta_ratio: float,
-        beauty_signature: dict[str, float],
+        sce_signature: dict[str, float],
         file_size: int,
     ) -> list[dict[str, Any]]:
         """Leitet eine stabile, rein bytebasierte Anchor-Menge fuer DNA-Exports ab."""
@@ -1334,10 +1334,10 @@ class AnalysisEngine:
             ("scan_symmetry", "SCAN_SYMMETRY", 2001, float(symmetry_score) / 100.0),
             ("scan_delta_ratio", "SCAN_DELTA_RATIO", 2002, float(scan_delta_ratio)),
             (
-                "scan_beauty_score",
-                "SCAN_BEAUTY",
+                "scan_sce_score",
+                "SCAN_SCE",
                 2003,
-                float(dict(beauty_signature or {}).get("beauty_score", 0.0) or 0.0) / 100.0,
+                float(dict(sce_signature or {}).get("sce_score", 0.0) or 0.0) / 100.0,
             ),
         ]
         for origin, anchor_type, index, value in scalar_entries:
@@ -1386,7 +1386,7 @@ class AnalysisEngine:
         """Baut einen deterministischen AELAB-Scanpayload ausschliesslich aus Input-Bytes."""
         scan_hash = self._scan_hash(raw)
         scan_delta, scan_delta_ratio = self._build_scan_delta(raw, scan_hash)
-        scan_beauty_signature = self._beauty_signature(
+        scan_sce_signature = self._sce_signature(
             raw=raw,
             entropy_blocks=entropy_blocks,
             distribution=dict(Counter(raw)),
@@ -1400,7 +1400,7 @@ class AnalysisEngine:
             periodicity=periodicity,
             symmetry_score=symmetry_score,
             scan_delta_ratio=scan_delta_ratio,
-            beauty_signature=scan_beauty_signature,
+            sce_signature=scan_sce_signature,
             file_size=file_size,
         )
         payload = {
@@ -1412,9 +1412,9 @@ class AnalysisEngine:
             "periodicity": int(periodicity),
             "symmetry_score": round(float(symmetry_score), 12),
             "delta_ratio": round(float(scan_delta_ratio), 12),
-            "beauty_signature": {
+            "sce_signature": {
                 str(key): round(float(value), 12)
-                for key, value in sorted(dict(scan_beauty_signature or {}).items(), key=lambda item: item[0])
+                for key, value in sorted(dict(scan_sce_signature or {}).items(), key=lambda item: item[0])
             },
             "fourier_peaks": [
                 {
@@ -1580,13 +1580,13 @@ class AnalysisEngine:
             if abs(float(item.get("value", 0.0) or 0.0)) > 1e-12
         ]
         digits = [digit for digit in digits if 1 <= digit <= 9]
-        auxiliary = float(dict(getattr(fingerprint, "beauty_signature", {}) or {}).get("benford_b", 0.0) or 0.0)
+        auxiliary = float(dict(getattr(fingerprint, "sce_signature", {}) or {}).get("benford_b", 0.0) or 0.0)
         if len(digits) < 12:
             return {
                 "score": float(auxiliary),
                 "sample_count": int(len(digits)),
                 "informative": False,
-                "mode": "beauty_aux",
+                "mode": "sce_aux",
                 "deviation": float(1.0 - auxiliary),
             }
         counts = Counter(digits)
@@ -1614,7 +1614,7 @@ class AnalysisEngine:
         slope, _ = np.polyfit(np.log(ranks), np.log(frequencies), 1)
         return float(max(0.0, min(3.0, -float(slope))))
 
-    def _beauty_signature(
+    def _sce_signature(
         self,
         raw: bytes,
         entropy_blocks: list[float],
@@ -1642,7 +1642,7 @@ class AnalysisEngine:
         mandelbrot_score = max(0.0, 1.0 - (abs(mandelbrot_d - 1.5) / 0.8))
         zipf_score = max(0.0, 1.0 - (abs(zipf_z - 1.0) / 1.2))
         delta_stability = max(0.0, min(1.0, 1.0 - delta_ratio))
-        beauty_score = 100.0 * (
+        sce_score = 100.0 * (
             (0.15 * alpha_score)
             + (0.10 * lyapunov_score)
             + (0.18 * mandelbrot_score)
@@ -1660,7 +1660,7 @@ class AnalysisEngine:
             "zipf_z": float(zipf_z),
             "symmetry_phi": float(symmetry_phi),
             "delta_stability": float(delta_stability),
-            "beauty_score": float(max(0.0, min(100.0, beauty_score))),
+            "sce_score": float(max(0.0, min(100.0, sce_score))),
             "low_power_mode": float(1.0 if low_power else 0.0),
         }
 
@@ -1816,7 +1816,7 @@ class AnalysisEngine:
         symmetry_score = self._symmetry_score(distribution)
         fourier_peaks = self._fourier_peaks(raw)
         delta, delta_ratio, delta_session_seed = self._build_delta(raw)
-        beauty_signature = self._beauty_signature(
+        sce_signature = self._sce_signature(
             raw=raw,
             entropy_blocks=entropy_blocks,
             distribution=distribution,
@@ -1887,7 +1887,7 @@ class AnalysisEngine:
             e_lambda=e_lambda,
             e_lambda_label=e_lambda_label,
             observer_state=observer_state,
-            beauty_signature=beauty_signature,
+            sce_signature=sce_signature,
             scene_points=scene_points,
             scan_hash=scan_hash,
             scan_payload=scan_payload,

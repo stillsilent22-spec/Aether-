@@ -9,7 +9,7 @@ Schichten (aus Whitepaper Abschnitte 7–13, identisch zur Hauptpipeline):
   [4] SYMMETRY      normalisierte Verteilungsungleichheit
   [5] DELTA         XOR-Transformation gegen Session-Seed
   [6] PERIODICITY   Autokorrelation über Block-Entropie-Sequenz
-  [7] BEAUTY        diagnostische Signatur (kombiniert)
+  [7] SCE        diagnostische Signatur (kombiniert)
   [8] BAYES         Posterior-Update über Anchor-Coverage
   [9] TRUST         Gesamtscore aus allen Schichten
   [10] CONSENSUS    Cross-Source Konsens-Messung
@@ -87,8 +87,8 @@ class SourceProfile:
     delta_score: float
     # Schicht 6: Periodicity
     periodicity_score: float
-    # Schicht 7: Beauty
-    beauty_score: float
+    # Schicht 7: SCE
+    sce_score: float
     # Schicht 8: Bayes
     bayes_posterior: float
     # Schicht 9: Trust
@@ -108,7 +108,7 @@ class ConsensusResult:
     sources_confirmed: int
     mean_trust: float
     mean_h_lambda: float             # Restunsicherheit über alle Quellen
-    mean_beauty: float               # Beauty-Signatur Konsens
+    mean_sce: float               # SCE-Signatur Konsens
     profiles: list[SourceProfile] = field(default_factory=list)
     timestamp: str = field(
         default_factory=lambda: datetime.now(datetime.timezone.utc
@@ -232,10 +232,10 @@ def _periodicity(entropy_values: list[float]) -> float:
     return round(max(0.0, autocorr), 4)
 
 
-# ── Schicht 7: Beauty-Signatur ────────────────────────────────────────────────
+# ── Schicht 7: SCE-Signatur ────────────────────────────────────────────────
 # Diagnostische Kombination — kein Wahrheitsbeweis, nur strukturelle Diagnose
 
-def _beauty(entropy_mean: float, symmetry: float,
+def _sce(entropy_mean: float, symmetry: float,
             anchor_coverage: float, periodicity: float) -> float:
     # Gewichtete Kombination der Strukturmetriken
     b = (
@@ -264,7 +264,7 @@ def _bayes_posterior(anchor_coverage: float, trust_prior: float = 0.5) -> float:
 # Identisch zu aether_dropper.py, erweitert um neue Schichten
 
 def _trust(coverage: float, entropy_mean: float, n_anchors: int,
-           symmetry: float, beauty: float, bayes: float) -> float:
+           symmetry: float, sce: float, bayes: float) -> float:
     base = (
         min(1.0, coverage * 4.0)
         + coverage
@@ -272,8 +272,8 @@ def _trust(coverage: float, entropy_mean: float, n_anchors: int,
         + min(1.0, n_anchors / 4.0)
         + (1.0 if entropy_mean < 7.9 else 0.0)
     ) / 5.0
-    # Aether-Erweiterung: Symmetry + Beauty + Bayes gewichtet einmischen
-    extended = base * 0.6 + symmetry * 0.15 + beauty * 0.15 + bayes * 0.10
+    # Aether-Erweiterung: Symmetry + SCE + Bayes gewichtet einmischen
+    extended = base * 0.6 + symmetry * 0.15 + sce * 0.15 + bayes * 0.10
     return round(min(1.0, extended), 4)
 
 
@@ -292,7 +292,7 @@ def _profile_source(url: str, title: Optional[str],
             entropy_mean=0.0, h_lambda=0.0, observer_mutual_info=0.0,
             anchors_found={}, anchor_coverage=0.0,
             symmetry_score=0.0, delta_score=0.0, periodicity_score=0.0,
-            beauty_score=0.0, bayes_posterior=0.0, trust_score=0.0,
+            sce_score=0.0, bayes_posterior=0.0, trust_score=0.0,
             verdict="DENIED", deny_reason=deny,
         )
 
@@ -325,14 +325,14 @@ def _profile_source(url: str, title: Optional[str],
     # [6] Periodicity
     period = _periodicity(entropy_values)
 
-    # [7] Beauty
-    beauty = _beauty(entropy_mean, sym, coverage, period)
+    # [7] SCE
+    sce = _sce(entropy_mean, sym, coverage, period)
 
     # [8] Bayes
     bayes = _bayes_posterior(coverage)
 
     # [9] Trust
-    trust = _trust(coverage, entropy_mean, len(anchors_found), sym, beauty, bayes)
+    trust = _trust(coverage, entropy_mean, len(anchors_found), sym, sce, bayes)
 
     verdict = "CONFIRMED" if coverage > 0.0 and trust >= TRUST_THRESHOLD else "FAILED"
 
@@ -347,7 +347,7 @@ def _profile_source(url: str, title: Optional[str],
         symmetry_score=sym,
         delta_score=delta,
         periodicity_score=period,
-        beauty_score=beauty,
+        sce_score=sce,
         bayes_posterior=bayes,
         trust_score=trust,
         verdict=verdict,
@@ -372,7 +372,7 @@ def measure_consensus(query: str, sources: list,
             query=query, status="UNRESOLVED",
             confirmed_anchors=[], delta_anchors=[],
             sources_analyzed=len(profiles), sources_confirmed=0,
-            mean_trust=0.0, mean_h_lambda=0.0, mean_beauty=0.0,
+            mean_trust=0.0, mean_h_lambda=0.0, mean_sce=0.0,
             profiles=profiles,
         )
 
@@ -389,7 +389,7 @@ def measure_consensus(query: str, sources: list,
 
     mean_trust   = sum(p.trust_score for p in confirmed) / len(confirmed)
     mean_h_lam   = sum(p.h_lambda    for p in confirmed) / len(confirmed)
-    mean_beauty  = sum(p.beauty_score for p in confirmed) / len(confirmed)
+    mean_sce  = sum(p.sce_score for p in confirmed) / len(confirmed)
 
     status = ("ANKER" if consensus_anchors
               else "DELTA" if delta_anchors
@@ -408,6 +408,6 @@ def measure_consensus(query: str, sources: list,
         sources_confirmed=len(confirmed),
         mean_trust=round(mean_trust, 4),
         mean_h_lambda=round(mean_h_lam, 4),
-        mean_beauty=round(mean_beauty, 4),
+        mean_sce=round(mean_sce, 4),
         profiles=profiles,
     )

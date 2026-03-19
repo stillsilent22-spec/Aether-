@@ -202,7 +202,7 @@ Key: existiert nicht mehr
 │  [4] Symmetry     normalisierte Verteilungsungleichheit           │
 │  [5] Delta        XOR gegen Session-Seed (aus Session-Key)       │
 │  [6] Periodicity  Autokorrelation                                │
-│  [7] Beauty       diagnostische Signatur                         │
+│  [7] SCE       diagnostische Signatur                         │
 │  [8] Bayes        Posterior-Update über Anchor-Coverage          │
 │  [9] Trust        Gesamtscore                                    │
 └──────────────────┬───────────────────┬──────────────────────────┘

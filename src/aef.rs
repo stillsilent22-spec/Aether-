@@ -49,7 +49,7 @@ pub mod engine_flags {
     pub const SYMMETRY: u64    = 1 << 4;  // [4] normalisierte Verteilungsungleichheit (Noether)
     pub const DELTA: u64       = 1 << 5;  // [5] XOR gegen Session-Seed
     pub const PERIODICITY: u64 = 1 << 6;  // [6] Autokorrelation (Mandelbrot/Fourier)
-    pub const BEAUTY: u64      = 1 << 7;  // [7] diagnostische Signatur
+    pub const SCE: u64      = 1 << 7;  // [7] diagnostische Signatur
     pub const BAYES: u64       = 1 << 8;  // [8] Posterior-Update über Anchor-Coverage
     pub const TRUST: u64       = 1 << 9;  // [9] Gesamtscore (Heisenberg-Grenze)
     // Rückwärtskompatible Aliase
@@ -430,9 +430,9 @@ impl EnginePipeline {
         if mandelbrot >= 0.45 || fourier >= 0.25 {
             flags |= engine_flags::PERIODICITY;
         }
-        // [7] Beauty: Kompressibilitaet als diagnostische Signatur
+        // [7] SCE: Kompressibilitaet als diagnostische Signatur
         if knowledge_ratio >= 0.35 {
-            flags |= engine_flags::BEAUTY;
+            flags |= engine_flags::SCE;
         }
         // [8] Bayes: Posterior-Update durch Anchor-Coverage
         if bayes >= 0.40 && knowledge_ratio >= 0.40 {
@@ -1145,7 +1145,7 @@ fn readable_engine_flags(flags: u64) -> Vec<String> {
         (engine_flags::SYMMETRY,    "[4] Symmetry"),
         (engine_flags::DELTA,       "[5] Delta"),
         (engine_flags::PERIODICITY, "[6] Periodicity"),
-        (engine_flags::BEAUTY,      "[7] Beauty"),
+        (engine_flags::SCE,      "[7] SCE"),
         (engine_flags::BAYES,       "[8] Bayes"),
         (engine_flags::TRUST,       "[9] Trust"),
     ] {

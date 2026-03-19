@@ -3767,10 +3767,10 @@ class AetherRegistry:
             observer_knowledge_ratio=float(payload.get("observer_knowledge_ratio", 0.0) or 0.0),
             h_lambda=float(payload.get("h_lambda", 0.0) or 0.0),
             observer_state=str(payload.get("observer_state", "OFFEN")),
-            beauty_signature={
+            sce_signature={
                 str(key): float(value)
-                for key, value in dict(payload.get("beauty_signature", {})).items()
-            } if isinstance(payload.get("beauty_signature", {}), dict) else None,
+                for key, value in dict(payload.get("sce_signature", {})).items()
+            } if isinstance(payload.get("sce_signature", {}), dict) else None,
             ae_lab_summary=(
                 dict(payload.get("ae_lab_summary", {}))
                 if isinstance(payload.get("ae_lab_summary", {}), dict)
@@ -5012,7 +5012,7 @@ class AetherRegistry:
                 "structure_patterns": {
                     "embedding_vector": [float(value) for value in list(entry.get("feature_vector", []))[:32]],
                     "anchor_vector": [float(value) for value in list(payload.get("anchor_vector", []) or [])[:32]],
-                    "beauty_signature": dict(payload.get("beauty_signature", {}) or {}),
+                    "sce_signature": dict(payload.get("sce_signature", {}) or {}),
                     "graph_phase_state": str(payload.get("graph_phase_state", "")),
                     "graph_region": str(payload.get("graph_region", "")),
                     "coherence_score": float(payload.get("coherence_score", 0.0) or 0.0),
@@ -5030,8 +5030,8 @@ class AetherRegistry:
                     "unresolved_residual_ratio": float(payload.get("unresolved_residual_ratio", 1.0) or 1.0),
                     "bayes_overall_confidence": float(payload.get("bayes_overall_confidence", 0.0) or 0.0),
                     "graph_confidence_mean": float(payload.get("graph_confidence_mean", 0.0) or 0.0),
-                    "beauty_score": float(
-                        dict(payload.get("beauty_signature", {}) or {}).get("beauty_score", 0.0) or 0.0
+                    "sce_score": float(
+                        dict(payload.get("sce_signature", {}) or {}).get("sce_score", 0.0) or 0.0
                     ),
                     "noether_score": float(
                         dict(payload.get("vault_noether", {}) or {}).get("invariant_score", 0.0) or 0.0

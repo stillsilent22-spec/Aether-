@@ -29,7 +29,7 @@ from typing import Optional
 from shanway_pipeline import (
     ANCHOR_NAMES, ANCHOR_MEANING,
     _entropy, _normalize_block, _detect_anchor,
-    _h_lambda, _symmetry, _periodicity, _beauty, _bayes_posterior, _trust,
+    _h_lambda, _symmetry, _periodicity, _sce, _bayes_posterior, _trust,
     _is_denied, TRUST_THRESHOLD,
     ConsensusResult,
 )
@@ -64,13 +64,13 @@ class RegistryAnchor:
         "anchor_id", "channel", "label",
         "signature",
         "entropy_mean", "h_lambda", "symmetry",
-        "periodicity", "beauty", "bayes", "trust",
+        "periodicity", "sce", "bayes", "trust",
         "raw_hash", "timestamp", "summary",
     )
 
     def __init__(self, channel: str, label: str, raw: bytes,
                  entropy_mean: float, h_lambda: float, symmetry: float,
-                 periodicity: float, beauty: float, bayes: float,
+                 periodicity: float, sce: float, bayes: float,
                  trust: float, anchors_found: dict[str, int], summary: str):
         self.channel      = channel
         self.label        = label
@@ -78,7 +78,7 @@ class RegistryAnchor:
         self.h_lambda     = round(h_lambda, 4)
         self.symmetry     = round(symmetry, 4)
         self.periodicity  = round(periodicity, 4)
-        self.beauty       = round(beauty, 4)
+        self.sce       = round(sce, 4)
         self.bayes        = round(bayes, 4)
         self.trust        = round(trust, 4)
         self.signature    = frozenset(anchors_found.keys())
@@ -99,7 +99,7 @@ class RegistryAnchor:
             "h_lambda":     self.h_lambda,
             "symmetry":     self.symmetry,
             "periodicity":  self.periodicity,
-            "beauty":       self.beauty,
+            "sce":       self.sce,
             "bayes":        self.bayes,
             "trust":        self.trust,
             "raw_hash":     self.raw_hash,
@@ -122,7 +122,7 @@ class RegistryAnchor:
             "h_lambda":    self.h_lambda / 8.0,
             "symmetry":    self.symmetry,
             "periodicity": self.periodicity,
-            "beauty":      self.beauty,
+            "sce":      self.sce,
             "bayes":       self.bayes,
             "has_pi":      1.0 if "pi"    in self.signature else 0.0,
             "has_phi":     1.0 if "phi"   in self.signature else 0.0,
@@ -273,7 +273,7 @@ def _raw_to_vector(raw: bytes,
     h_lam, _ = _h_lambda(entropy_mean)
     sym      = _symmetry(entropy_values)
     period   = _periodicity(entropy_values)
-    beauty   = _beauty(entropy_mean, sym, coverage, period)
+    sce   = _sce(entropy_mean, sym, coverage, period)
     bayes    = _bayes_posterior(coverage)
 
     return {
@@ -281,7 +281,7 @@ def _raw_to_vector(raw: bytes,
         "h_lambda":    h_lam / 8.0,
         "symmetry":    sym,
         "periodicity": period,
-        "beauty":      beauty,
+        "sce":      sce,
         "bayes":       bayes,
         "has_pi":      1.0 if "pi"    in anchors_found else 0.0,
         "has_phi":     1.0 if "phi"   in anchors_found else 0.0,
@@ -359,7 +359,7 @@ class ShanwayRegistry:
             h_lambda     = best.h_lambda,
             symmetry     = best.symmetry_score,
             periodicity  = best.periodicity_score,
-            beauty       = best.beauty_score,
+            sce          = best.sce_score,
             bayes        = best.bayes_posterior,
             trust        = result.mean_trust,
             anchors_found= anchors_found,
@@ -399,10 +399,10 @@ class ShanwayRegistry:
         h_lam, _ = _h_lambda(entropy_mean)
         sym      = _symmetry(entropy_values)
         period   = _periodicity(entropy_values)
-        beauty   = _beauty(entropy_mean, sym, coverage, period)
+        sce   = _sce(entropy_mean, sym, coverage, period)
         bayes    = _bayes_posterior(coverage)
         trust    = _trust(coverage, entropy_mean, len(anchors_found),
-                          sym, beauty, bayes)
+                          sym, sce, bayes)
 
         if trust < REGISTRY_TRUST_MIN:
             return None
@@ -414,7 +414,7 @@ class ShanwayRegistry:
             channel=channel, label=label, raw=raw,
             entropy_mean=entropy_mean, h_lambda=h_lam,
             symmetry=sym, periodicity=period,
-            beauty=beauty, bayes=bayes, trust=trust,
+            sce=sce, bayes=bayes, trust=trust,
             anchors_found=anchors_found, summary=summary,
         )
         self._write(anchor)

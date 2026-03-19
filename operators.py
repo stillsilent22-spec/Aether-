@@ -57,7 +57,7 @@ def attraktor(F, Hλ, Δ):
     stable = delta_var < 0.01
     return {"stable": stable, "delta_variance": delta_var}
 
-def beauty_signature(sym, proportion, gradient_coherence):
+def sce_signature(sym, proportion, gradient_coherence):
     norm = lambda v: (v - np.min(v)) / (np.ptp(v) + 1e-8) if isinstance(v, np.ndarray) and v.size > 1 else v
     s = norm(sym)
     p = norm(proportion)

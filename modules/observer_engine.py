@@ -54,7 +54,7 @@ class ObserverMetrics:
     h0: float
     ht: float
     coherence: float
-    beauty_d: float
+    sce_d: float
     phi: float
     freq: float
     detune: float
@@ -603,7 +603,7 @@ class ObserverEngine:
         return float(hits / max(1, len(predicted)))
 
     def _fractal_dimension(self, anchors: Sequence[AnchorPoint]) -> float:
-        """Schaetzt die Beauty-Dimension D per Box-Counting im Bereich (1, 2)."""
+        """Schaetzt die SCE-Dimension D per Box-Counting im Bereich (1, 2)."""
         if len(anchors) < 2:
             return 1.0
 
@@ -932,16 +932,16 @@ class ObserverEngine:
         ghost_anchors = self.predict_ghost_anchors(prior_cells)
         prior_accuracy = self._prior_accuracy(ghost_anchors, anchors)
         coherence = self._coherence(anchors, ht)
-        beauty_d = self._fractal_dimension(list(anchors) + [ghost for ghost in ghost_anchors[:4]])
+        sce_d = self._fractal_dimension(list(anchors) + [ghost for ghost in ghost_anchors[:4]])
         center_lum, center_mass_x = self._camera_center_metrics(rgb)
 
         freq = 110.0 + (coherence * 440.0)
-        detune = (1.0 - (beauty_d / 1.5)) * 1200.0
+        detune = (1.0 - (sce_d / 1.5)) * 1200.0
         metrics = ObserverMetrics(
             h0=float(self._initial_entropy or ht),
             ht=float(ht),
             coherence=float(coherence),
-            beauty_d=float(beauty_d),
+            sce_d=float(sce_d),
             phi=float(phi),
             freq=float(freq),
             detune=float(detune),

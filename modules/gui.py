@@ -190,7 +190,7 @@ class VeiraGUI:
         self.preview_relation_var = tk.StringVar(value="Screen / Hintergrund: noch kein Bezug aktiv")
         self.preview_register_var = tk.StringVar(value="Register: keine Auswahl")
         self.semantic_state_var = tk.StringVar(value="Semantik: --")
-        self.beauty_state_var = tk.StringVar(value="Schoenheit: --")
+        self.sce_state_var = tk.StringVar(value="Schoenheit: --")
         self.graph_region_var = tk.StringVar(value="Graph-Region: --")
         self.graph_phase_var = tk.StringVar(value="Graph-Phase: --")
         self.graph_attractor_var = tk.StringVar(value="Attraktoren: --")
@@ -216,7 +216,7 @@ class VeiraGUI:
         self.resonance_monitor_var = tk.DoubleVar(value=0.0)
         self.integrity_score_var = tk.StringVar(value="0.0")
         self.integrity_text_var = tk.StringVar(value="Strukturell gesund")
-        self.beauty_signature_var = tk.StringVar(value="Beauty 7D: --")
+        self.sce_signature_var = tk.StringVar(value="SCE 7D: --")
         self.observer_gap_var = tk.StringVar(value="H_lambda: --")
         self.ae_anchor_status_var = tk.StringVar(value="AELAB-Anker: --")
         self.ae_iteration_var = tk.StringVar(value="AELAB Iteration: idle")
@@ -866,7 +866,7 @@ class VeiraGUI:
                 observer_payload=dict(getattr(current, "observer_payload", {}) or {}),
                 bayes_payload=dict(getattr(current, "bayes_payload", {}) or {}),
                 graph_payload=dict(getattr(current, "graph_payload", {}) or {}),
-                beauty_signature=dict(getattr(current, "beauty_signature", {}) or {}),
+                sce_signature=dict(getattr(current, "sce_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(current, "observer_knowledge_ratio", 0.0) or 0.0),
                 fingerprint_payload=current.to_payload() if hasattr(current, "to_payload") else {},
                 **self._shanway_visual_payloads(current),
@@ -945,7 +945,7 @@ class VeiraGUI:
             "entropy_mean": float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
             "periodicity": int(getattr(fingerprint, "periodicity", 0) or 0),
             "delta_ratio": float(getattr(fingerprint, "delta_ratio", 0.0) or 0.0),
-            "beauty_signature": dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+            "sce_signature": dict(getattr(fingerprint, "sce_signature", {}) or {}),
             "observer_mutual_info": float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
             "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
@@ -1291,7 +1291,7 @@ class VeiraGUI:
             "entropy_mean": float(getattr(fingerprint, "entropy_mean", 0.0) or 0.0),
             "periodicity": int(getattr(fingerprint, "periodicity", 0) or 0),
             "delta_ratio": float(getattr(fingerprint, "delta_ratio", 0.0) or 0.0),
-            "beauty_signature": dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+            "sce_signature": dict(getattr(fingerprint, "sce_signature", {}) or {}),
             "observer_mutual_info": float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
             "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
@@ -1757,8 +1757,8 @@ class VeiraGUI:
         tk.Label(node_tab, textvariable=self.security_summary_var, bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 10))
         tk.Label(node_tab, textvariable=self.state_var, bg="#111A4A", fg="#C7D7FF", font=("Segoe UI", 10), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
         tk.Label(node_tab, textvariable=self.semantic_state_var, bg="#111A4A", fg="#67D5FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
-        tk.Label(node_tab, textvariable=self.beauty_state_var, bg="#111A4A", fg="#F6E7A7", font=("Segoe UI", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
-        tk.Label(node_tab, textvariable=self.beauty_signature_var, bg="#111A4A", fg="#F6E7A7", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
+        tk.Label(node_tab, textvariable=self.sce_state_var, bg="#111A4A", fg="#F6E7A7", font=("Segoe UI", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
+        tk.Label(node_tab, textvariable=self.sce_signature_var, bg="#111A4A", fg="#F6E7A7", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
         tk.Label(node_tab, textvariable=self.observer_gap_var, bg="#111A4A", fg="#9AD7C8", font=("Consolas", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
         tk.Label(node_tab, textvariable=self.current_dna_share_var, bg="#111A4A", fg="#FFB680", font=("Consolas", 9), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
         tk.Label(node_tab, textvariable=self.graph_region_var, bg="#111A4A", fg="#7DE8A7", font=("Consolas", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=12, pady=(0, 2))
@@ -2884,7 +2884,7 @@ class VeiraGUI:
                 source_label=str(getattr(fingerprint, "source_label", "") or ""),
                 file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
                 observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-                beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+                sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
                 history_factor=float(len(self.history_entries_cache)),
                 fingerprint_payload={
@@ -3507,9 +3507,9 @@ class VeiraGUI:
         self._update_semantic_status(fingerprint, source_text=snapshot.html)
         self.state_var.set(self.renderer.get_state_description(fingerprint))
         anchors, _, _ = self._fingerprint_anchors_with_interference(fingerprint)
-        beauty_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
+        sce_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
         self.browser_ct_var.set(f"C(t): {getattr(fingerprint, 'coherence_score', 0.0):.2f}")
-        self.browser_d_var.set(f"D: {beauty_d:.3f}")
+        self.browser_d_var.set(f"D: {sce_d:.3f}")
         self.browser_recon_var.set("RECON: ✗")
         self.browser_status_var.set(
             f"{snapshot.title or snapshot.url} analysiert | Datensatz-ID: {record_id} | Log: {Path(log_path).name}"
@@ -3521,7 +3521,7 @@ class VeiraGUI:
         if assessment is not None:
             self._maybe_execute_browser_followup(snapshot, fingerprint, assessment)
 
-        if beauty_d < 1.08 or beauty_d > 1.92:
+        if sce_d < 1.08 or sce_d > 1.92:
             self._flash_browser_alarm(play_sound=False)
 
     def _apply_shanway_browser_assessment(
@@ -3555,7 +3555,7 @@ class VeiraGUI:
                 "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
                 "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
             },
-            beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+            sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
             observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             history_factor=float(len(self.history_entries_cache)),
             fingerprint_payload={
@@ -4976,8 +4976,8 @@ class VeiraGUI:
                         "  "
                         f"{payload.get('semantics_label', '--')} | "
                         f"Intent {payload.get('assistant_intent', '--')} | "
-                        f"Schoenheit {float(payload.get('beauty_score', 0.0)):.1f} | "
-                        f"D {float(payload.get('beauty_d', 0.0)):.3f} | "
+                        f"Schoenheit {float(payload.get('sce_score', 0.0)):.1f} | "
+                        f"D {float(payload.get('sce_d', 0.0)):.3f} | "
                         f"Graph {payload.get('graph_phase_state', '--')} {payload.get('graph_region', '')} | "
                         f"Bayes {float(payload.get('bayes_pattern_posterior', 0.0)) * 100.0:.0f}% | "
                         f"H_lambda {float(payload.get('h_lambda', 0.0)):.2f} | "
@@ -5142,7 +5142,7 @@ class VeiraGUI:
                 )
 
             reply = None
-            beauty_d = 0.0
+            sce_d = 0.0
             anchors = []
             assistant_response = None
             assistant_context = None
@@ -5184,7 +5184,7 @@ class VeiraGUI:
                         "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
                         "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
                     },
-                    beauty_signature=dict(getattr(self.current_fingerprint, "beauty_signature", {}) or {})
+                    sce_signature=dict(getattr(self.current_fingerprint, "sce_signature", {}) or {})
                     if self.current_fingerprint is not None else {},
                     observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
@@ -5212,8 +5212,8 @@ class VeiraGUI:
                         "toxic": "BLOCKED_DIALOG",
                         "sensitive": "BLOCKED_DIALOG",
                     }.get(str(shanway_assessment.classification), "DIRECT_DIALOG"),
-                    beauty_score=float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
-                    beauty_label=(
+                    sce_score=float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
+                    sce_label=(
                         "harmonisch"
                         if shanway_assessment.classification == "harmonic"
                         else ("vorsichtig" if shanway_assessment.classification == "uncertain" else "blockiert")
@@ -5225,7 +5225,7 @@ class VeiraGUI:
                     structural_reply=reply,
                     context=assistant_context,
                 )
-                beauty_d = float(shanway_assessment.noether_symmetry)
+                sce_d = float(shanway_assessment.noether_symmetry)
                 anchors = list(assistant_context.ae_anchor_details or [])
                 web_context = dict(getattr(shanway_interface_result, "web_context", {}) or {})
                 if not web_context.get("ok"):
@@ -5290,7 +5290,7 @@ class VeiraGUI:
                         "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
                         "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
                     },
-                    beauty_signature=dict(getattr(self.current_fingerprint, "beauty_signature", {}) or {})
+                    sce_signature=dict(getattr(self.current_fingerprint, "sce_signature", {}) or {})
                     if self.current_fingerprint is not None else {},
                     observer_knowledge_ratio=float(getattr(self.current_fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
@@ -5315,9 +5315,9 @@ class VeiraGUI:
             if reply is not None and assistant_response is not None and assistant_context is not None:
                 payload = {
                     "semantics_label": reply.semantics_label,
-                    "beauty_score": reply.beauty_score,
-                    "beauty_label": reply.beauty_label,
-                    "beauty_d": beauty_d,
+                    "sce_score": reply.sce_score,
+                    "sce_label": reply.sce_label,
+                    "sce_d": sce_d,
                     "anchor_count": len(anchors),
                     "assistant_intent": assistant_response.intent,
                     "assistant_knowledge_layer": int(getattr(assistant_response, "knowledge_layer", 0) or 0),
@@ -5343,7 +5343,7 @@ class VeiraGUI:
                     if self.current_fingerprint is not None else 0.0,
                     "observer_state": str(getattr(self.current_fingerprint, "observer_state", "") or "")
                     if self.current_fingerprint is not None else "",
-                    "beauty_signature": {},
+                    "sce_signature": {},
                     "model_depth_label": assistant_context.model_depth_label,
                     "model_depth_score": assistant_context.model_depth_score,
                     "delta_learning_label": assistant_context.delta_learning_label,
@@ -5527,7 +5527,7 @@ class VeiraGUI:
                         "  "
                         f"Sprache {language} | "
                         f"Intent {payload.get('assistant_intent', '--')} | "
-                        f"Schoenheit {float(payload.get('beauty_score', 0.0)):.1f} | "
+                        f"Schoenheit {float(payload.get('sce_score', 0.0)):.1f} | "
                         f"H_lambda {float(payload.get('h_lambda', 0.0)):.2f} | "
                         f"Noether {float(assessment.get('noether_symmetry', 0.0)) * 100.0:.0f}%\n",
                     )
@@ -6580,7 +6580,7 @@ class VeiraGUI:
         self.metric_h0_var.set(f"{metrics.h0:.2f}")
         self.metric_ht_var.set(f"{metrics.ht:.2f}")
         self.metric_ct_var.set(f"{metrics.coherence:.2f}")
-        self.metric_d_var.set(f"{metrics.beauty_d:.3f}")
+        self.metric_d_var.set(f"{metrics.sce_d:.3f}")
         self.metric_phi_var.set(f"{metrics.phi:.2f}")
         self.metric_freq_var.set(f"{metrics.freq:.1f}")
         self.metric_detune_var.set(f"{metrics.detune:.0f}")
@@ -6629,7 +6629,7 @@ class VeiraGUI:
 
     def _check_alarm_conditions(self, metrics) -> None:
         """Loest D/H-Verletzungsalarme aus."""
-        violation = bool(metrics.beauty_d < 1.08 or metrics.ht > 7.35 or self.current_h_obs > 4.4)
+        violation = bool(metrics.sce_d < 1.08 or metrics.ht > 7.35 or self.current_h_obs > 4.4)
         if not violation:
             return
         alarm_posterior = float(self._last_bayes_snapshot.alarm_posterior if self._last_bayes_snapshot is not None else 0.0)
@@ -6637,7 +6637,7 @@ class VeiraGUI:
             reason="D/H violation",
             severity="high" if alarm_posterior >= 0.68 else "medium",
             payload={
-                "D": metrics.beauty_d,
+                "D": metrics.sce_d,
                 "H_t": metrics.ht,
                 "H_obs": self.current_h_obs,
                 "bayes_alarm_posterior": alarm_posterior,
@@ -7863,7 +7863,7 @@ class VeiraGUI:
             similarity_best = max(similarity_best, self.embedding_engine.cosine_similarity(embedding, vector))
         similarity_best *= confidence_scale
 
-        beauty_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
+        sce_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
         payload = {
             "session_id": self.session_context.session_id,
             "user_id": int(getattr(self.session_context, "user_id", 0) or 0),
@@ -7874,7 +7874,7 @@ class VeiraGUI:
             "file_hash": fingerprint.file_hash,
             "embedding_vector": embedding,
             "entropy_curve": [float(value) for value in list(getattr(fingerprint, "entropy_blocks", []))[:64]],
-            "beauty_d": beauty_d,
+            "sce_d": sce_d,
             "anchor_delta_ops": anchor_delta_ops,
             "anchor_vector": list(getattr(fingerprint, "anchor_vector", []) or []),
             "anchor_interference": interference_profile,
@@ -7895,7 +7895,7 @@ class VeiraGUI:
             "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
             "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
             "observer_state": str(getattr(fingerprint, "observer_state", "")),
-            "beauty_signature": dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+            "sce_signature": dict(getattr(fingerprint, "sce_signature", {}) or {}),
             "graph_region": graph_snapshot.region_label,
             "graph_region_nodes": graph_snapshot.region_node_count,
             "graph_phase_state": graph_snapshot.phase_state,
@@ -8009,7 +8009,7 @@ class VeiraGUI:
                 "observer_knowledge_ratio": float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
                 "h_lambda": float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
                 "observer_state": str(getattr(fingerprint, "observer_state", "")),
-                "beauty_signature": dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+                "sce_signature": dict(getattr(fingerprint, "sce_signature", {}) or {}),
                 "model_depth_label": str(model_depth_report.get("depth_label", "")),
                 "model_depth_score": float(model_depth_report.get("depth_score", 0.0) or 0.0),
                 "delta_learning_label": str(delta_learning_curve.get("trend_label", "")),
@@ -8349,14 +8349,14 @@ class VeiraGUI:
     ):
         """Verdichtet den aktuellen Fingerprint zu einer nicht-LLM-Antwort."""
         anchors, _, _ = self._fingerprint_anchors_with_interference(fingerprint)
-        beauty_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
+        sce_d = float(self.observer_engine._fractal_dimension(anchors)) if anchors else 1.0
         reply = self.dialog_engine.evaluate(
             fingerprint=fingerprint,
-            beauty_d=beauty_d,
+            sce_d=sce_d,
             anchor_count=len(anchors),
             source_text=source_text,
         )
-        return reply, beauty_d, anchors
+        return reply, sce_d, anchors
 
     def _graph_snapshot_for(self, fingerprint: AetherFingerprint) -> GraphFieldSnapshot:
         """Berechnet oder liest den aktuellen Graph-Feldzustand fuer einen Fingerprint."""
@@ -8726,7 +8726,7 @@ class VeiraGUI:
 
     def _update_semantic_status(self, fingerprint: AetherFingerprint, source_text: str = "") -> ShanwayAssessment | None:
         """Aktualisiert die sichtbare strukturelle Semantik fuer den aktuellen Datensatz."""
-        reply, beauty_d, anchors = self._structural_reply_for(fingerprint, source_text=source_text)
+        reply, sce_d, anchors = self._structural_reply_for(fingerprint, source_text=source_text)
         shanway_assessment: ShanwayAssessment | None = None
         security_prefix = ""
         if not self.session_context.security_allows("allow_semantic_promotion", True):
@@ -8738,26 +8738,26 @@ class VeiraGUI:
             f"{security_prefix}{reply.semantics_label} | "
             f"{getattr(fingerprint, 'integrity_text', self._derive_integrity_text(float(getattr(fingerprint, 'ethics_score', 0.0) or 0.0)))}"
         )
-        self.beauty_state_var.set(
-            f"Schoenheit {reply.beauty_score:.1f} | {reply.beauty_label} | D {beauty_d:.3f} | Anker {len(anchors)}"
+        self.sce_state_var.set(
+            f"Schoenheit {reply.sce_score:.1f} | {reply.sce_label} | D {sce_d:.3f} | Anker {len(anchors)}"
         )
-        beauty_signature = dict(getattr(fingerprint, "beauty_signature", {}) or {})
-        if beauty_signature:
-            self.beauty_signature_var.set(
+        sce_signature = dict(getattr(fingerprint, "sce_signature", {}) or {})
+        if sce_signature:
+            self.sce_signature_var.set(
                 "Score {score:.1f} | 1/f {alpha:.2f} | Ly {lyap:.2f} | D {mandel:.2f} | "
                 "K {kol:.2f} | B {ben:.2f} | Z {zipf:.2f} | Sym {sym:.2f}".format(
-                    score=float(beauty_signature.get("beauty_score", 0.0) or 0.0),
-                    alpha=float(beauty_signature.get("alpha_1f", 0.0) or 0.0),
-                    lyap=float(beauty_signature.get("lyapunov", 0.0) or 0.0),
-                    mandel=float(beauty_signature.get("mandelbrot_d", 0.0) or 0.0),
-                    kol=float(beauty_signature.get("kolmogorov_k", 0.0) or 0.0),
-                    ben=float(beauty_signature.get("benford_b", 0.0) or 0.0),
-                    zipf=float(beauty_signature.get("zipf_z", 0.0) or 0.0),
-                    sym=float(beauty_signature.get("symmetry_phi", 0.0) or 0.0),
+                    score=float(sce_signature.get("sce_score", 0.0) or 0.0),
+                    alpha=float(sce_signature.get("alpha_1f", 0.0) or 0.0),
+                    lyap=float(sce_signature.get("lyapunov", 0.0) or 0.0),
+                    mandel=float(sce_signature.get("mandelbrot_d", 0.0) or 0.0),
+                    kol=float(sce_signature.get("kolmogorov_k", 0.0) or 0.0),
+                    ben=float(sce_signature.get("benford_b", 0.0) or 0.0),
+                    zipf=float(sce_signature.get("zipf_z", 0.0) or 0.0),
+                    sym=float(sce_signature.get("symmetry_phi", 0.0) or 0.0),
                 )
             )
         else:
-            self.beauty_signature_var.set("Beauty 7D: --")
+            self.sce_signature_var.set("SCE 7D: --")
         observer_state = str(getattr(fingerprint, "observer_state", "OFFEN") or "OFFEN")
         observer_ratio = float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0)
         h_lambda = float(getattr(fingerprint, "h_lambda", 0.0) or 0.0)
@@ -8786,7 +8786,7 @@ class VeiraGUI:
                     "phase_state": str(getattr(getattr(self, "_graph_snapshot", None), "phase_state", "") or ""),
                     "attractor_score": float(getattr(getattr(self, "_graph_snapshot", None), "attractor_score", 0.0) or 0.0),
                 },
-                beauty_signature=dict(getattr(fingerprint, "beauty_signature", {}) or {}),
+                sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(fingerprint, "observer_knowledge_ratio", 0.0) or 0.0),
                 history_factor=float(len(self.history_entries_cache)),
                 fingerprint_payload={
