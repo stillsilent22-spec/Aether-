@@ -1,4 +1,14 @@
-"""shanway_chat.py - Shanways Chat-Eintrittspunkte."""
+"""shanway_chat.py — Shanway Chat-Eintrittspunkte.
+
+Shanway ist der finale, deterministische Ausgabemodul der Analyse-Pipeline.
+Er generiert keine Inhalte eigenstaendig. Jede Ausgabe basiert ausschliesslich
+auf den strukturell geprueften Bausteinen, die von der Aether-Pipeline
+(BrowserEngine -> ShanwayInterface -> ShanwayLLM -> ShanwaySafetyFilter) kommen.
+
+Shanway ist kein Agent, kein Assistent und kein autonomer Generator.
+Er ist ein deterministischer Renderer, der gepruefgte Inhalte in klare,
+strukturierte, konsistente und sichere Form bringt.
+"""
 
 from __future__ import annotations
 

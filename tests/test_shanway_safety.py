@@ -475,3 +475,130 @@ class TestConstants:
 
     def test_hedging_patterns_nonempty(self, safety_mod):
         assert len(safety_mod._HEDGING_PATTERNS) >= 3
+
+
+# ===========================================================================
+# 10. Pipeline-Konsens-Schwelle (Kevin-Hannemann-Spec)
+# ===========================================================================
+
+class TestPipelineConsensusGate:
+    """
+    Shanway darf keine Inhalte ausgeben, die nicht durch mindestens
+    CONSENSUS_MIN_SOURCES_STRICT (3) Quellen bestaetigt wurden —
+    sofern eine Web-Anfrage stattgefunden hat (sources_confirmed > 0).
+
+    sources_confirmed == 0 ist Vault/Datei-Modus und davon ausgenommen.
+    """
+
+    def test_one_confirmed_source_fails(self, sf):
+        """1 bestaetigte Quelle von 3 benoetigten → Schweigen."""
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0, sources_confirmed=1)
+        assert not result.passed, "1 source < 3 required: must silence"
+        assert result.filter_name == "determinism"
+        assert "insufficient_consensus" in result.reason
+
+    def test_two_confirmed_sources_fails(self, sf):
+        """2 bestaetigte Quellen von 3 benoetigten → Schweigen."""
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0, sources_confirmed=2)
+        assert not result.passed, "2 sources < 3 required: must silence"
+        assert "insufficient_consensus" in result.reason
+
+    def test_exactly_three_confirmed_passes(self, sf, safety_mod):
+        """Genau 3 Quellen = CONSENSUS_MIN_SOURCES_STRICT → erlaubt."""
+        threshold = safety_mod.CONSENSUS_MIN_SOURCES_STRICT
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0,
+                                      sources_confirmed=threshold)
+        assert result.passed, f"{threshold} sources == threshold: must pass"
+
+    def test_more_than_three_passes(self, sf):
+        """5 bestaetigte Quellen → erlaubt."""
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0, sources_confirmed=5)
+        assert result.passed
+
+    def test_zero_sources_passes_vault_mode(self, sf):
+        """
+        0 bestaetigte Quellen = Vault/Datei-Modus (kein Web-Kontext).
+        Konsens-Schwelle gilt hier nicht.
+        """
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0, sources_confirmed=0)
+        assert result.passed, "sources_confirmed=0 is vault/file mode: must pass"
+
+    def test_insufficient_consensus_fails_chain(self, sf):
+        """Chain-Filter muss bei 1 Web-Quelle ebenfalls scheitern."""
+        chain = sf.apply_chain(
+            query="Was ist Aether?",
+            generated_text="Aether ist ein Strukturanalysesystem.",
+            h_lambda=0.5, trust=0.9, sources_confirmed=1,
+        )
+        assert not chain.passed
+        assert "determinism" in chain.failed_filters
+
+    def test_insufficient_consensus_silenced_by_safe_generate(self, sf):
+        """safe_generate muss bei sources_confirmed=2 schweigen."""
+        out = sf.safe_generate(
+            query="Was ist Python?",
+            generated_text="Python ist eine Programmiersprache.",
+            h_lambda=0.0, trust=1.0, sources_confirmed=2,
+        )
+        assert out == "", f"Expected silence for insufficient consensus, got {out!r}"
+
+    def test_sufficient_consensus_passes_safe_generate(self, sf):
+        """safe_generate gibt aus bei sources_confirmed >= 3."""
+        text = "Aether ist ein deterministisches Strukturanalysesystem."
+        out = sf.safe_generate(
+            query="Was ist Aether?",
+            generated_text=text,
+            h_lambda=0.5, trust=0.9, sources_confirmed=3,
+        )
+        assert out != "", "sources_confirmed=3 should be sufficient"
+
+    def test_reason_contains_both_values(self, sf, safety_mod):
+        """Fehlermeldung muss tatsaechliche und benoetigte Anzahl enthalten."""
+        result = sf.check_determinism(h_lambda=0.0, trust=1.0, sources_confirmed=1)
+        assert "1" in result.reason
+        threshold = str(safety_mod.CONSENSUS_MIN_SOURCES_STRICT)
+        assert threshold in result.reason
+
+
+# ===========================================================================
+# 11. Shanway-Identitaet (Kevin-Hannemann-Spec)
+# ===========================================================================
+
+class TestShanwayIdentity:
+    """
+    Shanway ist kein Agent, kein Assistent, kein autonomer Generator.
+    Er ist ein deterministischer Renderer.
+    """
+
+    def test_silence_constant_is_empty_string(self, safety_mod):
+        """SILENCE muss '' sein — kein Fehlertext, keine Erklaerung."""
+        assert safety_mod.SILENCE == ""
+
+    def test_silence_token_exists(self, safety_mod):
+        """SILENCE_TOKEN als internes Routing-Token vorhanden."""
+        assert hasattr(safety_mod, "SILENCE_TOKEN")
+        assert isinstance(safety_mod.SILENCE_TOKEN, str)
+
+    def test_filter_chain_returns_chain_result(self, sf):
+        """apply_chain gibt immer ein ChainResult mit passed-Boolean zurueck."""
+        result = sf.apply_chain(
+            query="Was ist Informatik?",
+            generated_text="Informatik ist die Wissenschaft der Datenverarbeitung.",
+            h_lambda=1.0, trust=0.9, sources_confirmed=5,
+        )
+        assert hasattr(result, "passed")
+        assert isinstance(result.passed, bool)
+
+    def test_no_output_without_pipeline_consensus(self, sf):
+        """
+        Kern-Invariante: kein Output wenn Pipeline-Konsens nicht erreicht.
+        Shanway darf keine Inhalte ausgeben, die nicht durch die Pipeline
+        freigegeben wurden.
+        """
+        # sources_confirmed=1: eine Web-Quelle hat geantwortet, aber Konsens fehlt
+        out = sf.safe_generate(
+            query="Was ist Mathematik?",
+            generated_text="Mathematik ist die Wissenschaft der Zahlen.",
+            h_lambda=0.0, trust=1.0, sources_confirmed=1,
+        )
+        assert out == "", "Pipeline-Konsens nicht erreicht → kein Output"

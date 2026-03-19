@@ -1,15 +1,37 @@
 """
 modules/shanway_safety.py — Shanway Sicherheits- und Filterebene.
 
-Enthält:
-  1. BLACKLIST    — absolute Verbote (silence ohne Erklaerung)
-  2. WHITELIST    — strukturell sichere Themendomaenen
-  3. MEDICAL RULE — Shanway gibt NIEMALS medizinischen Rat. Keine Ausnahme.
-  4. CHAIN FILTER — Jeder Filter einzeln, dann alle gemeinsam.
-                    Erst wenn alle Einzelfilter UND der Gesamtfilter bestehen,
-                    darf TinyLlama ausgeben.
-  5. DETERMINISM  — temperature=0, h_lambda-Schwelle, kein Hedging.
+Shanway ist der finale, deterministische Ausgabemodul der Analyse-Pipeline.
+Er generiert keine Inhalte eigenstaendig, sondern verarbeitet ausschliesslich
+Material, das zuvor durch Aether, Filter und TinyLlama validiert wurde.
+
+Shanway darf keine neuen Fakten erfinden, keine Hypothesen bilden, keine
+Interpretationen hinzufuegen und keine Inhalte generieren, die nicht bereits
+durch die Pipeline freigegeben wurden.
+
+Shanway fuehrt keine freien Assoziationen aus und nutzt keine probabilistischen
+Modelle. Jede Ausgabe basiert ausschliesslich auf den strukturell geprueften
+Bausteinen, die ihm uebergeben werden.
+
+Shanway ist kein Agent, kein Assistent und kein autonomer Generator. Er ist ein
+deterministischer Renderer, der gepruefgte Inhalte in klare, strukturierte,
+konsistente und sichere Form bringt.
+
+Filter (nach Prioritaet):
+  1. MEDICAL RULE — Shanway gibt NIEMALS medizinischen Rat. Keine Ausnahme.
+  2. BLACKLIST    — absolute Verbote (silence ohne Erklaerung)
+  3. WHITELIST    — strukturell sichere Themendomaenen
+  4. DETERMINISM  — h_lambda-Schwelle, Trust-Schwelle, Konsens-Schwelle.
+                    Zu wenige bestaetigte Quellen (0 < n < 3) = Schweigen.
                     Unsicher = schweigt. Keine Interpretationen.
+  5. HEDGING      — keine Spekulationswoerter in deterministischem Modus
+  6. CHAIN        — alle Filter gemeinsam als AND-Gatter
+
+Pipeline-Konsens-Schwelle:
+  Wenn eine Web-Anfrage laeuft (sources_confirmed > 0), muessen mindestens
+  CONSENSUS_MIN_SOURCES_STRICT (3) Quellen bestaetigen, bevor Shanway ausgibt.
+  Bei sources_confirmed == 0 (Vault/Datei-Modus) gilt diese Schwelle nicht,
+  da kein Web-Kontext vorliegt.
 
 Nutzung:
     from modules.shanway_safety import ShanwaySafetyFilter, FilterResult
@@ -207,8 +229,15 @@ class ShanwaySafetyFilter:
         sources_confirmed: int = 0,
     ) -> FilterResult:
         """
-        Prueft Unsicherheits-Kriterien.
-        Unsicher = schweigt. Keine Interpretationen.
+        Prueft Unsicherheits-Kriterien per Kevin-Hannemann-Spec:
+          - h_lambda zu hoch          → Schweigen
+          - Trust zu niedrig          → Schweigen
+          - 0 < sources_confirmed < 3 → Schweigen (kein Konsens erreicht)
+
+        Hinweis: sources_confirmed == 0 bedeutet Vault/Datei-Modus (kein
+        Web-Kontext), die Konsens-Schwelle greift dann nicht. Sie greift nur,
+        wenn eine Web-Anfrage lief (sources_confirmed > 0) aber zu wenig
+        Quellen bestaetigt haben.
         """
         if h_lambda > H_LAMBDA_UNCERTAINTY_THRESHOLD:
             return FilterResult(
@@ -222,10 +251,18 @@ class ShanwaySafetyFilter:
                 passed=False,
                 reason=f"trust_too_low:{trust:.3f}<{MIN_TRUST_FOR_OUTPUT}",
             )
-        if sources_confirmed < CONSENSUS_MIN_SOURCES_STRICT and sources_confirmed > 0:
-            # Zu wenige bestaetigte Quellen: schwaches Signal, aber nicht verboten
-            # → PasseN als WARNING (still passes, but noted)
-            pass
+        if 0 < sources_confirmed < CONSENSUS_MIN_SOURCES_STRICT:
+            # Zu wenige bestaetigte Quellen: Konsens-Schwelle nicht erreicht.
+            # Shanway darf keine Inhalte ausgeben, die nicht durch mindestens
+            # CONSENSUS_MIN_SOURCES_STRICT Quellen bestaetigt wurden.
+            return FilterResult(
+                filter_name="determinism",
+                passed=False,
+                reason=(
+                    f"insufficient_consensus:{sources_confirmed}"
+                    f"<{CONSENSUS_MIN_SOURCES_STRICT}_required"
+                ),
+            )
         return FilterResult(filter_name="determinism", passed=True)
 
     def check_hedging(self, generated_text: str) -> FilterResult:
