@@ -33,8 +33,10 @@ pub enum BusEvent {
     VramPressureChanged(VramPressureEvent),
     TextureUploadRequested(TextureUploadRequestEvent),
     TextureUploadCompleted(TextureUploadResultEvent),
+    MediaTraceRecorded(MediaTraceEvent),
     ShaderCompileRequested(ShaderCompileRequestEvent),
     ShaderCacheHit(ShaderCacheHitEvent),
+    OptimizationDecision(OptimizationDecisionEvent),
     VramOptimized(VramOptimizedEvent),
     VramEvictionRequired(VramEvictionEvent),
     FrameStarted(FrameStartedEvent),
@@ -276,6 +278,17 @@ pub struct TextureUploadResultEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaTraceEvent {
+    pub process: String,
+    pub medium: String,
+    pub asset_label: String,
+    pub stage: String,
+    pub operation: String,
+    pub anchor_refs: Vec<String>,
+    pub trace_depth: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShaderCompileRequestEvent {
     pub program_id: String,
     pub shader_hash: String,
@@ -287,6 +300,18 @@ pub struct ShaderCacheHitEvent {
     pub program_id: String,
     pub shader_hash: String,
     pub handle: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OptimizationDecisionEvent {
+    pub subsystem: String,
+    pub decision: String,
+    pub trigger: String,
+    pub confidence: f32,
+    pub expected_gain_percent: f32,
+    pub applied: bool,
+    pub rollback_ready: bool,
+    pub guardrail: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

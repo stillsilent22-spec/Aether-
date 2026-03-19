@@ -16,6 +16,14 @@ try:
 except Exception:  # pragma: no cover
     psutil = None
 
+try:
+    from .ethics_engine import OckhamRazorEngine
+except Exception:  # pragma: no cover
+    try:
+        from modules.ethics_engine import OckhamRazorEngine
+    except Exception:  # pragma: no cover
+        OckhamRazorEngine = None  # type: ignore
+
 
 ACTION_ORDER = {
     "observe": 0,
@@ -65,6 +73,9 @@ class AgentDecision:
     policy_hits: list[str] = field(default_factory=list)
     recommended_action: str = "observe"
     applied_action: str = "observe"
+    ockham_action: str = "allow"
+    ockham_risk_score: float = 0.0
+    ockham_reasons: list[str] = field(default_factory=list)
     control_state: str = "idle"
     note: str = ""
 
@@ -100,10 +111,13 @@ class AgentControlEngine:
         thresholds: AgentControlThresholds | None = None,
         apply_os_controls: bool = True,
         allow_firewall: bool = True,
+        use_ockham: bool = True,
     ) -> None:
         self.thresholds = thresholds or AgentControlThresholds()
         self.apply_os_controls = bool(apply_os_controls)
         self.allow_firewall = bool(allow_firewall)
+        self.use_ockham = bool(use_ockham)
+        self._ockham_engine = OckhamRazorEngine() if (self.use_ockham and OckhamRazorEngine is not None) else None
         self._history: dict[int, deque[dict[str, float]]] = defaultdict(lambda: deque(maxlen=8))
         self._controlled: dict[int, AppliedControlState] = {}
 
@@ -324,6 +338,35 @@ class AgentControlEngine:
                     recommended_action = _action_max(recommended_action, "network_block")
 
         should_apply = (not agents_enabled) or bool(automatic_policies)
+        ockham_action = "allow"
+        ockham_risk = 0.0
+        ockham_reasons: list[str] = []
+        if is_candidate and self._ockham_engine is not None:
+            observation = {
+                "cpu_load": _clamp(cpu_percent / 100.0),
+                "mem_pressure": _clamp(memory_mb / 4096.0),
+                "process_spawn_rate": _clamp(max(cpu_drift, thread_count / 12.0)),
+                "unsigned_binary_ratio": _clamp(max(0.0, (structural_score - 0.40) / 0.60)),
+                "network_new_peers": _clamp(max(network_rhythm, open_connections / 6.0)),
+                "error_burst": _clamp(max(io_pulse, abs(cpu_percent - mean_cpu) / 60.0)),
+                "integrity_alerts": _clamp(0.0 if classification != "agentisch" else max(0.0, structural_score - 0.70)),
+            }
+            ockham = self._ockham_engine.decide(observation)
+            ockham_action = str(ockham.action)
+            ockham_risk = float(ockham.risk_score)
+            ockham_reasons = list(ockham.reasons)
+            mapped = {
+                "allow": "observe",
+                "throttle_background": "deprioritize",
+                "limit_new_processes": "isolate",
+                "isolate_network": "network_block",
+                "pause_autopilot": "network_block",
+                "require_manual_review": "network_block",
+            }.get(ockham_action, "observe")
+            recommended_action = _action_max(recommended_action, mapped)
+            if mapped != "observe":
+                policy_hits.append(f"ockham_{ockham_action}")
+
         applied_action = recommended_action if should_apply else "observe"
         return AgentDecision(
             pid=pid,
@@ -337,6 +380,9 @@ class AgentControlEngine:
             policy_hits=policy_hits,
             recommended_action=recommended_action,
             applied_action=applied_action,
+            ockham_action=ockham_action,
+            ockham_risk_score=round(float(ockham_risk), 3),
+            ockham_reasons=ockham_reasons,
         )
 
     def _apply_control(self, pid: int, process_name: str, action: str) -> tuple[str, str]:

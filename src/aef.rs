@@ -438,10 +438,6 @@ impl EnginePipeline {
         if bayes >= 0.40 && knowledge_ratio >= 0.40 {
             flags |= engine_flags::BAYES;
         }
-        // [9] Trust: Gesamtscore über Heisenberg-Schwelle
-        if trust_score >= 0.55 {
-            flags |= engine_flags::TRUST;
-        }
 
         let trust_score = ((0.18 * symmetry)
             + (0.10 * benford)
@@ -451,6 +447,11 @@ impl EnginePipeline {
             + (0.18 * knowledge_ratio)
             + (0.24 * (coherence_index as f32)))
             .clamp(0.0, 1.0);
+
+        // [9] Trust: Gesamtscore über Heisenberg-Schwelle
+        if trust_score >= 0.55 {
+            flags |= engine_flags::TRUST;
+        }
 
 
         // E_lambda: Emergenz-Signal — misst strukturell emergente Muster

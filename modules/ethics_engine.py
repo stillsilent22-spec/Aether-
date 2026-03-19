@@ -132,14 +132,30 @@ if _DC_OK:
         noether: float = 0.0
         interferenz: float = 0.0
         heisenberg: float = 0.0
+        symmetry_component: float = 0.0
+        coherence_score: float = 0.0
+        resonance_score: float = 0.0
+        ethics_score: float = 0.0
+        integrity_state: str = "STRUCTURAL_TENSION"
+        integrity_text: str = "Strukturelle Spannung erkannt"
         notes: list = _field(default_factory=list)
 else:
     class EthicsAssessment:  # type: ignore
         def __init__(self, score=0.0, zipf=0.0, benford=0.0, fraktal=0.0,
-                     noether=0.0, interferenz=0.0, heisenberg=0.0, notes=None):
+                     noether=0.0, interferenz=0.0, heisenberg=0.0,
+                     symmetry_component=0.0, coherence_score=0.0,
+                     resonance_score=0.0, ethics_score=0.0,
+                     integrity_state="STRUCTURAL_TENSION",
+                     integrity_text="Strukturelle Spannung erkannt", notes=None):
             self.score = score; self.zipf = zipf; self.benford = benford
             self.fraktal = fraktal; self.noether = noether
             self.interferenz = interferenz; self.heisenberg = heisenberg
+            self.symmetry_component = symmetry_component
+            self.coherence_score = coherence_score
+            self.resonance_score = resonance_score
+            self.ethics_score = ethics_score
+            self.integrity_state = integrity_state
+            self.integrity_text = integrity_text
             self.notes = notes or []
 
 
@@ -174,6 +190,235 @@ class EthicsEngine:
     def score(self, text: str, entropy_mean=None) -> float:
         """Kurzform: gibt nur den Gesamtscore zurueck."""
         return float(self.assess(text, entropy_mean=entropy_mean).score)
+
+    def evaluate(
+        self,
+        symmetry_score: float,
+        entropy_blocks: list,
+        entropy_mean: float,
+        periodicity: int,
+        delta_ratio: float,
+        healthy_references=None,
+    ) -> EthicsAssessment:
+        """Numerische Integritaetsbewertung fuer Analyse-/Runtime-Pipelines."""
+        symmetry_component = float(symmetry_score)
+        if symmetry_component > 1.0:
+            symmetry_component = symmetry_component / 100.0
+        symmetry_component = max(0.0, min(1.0, symmetry_component))
+
+        entropy_center = 4.5
+        entropy_spread = 2.8
+        entropy_health = max(0.0, 1.0 - (abs(float(entropy_mean) - entropy_center) / entropy_spread))
+
+        try:
+            if entropy_blocks:
+                avg = sum(float(v) for v in entropy_blocks) / float(len(entropy_blocks))
+                variance = sum((float(v) - avg) ** 2 for v in entropy_blocks) / float(max(1, len(entropy_blocks)))
+                volatility = min(1.0, (variance ** 0.5) / 3.0)
+            else:
+                volatility = 0.0
+        except Exception:
+            volatility = 0.0
+
+        periodicity_norm = max(0.0, min(1.0, 1.0 - abs(int(periodicity) - 24) / 48.0))
+        delta_health = max(0.0, min(1.0, 1.0 - float(delta_ratio)))
+
+        coherence_score = (
+            0.38 * symmetry_component
+            + 0.30 * entropy_health
+            + 0.18 * periodicity_norm
+            + 0.14 * delta_health
+        )
+        coherence_score *= (1.0 - 0.25 * volatility)
+        coherence_score = max(0.0, min(1.0, coherence_score))
+
+        resonance_score = 0.5
+        refs = list(healthy_references or [])
+        if refs:
+            current = [symmetry_component, entropy_health, periodicity_norm, delta_health]
+            best_distance = None
+            for ref in refs:
+                try:
+                    ref_vec = [
+                        float(ref.get("symmetry_score", symmetry_component)),
+                        max(0.0, min(1.0, 1.0 - abs(float(ref.get("entropy_mean", entropy_mean)) - entropy_center) / entropy_spread)),
+                        max(0.0, min(1.0, 1.0 - abs(float(ref.get("periodicity", periodicity)) - 24) / 48.0)),
+                        max(0.0, min(1.0, 1.0 - float(ref.get("delta_ratio", delta_ratio)))),
+                    ]
+                    dist = sum((a - b) ** 2 for a, b in zip(current, ref_vec)) ** 0.5
+                    best_distance = dist if best_distance is None else min(best_distance, dist)
+                except Exception:
+                    continue
+            if best_distance is not None:
+                resonance_score = max(0.0, min(1.0, 1.0 - (best_distance / 2.0)))
+
+        ethics_score = (
+            0.50 * coherence_score
+            + 0.30 * resonance_score
+            + 0.20 * symmetry_component
+        )
+        ethics_score = max(0.0, min(1.0, ethics_score))
+
+        if ethics_score >= 0.72:
+            integrity_state = "STRUCTURAL_COHERENCE"
+            integrity_text = "Strukturelle Koharenz stabil"
+        elif ethics_score >= 0.46:
+            integrity_state = "STRUCTURAL_TENSION"
+            integrity_text = "Strukturelle Spannung erkannt"
+        else:
+            integrity_state = "STRUCTURAL_ANOMALY"
+            integrity_text = "Strukturelle Anomalie erkannt"
+
+        return EthicsAssessment(
+            score=float(ethics_score),
+            zipf=float(coherence_score),
+            benford=float(resonance_score),
+            fraktal=float(entropy_health),
+            noether=float(periodicity_norm),
+            interferenz=float(delta_health),
+            heisenberg=float(1.0 - volatility),
+            symmetry_component=float(symmetry_component),
+            coherence_score=float(coherence_score),
+            resonance_score=float(resonance_score),
+            ethics_score=float(ethics_score),
+            integrity_state=integrity_state,
+            integrity_text=integrity_text,
+            notes=[],
+        )
+
+
+# ---------------------------------------------------------------------------
+# Ockham's Razor for OS governance (deterministic, minimal interventions)
+# ---------------------------------------------------------------------------
+
+if _DC_OK:
+    @_dataclass
+    class OckhamDecision:
+        action: str = "allow"
+        risk_score: float = 0.0
+        utility: float = 0.0
+        complexity: float = 0.0
+        reasons: list = _field(default_factory=list)
+        ranked_actions: list = _field(default_factory=list)
+else:
+    class OckhamDecision:  # type: ignore
+        def __init__(self, action="allow", risk_score=0.0, utility=0.0, complexity=0.0, reasons=None, ranked_actions=None):
+            self.action = action
+            self.risk_score = risk_score
+            self.utility = utility
+            self.complexity = complexity
+            self.reasons = reasons or []
+            self.ranked_actions = ranked_actions or []
+
+
+def _clip01(value) -> float:
+    try:
+        return float(max(0.0, min(1.0, float(value))))
+    except Exception:
+        return 0.0
+
+
+def _risk_from_observation(observation: dict) -> tuple[float, list]:
+    cpu_load = _clip01(observation.get("cpu_load", 0.0))
+    mem_pressure = _clip01(observation.get("mem_pressure", 0.0))
+    spawn_rate = _clip01(observation.get("process_spawn_rate", 0.0))
+    unsigned_ratio = _clip01(observation.get("unsigned_binary_ratio", 0.0))
+    net_new_peers = _clip01(observation.get("network_new_peers", 0.0))
+    error_burst = _clip01(observation.get("error_burst", 0.0))
+    integrity_alerts = _clip01(observation.get("integrity_alerts", 0.0))
+
+    risk = (
+        0.18 * cpu_load
+        + 0.15 * mem_pressure
+        + 0.16 * spawn_rate
+        + 0.19 * unsigned_ratio
+        + 0.12 * net_new_peers
+        + 0.08 * error_burst
+        + 0.12 * integrity_alerts
+    )
+
+    reasons = []
+    if cpu_load > 0.82:
+        reasons.append("cpu_load_high")
+    if mem_pressure > 0.82:
+        reasons.append("mem_pressure_high")
+    if spawn_rate > 0.72:
+        reasons.append("spawn_rate_high")
+    if unsigned_ratio > 0.45:
+        reasons.append("unsigned_binary_ratio_high")
+    if net_new_peers > 0.60:
+        reasons.append("network_peer_churn_high")
+    if error_burst > 0.70:
+        reasons.append("error_burst_high")
+    if integrity_alerts > 0.10:
+        reasons.append("integrity_alerts_present")
+
+    return (_clip01(risk), reasons)
+
+
+def _action_table() -> list:
+    # complexity: intervention cost; reduction: expected normalized risk reduction
+    return [
+        {"action": "allow", "complexity": 0.00, "reduction": 0.00},
+        {"action": "throttle_background", "complexity": 0.18, "reduction": 0.28},
+        {"action": "limit_new_processes", "complexity": 0.26, "reduction": 0.42},
+        {"action": "isolate_network", "complexity": 0.33, "reduction": 0.55},
+        {"action": "pause_autopilot", "complexity": 0.40, "reduction": 0.66},
+        {"action": "require_manual_review", "complexity": 0.52, "reduction": 0.80},
+    ]
+
+
+def ockham_os_razor(observation: dict, complexity_weight: float = 0.35) -> dict:
+    """
+    Waehlt die einfachste noch wirksame OS-Gegenmassnahme.
+
+    Utility(action) = risk_score * reduction - complexity_weight * complexity
+    Der Gewinner maximiert Utility. Bei Gleichstand gewinnt die geringere Komplexitaet.
+    """
+    risk_score, reasons = _risk_from_observation(dict(observation or {}))
+
+    ranked = []
+    for row in _action_table():
+        utility = risk_score * float(row["reduction"]) - float(complexity_weight) * float(row["complexity"])
+        ranked.append(
+            {
+                "action": str(row["action"]),
+                "utility": float(utility),
+                "complexity": float(row["complexity"]),
+                "expected_risk_reduction": float(risk_score * float(row["reduction"])),
+            }
+        )
+
+    ranked.sort(key=lambda item: (-item["utility"], item["complexity"], item["action"]))
+    winner = ranked[0] if ranked else {"action": "allow", "utility": 0.0, "complexity": 0.0}
+
+    # Ockham gate: for low risk prefer explicit non-intervention.
+    if risk_score < 0.28:
+        winner = {"action": "allow", "utility": 0.0, "complexity": 0.0}
+
+    return {
+        "action": str(winner["action"]),
+        "risk_score": float(risk_score),
+        "utility": float(winner["utility"]),
+        "complexity": float(winner["complexity"]),
+        "reasons": reasons,
+        "ranked_actions": ranked,
+    }
+
+
+class OckhamRazorEngine:
+    """Deterministisches Minimal-Interventionsmodell fuer OS-Governance."""
+
+    def decide(self, observation: dict, complexity_weight: float = 0.35) -> OckhamDecision:
+        raw = ockham_os_razor(observation=observation, complexity_weight=complexity_weight)
+        return OckhamDecision(
+            action=str(raw.get("action", "allow")),
+            risk_score=float(raw.get("risk_score", 0.0)),
+            utility=float(raw.get("utility", 0.0)),
+            complexity=float(raw.get("complexity", 0.0)),
+            reasons=list(raw.get("reasons", [])),
+            ranked_actions=list(raw.get("ranked_actions", [])),
+        )
 
 
 # ---------------------------------------------------------------------------

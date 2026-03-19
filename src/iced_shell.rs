@@ -9,10 +9,10 @@ use crate::state::{ChatMessage, GroupRoom, PrivateThread, RegisterEntry, StateSt
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use iced::theme::Palette;
-use iced::widget::{button, column, container, progress_bar, row, scrollable, text, text_input};
+use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
 use iced::{
-    application, event, time, window, Alignment, Color, Element, Length, Settings, Subscription,
-    Task, Theme,
+    application, event, mouse, time, window, Alignment, Background, Border, Color, Element,
+    Length, Point, Rectangle, Settings, Size, Subscription, Task, Theme,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -31,6 +31,7 @@ enum Tab {
     Logs,
     Anchors,
     Imprint,
+    StructureMap,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,14 @@ enum ChatContext {
     Private,
     Group,
     Shanway,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeProfile {
+    Auto,
+    Balanced,
+    LowPower,
+    Legacy,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +58,7 @@ enum Message {
     TabSelected(Tab),
     ChatContextSelected(ChatContext),
     SecurityModeSelected(String),
+    RuntimeProfileSelected(RuntimeProfile),
     SecurityRecheck,
     TutorialDismissed,
     AnchorGroupSelected(usize),
@@ -134,6 +144,15 @@ pub struct AetherIcedShell {
     last_analysis: Option<AnalysisSnapshot>,
     window_width: f32,
     window_height: f32,
+    tick_counter: u64,
+    browser_sync_stride: u64,
+    runtime_profile: RuntimeProfile,
+    // --- StructureMap ---
+    structure_map_nodes: Vec<Vec<f32>>,
+    structure_map_compression: f32,
+    structure_map_locked: bool,
+    structure_map_anchor_hist: Vec<f32>,
+    structure_map_mutation_hist: Vec<u32>,
 }
 
 impl AetherIcedShell {
@@ -174,7 +193,16 @@ impl AetherIcedShell {
             last_analysis: None,
             window_width: 1560.0,
             window_height: 900.0,
+            tick_counter: 0,
+            browser_sync_stride: 3,
+            runtime_profile: RuntimeProfile::Auto,
+            structure_map_nodes: Vec::new(),
+            structure_map_compression: 0.0,
+            structure_map_locked: false,
+            structure_map_anchor_hist: Vec::new(),
+            structure_map_mutation_hist: Vec::new(),
         };
+        shell.browser_sync_stride = shell.profile_browser_sync_stride();
         shell.refresh_security_snapshot(false, "startup");
         shell
     }
@@ -299,6 +327,16 @@ impl AetherIcedShell {
         let delta = snapshot.delta_size as f32;
         let knowledge_ratio = (1.0 - (delta / original)).clamp(0.0, 1.0);
         let residual_ratio = (delta / original).clamp(0.0, 1.0);
+        let e_lambda = (1.0 - knowledge_ratio).clamp(0.0, 1.0);
+        let e_lambda_label = if e_lambda < 0.15 {
+            "LATENT"
+        } else if e_lambda < 0.35 {
+            "EMERGING"
+        } else if e_lambda < 0.60 {
+            "ACTIVE"
+        } else {
+            "CRITICAL"
+        };
         let browser_context = self
             .browser_probe
             .as_ref()
@@ -326,6 +364,8 @@ impl AetherIcedShell {
             residual_ratio,
             observer_mutual_info: knowledge_ratio,
             h_lambda: (1.0 - knowledge_ratio).clamp(0.0, 1.0),
+            e_lambda,
+            e_lambda_label: e_lambda_label.to_owned(),
             boundary: "LOCAL_ONLY".to_owned(),
             anchor_summary: snapshot.anchor_summary.clone(),
             process_summary: snapshot.process_summary.clone(),
@@ -442,35 +482,79 @@ impl AetherIcedShell {
             .collect()
     }
 
-    fn tab_button(&self, tab: Tab, label: &'static str) -> Element<'_, Message> {
-        let underline = if self.active_tab == tab {
-            "____"
-        } else {
-            "    "
-        };
+    fn tab_button(&self, tab: Tab, icon: &'static str, label: &'static str) -> Element<'_, Message> {
+        let is_active = self.active_tab == tab;
         container(
-            column![
-                button(text(label).size(16))
-                    .padding([8, 14])
-                    .on_press(Message::TabSelected(tab)),
-                text(underline).size(14),
-            ]
-            .spacing(2)
-            .align_x(Alignment::Center),
+            button(
+                column![
+                    text(icon).size(18),
+                    text(label).size(12),
+                ]
+                .spacing(3)
+                .align_x(Alignment::Center),
+            )
+            .padding([8, 14])
+            .on_press(Message::TabSelected(tab)),
         )
+        .style(move |_theme: &Theme| {
+            if is_active {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
+                    border: Border {
+                        color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
+                        width: 1.5,
+                        radius: 8.0.into(),
+                    },
+                    text_color: Some(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
+                    ..Default::default()
+                }
+            } else {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x0A, 0x16, 0x24))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }
+        })
         .into()
     }
 
     fn context_button(&self, context: ChatContext, label: &'static str) -> Element<'_, Message> {
-        let marker = if self.chat_context == context {
-            "[aktiv]"
-        } else {
-            ""
-        };
-        button(text(format!("{label} {marker}")).size(15))
-            .padding([8, 14])
-            .on_press(Message::ChatContextSelected(context))
-            .into()
+        let is_active = self.chat_context == context;
+        container(
+            button(text(label).size(15))
+                .padding([8, 18])
+                .on_press(Message::ChatContextSelected(context)),
+        )
+        .style(move |_theme: &Theme| {
+            if is_active {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
+                    border: Border {
+                        color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
+                        width: 1.5,
+                        radius: 6.0.into(),
+                    },
+                    text_color: Some(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
+                    ..Default::default()
+                }
+            } else {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x0A, 0x16, 0x24))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }
+        })
+        .into()
     }
 
     fn view_auth(&self) -> Element<'_, Message> {
@@ -530,42 +614,151 @@ impl AetherIcedShell {
             .security_snapshot
             .node_id
             .chars()
-            .take(18)
+            .take(12)
             .collect::<String>();
+        let trust_dot = if self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
+            || self.security_snapshot.trust_state.to_uppercase().contains("OK")
+            || self.security_snapshot.trust_state.to_uppercase().contains("SECURE")
+        {
+            "\u{25cf} "
+        } else if self.security_snapshot.trust_state.to_uppercase().contains("WARN") {
+            "\u{25d0} "
+        } else {
+            "\u{25cb} "
+        };
+        let entries_count = self
+            .current_username()
+            .map(|u| self.state_store.entries_for(&u).len())
+            .unwrap_or(0);
         container(
             column![
-                text("A").size(40),
-                text("AETHER").size(20),
-                text("Petrol Shell").size(15),
-                text(format!("Nutzer: {}", username)).size(14),
-                text(format!("Trust: {}", self.security_snapshot.trust_state)).size(14),
-                text(format!("Mode: {}", self.security_snapshot.mode)).size(14),
-                text(format!("Node: {}", node_prefix)).size(13),
-                text(" ").size(20),
-                text("SYS").size(14),
-                text("PWR").size(14),
+                container(
+                    column![
+                        text("\u{2b21}").size(34),
+                        text("AETHER").size(17),
+                        text("Petrol Shell").size(11),
+                    ]
+                    .spacing(2)
+                    .align_x(Alignment::Center),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x06, 0x11, 0x1E))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+                        width: 1.5,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding([12, 14])
+                .width(Length::Fill),
+
+                text("\u{2014} IDENTITY \u{2014}").size(10),
+                container(
+                    column![
+                        text(format!("  \u{25b8} {}", username)).size(14),
+                        text(format!("  Node {}", node_prefix)).size(11),
+                    ]
+                    .spacing(3),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding([10, 12])
+                .width(Length::Fill),
+
+                text("\u{2014} STATUS \u{2014}").size(10),
+                container(
+                    column![
+                        text(format!("{}{}", trust_dot, self.security_snapshot.trust_state)).size(13),
+                        text(format!("  Mode: {}", self.security_snapshot.mode)).size(11),
+                        text(format!("  Maze: {}", self.security_snapshot.maze_state)).size(11),
+                    ]
+                    .spacing(4),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding([10, 12])
+                .width(Length::Fill),
+
+                text("\u{2014} SYSTEM \u{2014}").size(10),
+                container(
+                    column![
+                        text(format!("  \u{25a4} Artefakte: {}", entries_count)).size(13),
+                        text(format!("  \u{25b6} Analyse: {:.0}%", self.analysis_progress * 100.0)).size(13),
+                        text(format!("  \u{2699} Profil: {}", self.runtime_profile_label())).size(12),
+                        text(if self.analysis_running { "  \u{25b6} AKTIV" } else { "  \u{25a0} BEREIT" }).size(12),
+                    ]
+                    .spacing(4),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding([10, 12])
+                .width(Length::Fill),
             ]
             .spacing(8)
             .height(Length::Fill),
         )
-        .padding(22)
-        .width(Length::Fixed(180.0))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1A))),
+            border: Border {
+                color: Color::from_rgb8(0x1E, 0x40, 0x5F),
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding(12)
+        .width(Length::Fixed(195.0))
         .height(Length::Fill)
         .into()
     }
 
     fn view_tabs(&self) -> Element<'_, Message> {
-        row![
-            self.tab_button(Tab::Home, "Home"),
-            self.tab_button(Tab::Chat, "Chat"),
-            self.tab_button(Tab::Browser, "Browser"),
-            self.tab_button(Tab::Data, "Data"),
-            self.tab_button(Tab::Settings, "Einstellungen"),
-            self.tab_button(Tab::Logs, "Logs"),
-            self.tab_button(Tab::Anchors, "Anker"),
-            self.tab_button(Tab::Imprint, "Impressum"),
-        ]
-        .spacing(8)
+        container(
+            row![
+                self.tab_button(Tab::Home,     "\u{25c9}",  "Overview"),
+                self.tab_button(Tab::Chat,     "\u{25c8}",  "Chat"),
+                self.tab_button(Tab::Browser,  "\u{2295}",  "Browser"),
+                self.tab_button(Tab::Data,     "\u{25a4}",  "Data"),
+                self.tab_button(Tab::Settings, "\u{2699}",  "Config"),
+                self.tab_button(Tab::Logs,     "\u{25a3}",  "Logs"),
+                self.tab_button(Tab::Anchors,      "\u{25c6}",  "Cluster"),
+                self.tab_button(Tab::StructureMap, "\u{29bf}",  "StrMap"),
+                self.tab_button(Tab::Imprint,      "\u{2139}",  "Info"),
+            ]
+            .spacing(6),
+        )
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1A))),
+            border: Border {
+                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                width: 1.0,
+                radius: 10.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding([6, 8])
         .into()
     }
 
@@ -576,7 +769,7 @@ impl AetherIcedShell {
             .security_audit_events
             .first()
             .map(|item| item.summary.clone())
-            .unwrap_or_else(|| "Noch keine Audit-Ereignisse.".to_owned());
+            .unwrap_or_else(|| "Keine Audit-Ereignisse.".to_owned());
         let latest_analysis_hint = self
             .last_analysis
             .as_ref()
@@ -592,42 +785,104 @@ impl AetherIcedShell {
                 )
             })
             .unwrap_or_else(|| "Noch keine Artefaktanalyse abgeschlossen.".to_owned());
+        let analysis_value = if self.analysis_running {
+            format!("{:.0}%", self.analysis_progress * 100.0)
+        } else if let Some(a) = &self.last_analysis {
+            format!("{:.2}% Gain", a.compression_gain_percent)
+        } else {
+            "Bereit".to_owned()
+        };
+        let cluster_count = self.anchor_clusters().len();
+        let cluster_fill = (cluster_count.min(10) as f32) / 10.0_f32;
+        let entry_fill = (entries.len().min(20) as f32) / 20.0_f32;
         container(
             scrollable(
                 column![
+                    // --- Row 1: 4 Metric Dashboard Cards ---
                     row![
-                        metric_card("Status", self.security_snapshot.trust_state.clone(), self.security_snapshot.summary.clone()),
-                        metric_card("Artefakte", entries.len().to_string(), format!("{} B lokal organisiert", total_bytes)),
-                        metric_card(
-                            "Analyse",
-                            if self.analysis_running {
-                                format!("{:.0}%", self.analysis_progress * 100.0)
-                            } else if let Some(analysis) = &self.last_analysis {
-                                format!("{:.2}%", analysis.compression_gain_percent)
-                            } else {
-                                "0%".to_owned()
-                            },
+                        dashboard_metric(
+                            "\u{25ce} STATUS",
+                            self.security_snapshot.trust_state.clone(),
+                            self.security_snapshot.summary.clone(),
+                            1.0,
+                        ),
+                        dashboard_metric(
+                            "\u{25a4} ARTEFAKTE",
+                            entries.len().to_string(),
+                            format!("{} B lokal", total_bytes),
+                            entry_fill,
+                        ),
+                        dashboard_metric(
+                            "\u{25b6} ANALYSE",
+                            analysis_value,
                             self.analysis_status.clone(),
+                            self.analysis_progress,
+                        ),
+                        dashboard_metric(
+                            "\u{25c6} CLUSTER",
+                            cluster_count.to_string(),
+                            "Datengetrieben".to_owned(),
+                            cluster_fill,
                         ),
                     ]
-                    .spacing(14),
-                    info_card(
-                        "Orchestrierung",
-                        "Artefakt erkannt -> Strukturanalyse gestartet -> Merkmalsprofil erstellt -> Anchor-Signale generiert -> Cluster-Zuordnung abgeschlossen.",
-                    ),
-                    analysis_card(
-                        self.analysis_progress,
-                        &self.analysis_status,
-                        &self.hovered_file_label,
-                        &latest_analysis_hint,
-                    ),
+                    .spacing(12),
+
+                    // --- Orchestration Flow Map ---
+                    orchestration_map_card(),
+
+                    // --- Analysis + Events split ---
                     row![
-                        info_card("Systemstatus", &format!("Mode: {}\nMaze: {}", self.security_snapshot.mode, self.security_snapshot.maze_state)),
-                        info_card("Letzte Meldung", &latest_log),
+                        container(
+                            column![
+                                text("\u{25b6} ANALYSEFLUSS").size(16),
+                                progress_bar(0.0..=1.0, self.analysis_progress.clamp(0.0, 1.0)),
+                                text(make_sparkline(self.analysis_progress)).size(13),
+                                text(self.analysis_status.clone()).size(14),
+                                text(self.hovered_file_label.clone()).size(13),
+                                text(latest_analysis_hint.clone()).size(13),
+                            ]
+                            .spacing(8)
+                            .width(Length::Fill),
+                        )
+                        .style(|_theme: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                            border: Border {
+                                color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+                                width: 1.5,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        })
+                        .padding(18)
+                        .width(Length::FillPortion(2)),
+
+                        container(
+                            column![
+                                text("\u{25ce} RECENT EVENTS").size(16),
+                                text(latest_log.clone()).size(13),
+                                text("").size(4),
+                                text("\u{2014} SYSTEMSTATUS \u{2014}").size(12),
+                                text(format!("Mode: {}", self.security_snapshot.mode)).size(13),
+                                text(format!("Maze: {}", self.security_snapshot.maze_state)).size(13),
+                            ]
+                            .spacing(6)
+                            .width(Length::Fill),
+                        )
+                        .style(|_theme: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                            border: Border {
+                                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                                width: 1.5,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        })
+                        .padding(18)
+                        .width(Length::FillPortion(1)),
                     ]
-                    .spacing(14),
+                    .spacing(12),
                 ]
-                .spacing(18),
+                .spacing(14),
             )
             .height(Length::Fill),
         )
@@ -958,6 +1213,7 @@ impl AetherIcedShell {
 
     fn view_settings(&self) -> Element<'_, Message> {
         let mode = self.security_mode();
+        let profile = self.runtime_profile;
         container(
             scrollable(
                 column![
@@ -981,6 +1237,50 @@ impl AetherIcedShell {
                             .on_press(Message::SecurityRecheck),
                     ]
                     .spacing(10),
+                    text("Runtime-Profil (Hardware-Inklusion)").size(20),
+                    text("AUTO passt dynamisch an. LEGACY priorisiert niedrige Dauerlast fuer aeltere Systeme.")
+                        .size(14),
+                    row![
+                        button(text(if profile == RuntimeProfile::Auto {
+                            "AUTO [aktiv]"
+                        } else {
+                            "AUTO"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto)),
+                        button(text(if profile == RuntimeProfile::Balanced {
+                            "BALANCED [aktiv]"
+                        } else {
+                            "BALANCED"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced)),
+                        button(text(if profile == RuntimeProfile::LowPower {
+                            "LOW-POWER [aktiv]"
+                        } else {
+                            "LOW-POWER"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower)),
+                        button(text(if profile == RuntimeProfile::Legacy {
+                            "LEGACY [aktiv]"
+                        } else {
+                            "LEGACY"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy)),
+                    ]
+                    .spacing(8),
+                    info_card(
+                        "Aktive Runtime-Parameter",
+                        &format!(
+                            "Profil: {}\nTick-Intervall: {} ms\nBrowser-Sync: alle {} Ticks\nBrowser-Event-Batch: {}",
+                            self.runtime_profile_label(),
+                            self.tick_interval_ms(),
+                            self.browser_sync_stride,
+                            self.profile_browser_poll_batch()
+                        ),
+                    ),
                 ]
                 .spacing(16),
             )
@@ -992,24 +1292,75 @@ impl AetherIcedShell {
 
     fn view_logs(&self) -> Element<'_, Message> {
         let mut items = column![
-            text("Logs").size(24),
-            text("Lokale technische Meldungen fuer Audit und Security.").size(16),
+            text("\u{25a3} LOGS \u{2014} Audit & Security").size(22),
+            text("Lokale technische Meldungen fuer Audit und Security.").size(13),
         ]
-        .spacing(14);
+        .spacing(12);
         if self.security_audit_events.is_empty() {
-            items = items.push(info_card(
-                "Noch keine Logs",
-                "Nach Anmeldung oder Security-Recheck erscheinen hier Ereignisse.",
-            ));
+            items = items.push(
+                container(
+                    column![
+                        text("\u{25cb} Noch keine Logs").size(16),
+                        text("Nach Anmeldung oder Security-Recheck erscheinen hier Ereignisse.").size(14),
+                    ]
+                    .spacing(6),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding(16)
+                .width(Length::Fill),
+            );
         } else {
             for event in &self.security_audit_events {
-                items = items.push(info_card(
-                    &format!("{} | {}", event.reason, event.trust_state),
-                    &format!(
-                        "{}\nMode: {} | Maze: {}",
-                        event.summary, event.mode, event.maze_state
-                    ),
-                ));
+                let trust_upper = event.trust_state.to_uppercase();
+                let (badge, border_col) =
+                    if trust_upper.contains("HIGH") || trust_upper.contains("OK") || trust_upper.contains("SECURE") {
+                        ("\u{25cf} OK", Color::from_rgb8(0x70, 0xB3, 0x92))
+                    } else if trust_upper.contains("WARN") || trust_upper.contains("MED") {
+                        ("\u{25d0} WARN", Color::from_rgb8(0xD4, 0xA0, 0x50))
+                    } else if trust_upper.contains("ERR") || trust_upper.contains("CRIT") {
+                        ("\u{25cf} CRIT", Color::from_rgb8(0xC6, 0x6A, 0x6A))
+                    } else {
+                        ("\u{25cb} INFO", Color::from_rgb8(0x1E, 0x82, 0x8F))
+                    };
+                let summary = event.summary.clone();
+                let reason = event.reason.clone();
+                let trust_state = event.trust_state.clone();
+                let mode = event.mode.clone();
+                let maze = event.maze_state.clone();
+                items = items.push(
+                    container(
+                        column![
+                            row![
+                                text(badge).size(13),
+                                text(format!("  {} | {}", reason, trust_state)).size(14),
+                            ]
+                            .spacing(6),
+                            text(summary).size(13),
+                            text(format!("Mode: {} | Maze: {}", mode, maze)).size(12),
+                        ]
+                        .spacing(4)
+                        .width(Length::Fill),
+                    )
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                        border: Border {
+                            color: border_col,
+                            width: 1.5,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .padding([12, 16])
+                    .width(Length::Fill),
+                );
             }
         }
         container(scrollable(items).height(Length::Fill))
@@ -1025,40 +1376,88 @@ impl AetherIcedShell {
             .or_else(|| clusters.first().cloned())
             .unwrap();
         let mut list = column![
-            text("Anker").size(24),
-            text("Kategorien entstehen datengetrieben aus Strukturmerkmalen und Metadaten.")
-                .size(16),
+            text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22),
+            text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13),
         ]
-        .spacing(12);
+        .spacing(10);
         for (index, cluster) in clusters.iter().enumerate() {
+            let is_sel = index == self.selected_anchor_group;
+            let bar = make_sparkline((cluster.item_count.min(20) as f32) / 20.0_f32);
+            let title = cluster.title.clone();
+            let descriptor = cluster.descriptor.clone();
+            let item_count = cluster.item_count;
             list = list.push(
-                button(
-                    column![
-                        text(cluster.title.clone()).size(18),
-                        text(cluster.descriptor.clone()).size(14),
-                        text(format!("{} Artefakte", cluster.item_count)).size(14),
-                    ]
-                    .spacing(4),
+                container(
+                    button(
+                        column![
+                            text(format!("\u{25c6} {}", title)).size(15),
+                            text(descriptor).size(12),
+                            text(format!("{} [{}]", bar, item_count)).size(12),
+                        ]
+                        .spacing(3),
+                    )
+                    .padding([10, 12])
+                    .width(Length::Fill)
+                    .on_press(Message::AnchorGroupSelected(index)),
                 )
-                .padding([12, 14])
-                .on_press(Message::AnchorGroupSelected(index)),
+                .style(move |_theme: &Theme| {
+                    if is_sel {
+                        container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
+                            border: Border {
+                                color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
+                                width: 1.5,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    } else {
+                        container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                            border: Border {
+                                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                                width: 1.0,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }
+                })
+                .width(Length::Fill),
             );
         }
+        let detail_fill = if selected.total_bytes == 0 {
+            0.0_f32
+        } else {
+            (selected.total_bytes.min(10_000_000) as f32) / 10_000_000.0
+        };
         container(
             row![
                 container(scrollable(list).height(Length::Fill))
-                    .padding(18)
+                    .padding(12)
                     .width(Length::FillPortion(1)),
                 container(
                     column![
-                        text(selected.title).size(24),
-                        text(selected.descriptor).size(16),
-                        text(format!("Groesse: {} B", selected.total_bytes)).size(16),
-                        text(selected.sample_note).size(16),
-                        button(text("Download optional anfragen")).padding([10, 18]),
+                        text(format!("\u{25c6} {}", selected.title)).size(22),
+                        text(selected.descriptor.clone()).size(15),
+                        text(format!("Artefakte: {}", selected.item_count)).size(14),
+                        progress_bar(0.0..=1.0, detail_fill),
+                        text(make_sparkline(detail_fill)).size(13),
+                        text(format!("Groesse: {} B", selected.total_bytes)).size(14),
+                        text(selected.sample_note.clone()).size(13),
+                        button(text("Download anfragen")).padding([10, 18]),
                     ]
                     .spacing(10),
                 )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                    border: Border {
+                        color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+                        width: 1.5,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
                 .padding(22)
                 .width(Length::FillPortion(2)),
             ]
@@ -1086,6 +1485,223 @@ impl AetherIcedShell {
         .into()
     }
 
+    // -----------------------------------------------------------------------
+    // Aether.StructureMap – Ockham-gefilterter fraktaler 3D-Suchbaum
+    // Reine Visualisierung. Keine Steuerlogik. Keine Systemeingriffe.
+    // -----------------------------------------------------------------------
+
+    fn step_structure_map(&mut self) {
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::f32::consts::TAU;
+
+        let mut rng = StdRng::seed_from_u64(
+            self.tick_counter.wrapping_mul(7919).wrapping_add(3),
+        );
+        const N_RINGS: usize = 10;
+        let mut nodes: Vec<Vec<f32>> = Vec::with_capacity(N_RINGS);
+
+        // Ring 1 – Rohdaten: 6 zufällige Positionen
+        let ring1: Vec<f32> = (0..6).map(|_| rng.gen_range(0.0f32..TAU)).collect();
+        nodes.push(ring1);
+
+        // Ring 2–6 – Verarbeitung: Verzweigung mit Variation
+        for ring in 1..6 {
+            let prev = nodes[ring - 1].clone();
+            let mut curr: Vec<f32> = Vec::new();
+            for &t in &prev {
+                curr.push((t + rng.gen_range(-0.26f32..0.26f32)).rem_euclid(TAU));
+                if ring >= 2 && rng.gen::<f32>() < 0.38 {
+                    curr.push((t + rng.gen_range(-0.52f32..0.52f32)).rem_euclid(TAU));
+                }
+            }
+            curr.truncate(24);
+            nodes.push(curr);
+        }
+
+        // Ring 7 – Ockham-Schnitt: probabilistischer Ast-Kollaps
+        let prev7 = nodes.last().unwrap().clone();
+        let rate = 0.35 + 0.18 * ((self.tick_counter as f32 * 0.42).sin());
+        let filtered: Vec<f32> = prev7.into_iter()
+            .filter(|_| rng.gen::<f32>() < rate)
+            .collect();
+        let ring7: Vec<f32> = if filtered.is_empty() {
+            (0..3).map(|_| rng.gen_range(0.0f32..TAU)).collect()
+        } else {
+            filtered.into_iter()
+                .map(|t| (t + rng.gen_range(-0.04f32..0.04f32)).rem_euclid(TAU))
+                .collect()
+        };
+        nodes.push(ring7);
+
+        // Ring 8–9 – Kompression: Konvergenz zu 4 Anker-Clustern
+        let anchors = [0.0f32, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0];
+        for _ in 0..2 {
+            let prev = nodes.last().unwrap().clone();
+            let mut curr: Vec<f32> = Vec::with_capacity(prev.len());
+            for t in prev {
+                let near = anchors.iter().copied()
+                    .min_by(|&a, &b| {
+                        let da = (a - t).abs().min(TAU - (a - t).abs());
+                        let db = (b - t).abs().min(TAU - (b - t).abs());
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(0.0);
+                curr.push(
+                    (t + 0.74 * (near - t) + rng.gen_range(-0.022f32..0.022f32))
+                        .rem_euclid(TAU),
+                );
+            }
+            nodes.push(curr);
+        }
+
+        // Ring 10 – Anker: 4 feste Diamant-Knoten
+        nodes.push(anchors.to_vec());
+        self.structure_map_nodes = nodes;
+
+        // Anker-Dichte-Historie
+        let n = self.structure_map_nodes.last().map_or(0, |v| v.len());
+        self.structure_map_anchor_hist
+            .push(n as f32 + rng.gen_range(-0.25f32..0.25f32));
+        if self.structure_map_anchor_hist.len() > 30 {
+            self.structure_map_anchor_hist.remove(0);
+        }
+
+        // Mutations-Histogramm (Ring 5)
+        let m = ((12.0 + rng.gen_range(-3.2f32..3.2f32)).max(0.0)) as u32;
+        self.structure_map_mutation_hist.push(m);
+        if self.structure_map_mutation_hist.len() > 20 {
+            self.structure_map_mutation_hist.remove(0);
+        }
+
+        // Lossless-Compression-Ratio (wächst bis 100%, rastet ein)
+        if !self.structure_map_locked {
+            self.structure_map_compression = (self.structure_map_compression
+                + rng.gen_range(3.8f32..7.2f32))
+                .min(100.0);
+            if self.structure_map_compression >= 100.0 {
+                self.structure_map_compression = 100.0;
+                self.structure_map_locked = true;
+            }
+        }
+    }
+
+    fn view_structure_map(&self) -> Element<'_, Message> {
+        let accent = Color::from_rgb8(0x1E, 0x90, 0xFF);
+        let dim    = Color::from_rgb8(0xA7, 0xB0, 0xB7);
+        let surf   = Color::from_rgb8(0x07, 0x10, 0x1A);
+
+        let comp_pct = self.structure_map_compression;
+        let comp_label = if self.structure_map_locked {
+            format!("{:.0}%  \u{25cf} LOCKED", comp_pct)
+        } else {
+            format!("{:.0}%", comp_pct)
+        };
+
+        let anchor_spark: String = {
+            let h = &self.structure_map_anchor_hist;
+            let max = h.iter().cloned().fold(0.1f32, f32::max);
+            h.iter().map(|&v| {
+                let p = (v / max).clamp(0.0, 1.0);
+                if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
+                else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
+            }).collect()
+        };
+        let mut_spark: String = self.structure_map_mutation_hist.iter().map(|&v| {
+            if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
+            else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
+        }).collect();
+
+        let overlay = container(
+            scrollable(
+                column![
+                    text("\u{25c8} DOM\u{c4}NEN").size(11).color(accent),
+                    text("\u{25c6} KLIMA").size(10)
+                        .color(Color::from_rgb8(0x1E, 0x90, 0xFF)),
+                    text("\u{25c6} WASSER").size(10)
+                        .color(Color::from_rgb8(0x00, 0xCF, 0xFF)),
+                    text("\u{25c6} GESUNDHEIT").size(10)
+                        .color(Color::from_rgb8(0x9B, 0x59, 0xB6)),
+                    text("\u{25c6} BODEN").size(10)
+                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
+                    text("\u{25c6} LUFT").size(10)
+                        .color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
+                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
+                    text("\u{25c8} ANKER-DICHTE").size(10).color(accent),
+                    text(anchor_spark.clone()).size(10)
+                        .color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text("\u{25c8} MUTATION Ring 5").size(10)
+                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
+                    text(mut_spark.clone()).size(10)
+                        .color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
+                    text("\u{25c8} KOMPRESSION").size(10)
+                        .color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
+                    text(comp_label.clone()).size(22),
+                    progress_bar(0.0..=100.0, comp_pct).height(8),
+                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
+                    text("Ring 1  Rohdaten").size(9)
+                        .color(Color::from_rgb8(0xFF, 0x44, 0x44)),
+                    text("Ring 2\u{2013}6  Verarbeit.").size(9)
+                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
+                    text("Ring 7  Ockham-Cut").size(9).color(Color::WHITE),
+                    text("Ring 8\u{2013}9  Kompr.").size(9)
+                        .color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text("Ring 10  Anker \u{25c6}").size(9)
+                        .color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
+                ]
+                .spacing(5)
+                .padding(10),
+            )
+            .height(Length::Fill),
+        )
+        .width(Length::Fixed(195.0))
+        .height(Length::Fill)
+        .style(move |_| container::Style {
+            background: Some(Background::Color(surf)),
+            border: Border {
+                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
+        let scene = StructureMapScene {
+            nodes: self.structure_map_nodes.clone(),
+        };
+
+        let tree_canvas = canvas::Canvas::new(scene)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        container(
+            column![
+                row![
+                    text("AETHER \u{00b7} STRUCTUREMAP")
+                        .size(13)
+                        .color(accent),
+                    text("  \u{25e6}  Ockham-Kollaps  \u{25e6}  Mutationspfade  \u{25e6}  Kompressionszonen  \u{25e6}  Reine Diagnose")
+                        .size(10)
+                        .color(dim),
+                ]
+                .spacing(0),
+                row![
+                    tree_canvas,
+                    overlay,
+                ]
+                .spacing(8)
+                .height(Length::Fill),
+            ]
+            .spacing(8)
+            .height(Length::Fill),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
     fn view_shell(&self) -> Element<'_, Message> {
         let main = match self.active_tab {
             Tab::Home => self.view_home(),
@@ -1095,6 +1711,7 @@ impl AetherIcedShell {
             Tab::Settings => self.view_settings(),
             Tab::Logs => self.view_logs(),
             Tab::Anchors => self.view_anchors(),
+            Tab::StructureMap => self.view_structure_map(),
             Tab::Imprint => self.view_imprint(),
         };
         container(
@@ -1212,6 +1829,72 @@ impl AetherIcedShell {
         )
     }
 
+    fn runtime_profile_label(&self) -> &'static str {
+        match self.runtime_profile {
+            RuntimeProfile::Auto => "AUTO",
+            RuntimeProfile::Balanced => "BALANCED",
+            RuntimeProfile::LowPower => "LOW-POWER",
+            RuntimeProfile::Legacy => "LEGACY",
+        }
+    }
+
+    fn profile_tick_interval_ms(&self) -> u64 {
+        match self.runtime_profile {
+            RuntimeProfile::Auto => {
+                if self.active_tab == Tab::Browser {
+                    220
+                } else if self.analysis_running {
+                    320
+                } else {
+                    900
+                }
+            }
+            RuntimeProfile::Balanced => {
+                if self.active_tab == Tab::Browser {
+                    260
+                } else {
+                    650
+                }
+            }
+            RuntimeProfile::LowPower => {
+                if self.active_tab == Tab::Browser {
+                    420
+                } else {
+                    1150
+                }
+            }
+            RuntimeProfile::Legacy => {
+                if self.active_tab == Tab::Browser {
+                    650
+                } else {
+                    1600
+                }
+            }
+        }
+    }
+
+    fn profile_browser_sync_stride(&self) -> u64 {
+        match self.runtime_profile {
+            RuntimeProfile::Auto => 3,
+            RuntimeProfile::Balanced => 3,
+            RuntimeProfile::LowPower => 5,
+            RuntimeProfile::Legacy => 7,
+        }
+    }
+
+    fn profile_browser_poll_batch(&self) -> usize {
+        match self.runtime_profile {
+            RuntimeProfile::Auto => 4,
+            RuntimeProfile::Balanced => 4,
+            RuntimeProfile::LowPower => 3,
+            RuntimeProfile::Legacy => 2,
+        }
+    }
+
+    fn tick_interval_ms(&self) -> u64 {
+        self.profile_tick_interval_ms()
+    }
+
     fn handle_message(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::LoginUsernameChanged(value) => self.login_username = value,
@@ -1265,6 +1948,16 @@ impl AetherIcedShell {
             }
             Message::ChatContextSelected(context) => self.chat_context = context,
             Message::SecurityModeSelected(mode) => self.set_security_mode(&mode),
+            Message::RuntimeProfileSelected(profile) => {
+                self.runtime_profile = profile;
+                self.browser_sync_stride = self.profile_browser_sync_stride();
+                self.status_line = format!(
+                    "Runtime-Profil aktiv: {} | Tick {} ms | Browser-Sync jede {} Ticks",
+                    self.runtime_profile_label(),
+                    self.tick_interval_ms(),
+                    self.browser_sync_stride
+                );
+            }
             Message::ChatUserSearchChanged(value) => self.chat_user_search = value,
             Message::PrivatePartnerSelected(partner) => {
                 self.selected_private_partner = Some(partner.clone());
@@ -1426,12 +2119,21 @@ impl AetherIcedShell {
                 }
             }
             Message::Tick => {
-                if self.active_tab == Tab::Browser {
-                    self.sync_browser_embed();
-                } else {
-                    self.browser_embed.hide();
+                self.tick_counter = self.tick_counter.wrapping_add(1);
+                if self.active_tab == Tab::StructureMap {
+                    self.step_structure_map();
+                    return Task::none();
                 }
-                for event in self.browser_embed.poll_events(8) {
+                if self.active_tab != Tab::Browser {
+                    return Task::none();
+                }
+                if self.tick_counter % self.browser_sync_stride == 0 {
+                    self.sync_browser_embed();
+                }
+                for event in self
+                    .browser_embed
+                    .poll_events(self.profile_browser_poll_batch())
+                {
                     match event.kind.as_str() {
                         "ready" | "bridge_ready" => {
                             self.browser_note =
@@ -1519,10 +2221,10 @@ fn app_event(event: iced::Event, status: event::Status, _window: window::Id) -> 
     }
 }
 
-fn app_subscription(_state: &AetherIcedShell) -> Subscription<Message> {
+fn app_subscription(state: &AetherIcedShell) -> Subscription<Message> {
     Subscription::batch(vec![
         event::listen_with(app_event),
-        time::every(Duration::from_millis(350)).map(|_| Message::Tick),
+        time::every(Duration::from_millis(state.tick_interval_ms())).map(|_| Message::Tick),
     ])
 }
 
@@ -1542,16 +2244,264 @@ pub fn run() -> iced::Result {
         .run_with(|| (AetherIcedShell::bootstrap(), Task::none()))
 }
 
-fn metric_card<'a>(label: &'a str, value: String, hint: String) -> Element<'a, Message> {
+fn make_sparkline(fill: f32) -> String {
+    let total = 20usize;
+    let filled = (fill.clamp(0.0, 1.0) * total as f32) as usize;
+    let empty = total - filled;
+    format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
+}
+
+// ---------------------------------------------------------------------------
+// Aether.StructureMap – Canvas-Renderer für den fraktalen 3D-Suchbaum
+// ---------------------------------------------------------------------------
+
+/// Trägt die vorberechneten Knoten-Positionen (Theta-Winkel pro Ring).
+struct StructureMapScene {
+    nodes: Vec<Vec<f32>>,
+}
+
+impl canvas::Program<Message> for StructureMapScene {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry<iced::Renderer>> {
+        use std::f32::consts::TAU;
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        // Hintergrund – tiefschwarz
+        frame.fill_rectangle(
+            Point::new(0.0, 0.0),
+            bounds.size(),
+            Color::from_rgb8(0x02, 0x04, 0x08),
+        );
+
+        if self.nodes.is_empty() {
+            return vec![frame.into_geometry()];
+        }
+
+        let cx = bounds.width * 0.5;
+        let cy = bounds.height * 0.5;
+        let max_r = cx.min(cy) * 0.90;
+        const N_RINGS: usize = 10;
+
+        let ring_colors: [Color; N_RINGS] = [
+            Color::from_rgb8(0xFF, 0x44, 0x44), // 1  Rohdaten
+            Color::from_rgb8(0xAA, 0xFF, 0x00), // 2
+            Color::from_rgb8(0x7F, 0xFF, 0x00), // 3
+            Color::from_rgb8(0xFF, 0xD7, 0x00), // 4
+            Color::from_rgb8(0xFF, 0xA5, 0x00), // 5  Mutation
+            Color::from_rgb8(0xFF, 0xCC, 0x00), // 6
+            Color::from_rgb8(0xFF, 0xFF, 0xFF), // 7  Ockham-Cut
+            Color::from_rgb8(0x9B, 0xD4, 0xFF), // 8  Kompression
+            Color::from_rgb8(0xC0, 0xE8, 0xFF), // 9  Kompression
+            Color::from_rgb8(0xE0, 0xF7, 0xFF), // 10 Anker
+        ];
+
+        let polar = |theta: f32, ring_idx: usize| -> Point {
+            let r = max_r * ((ring_idx + 1) as f32 / N_RINGS as f32);
+            Point::new(cx + r * theta.cos(), cy + r * theta.sin())
+        };
+
+        for ring_idx in 0..N_RINGS {
+            let color = ring_colors[ring_idx];
+            let curr = match self.nodes.get(ring_idx) {
+                Some(v) => v.clone(),
+                None => continue,
+            };
+
+            // Ring-Führungskreis (schwach sichtbar)
+            {
+                let r = max_r * ((ring_idx + 1) as f32 / N_RINGS as f32);
+                let guide = canvas::Path::circle(Point::new(cx, cy), r);
+                let mut gc = color;
+                gc.a = 0.07;
+                frame.stroke(
+                    &guide,
+                    canvas::Stroke {
+                        style: canvas::Style::Solid(gc),
+                        width: 0.7,
+                        ..canvas::Stroke::default()
+                    },
+                );
+            }
+
+            // Verbindungslinien zum Elternring
+            if ring_idx > 0 {
+                let prev = match self.nodes.get(ring_idx - 1) {
+                    Some(v) => v.clone(),
+                    None => vec![],
+                };
+                let lw: f32 = if ring_idx == 6 { 2.0 } else if ring_idx >= 7 { 1.2 } else { 0.65 };
+                let alpha: f32 = if ring_idx >= 6 { 0.82 } else { 0.45 };
+                let mut lc = color;
+                lc.a = alpha;
+
+                for &theta in &curr {
+                    if let Some(&parent) = prev.iter().min_by(|&&a, &&b| {
+                        let da = (a - theta).abs().min(TAU - (a - theta).abs());
+                        let db = (b - theta).abs().min(TAU - (b - theta).abs());
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    }) {
+                        let from = polar(parent, ring_idx - 1);
+                        let to   = polar(theta,  ring_idx);
+                        let p = canvas::Path::new(|b| {
+                            b.move_to(from);
+                            b.line_to(to);
+                        });
+                        frame.stroke(
+                            &p,
+                            canvas::Stroke {
+                                style: canvas::Style::Solid(lc),
+                                width: lw,
+                                ..canvas::Stroke::default()
+                            },
+                        );
+                    }
+                }
+            }
+
+            // Ockham-Schnittlinie (Ring 7)
+            if ring_idx == 6 {
+                let r = max_r * 7.0 / N_RINGS as f32;
+                let arc = canvas::Path::circle(Point::new(cx, cy), r);
+                let mut cut = Color::WHITE;
+                cut.a = 0.22;
+                frame.stroke(
+                    &arc,
+                    canvas::Stroke {
+                        style: canvas::Style::Solid(cut),
+                        width: 1.8,
+                        ..canvas::Stroke::default()
+                    },
+                );
+            }
+
+            // Knoten zeichnen
+            for &theta in &curr {
+                let pt = polar(theta, ring_idx);
+                if ring_idx == 9 {
+                    // Diamant-Anker
+                    let r = 6.0f32;
+                    let diamond = canvas::Path::new(|b| {
+                        b.move_to(Point::new(pt.x,       pt.y - r));
+                        b.line_to(Point::new(pt.x + r,   pt.y));
+                        b.line_to(Point::new(pt.x,       pt.y + r));
+                        b.line_to(Point::new(pt.x - r,   pt.y));
+                        b.close();
+                    });
+                    frame.fill(&diamond, Color::from_rgb8(0xE0, 0xF7, 0xFF));
+                    let mut glow = Color::from_rgb8(0xE0, 0xF7, 0xFF);
+                    glow.a = 0.08;
+                    frame.fill(&canvas::Path::circle(pt, 14.0), glow);
+                } else if ring_idx >= 7 {
+                    frame.fill(&canvas::Path::circle(pt, 2.5), color);
+                } else {
+                    let sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
+                    let mut nc = color;
+                    nc.a = 0.72;
+                    frame.fill(&canvas::Path::circle(pt, sz), nc);
+                }
+            }
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+fn dashboard_metric(label: &'static str, value: String, hint: String, fill: f32) -> Element<'static, Message> {
+    let bar = make_sparkline(fill);
     container(
         column![
-            text(label).size(14),
-            text(value).size(24),
-            text(hint).size(14)
+            text(label).size(12),
+            text(value).size(28),
+            text(bar).size(13),
+            text(hint).size(12),
         ]
         .spacing(6)
         .width(Length::Fill),
     )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+            width: 1.5,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(18)
+    .width(Length::Fill)
+    .into()
+}
+
+fn orchestration_map_card() -> Element<'static, Message> {
+    container(
+        column![
+            text("◎ ORCHESTRIERUNG — Aether Datenfluss").size(16),
+            container(
+                column![
+                    text("  [DROP] ──▶ [STRUKTURANALYSE] ──▶ [MERKMALSPROFIL]").size(14),
+                    text("                                          │").size(14),
+                    text("                                  [ANCHOR-SIGNALE]").size(14),
+                    text("                                          │").size(14),
+                    text("                         [CLUSTER-ZUORDNUNG] ──▶ [SPEICHER]").size(14),
+                ]
+                .spacing(2),
+            )
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x04, 0x0E, 0x18))),
+                border: Border {
+                    color: Color::from_rgb8(0x1C, 0x5A, 0x68),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            })
+            .padding([12, 16]),
+        ]
+        .spacing(8)
+        .width(Length::Fill),
+    )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+            width: 1.5,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(18)
+    .width(Length::Fill)
+    .into()
+}
+
+fn metric_card<'a>(label: &'a str, value: String, hint: String) -> Element<'a, Message> {
+    container(
+        column![
+            text(label).size(12),
+            text(value).size(26),
+            text(hint).size(12),
+        ]
+        .spacing(6)
+        .width(Length::Fill),
+    )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+            width: 1.5,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
     .padding(18)
     .width(Length::Fill)
     .into()
@@ -1560,13 +2510,22 @@ fn metric_card<'a>(label: &'a str, value: String, hint: String) -> Element<'a, M
 fn info_card<'a>(title: &str, body: &str) -> Element<'a, Message> {
     container(
         column![
-            text(title.to_owned()).size(18),
-            text(body.to_owned()).size(15)
+            text(title.to_owned()).size(16),
+            text(body.to_owned()).size(14),
         ]
-        .spacing(8)
+        .spacing(6)
         .width(Length::Fill),
     )
-    .padding(18)
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1C, 0x38, 0x50),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(16)
     .width(Length::Fill)
     .into()
 }
@@ -1579,38 +2538,59 @@ fn analysis_card<'a>(
 ) -> Element<'a, Message> {
     container(
         column![
-            text("Analysefluss").size(20),
-            text(status.to_owned()).size(16),
+            text("▶ ANALYSEFLUSS").size(16),
             progress_bar(0.0..=1.0, progress.clamp(0.0, 1.0)),
-            text(hint.to_owned()).size(14),
-            text(detail.to_owned()).size(14),
+            text(make_sparkline(progress)).size(13),
+            text(status.to_owned()).size(15),
+            text(hint.to_owned()).size(13),
+            text(detail.to_owned()).size(13),
         ]
-        .spacing(10)
+        .spacing(8)
         .width(Length::Fill),
     )
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+            width: 1.5,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
     .padding(18)
     .width(Length::Fill)
     .into()
 }
 
 fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
+    let gain_fill = entry.compression_gain_percent / 100.0;
     container(
         column![
-            text(format!("{} | {}", entry.id, entry.file_name)).size(18),
+            text(format!("▤ {} | {}", entry.id, entry.file_name)).size(16),
             text(format!(
-                "{} | Original {} B | Delta {} B | Gewinn {:.2}%",
+                "{} | {} B orig | {} B delta | {:.2}% Gain",
                 entry.source_kind,
                 entry.original_size,
                 entry.delta_size,
                 entry.compression_gain_percent
             ))
-            .size(15),
-            text(entry.anchor_summary.clone()).size(15),
-            text(entry.preview_note.clone()).size(15),
+            .size(13),
+            text(make_sparkline(gain_fill)).size(12),
+            text(entry.anchor_summary.clone()).size(13),
+            text(entry.preview_note.clone()).size(13),
         ]
-        .spacing(6),
+        .spacing(5),
     )
-    .padding(16)
+    .style(|_theme: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1C, 0x38, 0x50),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(14)
     .width(Length::Fill)
     .into()
 }

@@ -320,6 +320,7 @@ class AnalysisEngine:
         block_size: int = 256,
         registry: AetherRegistry | None = None,
         ethics_engine: EthicsEngine | None = None,
+        rule_engine: Any | None = None,
     ) -> None:
         """
         Initialisiert die Analyse-Engine.
@@ -330,12 +331,14 @@ class AnalysisEngine:
             block_size: Blockgroesse fuer Entropieanalyse.
             registry: Optionale Registry fuer Resonanz-Referenzen.
             ethics_engine: Optionale externe Ethik-Engine.
+            rule_engine: Optionale RuleEngine-Instanz fuer Metriken-Bewertung.
         """
         self.session_context = session_context
         self.chain = chain if chain is not None else AetherChain()
         self.block_size = block_size
         self.registry = registry
         self.ethics_engine = ethics_engine if ethics_engine is not None else EthicsEngine()
+        self.rule_engine = rule_engine
         self.reconstruction_engine = LosslessReconstructionEngine(chunk_size=max(64, int(block_size)))
 
     def set_registry(self, registry: AetherRegistry | None) -> None:
@@ -1936,6 +1939,27 @@ class AnalysisEngine:
             fingerprint.file_profile["low_power_mode"] = bool(low_power)
             fingerprint.file_profile["analysis_mode"] = "low_power" if low_power else "full"
         self._report_progress(progress_callback, "done", 1.0, "Analyse abgeschlossen")
+        # --- RuleEngine hook (optional, non-blocking) ---
+        if self.rule_engine is not None:
+            try:
+                _metrics = {
+                    "entropy_mean": float(fingerprint.entropy_mean),
+                    "delta_ratio": float(fingerprint.delta_ratio),
+                    "h_lambda": float(fingerprint.h_lambda),
+                    "symmetry_phi": float(fingerprint.symmetry_score) / 100.0,
+                    "e_lambda": float(fingerprint.e_lambda),
+                    "coherence_score": float(fingerprint.coherence_score),
+                    "observer_knowledge_ratio": float(fingerprint.observer_knowledge_ratio),
+                }
+                self.rule_engine.evaluate(
+                    _metrics,
+                    candidate_id=str(fingerprint.file_hash),
+                    actor="analysis_engine_v1",
+                    evidence_refs=[str(fingerprint.source_label)],
+                    write_log=True,
+                )
+            except Exception:  # pragma: no cover — never crash the pipeline
+                pass
         if callback is not None:
             callback(fingerprint)
         return fingerprint

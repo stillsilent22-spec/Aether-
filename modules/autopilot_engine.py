@@ -37,6 +37,14 @@ except Exception:
     psutil = None  # type: ignore
     _PSUTIL_OK = False
 
+try:
+    from .ethics_engine import OckhamRazorEngine as _OckhamRazorEngine
+except ImportError:
+    try:
+        from modules.ethics_engine import OckhamRazorEngine as _OckhamRazorEngine  # type: ignore
+    except ImportError:
+        _OckhamRazorEngine = None  # type: ignore
+
 _IS_WIN = sys.platform.startswith("win")
 
 logger = logging.getLogger(__name__)
@@ -79,9 +87,13 @@ class AutopilotEngine:
         self,
         store: ProcessAnchorStore,
         autopilot: bool = False,
+        use_ockham: bool = True,
     ) -> None:
         self._store = store
         self._autopilot = bool(autopilot)
+        self._ockham = (
+            _OckhamRazorEngine() if (use_ockham and _OckhamRazorEngine is not None) else None
+        )
 
     # ------------------------------------------------------------------
     # Autopilot
@@ -117,6 +129,28 @@ class AutopilotEngine:
         angewendet wenn user_consented=True gesetzt ist.
         """
         results: list[dict[str, Any]] = []
+
+        # Ockham pre-gate: if the live system state is critical, block the whole batch.
+        if self._ockham is not None and suggestions:
+            _od = self._ockham.decide(self._build_ockham_obs())
+            if _od.action == "require_manual_review":
+                logger.warning(
+                    "Ockham pre-gate blocked autopilot batch: risk=%.2f reasons=%s",
+                    _od.risk_score,
+                    _od.reasons,
+                )
+                return [
+                    {
+                        "success": False,
+                        "message": "ockham_blocked",
+                        "ockham_action": _od.action,
+                        "ockham_risk": _od.risk_score,
+                        "action_type": sug.action_type,
+                        "target": sug.target,
+                    }
+                    for sug in suggestions
+                ]
+
         for sug in suggestions:
             if not user_consented and not self._autopilot:
                 results.append({"success": False, "message": "no_consent", "suggestion": sug.action_type})
@@ -128,6 +162,25 @@ class AutopilotEngine:
             result = self._apply_one(sug, user_consented=user_consented)
             results.append(result)
         return results
+
+    def _build_ockham_obs(self) -> dict:
+        """Build Ockham observation dict from live system metrics."""
+        obs = {
+            "cpu_load": 0.0,
+            "mem_pressure": 0.0,
+            "process_spawn_rate": 0.05,
+            "unsigned_binary_ratio": 0.0,
+            "network_new_peers": 0.0,
+            "error_burst": 0.0,
+            "integrity_alerts": 0.0,
+        }
+        if _PSUTIL_OK and psutil is not None:
+            try:
+                obs["cpu_load"] = psutil.cpu_percent(interval=None) / 100.0
+                obs["mem_pressure"] = psutil.virtual_memory().percent / 100.0
+            except Exception:
+                pass
+        return obs
 
     def _apply_one(
         self, sug: OptimizationSuggestion, user_consented: bool

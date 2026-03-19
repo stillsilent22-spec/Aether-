@@ -1721,6 +1721,11 @@ class VeiraGUI:
         self.right_notebook.add(cross_domain_tab, text="DOMÄNEN")
         self._build_cross_domain_tab(cross_domain_tab)
 
+        # --- Aether.StructureMap Diagnose-Tab ---
+        structure_map_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        self.right_notebook.add(structure_map_tab, text="STRUCTUREMAP")
+        self._build_structure_map_tab(structure_map_tab)
+
         # --- Einstellungen-Tab (Sprache + Monitor) ---
         settings_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         self.right_notebook.add(settings_tab, text="EINSTELLUNGEN")
@@ -10340,6 +10345,309 @@ class VeiraGUI:
             command=_export,
             bg="#1A3A1A", fg=ACCENT, relief="flat", padx=10, pady=4,
         ).pack(side="left")
+
+    def _build_structure_map_tab(self, parent: tk.Frame) -> None:
+        """Aether.StructureMap – read-only fraktaler 3D-Suchbaum-Diagnose-Visualizer.
+
+        Reine Visualisierung. Keine Steuerlogik. Keine Rueckkopplung in Kernprozesse.
+        """
+        import random as _rnd
+        from matplotlib.figure import Figure
+
+        _BG = "#020408"
+        _ACCENT = "#1E90FF"
+        RING_COLORS = [
+            "#FF4444",  # 1 – Rohdaten
+            "#AAFF00",  # 2
+            "#7FFF00",  # 3
+            "#FFD700",  # 4
+            "#FFA500",  # 5 – hohe Mutation
+            "#FFCC00",  # 6
+            "#FFFFFF",  # 7 – Ockham-Cut
+            "#9BD4FF",  # 8 – Kompression
+            "#C0E8FF",  # 9 – Kompression
+            "#E0F7FF",  # 10 – Anker
+        ]
+
+        # ── Header ──────────────────────────────────────────────────────────
+        hdr = tk.Frame(parent, bg=APP_BG)
+        hdr.pack(fill="x", padx=8, pady=(6, 0))
+        tk.Label(
+            hdr, text="AETHER · STRUCTUREMAP",
+            bg=APP_BG, fg=_ACCENT, font=("Segoe UI", 11, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            hdr,
+            text="  ◦ Fraktaler 3D-Suchbaum  ◦ Ockham-Kollaps  ◦ Reine Diagnose",
+            bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 8),
+        ).pack(side="left")
+
+        # ── Domain-Zeile ────────────────────────────────────────────────────
+        dom_row = tk.Frame(parent, bg=APP_BG)
+        dom_row.pack(fill="x", padx=8, pady=(2, 0))
+        for label, col in [
+            ("◆ KLIMA", _ACCENT),
+            ("◆ WASSER", "#00CFFF"),
+            ("◆ GESUNDHEIT", "#9B59B6"),
+            ("◆ BODEN", "#7FFF00"),
+            ("◆ LUFT", "#FFD700"),
+        ]:
+            tk.Label(dom_row, text=label, bg=APP_BG, fg=col,
+                     font=("Segoe UI", 8, "bold")).pack(side="left", padx=8)
+
+        # ── Haupt-Body ──────────────────────────────────────────────────────
+        body = tk.Frame(parent, bg=_BG)
+        body.pack(fill="both", expand=True, padx=6, pady=(4, 6))
+
+        # Linke Seite: fraktaler Baum
+        fig_main = Figure(figsize=(5, 5), facecolor=_BG)
+        fig_main.subplots_adjust(left=0.01, right=0.99, top=0.99, bottom=0.01)
+        ax_main = fig_main.add_subplot(111, projection="polar")
+        ax_main.set_facecolor(_BG)
+        ax_main.set_xticks([])
+        ax_main.set_yticks([])
+        try:
+            ax_main.spines["polar"].set_visible(False)
+        except Exception:
+            pass
+        ax_main.set_ylim(0, 1.05)
+        main_canvas = FigureCanvasTkAgg(fig_main, master=body)
+        main_canvas.get_tk_widget().pack(side="left", fill="both", expand=True)
+
+        # Rechte Seite: Overlays
+        right = tk.Frame(body, bg=APP_BG, width=195)
+        right.pack(side="right", fill="y", padx=(4, 0))
+        right.pack_propagate(False)
+
+        # Overlay 1: Anker-Dichte
+        tk.Label(right, text="◈ ANKER-DICHTE", bg=APP_BG, fg=_ACCENT,
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(8, 1))
+        fig_anc = Figure(figsize=(1.85, 1.15), facecolor=APP_BG)
+        ax_anc = fig_anc.add_subplot(111)
+        ax_anc.set_facecolor("#0C1A26")
+        ax_anc.tick_params(labelsize=5, colors="#4A5568", length=2)
+        for sp in ax_anc.spines.values():
+            sp.set_color("#1A2A3A")
+        anc_canvas = FigureCanvasTkAgg(fig_anc, master=right)
+        anc_canvas.get_tk_widget().pack(padx=8, pady=2)
+
+        # Overlay 2: Mutations-Histogramm (Ring 5)
+        tk.Label(right, text="◈ MUTATIONS-RATE  Ring 5", bg=APP_BG, fg="#7FFF00",
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(8, 1))
+        fig_mut = Figure(figsize=(1.85, 1.15), facecolor=APP_BG)
+        ax_mut = fig_mut.add_subplot(111)
+        ax_mut.set_facecolor("#0C1A26")
+        ax_mut.tick_params(labelsize=5, colors="#4A5568", length=2)
+        for sp in ax_mut.spines.values():
+            sp.set_color("#1A2A3A")
+        mut_canvas = FigureCanvasTkAgg(fig_mut, master=right)
+        mut_canvas.get_tk_widget().pack(padx=8, pady=2)
+
+        # Overlay 3: Lossless-Compression-Ratio
+        tk.Label(right, text="◈ KOMPRESSION", bg=APP_BG, fg="#E0F7FF",
+                 font=("Segoe UI", 8, "bold")).pack(anchor="w", padx=8, pady=(8, 1))
+        _ratio_var = tk.StringVar(value="0 %")
+        tk.Label(right, textvariable=_ratio_var, bg=APP_BG, fg="#FFFFFF",
+                 font=("Segoe UI", 22, "bold")).pack(pady=(0, 2))
+        ratio_bar = tk.Canvas(right, height=6, bg="#0C1A26", highlightthickness=0)
+        ratio_bar.pack(fill="x", padx=8, pady=(0, 8))
+
+        # Ring-Legende
+        tk.Frame(right, bg="#1A2A3A", height=1).pack(fill="x", padx=8, pady=(4, 3))
+        tk.Label(right, text="RING-LEGENDE", bg=APP_BG, fg=APP_TEXT_MUTED,
+                 font=("Segoe UI", 7, "bold")).pack(anchor="w", padx=8)
+        for txt, col in [
+            ("1  Rohdaten",      "#FF4444"),
+            ("2–6 Verarbeitung", "#7FFF00"),
+            ("7  Ockham-Cut",    "#FFFFFF"),
+            ("8–9 Kompression",  "#9BD4FF"),
+            ("10 Anker",         "#E0F7FF"),
+        ]:
+            tk.Label(right, text=f"■ {txt}", bg=APP_BG, fg=col,
+                     font=("Segoe UI", 7)).pack(anchor="w", padx=12)
+
+        # ── Animations-Zustand ───────────────────────────────────────────────
+        _state = {
+            "step": 0,
+            "compression": 0.0,
+            "locked": False,
+            "anchor_hist": [],
+            "mut_hist": [],
+        }
+
+        # ── Frame-Renderer ───────────────────────────────────────────────────
+        def _draw() -> None:
+            step = _state["step"]
+            rng = _rnd.Random(step * 7919 + 3)
+
+            N_RINGS = 10
+            # Main tree -------------------------------------------------------
+            ax_main.clear()
+            ax_main.set_facecolor(_BG)
+            ax_main.set_xticks([])
+            ax_main.set_yticks([])
+            try:
+                ax_main.spines["polar"].set_visible(False)
+            except Exception:
+                pass
+            ax_main.set_ylim(0, 1.05)
+
+            prev_thetas = []
+            curr_thetas = []
+            for ring_idx in range(N_RINGS):
+                ring = ring_idx + 1
+                color = RING_COLORS[ring_idx]
+                r_inner = ring_idx / N_RINGS
+                r_outer = ring / N_RINGS
+
+                if ring == 1:
+                    curr_thetas = [rng.uniform(0, 2 * math.pi) for _ in range(6)]
+                elif ring <= 6:
+                    new_t = []
+                    for t in prev_thetas:
+                        new_t.append(t + rng.gauss(0, 0.13))
+                        if ring in (4, 5, 6) and rng.random() < 0.38:
+                            new_t.append(t + rng.gauss(0, 0.52))
+                    curr_thetas = new_t[:24]
+                elif ring == 7:
+                    rate = 0.35 + 0.18 * math.sin(step * 0.42)
+                    curr_thetas = [
+                        t + rng.gauss(0, 0.04)
+                        for t in prev_thetas
+                        if rng.random() < rate
+                    ]
+                    if not curr_thetas:
+                        curr_thetas = [rng.uniform(0, 2 * math.pi) for _ in range(3)]
+                elif ring in (8, 9):
+                    anchors = [k * math.pi / 2 for k in range(4)]
+                    curr_thetas = []
+                    for t in prev_thetas:
+                        near = min(anchors, key=lambda a, _t=t: abs(a - _t))
+                        curr_thetas.append(t + 0.74 * (near - t) + rng.gauss(0, 0.022))
+                else:  # ring 10
+                    curr_thetas = [k * math.pi / 2 for k in range(4)]
+
+                # Verbindungslinien
+                if prev_thetas and curr_thetas:
+                    lw = 1.6 if ring == 7 else (0.9 if ring >= 8 else 0.65)
+                    al = 0.82 if ring >= 7 else 0.50
+                    for theta in curr_thetas:
+                        parent_t = min(prev_thetas, key=lambda p, _th=theta: abs(p - _th))
+                        ax_main.plot(
+                            [parent_t, theta], [r_inner, r_outer],
+                            color=color, alpha=al, linewidth=lw,
+                            solid_capstyle="round",
+                        )
+
+                # Knoten
+                if curr_thetas:
+                    if ring == 7:
+                        arc = np.linspace(0, 2 * math.pi, 180)
+                        ax_main.plot(arc, [r_outer] * 180, color="#FFFFFF",
+                                     alpha=0.16, linewidth=1.0, linestyle=":")
+                        ax_main.scatter(
+                            curr_thetas, [r_outer] * len(curr_thetas),
+                            c="#FFFFFF", s=14, alpha=0.88, zorder=6, marker="o",
+                        )
+                    elif ring == 10:
+                        ax_main.scatter(
+                            curr_thetas, [r_outer] * len(curr_thetas),
+                            c="#E0F7FF", s=90, alpha=1.0, zorder=7, marker="D",
+                        )
+                        ax_main.scatter(
+                            curr_thetas, [r_outer] * len(curr_thetas),
+                            c="#FFFFFF", s=220, alpha=0.07, zorder=5, marker="o",
+                        )
+                    elif ring >= 8:
+                        ax_main.scatter(
+                            curr_thetas, [r_outer] * len(curr_thetas),
+                            c=color, s=6, alpha=0.82, zorder=5, marker="o",
+                        )
+                    else:
+                        sz = max(1, 5 - ring_idx)
+                        ax_main.scatter(
+                            curr_thetas, [r_outer] * len(curr_thetas),
+                            c=color, s=sz, alpha=0.68, zorder=4, marker=".",
+                        )
+
+                prev_thetas = curr_thetas
+
+            main_canvas.draw_idle()
+
+            # Anker-Dichte ----------------------------------------------------
+            n_anchors = len(curr_thetas)
+            _state["anchor_hist"].append(n_anchors + rng.gauss(0, 0.25))
+            if len(_state["anchor_hist"]) > 30:
+                _state["anchor_hist"].pop(0)
+            hist_a = _state["anchor_hist"]
+            xs = list(range(len(hist_a)))
+            exp_curve = [min(4.2 * (1.0 - math.exp(-i * 0.20)), 4.4) for i in xs]
+            ax_anc.clear()
+            ax_anc.set_facecolor("#0C1A26")
+            ax_anc.plot(xs, exp_curve, color=_ACCENT, linewidth=1.0, alpha=0.55)
+            ax_anc.fill_between(xs, exp_curve, alpha=0.12, color=_ACCENT)
+            if xs:
+                ax_anc.scatter(xs[-1:], hist_a[-1:], c="#E0F7FF", s=12, zorder=5)
+            ax_anc.set_xlim(0, 30)
+            ax_anc.set_ylim(0, 5)
+            ax_anc.tick_params(labelsize=5, colors="#4A5568", length=2)
+            for sp in ax_anc.spines.values():
+                sp.set_color("#1A2A3A")
+            anc_canvas.draw_idle()
+
+            # Mutations-Histogramm --------------------------------------------
+            ring5_n = max(0, int(12 + rng.gauss(0, 3.2)))
+            _state["mut_hist"].append(ring5_n)
+            if len(_state["mut_hist"]) > 20:
+                _state["mut_hist"].pop(0)
+            mh = _state["mut_hist"]
+            bar_cols = [
+                "#7FFF00" if v >= 12 else ("#FFD700" if v >= 8 else "#FF4444")
+                for v in mh
+            ]
+            ax_mut.clear()
+            ax_mut.set_facecolor("#0C1A26")
+            ax_mut.bar(range(len(mh)), mh, color=bar_cols, alpha=0.82, width=0.88)
+            ax_mut.axhline(y=12, color="#FFFFFF", alpha=0.28, linewidth=0.8, linestyle="--")
+            ax_mut.set_xlim(-0.5, 20)
+            ax_mut.set_ylim(0, 22)
+            ax_mut.tick_params(labelsize=5, colors="#4A5568", length=2)
+            for sp in ax_mut.spines.values():
+                sp.set_color("#1A2A3A")
+            mut_canvas.draw_idle()
+
+            # Kompressionsrate ------------------------------------------------
+            if not _state["locked"]:
+                _state["compression"] = min(
+                    100.0, _state["compression"] + rng.uniform(3.8, 7.2)
+                )
+                if _state["compression"] >= 100.0:
+                    _state["compression"] = 100.0
+                    _state["locked"] = True
+            pct = _state["compression"]
+            _ratio_var.set(f"{int(pct)} %")
+            try:
+                w = ratio_bar.winfo_width()
+                if w > 10:
+                    ratio_bar.delete("all")
+                    fill_w = max(1, int(w * pct / 100.0))
+                    bar_color = "#E0F7FF" if _state["locked"] else _ACCENT
+                    ratio_bar.create_rectangle(
+                        0, 0, fill_w, 6, fill=bar_color, outline="", width=0
+                    )
+            except tk.TclError:
+                pass
+
+            _state["step"] += 1
+
+        def _animate() -> None:
+            try:
+                _draw()
+                parent.after(1000, _animate)
+            except Exception:
+                pass
+
+        parent.after(600, _animate)
 
     def _build_settings_tab(self, parent: tk.Frame) -> None:
         """Baut den Einstellungen-Tab mit Sprachauswahl und Monitor-Steuerung."""

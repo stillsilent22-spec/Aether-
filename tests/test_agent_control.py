@@ -84,3 +84,29 @@ def test_auto_policy_blocks_highly_regular_network_pattern() -> None:
     assert report.decisions
     assert report.decisions[0].applied_action == "network_block"
     assert "network_rhythm" in report.decisions[0].policy_hits
+
+
+def test_ockham_metadata_present_for_candidates() -> None:
+    engine = AgentControlEngine(apply_os_controls=False, use_ockham=True)
+    report = engine.evaluate_snapshot(
+        _snapshot(cpu_percent=18.0, open_connections=4, interval_regularity=0.88),
+        agents_enabled=True,
+        automatic_policies=True,
+    )
+    assert report.decisions
+    decision = report.decisions[0]
+    assert isinstance(decision.ockham_action, str)
+    assert 0.0 <= decision.ockham_risk_score <= 1.0
+
+
+def test_ockham_can_be_disabled() -> None:
+    engine = AgentControlEngine(apply_os_controls=False, use_ockham=False)
+    report = engine.evaluate_snapshot(
+        _snapshot(cpu_percent=18.0, open_connections=4, interval_regularity=0.88),
+        agents_enabled=True,
+        automatic_policies=True,
+    )
+    assert report.decisions
+    decision = report.decisions[0]
+    assert decision.ockham_action == "allow"
+    assert decision.ockham_risk_score == 0.0

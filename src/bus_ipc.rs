@@ -1,7 +1,8 @@
 use crate::inter_layer_bus::{
-    BusEvent, CrossProgramReuseEvent, OfflineCacheEvent, PackInstalledEvent, PackRecommendedEvent,
-    ShaderCacheHitEvent, ShanwayUserMessageEvent, TextureUploadResultEvent, VramOptimizedEvent,
-    VramPressureEvent, WorkflowHitEvent, WorkflowLearnedEvent,
+    BusEvent, CrossProgramReuseEvent, MediaTraceEvent, OfflineCacheEvent,
+    OptimizationDecisionEvent, PackInstalledEvent, PackRecommendedEvent, ShaderCacheHitEvent,
+    ShanwayUserMessageEvent, TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent,
+    WorkflowHitEvent, WorkflowLearnedEvent,
 };
 use chrono::Utc;
 use serde_json::{json, Value};
@@ -148,7 +149,9 @@ pub fn event_type_name(event: &BusEvent) -> &'static str {
         BusEvent::VramPressureChanged(_) => "VramPressureChanged",
         BusEvent::VramOptimized(_) => "VramOptimized",
         BusEvent::TextureUploadCompleted(_) => "TextureUploadCompleted",
+        BusEvent::MediaTraceRecorded(_) => "MediaTraceRecorded",
         BusEvent::ShaderCacheHit(_) => "ShaderCacheHit",
+        BusEvent::OptimizationDecision(_) => "OptimizationDecision",
         BusEvent::ShanwayUserMessage(_) => "ShanwayUserMessage",
         _ => "Unsupported",
     }
@@ -191,7 +194,13 @@ fn serialize_payload(event: &BusEvent) -> Value {
         BusEvent::TextureUploadCompleted(payload) => {
             serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
         }
+        BusEvent::MediaTraceRecorded(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
         BusEvent::ShaderCacheHit(payload) => {
+            serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
+        }
+        BusEvent::OptimizationDecision(payload) => {
             serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
         }
         BusEvent::ShanwayUserMessage(payload) => json!({
@@ -233,8 +242,14 @@ fn parse_event(event_type: &str, payload: Value) -> Result<BusEvent, String> {
         "TextureUploadCompleted" => serde_json::from_value::<TextureUploadResultEvent>(payload)
             .map(BusEvent::TextureUploadCompleted)
             .map_err(|err| err.to_string()),
+        "MediaTraceRecorded" => serde_json::from_value::<MediaTraceEvent>(payload)
+            .map(BusEvent::MediaTraceRecorded)
+            .map_err(|err| err.to_string()),
         "ShaderCacheHit" => serde_json::from_value::<ShaderCacheHitEvent>(payload)
             .map(BusEvent::ShaderCacheHit)
+            .map_err(|err| err.to_string()),
+        "OptimizationDecision" => serde_json::from_value::<OptimizationDecisionEvent>(payload)
+            .map(BusEvent::OptimizationDecision)
             .map_err(|err| err.to_string()),
         "ShanwayUserMessage" => {
             parse_shanway_user_message(payload).map(BusEvent::ShanwayUserMessage)

@@ -138,7 +138,7 @@ pub fn noether_score(words_start: HashMap<String, f64>, words_end: HashMap<Strin
 
 /// Python-Modul-Registrierung.
 #[pymodule]
-pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
+pub fn register(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(byte_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(token_entropy, m)?)?;
     m.add_function(wrap_pyfunction!(zipf_score, m)?)?;

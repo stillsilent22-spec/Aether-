@@ -1,12 +1,18 @@
 use crate::inter_layer_bus::{
-    BusEvent, BusPublisher, ShaderCacheHitEvent, ShaderCompileRequestEvent,
-    TextureUploadRequestEvent, TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent,
-    VramPressureLevel,
+    BusEvent, BusPublisher, MediaTraceEvent, OptimizationDecisionEvent, ShaderCacheHitEvent,
+    ShaderCompileRequestEvent, TextureUploadRequestEvent, TextureUploadResultEvent,
+    VramOptimizedEvent, VramPressureEvent, VramPressureLevel,
 };
 use crate::vault_access::VaultAccessLayer;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GfxTraceMode {
+    Stage,
+    Deep,
+}
 
 /// Grafik-Backend-Abstraktion fuer spaetere Backend-spezifische Implementierungen.
 pub trait AetherGfxBackend: Send + Sync {
@@ -54,6 +60,8 @@ pub struct AetherGfx {
     texture_vault: TextureVaultCache,
     shader_cache: ShaderVaultCache,
     bus: BusPublisher,
+    trace_mode: GfxTraceMode,
+    deep_trace_once: HashSet<String>,
 }
 
 impl AetherGfx {
@@ -64,10 +72,35 @@ impl AetherGfx {
             texture_vault: TextureVaultCache::new(vault),
             shader_cache: ShaderVaultCache::new(),
             bus,
+            trace_mode: GfxTraceMode::Stage,
+            deep_trace_once: HashSet::new(),
         }
     }
 
+    pub fn trace_mode(&self) -> GfxTraceMode {
+        self.trace_mode
+    }
+
+    pub fn set_trace_mode(&mut self, mode: GfxTraceMode) {
+        self.trace_mode = mode;
+    }
+
+    pub fn request_deep_trace_once(&mut self, asset_label: &str) {
+        self.deep_trace_once.insert(asset_label.to_owned());
+    }
+
+    fn resolve_trace_depth(&mut self, asset_label: &str) -> &'static str {
+        if self.trace_mode == GfxTraceMode::Deep {
+            return "deep";
+        }
+        if self.deep_trace_once.remove(asset_label) {
+            return "deep";
+        }
+        "stage"
+    }
+
     pub async fn upload_texture(&mut self, label: &str, bytes: &[u8]) -> u64 {
+        let trace_depth = self.resolve_trace_depth(label);
         self.bus.publish(BusEvent::TextureUploadRequested(
             TextureUploadRequestEvent {
                 program_id: self.backend.backend_name().to_owned(),
@@ -99,10 +132,26 @@ impl AetherGfx {
                 uploaded_mb: result.compressed_size as f32 / 1_048_576.0,
                 used_delta_path: result.hit_rate > 0.5,
             }));
+        self.bus.publish(BusEvent::MediaTraceRecorded(MediaTraceEvent {
+            process: self.backend.backend_name().to_owned(),
+            medium: "pixel".to_owned(),
+            asset_label: label.to_owned(),
+            stage: "texture_upload".to_owned(),
+            operation: if result.hit_rate > 0.5 {
+                "delta_path"
+            } else {
+                "raw_upload"
+            }
+            .to_owned(),
+            anchor_refs: result.anchor_refs.clone(),
+            trace_depth: trace_depth.to_owned(),
+        }));
         handle
     }
 
     pub fn compile_shader_cached(&mut self, program_id: &str, source: &str, stage: &str) -> u64 {
+        let trace_asset = format!("shader::{program_id}::{stage}");
+        let trace_depth = self.resolve_trace_depth(&trace_asset);
         self.bus.publish(BusEvent::ShaderCompileRequested(
             ShaderCompileRequestEvent {
                 program_id: program_id.to_owned(),
@@ -121,6 +170,20 @@ impl AetherGfx {
                     handle,
                 }));
         }
+        self.bus.publish(BusEvent::MediaTraceRecorded(MediaTraceEvent {
+            process: program_id.to_owned(),
+            medium: "pixel".to_owned(),
+            asset_label: trace_asset,
+            stage: "shader_pipeline".to_owned(),
+            operation: if cache_hit {
+                "cache_hit"
+            } else {
+                "compile"
+            }
+            .to_owned(),
+            anchor_refs: Vec::new(),
+            trace_depth: trace_depth.to_owned(),
+        }));
         handle
     }
 
@@ -142,6 +205,26 @@ impl AetherGfx {
                 pressure_level: level,
                 active_programs: vec![self.backend.backend_name().to_owned()],
             }));
+        if matches!(level, VramPressureLevel::High | VramPressureLevel::Critical) {
+            let applied = matches!(level, VramPressureLevel::Critical);
+            self.bus
+                .publish(BusEvent::OptimizationDecision(OptimizationDecisionEvent {
+                    subsystem: "gfx".to_owned(),
+                    decision: if applied {
+                        "tighten_vram_budget"
+                    } else {
+                        "prepare_vram_throttle"
+                    }
+                    .to_owned(),
+                    trigger: format!("vram_pressure_{:?}", level),
+                    confidence: ratio.clamp(0.0, 1.0),
+                    expected_gain_percent: if applied { 18.0 } else { 10.0 },
+                    applied,
+                    rollback_ready: true,
+                    guardrail: "no_forced_evict_without_confirmed_critical_pressure"
+                        .to_owned(),
+                }));
+        }
     }
 }
 

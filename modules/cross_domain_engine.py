@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import sqlite3
 import time
 import uuid
@@ -60,6 +61,11 @@ class CrossDomainCluster:
     relevance_score: float    # 0 – 100
     first_seen: float         # Unix-Timestamp
     last_updated: float       # Unix-Timestamp
+    emergence_score: float = 0.0
+    p_value: float = 1.0
+    stability_score: float = 0.0
+    lag_hint: Optional[dict[str, float | str]] = None
+    significant: bool = False
 
     @property
     def n_anchors(self) -> int:
@@ -188,6 +194,120 @@ class CrossDomainEngine:
         self._init_db()
 
     # ------------------------------------------------------------------
+    # Emergence Helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _quantile(values: list[float], q: float) -> float:
+        if not values:
+            return 0.0
+        ranked = sorted(float(v) for v in values)
+        idx = int(max(0, min(len(ranked) - 1, round((len(ranked) - 1) * q))))
+        return float(ranked[idx])
+
+    @staticmethod
+    def _time_window_coverage(cluster_anchors: list[RawAnchor], span_days: float) -> tuple[int, int, float]:
+        if not cluster_anchors:
+            return 0, 0, 0.0
+        span_seconds = max(1.0, float(span_days) * 86400.0)
+        timestamps = [float(a.timestamp) for a in cluster_anchors]
+        t_min = min(timestamps)
+        t_max = max(timestamps)
+        total_windows = max(1, int(math.floor((t_max - t_min) / span_seconds)) + 1)
+        covered = {
+            int(math.floor((float(a.timestamp) - t_min) / span_seconds))
+            for a in cluster_anchors
+        }
+        covered_windows = max(1, len(covered))
+        stability = covered_windows / float(total_windows)
+        return covered_windows, total_windows, float(max(0.0, min(1.0, stability)))
+
+    @staticmethod
+    def _lag_hint(cluster_anchors: list[RawAnchor], span_days: float) -> dict[str, float | str]:
+        by_domain: dict[str, list[float]] = defaultdict(list)
+        for anchor in cluster_anchors:
+            by_domain[str(anchor.domain)].append(float(anchor.timestamp))
+
+        if len(by_domain) < 2:
+            return {
+                "direction": "undetermined",
+                "lag_days": 0.0,
+                "consistency": 0.0,
+            }
+
+        centers: dict[str, float] = {
+            domain: (sum(values) / float(max(1, len(values))))
+            for domain, values in by_domain.items()
+        }
+        ordered = sorted(centers.items(), key=lambda item: item[1])
+        earliest_domain, earliest_ts = ordered[0]
+        latest_domain, latest_ts = ordered[-1]
+        lag_days = max(0.0, (latest_ts - earliest_ts) / 86400.0)
+        scale_days = max(1.0, float(span_days))
+        consistency = max(0.0, 1.0 - min(1.0, lag_days / scale_days))
+        return {
+            "direction": f"{earliest_domain}->{latest_domain}",
+            "lag_days": round(float(lag_days), 4),
+            "consistency": round(float(consistency), 6),
+        }
+
+    @staticmethod
+    def _permute_points(points: list[list[float]], rng: random.Random) -> list[list[float]]:
+        if not points:
+            return []
+        dim = len(points[0])
+        columns: list[list[float]] = [[row[d] for row in points] for d in range(dim)]
+        for column in columns:
+            rng.shuffle(column)
+        return [[columns[d][i] for d in range(dim)] for i in range(len(points))]
+
+    def _null_relevance_distribution(
+        self,
+        anchors: list[RawAnchor],
+        norm_points: list[list[float]],
+        eps: float,
+        min_samples: int,
+        iterations: int,
+        random_seed: int,
+    ) -> list[float]:
+        if not anchors or not norm_points or iterations <= 0:
+            return []
+        rng = random.Random(int(random_seed))
+        now = time.time()
+        week_ago = now - 7 * 86400
+        distribution: list[float] = []
+
+        for _ in range(int(iterations)):
+            permuted = self._permute_points(norm_points, rng)
+            labels = _dbscan(permuted, eps, min_samples)
+            groups: dict[int, list[int]] = defaultdict(list)
+            for idx, lbl in enumerate(labels):
+                if lbl >= 0:
+                    groups[lbl].append(idx)
+
+            for indices in groups.values():
+                if not indices:
+                    continue
+                cluster_anchors = [anchors[i] for i in indices]
+                domains = {a.domain for a in cluster_anchors}
+                centroid = [
+                    sum(permuted[i][d] for i in indices) / float(len(indices))
+                    for d in range(len(permuted[0]))
+                ]
+                mean_dist = sum(_euclidean(permuted[i], centroid) for i in indices) / float(len(indices))
+                recent = sum(1 for a in cluster_anchors if a.timestamp >= week_ago)
+                growth = recent / float(max(1, len(cluster_anchors)))
+                distribution.append(
+                    compute_relevance(
+                        n_anchors=len(cluster_anchors),
+                        n_domains=len(domains),
+                        growth_rate=growth,
+                        mean_distance=mean_dist,
+                    )
+                )
+        return distribution
+
+    # ------------------------------------------------------------------
     # DB
     # ------------------------------------------------------------------
 
@@ -291,6 +411,13 @@ class CrossDomainEngine:
         min_samples: int = 3,
         window_days: float = 365.0,
         require_multi_domain: bool = True,
+        min_persistence_windows: int = 1,
+        window_span_days: float = 30.0,
+        enable_null_model: bool = False,
+        null_iterations: int = 200,
+        significance_alpha: float = 0.05,
+        random_seed: int = 42,
+        min_emergence_score: float = 0.0,
     ) -> list[CrossDomainCluster]:
         """
         Fuehrt DBSCAN-Clustering auf den Ankern durch.
@@ -338,6 +465,19 @@ class CrossDomainEngine:
             if lbl >= 0:
                 groups[lbl].append(i)
 
+        null_distribution: list[float] = []
+        null_threshold = 0.0
+        if enable_null_model:
+            null_distribution = self._null_relevance_distribution(
+                anchors=anchors,
+                norm_points=norm_points,
+                eps=eps,
+                min_samples=min_samples,
+                iterations=int(max(0, null_iterations)),
+                random_seed=int(random_seed),
+            )
+            null_threshold = self._quantile(null_distribution, 1.0 - float(significance_alpha))
+
         now = time.time()
         week_ago = now - 7 * 86400
         result: list[CrossDomainCluster] = []
@@ -381,6 +521,44 @@ class CrossDomainEngine:
                     mean_distance=mean_dist,
                 )
 
+                covered_windows, _total_windows, stability = self._time_window_coverage(
+                    cluster_anchors,
+                    span_days=window_span_days,
+                )
+                if covered_windows < max(1, int(min_persistence_windows)):
+                    continue
+
+                lag_hint = self._lag_hint(cluster_anchors, span_days=window_span_days)
+                lag_consistency = float(lag_hint.get("consistency", 0.0) or 0.0)
+
+                total_domains_in_window = max(1, len({a.domain for a in anchors}))
+                domain_mix = min(1.0, len(domains) / float(total_domains_in_window))
+                density = max(0.0, 1.0 - min(1.0, float(mean_dist)))
+                emergence_score = 100.0 * (
+                    (0.35 * density)
+                    + (0.25 * domain_mix)
+                    + (0.20 * stability)
+                    + (0.20 * lag_consistency)
+                )
+                emergence_score = float(max(0.0, min(100.0, emergence_score)))
+
+                if emergence_score < float(min_emergence_score):
+                    continue
+
+                p_value = 1.0
+                significant = False
+                if enable_null_model and null_distribution:
+                    ge_count = sum(1 for value in null_distribution if float(value) >= float(rel))
+                    p_value = float((ge_count + 1) / float(len(null_distribution) + 1))
+                    significant = bool(rel >= null_threshold and p_value <= float(significance_alpha))
+                elif enable_null_model:
+                    significant = False
+                else:
+                    significant = True
+
+                if enable_null_model and not significant:
+                    continue
+
                 first_seen = min(a.timestamp for a in cluster_anchors)
                 cid = str(uuid.uuid4())
 
@@ -393,6 +571,11 @@ class CrossDomainEngine:
                     relevance_score=rel,
                     first_seen=first_seen,
                     last_updated=now,
+                    emergence_score=float(round(emergence_score, 6)),
+                    p_value=float(round(p_value, 6)),
+                    stability_score=float(round(stability, 6)),
+                    lag_hint=dict(lag_hint),
+                    significant=bool(significant),
                 )
                 result.append(cluster)
 
@@ -434,6 +617,11 @@ class CrossDomainEngine:
                     "n_anchors": c.n_anchors,
                     "domains": c.domains,
                     "relevance_score": c.relevance_score,
+                    "emergence_score": c.emergence_score,
+                    "p_value": c.p_value,
+                    "stability_score": c.stability_score,
+                    "lag_hint": c.lag_hint,
+                    "significant": c.significant,
                     "first_seen": c.first_seen,
                     "last_updated": c.last_updated,
                     "disclaimer": self.DISCLAIMER_DE,
@@ -457,11 +645,13 @@ class CrossDomainEngine:
             if lang == "en":
                 lines.append(
                     f"Cluster {c.cluster_id[:8]} \u00b7 Relevance {c.relevance_score:.0f}/100 \u00b7 "
+                    f"Emergence {c.emergence_score:.0f}/100 \u00b7 p={c.p_value:.3f} \u00b7 "
                     f"{c.n_anchors} anchors across {c.n_domains} domain(s): {c.domain_summary()}"
                 )
             else:
                 lines.append(
                     f"Cluster {c.cluster_id[:8]} \u00b7 Relevanz {c.relevance_score:.0f}/100 \u00b7 "
+                    f"Emergenz {c.emergence_score:.0f}/100 \u00b7 p={c.p_value:.3f} \u00b7 "
                     f"{c.n_anchors} Anker in {c.n_domains} Dom\u00e4ne(n): {c.domain_summary()}"
                 )
 
@@ -501,6 +691,8 @@ class CrossDomainEngine:
             "total_anchors_in_db": total_anchors,
             "clusters_last_run": len(self._clusters),
             "top_relevance": self._clusters[0].relevance_score if self._clusters else 0.0,
+            "top_emergence": self._clusters[0].emergence_score if self._clusters else 0.0,
+            "significant_clusters": sum(1 for c in self._clusters if c.significant),
             "domains_covered": len(
                 {d for c in self._clusters for d in c.domains}
             ),

@@ -273,6 +273,60 @@ class TestCrossDomainEngine:
         assert isinstance(engine.stats(), dict)
         assert "total_anchors_in_db" in engine.stats()
 
+    def test_cluster_exposes_emergence_fields(self):
+        engine = self._engine("_emergence_fields")
+        anchors = (
+            [_make_anchor("climate", [0.0, 0.0]) for _ in range(4)]
+            + [_make_anchor("health", [0.01, 0.0]) for _ in range(4)]
+        )
+        engine.ingest_anchors(anchors)
+        clusters = engine.cluster(eps=0.5, min_samples=3)
+        if clusters:
+            c = clusters[0]
+            assert hasattr(c, "emergence_score")
+            assert hasattr(c, "p_value")
+            assert hasattr(c, "stability_score")
+            assert hasattr(c, "lag_hint")
+            assert 0.0 <= float(c.emergence_score) <= 100.0
+
+    def test_persistence_filter_can_exclude_single_window_cluster(self):
+        engine = self._engine("_persistence")
+        now = time.time()
+        anchors = (
+            [_make_anchor("a", [0.0, 0.0], ts=now) for _ in range(4)]
+            + [_make_anchor("b", [0.01, 0.0], ts=now) for _ in range(4)]
+        )
+        engine.ingest_anchors(anchors)
+        clusters = engine.cluster(
+            eps=0.5,
+            min_samples=3,
+            min_persistence_windows=2,
+            window_span_days=30.0,
+        )
+        assert clusters == []
+
+    def test_null_model_mode_executes_and_returns_list(self):
+        engine = self._engine("_null_model")
+        anchors = (
+            [_make_anchor("climate", [0.00, 0.00]) for _ in range(6)]
+            + [_make_anchor("antibiotics", [0.01, 0.00]) for _ in range(6)]
+            + [_make_anchor("health", [0.02, 0.00]) for _ in range(6)]
+        )
+        engine.ingest_anchors(anchors)
+        clusters = engine.cluster(
+            eps=0.6,
+            min_samples=3,
+            enable_null_model=True,
+            null_iterations=10,
+            significance_alpha=0.2,
+            random_seed=7,
+            min_emergence_score=0.0,
+        )
+        assert isinstance(clusters, list)
+        for cluster in clusters:
+            assert 0.0 <= float(cluster.p_value) <= 1.0
+            assert isinstance(cluster.significant, bool)
+
     def test_clear_anchors(self):
         engine = self._engine("_clear")
         engine.ingest_anchors([_make_anchor("x", [1.0])])

@@ -7,7 +7,7 @@ use crate::browser::{
 };
 use crate::bus_ipc;
 use crate::chat_sync::{ChatRelayClient, ChatRelayConfig, ChatRelayEnvelope, ChatRelayStateStore};
-use crate::gfx::AetherGfx;
+use crate::gfx::{AetherGfx, GfxTraceMode};
 use crate::inter_layer_bus::{BusEvent, BusPublisher, InterLayerBus, PackInstalledEvent};
 use crate::offline_cache::{CacheTarget, OfflineCacheManager, OfflinePrepRequest};
 use crate::pack::{AutoPackGenerator, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
@@ -184,6 +184,10 @@ pub struct AetherRustShell {
     security_monitor: SecurityMonitor,
     security_snapshot: SecuritySnapshot,
     security_audit_events: Vec<SecurityAuditEvent>,
+    deep_trace_next_drop: bool,
+    media_trace_events_seen: u64,
+    optimization_decisions_seen: u64,
+    last_vram_pressure_ratio: f32,
 }
 
 impl AetherRustShell {
@@ -312,6 +316,10 @@ impl AetherRustShell {
             security_monitor: SecurityMonitor::new(PathBuf::from(".")),
             security_snapshot: SecuritySnapshot::default(),
             security_audit_events: Vec::new(),
+            deep_trace_next_drop: false,
+            media_trace_events_seen: 0,
+            optimization_decisions_seen: 0,
+            last_vram_pressure_ratio: 0.0,
         };
         shell.refresh_security_snapshot(false, "startup");
         shell
@@ -1126,7 +1134,36 @@ impl AetherRustShell {
                     payload.program_id, payload.shader_hash
                 ));
             }
+            BusEvent::MediaTraceRecorded(payload) => {
+                self.media_trace_events_seen = self.media_trace_events_seen.saturating_add(1);
+                let anchor_hint = if payload.anchor_refs.is_empty() {
+                    "keine Anker".to_owned()
+                } else {
+                    format!("{} Anker", payload.anchor_refs.len())
+                };
+                self.append_log(format!(
+                    "Trace {}: {} | {} | {} | {}",
+                    payload.medium,
+                    payload.process,
+                    payload.stage,
+                    payload.operation,
+                    anchor_hint
+                ));
+            }
+            BusEvent::OptimizationDecision(payload) => {
+                self.optimization_decisions_seen =
+                    self.optimization_decisions_seen.saturating_add(1);
+                self.append_log(format!(
+                    "Optimierungs-Entscheidung: {} | {} | Trigger {} | {:.0}% Konfidenz | angewendet {}",
+                    payload.subsystem,
+                    payload.decision,
+                    payload.trigger,
+                    payload.confidence * 100.0,
+                    if payload.applied { "ja" } else { "nein" }
+                ));
+            }
             BusEvent::VramPressureChanged(payload) => {
+                self.last_vram_pressure_ratio = payload.pressure_ratio;
                 self.append_log(format!(
                     "VRAM-Druck: {:?} | {:.0}% von {:.0} MB",
                     payload.pressure_level,
@@ -1742,6 +1779,7 @@ impl AetherRustShell {
             .unwrap_or("unbekannt")
             .to_owned();
         let preview_bytes = color_image_rgba_bytes(&preview);
+        let preview_texture_label = format!("preview::{source_kind}::{file_name}");
         let preview_note = format!(
             "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Drift {:.2}",
             source_kind,
@@ -1758,8 +1796,17 @@ impl AetherRustShell {
             preview,
             egui::TextureOptions::LINEAR,
         ));
+        if self.deep_trace_next_drop {
+            self.gfx.request_deep_trace_once(&preview_texture_label);
+            self.gfx
+                .request_deep_trace_once("shader::rust_shell_preview::fragment");
+            self.deep_trace_next_drop = false;
+            self.append_log(format!(
+                "Deep-Trace One-Shot aktiviert fuer {file_name} (Textur + Shader)."
+            ));
+        }
         match Self::run_async(self.gfx.upload_texture(
-            &format!("preview::{source_kind}::{file_name}"),
+            &preview_texture_label,
             &preview_bytes,
         )) {
             Ok(handle) => self.append_log(format!("Vorschau-Textur vorbereitet: Handle {handle}")),
@@ -1984,6 +2031,80 @@ impl AetherRustShell {
         let Some(metrics) = self.current_visualization_metrics() else {
             return;
         };
+        let classify = |value: f32, warn: f32, crit: f32| -> (&'static str, Color32) {
+            if value >= crit {
+                ("hoch", Color32::from_rgb(232, 104, 92))
+            } else if value >= warn {
+                ("mittel", Color32::from_rgb(246, 204, 112))
+            } else {
+                ("niedrig", Color32::from_rgb(138, 218, 176))
+            }
+        };
+        let anomaly_index = (0.34 * metrics.drift_norm
+            + 0.24 * metrics.residual_ratio
+            + 0.22 * metrics.network_pressure
+            + 0.20 * metrics.godel_zone)
+            .clamp(0.0, 1.0);
+        let coupling_index = ((metrics.resonance + metrics.coherence + metrics.coverage) / 3.0)
+            .clamp(0.0, 1.0);
+        let (anomaly_level, anomaly_color) = classify(anomaly_index, 0.35, 0.62);
+        let (coupling_level, coupling_color) = classify(coupling_index, 0.38, 0.65);
+        let mut markers = vec![
+            ("Drift", metrics.drift_norm),
+            ("Residual", metrics.residual_ratio),
+            ("Network", metrics.network_pressure),
+            ("Goedel-Zone", metrics.godel_zone),
+            ("Resonanz", metrics.resonance),
+            ("Koharenz", metrics.coherence),
+        ];
+        markers.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.label(RichText::new("Signalboard (ohne Interpretation)").strong());
+            ui.label(
+                "Hier werden nur statistische Auffaelligkeiten und Kopplungsstaerken sichtbar gemacht. Keine automatische kausale Deutung.",
+            );
+            ui.columns(2, |cols| {
+                cols[0].group(|ui| {
+                    ui.label(RichText::new("Anomalie-Index").strong());
+                    ui.add(
+                        egui::ProgressBar::new(anomaly_index)
+                            .desired_width(ui.available_width())
+                            .text(format!("{:.0}%", anomaly_index * 100.0)),
+                    );
+                    ui.label(
+                        RichText::new(format!("Stufe: {}", anomaly_level))
+                            .color(anomaly_color)
+                            .strong(),
+                    );
+                });
+                cols[1].group(|ui| {
+                    ui.label(RichText::new("Zusammenhangs-Index").strong());
+                    ui.add(
+                        egui::ProgressBar::new(coupling_index)
+                            .desired_width(ui.available_width())
+                            .text(format!("{:.0}%", coupling_index * 100.0)),
+                    );
+                    ui.label(
+                        RichText::new(format!("Stufe: {}", coupling_level))
+                            .color(coupling_color)
+                            .strong(),
+                    );
+                });
+            });
+            ui.add_space(6.0);
+            ui.label(RichText::new("Top-Signale (rein statistisch)").strong());
+            for (name, value) in markers.into_iter().take(3) {
+                let (level, color) = classify(value, 0.35, 0.62);
+                ui.label(
+                    RichText::new(format!("- {}: {:.0}% ({})", name, value * 100.0, level))
+                        .color(color),
+                );
+            }
+        });
         ui.columns(4, |cols| {
             cols[0].group(|ui| {
                 ui.label(RichText::new("Quelle").strong());
@@ -2069,6 +2190,13 @@ impl AetherRustShell {
                 metrics.hit_rate * 100.0,
                 metrics.projection_gain * 100.0
             ));
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(
+                    "Hinweis: Diese Ansicht priorisiert Sichtbarkeit von Signalen und Zusammenhaengen. Sie liefert keine automatische Interpretation oder Kausalbehauptung.",
+                )
+                .color(Color32::from_rgb(180, 188, 202)),
+            );
         });
     }
 
@@ -2637,6 +2765,15 @@ impl AetherRustShell {
 
     fn ui_security_tab(&mut self, ui: &mut egui::Ui) {
         let mode = self.security_mode();
+        let register_count = self
+            .current_username()
+            .map(|username| self.state_store.entries_for(&username).len())
+            .unwrap_or(0);
+        let has_source = self.active_visualization_file().is_some();
+        let has_metrics = self.current_visualization_metrics().is_some();
+        let has_trace = self.media_trace_events_seen > 0;
+        let has_decisions = self.optimization_decisions_seen > 0;
+        let vram_ok = self.last_vram_pressure_ratio < 0.92;
         ui.group(|ui| {
             ui.label(RichText::new("Security-Zustand").strong());
             ui.label(
@@ -2701,6 +2838,130 @@ impl AetherRustShell {
                         }
                     });
             });
+        });
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.label(RichText::new("Ersttest-Protokoll (Go/No-Go)").strong());
+            ui.label("Messbar, reproduzierbar und ohne Interpretationsautomatik. Fokus: Sichtbarkeit, Traceability, Stabilitaet.");
+            let checks = vec![
+                (
+                    "Quelle aktiv und visualisierbar",
+                    has_source && has_metrics,
+                    "Datei/Browser-Quelle plus Strukturmetriken verfuegbar",
+                ),
+                (
+                    "Trace-Events empfangen",
+                    has_trace,
+                    "mindestens ein MediaTraceRecorded-Ereignis",
+                ),
+                (
+                    "Governance-Entscheidung sichtbar",
+                    has_decisions,
+                    "mindestens ein OptimizationDecision-Ereignis",
+                ),
+                (
+                    "VRAM unter kritischer Grenze",
+                    vram_ok,
+                    "letzter Druck < 92%",
+                ),
+                (
+                    "Registerbasis vorhanden",
+                    register_count > 0,
+                    "mindestens ein lokaler Registereintrag",
+                ),
+            ];
+            let pass_count = checks.iter().filter(|item| item.1).count();
+            for (name, ok, note) in &checks {
+                let color = if *ok {
+                    Color32::from_rgb(138, 218, 176)
+                } else {
+                    Color32::from_rgb(236, 132, 120)
+                };
+                ui.label(
+                    RichText::new(format!(
+                        "{} {} ({})",
+                        if *ok { "[OK]" } else { "[OFFEN]" },
+                        name,
+                        note
+                    ))
+                    .color(color),
+                );
+            }
+            let go = pass_count >= 4;
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new(format!(
+                    "Gesamtstatus: {} / {} Kriterien erfuellt -> {}",
+                    pass_count,
+                    checks.len(),
+                    if go { "GO" } else { "NO-GO" }
+                ))
+                .strong()
+                .color(if go {
+                    Color32::from_rgb(138, 218, 176)
+                } else {
+                    Color32::from_rgb(236, 132, 120)
+                }),
+            );
+            if ui.button("Protokoll in Aktivitaetslog schreiben").clicked() {
+                self.append_log(format!(
+                    "Ersttest-Protokoll: {} von {} Kriterien erfuellt -> {}",
+                    pass_count,
+                    checks.len(),
+                    if go { "GO" } else { "NO-GO" }
+                ));
+                self.append_log(format!(
+                    "Messwerte: Register {} | Trace {} | Entscheidungen {} | VRAM {:.0}%",
+                    register_count,
+                    self.media_trace_events_seen,
+                    self.optimization_decisions_seen,
+                    self.last_vram_pressure_ratio * 100.0
+                ));
+            }
+        });
+        ui.add_space(8.0);
+        ui.group(|ui| {
+            ui.label(RichText::new("Traceability / Provenance").strong());
+            ui.label("On-Demand Deep-Trace fuer Pixel/Shader-Pfade. Standard bleibt ressourcenschonend (Stage). ");
+            ui.horizontal(|ui| {
+                let stage_selected = self.gfx.trace_mode() == GfxTraceMode::Stage;
+                if ui
+                    .selectable_label(stage_selected, "Trace-Modus: STAGE")
+                    .clicked()
+                    && !stage_selected
+                {
+                    self.gfx.set_trace_mode(GfxTraceMode::Stage);
+                    self.status_line = "Trace-Modus auf STAGE gesetzt (geringe Dauerlast).".to_owned();
+                }
+                let deep_selected = self.gfx.trace_mode() == GfxTraceMode::Deep;
+                if ui
+                    .selectable_label(deep_selected, "Trace-Modus: DEEP")
+                    .clicked()
+                    && !deep_selected
+                {
+                    self.gfx.set_trace_mode(GfxTraceMode::Deep);
+                    self.status_line = "Trace-Modus auf DEEP gesetzt (hoehere Last, maximale Nachvollziehbarkeit).".to_owned();
+                }
+            });
+            ui.checkbox(
+                &mut self.deep_trace_next_drop,
+                "Deep-Trace One-Shot fuer naechsten Dateidrop",
+            );
+            if ui.button("Deep-Trace fuer aktive Vorschau jetzt markieren").clicked() {
+                if let Some(file) = &self.current_file {
+                    self.gfx.request_deep_trace_once(&format!(
+                        "preview::{}::{}",
+                        file.source_kind, file.file_name
+                    ));
+                    self.gfx
+                        .request_deep_trace_once("shader::rust_shell_preview::fragment");
+                    self.status_line =
+                        "Deep-Trace One-Shot fuer aktive Vorschau markiert.".to_owned();
+                } else {
+                    self.status_line =
+                        "Keine aktive Datei vorhanden. Erst Vorschau laden, dann markieren.".to_owned();
+                }
+            }
         });
         ui.add_space(8.0);
         ui.group(|ui| {

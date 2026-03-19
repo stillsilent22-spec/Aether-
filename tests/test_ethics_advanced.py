@@ -358,6 +358,69 @@ class TestEthicsIntegration:
         for text in (SCIENTIFIC_TEXT, NEWS_TEXT, EMPTY_TEXT):
             assert abs(ethics_score(text) - e.score(text)) < 1e-9
 
+
+class TestEthicsRuntimeCompatibility:
+
+    def test_evaluate_returns_runtime_fields(self):
+        from modules.ethics_engine import EthicsEngine
+        e = EthicsEngine()
+        r = e.evaluate(
+            symmetry_score=83.0,
+            entropy_blocks=[3.8, 4.1, 4.5, 4.2, 4.0],
+            entropy_mean=4.12,
+            periodicity=24,
+            delta_ratio=0.12,
+            healthy_references=[
+                {
+                    "symmetry_score": 0.8,
+                    "entropy_mean": 4.2,
+                    "periodicity": 24,
+                    "delta_ratio": 0.15,
+                }
+            ],
+        )
+        assert 0.0 <= r.ethics_score <= 1.0
+        assert 0.0 <= r.coherence_score <= 1.0
+        assert 0.0 <= r.resonance_score <= 1.0
+        assert r.integrity_state in ("STRUCTURAL_COHERENCE", "STRUCTURAL_TENSION", "STRUCTURAL_ANOMALY")
+
+
+class TestOckhamRazorEngine:
+
+    def test_low_risk_prefers_allow(self):
+        from modules.ethics_engine import OckhamRazorEngine
+        engine = OckhamRazorEngine()
+        decision = engine.decide(
+            {
+                "cpu_load": 0.10,
+                "mem_pressure": 0.15,
+                "process_spawn_rate": 0.05,
+                "unsigned_binary_ratio": 0.01,
+                "network_new_peers": 0.08,
+                "error_burst": 0.03,
+                "integrity_alerts": 0.00,
+            }
+        )
+        assert decision.action == "allow"
+        assert 0.0 <= decision.risk_score <= 1.0
+
+    def test_high_risk_avoids_allow(self):
+        from modules.ethics_engine import OckhamRazorEngine
+        engine = OckhamRazorEngine()
+        decision = engine.decide(
+            {
+                "cpu_load": 0.92,
+                "mem_pressure": 0.88,
+                "process_spawn_rate": 0.86,
+                "unsigned_binary_ratio": 0.73,
+                "network_new_peers": 0.82,
+                "error_burst": 0.80,
+                "integrity_alerts": 0.65,
+            }
+        )
+        assert decision.action != "allow"
+        assert any("high" in reason or "integrity" in reason for reason in decision.reasons)
+
     def test_corpus_scores_distribution(self):
         """Alle Testkorpora produzieren gültige Scores."""
         from modules.ethics_engine import EthicsEngine

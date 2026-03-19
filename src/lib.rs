@@ -1,5 +1,6 @@
 pub mod aef;
 pub mod app;
+pub mod ockham;
 pub mod py_entropy;
 pub mod auth;
 pub mod browser;
@@ -17,8 +18,19 @@ pub mod priority;
 pub mod public_ttd;
 pub mod runtime_signal;
 pub mod security;
+pub mod fingerprint;
+pub mod zk_match;
+pub mod policy;
+pub mod api;
+pub mod capsule;
+pub mod egl_policy;
+pub mod network_guard;
+pub mod orchestrator;
+pub mod egl_api;
+pub mod egl_example;
 pub mod shanway;
 pub mod state;
 pub mod theory_of_mind;
 pub mod vault_access;
 pub mod workflow_anchor;
+
