@@ -1726,6 +1726,11 @@ class VeiraGUI:
         self.right_notebook.add(structure_map_tab, text="STRUCTUREMAP")
         self._build_structure_map_tab(structure_map_tab)
 
+        # --- YouTube KI-Scanner Tab ---
+        youtube_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        self.right_notebook.add(youtube_tab, text="YOUTUBE")
+        self._build_youtube_tab(youtube_tab)
+
         # --- Einstellungen-Tab (Sprache + Monitor) ---
         settings_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         self.right_notebook.add(settings_tab, text="EINSTELLUNGEN")
@@ -10648,6 +10653,340 @@ class VeiraGUI:
                 pass
 
         parent.after(600, _animate)
+
+    def _build_youtube_tab(self, parent: tk.Frame) -> None:
+        """YouTube KI-Scanner – strukturelle Analyse ohne Semantik.
+
+        Metriken:
+          ai_score           – gewichtete Signalsumme (0..1)
+          ai_verdict         – "ai" | "likely_ai" | "human"
+          upload_rhythm_delta – Periodizitaet der Upload-Kadenz (0..1)
+          entropy            – Shannon-Entropie der Seitenstruktur
+          ockham_penalty     – Strafterm fuer Signalüberkomplexitaet
+
+        Einstellungen:
+          Warnschwelle       – ab welchem Score wird gewarnt
+          Auto-Ausblenden    – KI-Inhalte automatisch ausblenden (lokal, kein Netzwerkcall)
+          Cluster-Filter     – nur Kanäle mit bekannten KI-Clustern hervorheben
+        """
+        import threading as _threading
+
+        BG = "#070D14"
+        BG2 = "#0D1824"
+        FG = "#E7F4FF"
+        FGDIM = "#8BAFD0"
+        ACCENT = "#1C9AE0"
+        WARN = "#F6C849"
+        ERR = "#FF5555"
+        OK = "#7DE8A7"
+        FONT_H = ("Segoe UI", 11, "bold")
+        FONT_N = ("Segoe UI", 10)
+        FONT_S = ("Segoe UI", 9)
+        FONT_M = ("Consolas", 9)
+
+        # ── Interner Zustand ────────────────────────────────────────────────
+        self._yt_scanner = None
+        self._yt_history_rows: list = []
+        self._yt_scan_running = False
+
+        def _get_scanner():
+            if self._yt_scanner is None:
+                try:
+                    from modules.youtube_scanner import YouTubeScanner
+                    self._yt_scanner = YouTubeScanner()
+                except Exception as exc:
+                    _set_status(f"Scanner-Fehler: {exc}", err=True)
+            return self._yt_scanner
+
+        # ── Titelzeile ──────────────────────────────────────────────────────
+        hdr = tk.Frame(parent, bg=BG)
+        hdr.pack(fill="x", padx=8, pady=(8, 0))
+        tk.Label(hdr, text="⬛ YOUTUBE · KI-SCANNER", bg=BG, fg=ACCENT,
+                 font=FONT_H).pack(side="left")
+        tk.Label(
+            hdr,
+            text="Strukturell · Deterministisch · Ohne Semantik",
+            bg=BG, fg=FGDIM, font=FONT_S,
+        ).pack(side="left", padx=(12, 0))
+        tk.Frame(parent, bg="#1A3050", height=1).pack(fill="x", padx=6, pady=(4, 2))
+
+        # ── Disclaimer ──────────────────────────────────────────────────────
+        disc = tk.Frame(parent, bg="#130A00", bd=1, relief="flat")
+        disc.pack(fill="x", padx=10, pady=(0, 4))
+        tk.Label(
+            disc,
+            text=(
+                "Alle Angaben basieren ausschliesslich auf messbaren Strukturmetriken "
+                "(Entropie, Periodizitaet, Signalmuster). Kein Weltmodell, keine Semantik, "
+                "kein Wahrheitsanspruch. Ergebnis ist eine Strukturhypothese."
+            ),
+            bg="#130A00", fg=WARN, font=FONT_S, wraplength=490, justify="left",
+        ).pack(anchor="w", padx=10, pady=6)
+
+        # ── URL-Eingabe ──────────────────────────────────────────────────────
+        url_frame = tk.Frame(parent, bg=BG)
+        url_frame.pack(fill="x", padx=10, pady=(2, 4))
+        tk.Label(url_frame, text="URL:", bg=BG, fg=FGDIM, font=FONT_S).pack(side="left")
+        self._yt_url_var = tk.StringVar()
+        yt_entry = tk.Entry(
+            url_frame, textvariable=self._yt_url_var,
+            width=52, bg=BG2, fg=FG, insertbackground=FG, relief="flat",
+            font=FONT_N,
+        )
+        yt_entry.pack(side="left", padx=(6, 8))
+
+        self._yt_status_var = tk.StringVar(value="")
+
+        def _set_status(msg: str, err: bool = False) -> None:
+            color = ERR if err else FGDIM
+            try:
+                status_lbl.config(fg=color)
+                self._yt_status_var.set(str(msg))
+            except Exception:
+                pass
+
+        def _do_scan() -> None:
+            if self._yt_scan_running:
+                return
+            url = self._yt_url_var.get().strip()
+            if not url:
+                _set_status("Keine URL eingegeben.", err=True)
+                return
+            scanner = _get_scanner()
+            if scanner is None:
+                return
+            self._yt_scan_running = True
+            _set_status("Scan läuft…")
+            scan_btn.config(state="disabled")
+
+            def _worker():
+                try:
+                    profile = scanner.scan(url)
+                    parent.after(0, lambda p=profile: _display_result(p))
+                    parent.after(0, lambda p=profile: _add_history_row(p))
+                except Exception as exc:
+                    parent.after(0, lambda e=exc: _set_status(f"Fehler: {e}", err=True))
+                finally:
+                    parent.after(0, lambda: scan_btn.config(state="normal"))
+                    self._yt_scan_running = False
+
+            _threading.Thread(target=_worker, daemon=True, name="YTScan").start()
+
+        scan_btn = tk.Button(
+            url_frame, text="Analysieren", bg=ACCENT, fg=FG,
+            relief="flat", font=FONT_N, cursor="hand2",
+            command=_do_scan,
+        )
+        scan_btn.pack(side="left")
+
+        # Bind Enter in URL field
+        yt_entry.bind("<Return>", lambda _e: _do_scan())
+
+        # ── Ergebnis-Panel ────────────────────────────────────────────────────
+        result_frame = tk.Frame(parent, bg=BG2, bd=1, relief="flat")
+        result_frame.pack(fill="x", padx=10, pady=(2, 4))
+
+        self._yt_result_title_var = tk.StringVar(value="– kein Scan –")
+        tk.Label(result_frame, textvariable=self._yt_result_title_var,
+                 bg=BG2, fg=FG, font=FONT_N, wraplength=490, anchor="w",
+                 justify="left").pack(anchor="w", padx=10, pady=(6, 2))
+
+        # Score-Balken
+        score_bar_frame = tk.Frame(result_frame, bg=BG2)
+        score_bar_frame.pack(anchor="w", padx=10, pady=(0, 4), fill="x")
+        tk.Label(score_bar_frame, text="KI-Score:", bg=BG2, fg=FGDIM, font=FONT_S).pack(side="left")
+        self._yt_score_canvas = tk.Canvas(
+            score_bar_frame, width=220, height=14, bg="#0A1520", highlightthickness=0,
+        )
+        self._yt_score_canvas.pack(side="left", padx=(6, 8))
+        self._yt_score_label_var = tk.StringVar(value="?")
+        tk.Label(score_bar_frame, textvariable=self._yt_score_label_var,
+                 bg=BG2, fg=FG, font=FONT_S, width=6).pack(side="left")
+        self._yt_verdict_var = tk.StringVar(value="–")
+        self._yt_verdict_lbl = tk.Label(
+            score_bar_frame, textvariable=self._yt_verdict_var,
+            bg=BG2, fg=FGDIM, font=("Segoe UI", 10, "bold"), width=20, anchor="w",
+        )
+        self._yt_verdict_lbl.pack(side="left", padx=(8, 0))
+
+        # Detail-Metriken
+        metrics_frame = tk.Frame(result_frame, bg=BG2)
+        metrics_frame.pack(anchor="w", padx=10, pady=(0, 4), fill="x")
+        self._yt_metrics_var = tk.StringVar(value="")
+        tk.Label(metrics_frame, textvariable=self._yt_metrics_var,
+                 bg=BG2, fg=FGDIM, font=FONT_S, wraplength=490, anchor="w",
+                 justify="left").pack(anchor="w")
+
+        # Signal-Liste
+        self._yt_signals_var = tk.StringVar(value="")
+        tk.Label(result_frame, textvariable=self._yt_signals_var,
+                 bg=BG2, fg=WARN, font=FONT_S, wraplength=490, anchor="w",
+                 justify="left").pack(anchor="w", padx=10, pady=(0, 6))
+
+        def _update_score_bar(score: float) -> None:
+            c = self._yt_score_canvas
+            c.delete("all")
+            bar_w = int(220 * max(0.0, min(1.0, score)))
+            color = OK if score < 0.45 else (WARN if score < 0.70 else ERR)
+            c.create_rectangle(0, 0, bar_w, 14, fill=color, outline="")
+
+        def _display_result(profile) -> None:
+            _update_score_bar(profile.ai_score)
+            self._yt_score_label_var.set(f"{profile.ai_score:.2f}")
+            verdict_text = profile.verdict_label()
+            verdict_color = OK if profile.ai_verdict == "human" else (WARN if profile.ai_verdict == "likely_ai" else ERR)
+            self._yt_verdict_var.set(verdict_text)
+            self._yt_verdict_lbl.config(fg=verdict_color)
+            self._yt_result_title_var.set(
+                f"{profile.profile_type.upper()}  ·  {profile.title[:80] or profile.url[:80]}"
+            )
+            self._yt_metrics_var.set(
+                f"Entropie: {profile.entropy:.3f}  ·  "
+                f"Upload-Rhythmus Δ: {profile.upload_rhythm_delta:.3f}  ·  "
+                f"Ockham-Strafe: {profile.ockham_penalty:.3f}  ·  "
+                f"Kanal: {profile.channel_name or '–'}"
+            )
+            sigs = ", ".join(profile.ai_signals) or "–"
+            self._yt_signals_var.set(f"Signale: {sigs}")
+            _set_status("Scan abgeschlossen.")
+
+        # ── Verlaufstabelle ───────────────────────────────────────────────────
+        tk.Label(parent, text="VERLAUF", bg=BG, fg=FGDIM,
+                 font=FONT_S).pack(anchor="w", padx=12, pady=(4, 0))
+        hist_frame = tk.Frame(parent, bg=BG)
+        hist_frame.pack(fill="both", expand=True, padx=10, pady=(0, 2))
+
+        hist_scroll = tk.Scrollbar(hist_frame, bg=BG, troughcolor=BG2)
+        hist_scroll.pack(side="right", fill="y")
+        self._yt_hist_listbox = tk.Listbox(
+            hist_frame,
+            yscrollcommand=hist_scroll.set,
+            bg=BG2, fg=FG, selectbackground="#1A3A6A",
+            font=FONT_M, relief="flat", activestyle="none",
+        )
+        self._yt_hist_listbox.pack(fill="both", expand=True)
+        hist_scroll.config(command=self._yt_hist_listbox.yview)
+
+        def _add_history_row(profile) -> None:
+            import datetime as _dt
+            ts_str = _dt.datetime.fromtimestamp(profile.scanned_at).strftime("%d.%m.%Y %H:%M")
+            line = (
+                f"  [{ts_str}]  "
+                f"{profile.ai_score:.2f}  "
+                f"{profile.ai_verdict:<12s}  "
+                f"{profile.url[:55]}"
+            )
+            self._yt_hist_listbox.insert(0, line)
+            # Auto-hide: wenn Option aktiv und Score >= Schwelle, eingrauen
+            threshold = float(self._yt_threshold_var.get() if hasattr(self, "_yt_threshold_var") else 0.45)
+            if getattr(self, "_yt_autohide_var", None) and self._yt_autohide_var.get():
+                if profile.ai_score >= threshold:
+                    self._yt_hist_listbox.itemconfig(0, fg="#444466")
+
+        # Lade gespeicherte Profile
+        def _load_history() -> None:
+            scanner = _get_scanner()
+            if scanner is None:
+                return
+            try:
+                for profile in scanner.store.recent(n=30):
+                    _add_history_row(profile)
+            except Exception:
+                pass
+
+        parent.after(400, _load_history)
+
+        # ── Trennlinie ────────────────────────────────────────────────────────
+        tk.Frame(parent, bg="#1A3050", height=1).pack(fill="x", padx=6, pady=(4, 2))
+
+        # ── Einstellungen ─────────────────────────────────────────────────────
+        tk.Label(parent, text="EINSTELLUNGEN  —  KI-Inhalte",
+                 bg=BG, fg=ACCENT, font=FONT_S).pack(anchor="w", padx=12, pady=(2, 0))
+
+        cfg_frame = tk.Frame(parent, bg=BG)
+        cfg_frame.pack(anchor="w", padx=12, pady=(2, 4), fill="x")
+
+        # Warnschwelle
+        tk.Label(cfg_frame, text="Warnschwelle:", bg=BG, fg=FGDIM, font=FONT_S).grid(
+            row=0, column=0, sticky="w", pady=2)
+        self._yt_threshold_var = tk.StringVar(value="0.45")
+        tk.Scale(
+            cfg_frame, variable=self._yt_threshold_var,
+            from_=0.0, to=1.0, resolution=0.05, orient="horizontal",
+            length=160, bg=BG, fg=FG, troughcolor=BG2, highlightthickness=0,
+            sliderlength=14,
+        ).grid(row=0, column=1, sticky="w", padx=(6, 16))
+        tk.Label(cfg_frame, textvariable=self._yt_threshold_var,
+                 bg=BG, fg=FG, font=FONT_S, width=5).grid(row=0, column=2, sticky="w")
+
+        # Auto-Ausblenden
+        self._yt_autohide_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            cfg_frame,
+            text="KI-Inhalte automatisch ausblenden (lokal)",
+            variable=self._yt_autohide_var,
+            bg=BG, fg=FG, selectcolor=BG2, activebackground=BG,
+            font=FONT_S,
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=2)
+
+        # Cluster-Filter
+        self._yt_cluster_filter_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(
+            cfg_frame,
+            text="Nur Cluster mit bekannten KI-Signaturen hervorheben",
+            variable=self._yt_cluster_filter_var,
+            bg=BG, fg=FG, selectcolor=BG2, activebackground=BG,
+            font=FONT_S,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=2)
+
+        # Cluster-Ansicht (Knopf)
+        def _show_clusters() -> None:
+            scanner = _get_scanner()
+            if scanner is None:
+                return
+            try:
+                clusters = scanner.cluster()
+                self._yt_hist_listbox.delete(0, "end")
+                for cid, members in clusters.items():
+                    threshold = float(self._yt_threshold_var.get())
+                    ai_members = [m for m in members if m.ai_score >= threshold]
+                    if self._yt_cluster_filter_var.get() and not ai_members:
+                        continue
+                    self._yt_hist_listbox.insert(
+                        "end",
+                        f"  Cluster {cid}  ·  {len(members)} Profile  ·  "
+                        f"Ø-Score {sum(m.ai_score for m in members)/max(1, len(members)):.2f}"
+                    )
+                    for m in members:
+                        line = (
+                            f"    [{m.ai_verdict:<12s}]  {m.ai_score:.2f}  {m.url[:50]}"
+                        )
+                        self._yt_hist_listbox.insert("end", line)
+                        if m.ai_score >= threshold:
+                            self._yt_hist_listbox.itemconfig("end", fg=WARN)
+                _set_status(f"{len(clusters)} Cluster berechnet.")
+            except Exception as exc:
+                _set_status(f"Cluster-Fehler: {exc}", err=True)
+
+        cluster_btn_frame = tk.Frame(parent, bg=BG)
+        cluster_btn_frame.pack(anchor="w", padx=10, pady=(2, 4))
+        tk.Button(
+            cluster_btn_frame, text="Cluster berechnen", bg="#1A3050", fg=FG,
+            relief="flat", font=FONT_S, cursor="hand2",
+            command=_show_clusters,
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            cluster_btn_frame, text="Verlauf laden", bg="#1A3050", fg=FG,
+            relief="flat", font=FONT_S, cursor="hand2",
+            command=lambda: [self._yt_hist_listbox.delete(0, "end"), _load_history()],
+        ).pack(side="left")
+
+        # ── Status-Zeile ──────────────────────────────────────────────────────
+        status_lbl = tk.Label(
+            parent, textvariable=self._yt_status_var,
+            bg=BG, fg=FGDIM, font=FONT_S, anchor="w",
+        )
+        status_lbl.pack(anchor="w", padx=12, pady=(2, 6))
 
     def _build_settings_tab(self, parent: tk.Frame) -> None:
         """Baut den Einstellungen-Tab mit Sprachauswahl und Monitor-Steuerung."""
