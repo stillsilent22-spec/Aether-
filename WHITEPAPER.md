@@ -1,37 +1,37 @@
 # Aether Whitepaper
 
-Stand: M??rz 2026
+Stand: März 2026
 Autor: Kevin Hannemann
-Status: Technisches Whitepaper zur source-available Ver??ffentlichung
+Status: Technisches Whitepaper zur source-available Veröffentlichung
 
-??? [English version: WHITEPAPER_EN.md](WHITEPAPER_EN.md)
+→ [English version: WHITEPAPER_EN.md](WHITEPAPER_EN.md)
 
 ---
 
 ## 1. Einleitung
 
-Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether ??? einem lokalen Framework f??r strukturelle Datenanalyse mit integriertem Datenschutz.
+Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether — einem lokalen Framework für strukturelle Datenanalyse mit integriertem Datenschutz.
 
-Aether ist kein Klassifikator, kein KI-Modell und kein Interpreter. Es ist ein Messinstrument: Es berechnet strukturelle Merkmale beliebiger Daten und macht diese vergleichbar ??? ohne Labels, ohne Training, ohne sensitive Inhalte preiszugeben.
+Aether ist kein Klassifikator, kein KI-Modell und kein Interpreter. Es ist ein Messinstrument: Es berechnet strukturelle Merkmale beliebiger Daten und macht diese vergleichbar — ohne Labels, ohne Training, ohne sensitive Inhalte preiszugeben.
 
-**Grundsatz:** Strukturelle ??hnlichkeit ist eine Beobachtung, keine Aussage. Ob sie relevant ist, entscheiden Dom??nenexperten oder weitere Untersuchungen ??? nicht das System.
+**Grundsatz:** Strukturelle Ähnlichkeit ist eine Beobachtung, keine Aussage. Ob sie relevant ist, entscheiden Domänenexperten oder weitere Untersuchungen — nicht das System.
 
 ---
 
 ## 2. Technische Einordnung
 
-Aether behandelt Dateien, Bytestr??me und Systemprozesse als lokale Zust??nde, die ??ber messbare Struktur beschrieben und verglichen werden. Der technische Kern:
+Aether behandelt Dateien, Byteströme und Systemprozesse als lokale Zustände, die über messbare Struktur beschrieben und verglichen werden. Der technische Kern:
 
-- **Analysepipeline**: misst Entropie, Symmetrie, Periodizit??t, fraktale Dimension, Fourier-Spektrum, Attraktorzust??nde, Benford-Verteilung
+- **Analysepipeline**: misst Entropie, Symmetrie, Periodizität, fraktale Dimension, Fourier-Spektrum, Attraktorzust??nde, Benford-Verteilung
 - **Rekonstruktionsschicht**: Snapshots, Deltas, verlustfreie Rekonstruktion
 - **Persistenzschicht**: lokale SQLite-Datenbank, append-only Audit-Log
 - **Governance-Schicht**: fail-closed Zugriffsregeln, consent-gebundene Freigaben
-- **Shanway**: lokaler Sprachpfad ??? formuliert ausschlie??lich verifizierte Strukturbefunde
+- **Shanway**: lokaler Sprachpfad — formuliert ausschließlich verifizierte Strukturbefunde
 - **Aethernet**: optionaler dezentraler Ankerpfad (consent-bound, kein Rohdaten-Export)
 
 ---
 
-## 3. Dom??nenspezifische Mustererkennung
+## 3. Domänenspezifische Mustererkennung
 
 ### 3.1 Methodik
 
@@ -43,7 +43,7 @@ Innerhalb einer Dom??ne erkennt Aether Anomalien durch Abweichung von der beobac
 |---|---|---|
 | Shannon-Entropie | `H(X) = -?? p(x) log??? p(x)` | Informationsdichte, Musterlosigkeit |
 | Symmetrie (Gini) | Normalisierte Verteilungsungleichheit | Innere Balance der Byte-Verteilung |
-| Fraktale Dimension | Katz-Dimension | Selbst??hnlichkeit, Komplexit??tsstufe |
+| Fraktale Dimension | Katz-Dimension | SelbstÄhnlichkeit, Komplexit??tsstufe |
 | Dominante Frequenz | FFT, st??rkstes Spektrum | Periodizit??t, rhythmische Wiederkehr |
 | Benford-Score | F??hrungsziffernverteilung vs. log??????(1+1/d) | Nat??rlichkeit der Zahlenverteilung |
 | Attraktorzustand | Graph-basierte Stabilisierung | Konvergenz, Langzeitstabilit??t |
@@ -52,18 +52,18 @@ Innerhalb einer Dom??ne erkennt Aether Anomalien durch Abweichung von der beobac
 ### 3.2 Bioinformatik
 
 Genomsequenzen besitzen charakteristische Entropie- und Periodizit??tsprofile. Aether erkennt:
-- Entropieausrei??er (m??gliche Mutationsh??ufungen, Insertionen)
+- Entropieausrei??er (mögliche Mutationshäufungen, Insertionen)
 - Benford-Abweichungen (unerwartete H??ufigkeitsverteilungen von Codons)
 - Periodizit??tsmuster (regulatorische Sequenzen, Wiederholungselemente)
 
-**Datenschutz:** Die Sequenz verl??sst das Ger??t nie. Der Fingerprint enth??lt keine Sequenzinformation ??? er ist nicht invertierbar.
+**Datenschutz:** Die Sequenz verl??sst das Gerät nie. Der Fingerprint enth??lt keine Sequenzinformation ??? er ist nicht invertierbar.
 
 ### 3.3 Klimaforschung
 
 Klimazeitreihen zeigen charakteristische Strukturmuster (saisonale Periodizit??t, Attraktor-Stabilit??t bei stabilen Klimaregimen). Aether erkennt:
 - Strukturbr??che (Regime-Wechsel ohne Annotation)
 - Abnorme Frequenzmuster (nicht-periodische Ereigniscluster)
-- Attraktordrift (Verschiebung stabiler Zust??nde ??ber Zeit)
+- Attraktordrift (Verschiebung stabiler Zustände über Zeit)
 
 **Datenschutz:** Messstationsdaten, Koordinaten, Metadaten bleiben lokal.
 
@@ -82,7 +82,7 @@ Relevante Module: `modules/process_monitor.py`, `modules/efficiency_monitor.py`,
 Quellcode und Bin??rstrukturen haben messbare Struktureigenschaften:
 - Komplexit??tsverteilung (Entropiedichte pro Modul)
 - Anomalie-Erkennung (Abweichungen von der Codebase-Baseline)
-- Strukturelle ??hnlichkeit zwischen Modulen (ohne Inhalte zu lesen)
+- Strukturelle Ähnlichkeit zwischen Modulen (ohne Inhalte zu lesen)
 ### 3.6 EthicsEngine: Formale Definitionen der Sprachstrukturmetriken
 
 Die EthicsEngine bewertet Texte ausschließlich anhand messbarer Sprachstrukturgesetze.
@@ -183,34 +183,34 @@ $$E(T) = \begin{cases}
 | $H$ | Heisenberg | Absolute Aussagendichte, Unschärfemaß |
 ---
 
-## 4. Dom??nen??bergreifender Vergleich
+## 4. Domänenübergreifender Vergleich
 
 ### 4.1 Was Aether tut
 
-Wenn strukturelle Fingerprints aus verschiedenen Dom??nen verglichen werden, beobachtet Aether Cluster. Es interpretiert sie nicht.
+Wenn strukturelle Fingerprints aus verschiedenen Domänen verglichen werden, beobachtet Aether Cluster. Es interpretiert sie nicht.
 
 **Dreistufiges Modell:**
 
 ```
 Stufe 1: Beobachtung    ??? Zwei Fingerprints ??hneln sich strukturell
-Stufe 2: H??ufung        ??? Mehrere unabh??ngige Datens??tze zeigen gleiches Cluster
-Stufe 3: Hypothese      ??? Pr??fbare Vermutung f??r Dom??nenexperten
+Stufe 2: Häufung        ??? Mehrere unabh??ngige Datens??tze zeigen gleiches Cluster
+Stufe 3: Hypothese      ??? Pr??fbare Vermutung für Domänenexperten
 ```
 
 Aether gibt nur Stufe 1 aus. Stufe 2 entsteht durch Akkumulation im lokalen Vault oder im Aethernet-Schwarm. Stufe 3 ist Aufgabe des Nutzers.
 
 ### 4.2 Was Aether nicht tut
 
-- Struktur??hnlichkeit als Kausalit??t ausgeben
-- Dom??nen??bergreifende Muster als Befunde formulieren
+- StrukturÄhnlichkeit als Kausalit??t ausgeben
+- Domänenübergreifende Muster als Befunde formulieren
 - Unvalidierte Beobachtungen als Ergebnis darstellen (Shanway-Schutz)
 - R??ckschl??sse auf den Inhalt der verglichenen Daten ziehen
 
-### 4.3 Wann dom??nen??bergreifende Vergleiche relevant werden
+### 4.3 Wann dom??nenübergreifende Vergleiche relevant werden
 
 Erst wenn sich viele unabh??ngige strukturelle Hinweise h??ufen, entsteht ein belastbarer Hinweis:
 - Genomsequenz und Klimazeitreihe zeigen denselben Periodit????ts??fingerprint ??? Einzelhinweis
-- 200 unabh??ngige Genomsequenzen und 300 Klimazeitreihen zeigen dasselbe Cluster ??? pr??fbare Hypothese f??r Dom??nenexperten
+- 200 unabh??ngige Genomsequenzen und 300 Klimazeitreihen zeigen dasselbe Cluster ??? prüfbare Hypothese für Domänenexperten
 
 Das System macht diese Unterscheidung explizit: Einzelhinweise werden nicht als Befunde formuliert.
 
@@ -271,7 +271,7 @@ Diese Formulierung ist eine Arbeitshypothese des Projekts, kein neues Theorem de
 **Zero-Knowledge-Architektur:**
 
 ```
-Lokal (Ger??t)               Netz
+Lokal (Gerät)               Netz
 ???????????????????????????????????????               ????????????
 Rohdaten        ??? NIEMALS ??? Netz
 Deltas          ??? NIEMALS ??? Netz
@@ -293,18 +293,18 @@ Aus `anchor_hash` lassen sich weder der Chunk noch der Inhalt der analysierten D
 
 **Consent-Schicht vor jeder Freigabe:**
 - Option 1: Kein Teilen (Standard)
-- Option 2: Anonym (nur Anchor-Hash, keine Nutzeridentit??t)
+- Option 2: Anonym (nur Anchor-Hash, keine Nutzeridentität)
 - Option 3: Mit Signatur (explizite Identifikation des Erstellers)
 
 ---
 
 ## 7. Nicht-halluzinierende Architektur: Shanway
 
-Shanway empf??ngt ausschlie??lich strukturell verifizierte Daten aus der Pipeline. Der System-Prompt verhindert Spekulation. Bei Unsicherheit wird keine Ausgabe erzeugt.
+Shanway empfängt ausschließlich strukturell verifizierte Daten aus der Pipeline. Der System-Prompt verhindert Spekulation. Bei Unsicherheit wird keine Ausgabe erzeugt.
 
 **Was das in der Praxis bedeutet:**
 - Wenn `H_lambda` hoch ist (viel Restunsicherheit): Shanway schweigt oder kennzeichnet die Ausgabe entsprechend
-- Wenn Rekonstruktionsbedingung `D(S_t, R_t) = X_t` nicht erf??llt: Shanway gibt keine Vollst??ndigkeitsaussage aus
+- Wenn Rekonstruktionsbedingung `D(S_t, R_t) = X_t` nicht erfüllt: Shanway gibt keine Vollständigkeitsaussage aus
 - Wenn Governance-Bedingungen brechen: Shanway gibt keine Ausgabe
 
 ---
@@ -312,24 +312,24 @@ Shanway empf??ngt ausschlie??lich strukturell verifizierte Daten aus der Pipelin
 ## 8. Sicherheits- und Governance-Modell
 
 **Interne Sicherheitsregeln:**
-1. Unzul??ssige Zust??nde sind nicht bequem darstellbar
+1. Unzulässige Zustände sind nicht bequem darstellbar
 2. Kritische Zustandswechsel werden validiert
 3. Standard: `deny by default`
 4. Kritische Pfade: append-only, gehasht, signiert
-5. Rohdaten, Snapshots, Schl??ssel und Rechte strikt getrennt
+5. Rohdaten, Snapshots, Schlüssel und Rechte strikt getrennt
 
 **Relevante Module:**
 - `modules/security_engine.py` ??? `SecurityManager`, `secure_zeroize`
 - `modules/security_monitor.py` ??? Integrit??tspr??fung, Baseline-Vergleich
-- `modules/session_engine.py` ??? `SessionContext`, ephemere Schl??ssel
+- `modules/session_engine.py` ??? `SessionContext`, ephemere Schlüssel
 
 ---
 
 ## 9. Entwicklungspfad: AELAB und Aether
 
-AELAB war der erste Entwicklungsimpuls ??? ein evolutiver Pfad zur Extraktion stabiler Strukturkandidaten. Er erwies sich als zu ungebunden f??r den Anspruch des Systems.
+AELAB war der erste Entwicklungsimpuls ??? ein evolutiver Pfad zur Extraktion stabiler Strukturkandidaten. Er erwies sich als zu ungebunden für den Anspruch des Systems.
 
-Aether ist die Hauptarchitektur. AELAB ist heute ein interner Hintergrundpfad (`modules/ae_evolution_core.py`), der zus??tzliche Strukturanker liefert.
+Aether ist die Hauptarchitektur. AELAB ist heute ein interner Hintergrundpfad (`modules/ae_evolution_core.py`), der zusätzliche Strukturanker liefert.
 
 ---
 
@@ -453,7 +453,7 @@ in der Registry referenziert — niemals im Klartext.
 
 ---
 
-## 11. Datenschutz by Architecture — aktualisiert
+## 11. PrivacyRegistry und granulare Freigaben
 
 ### 11.1 Klarere Trennung: Anker vs. Filekey
 
@@ -483,20 +483,25 @@ Neue `PrivacyRegistry` (`modules/privacy_registry.py`) bietet:
 
 ---
 
-- Strukturmuster sind Beobachtungen, keine Kausalaussagen
-- Die beobachterrelative Erweiterung ist ein Arbeitsmodell, keine abgeschlossene Theorie
-- SEMS ist ein Arbeitsbegriff im Projekt, kein anerkanntes Wissenschaftsfeld
-- Dom??nen??bergreifende Cluster werden nicht als Befunde ausgegeben ??? erst H??ufung macht sie pr??fbar
-- Der historische Pi-Befund (AELAB-Entwicklungsgeschichte) ist in der aktuellen Codebasis nicht reproduzierbar belegt
+## 12. Systemgrenzen und Hinweise
+
+- **Strukturmuster sind Beobachtungen, keine Kausalaussagen.** Ähnliche Struktursignaturen in verschiedenen Domänen sind Hinweise — keine Befunde.
+- **Die beobachterrelative Erweiterung (H_lambda) ist ein Arbeitsmodell**, kein etabliertes informationstheoretisches Konzept.
+- **SEMS ist ein projektinterner Arbeitsbegriff**, kein anerkanntes Wissenschaftsfeld.
+- **Domänenübergreifende Cluster werden nicht als Befunde ausgegeben** — erst Häufung über viele unabhängige Datensätze macht sie zu prüfbaren Hypothesen.
+- **Der historische Pi-Befund (AELAB-Entwicklungsgeschichte)** ist in der aktuellen Codebasis nicht reproduzierbar belegt.
+- **Kein externer Sicherheitsaudit** wurde bisher durchgeführt.
 
 ---
 
-## Schlussfolgerung
+## 13. Schlussfolgerung
 
-Aether misst Struktur. Es interpretiert nicht. Es misst, speichert lokal, gibt nichts preis, was nicht explizit freigegeben wurde ??? und formuliert nur, was die Pipeline gemessen hat.
+Aether misst Struktur. Es interpretiert nicht. Es misst, speichert lokal, gibt nichts preis,
+was nicht explizit freigegeben wurde — und formuliert nur, was die Pipeline gemessen hat.
 
-**Aether ist ein Werkzeug f??r alle, die Muster in Daten finden wollen, ohne Kontrolle ??ber diese Daten aufzugeben. Hilf mit, es zu bauen.**
+Aether ist ein Werkzeug für alle, die Muster in Daten finden wollen,
+ohne Kontrolle über diese Daten aufzugeben. **Hilf mit, es zu bauen.**
 
 ---
 
-Stand: M??rz 2026 ??? Autor: Kevin Hannemann
+Stand: März 2026 — Autor: Kevin Hannemann

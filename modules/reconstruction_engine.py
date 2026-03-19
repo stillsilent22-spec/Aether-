@@ -128,7 +128,7 @@ class ReconstructionEngine:
         return self.ctx.fernet.decrypt(token)
 
 
-from dataclasses import dataclass as _dc, field as _dcfield
+from dataclasses import dataclass as _dc, field as _dcfield, dataclass, field
 
 
 @_dc
@@ -814,7 +814,7 @@ def _apply_xor_delta(source: bytes, delta_payload: dict[str, Any]) -> bytes:
     return reconstructed[:target_length]
 
 
-@dataclass
+@_dc
 class GovernanceContext:
     """Beschreibt lokale Rechte, Invarianten und Signaturmaterial fuer Rekonstruktionen."""
 
@@ -822,10 +822,10 @@ class GovernanceContext:
     session_id: str = ""
     user_id: int = 0
     role: str = "operator"
-    rights: dict[str, list[str]] = field(default_factory=dict)
-    invariants: dict[str, Any] = field(default_factory=dict)
-    keys: dict[str, str] = field(default_factory=dict)
-    audit: dict[str, Any] = field(default_factory=dict)
+    rights: dict[str, list[str]] = _dcfield(default_factory=dict)
+    invariants: dict[str, Any] = _dcfield(default_factory=dict)
+    keys: dict[str, str] = _dcfield(default_factory=dict)
+    audit: dict[str, Any] = _dcfield(default_factory=dict)
 
     def allows(self, modality: str, op: str) -> bool:
         """Prueft deterministisch, ob eine Modalitaets-Operation lokal erlaubt ist."""
