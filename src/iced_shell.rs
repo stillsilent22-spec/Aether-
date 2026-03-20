@@ -1,4 +1,4 @@
-use crate::aef::{AefDecodeResult, AefDecoder, VaultStore};
+use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
@@ -1862,14 +1862,34 @@ impl AetherIcedShell {
                     .into()
                 }
                 Err(err) => {
-                    container(
+                    let is_aef_err = err.contains("Magic Bytes")
+                        || err.contains("ungültig")
+                        || err.contains("droppen");
+                    let mut col = column![
                         row![
                             text("\u{2718}").size(14).color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
                             text(format!("Fehler: {err}")).size(13)
                                 .color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
                         ]
                         .spacing(8),
-                    )
+                    ]
+                    .spacing(8);
+                    if is_aef_err {
+                        col = col.push(
+                            container(
+                                text("\u{26a0} Diese Datei wurde noch nicht als AEF analysiert. Ziehe sie erneut in das Fenster.")
+                                    .size(13)
+                                    .color(Color::from_rgb8(0xFF, 0xCC, 0x44)),
+                            )
+                            .padding([8, 12])
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x2A, 0x18, 0x00))),
+                                border: Border { color: Color::from_rgb8(0x88, 0x66, 0x00), width: 1.0, radius: 4.0.into() },
+                                ..Default::default()
+                            }),
+                        );
+                    }
+                    container(col)
                     .padding(16)
                     .style(|_: &Theme| container::Style {
                         background: Some(Background::Color(Color::from_rgb8(0x1C, 0x06, 0x06))),
@@ -2892,8 +2912,10 @@ impl AetherIcedShell {
                             self.last_analysis = Some(result.snapshot.clone());
                             self.analysis_progress = 1.0;
                             self.analysis_status = format!(
-                                "Cluster-Zuordnung abgeschlossen. {} | {:.2}% Gewinn",
-                                result.snapshot.file_name, result.snapshot.compression_gain_percent
+                                "AEF erstellt: {} | {:.1}% Gewinn | {}",
+                                result.snapshot.file_name,
+                                result.snapshot.compression_gain_percent,
+                                result.snapshot.preview_note
                             );
                             self.status_line = self.analysis_status.clone();
                             self.active_tab = Tab::Data;
@@ -2953,7 +2975,13 @@ impl AetherIcedShell {
                             format!("Rekonstruktion unvollstaendig: {name} ({} Vault-Refs fehlen)", r.missing_vault_refs.len())
                         }
                     }
-                    Err(err) => format!("Rekonstruktion fehlgeschlagen: {err}"),
+                    Err(err) => {
+                        if err.contains("Magic Bytes") || err.contains("ungültig") {
+                            "Rekonstruktion fehlgeschlagen: Keine AEF-Datei gefunden. Datei zuerst neu droppen.".to_owned()
+                        } else {
+                            format!("Rekonstruktion fehlgeschlagen: {err}")
+                        }
+                    }
                 };
                 self.status_line = status;
                 self.rekonstruktion_result = Some(result);
@@ -3971,43 +3999,64 @@ async fn analyze_file_for_register(
     path: PathBuf,
     username: String,
 ) -> Result<FileAnalysisResult, String> {
-    let bytes =
-        fs::read(&path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
-    let metadata = fs::metadata(&path)
-        .map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
-    let original_size = metadata.len();
-    let delta_size = estimate_compressed_size(&bytes)?;
-    let ratio = if original_size == 0 {
-        0.0
-    } else {
-        delta_size as f32 / original_size as f32
-    };
-    let compression_gain_percent = ((1.0 - ratio).clamp(0.0, 1.0) * 10000.0).round() / 100.0;
-    let entropy = shannon_entropy(&bytes);
-    let drift = byte_drift(&bytes);
-    let source_kind = detect_source_kind(&path, &bytes);
+    // Create AEF output directory
+    let aef_dir = PathBuf::from("data")
+        .join("rust_shell")
+        .join("aef_store")
+        .join(&username);
+    fs::create_dir_all(&aef_dir)
+        .map_err(|e| format!("AEF-Verzeichnis konnte nicht erstellt werden: {e}"))?;
+    let file_stem = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
+    let aef_path = aef_dir.join(format!("{file_stem}.aef"));
+
+    // Load vault and build encoder
+    let vault = VaultStore::load_default().map_err(|e| format!("Vault: {e}"))?;
+    let vault = Arc::new(RwLock::new(vault));
+    let engine = Arc::new(EnginePipeline::new());
+    let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
+
+    // Encode the file to .aef
+    let encode_result = encoder
+        .encode_sync(&path, &aef_path)
+        .map_err(|e| format!("AEF-Encoding fehlgeschlagen: {e}"))?;
+
+    let original_size = encode_result.original_size;
+    let delta_size = encode_result.delta_size;
+    let compression_gain_percent =
+        ((1.0 - encode_result.compression_rate).clamp(0.0, 1.0) * 10000.0).round() / 100.0;
     let file_name = path
         .file_name()
-        .and_then(|name| name.to_str())
+        .and_then(|n| n.to_str())
         .unwrap_or("unbekannt")
         .to_owned();
-    let symmetry = estimated_symmetry(&bytes);
+    let source_kind = detect_source_kind(&path, &[]);
     let preview_note = format!(
-        "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Drift {:.2}",
-        source_kind,
-        entropy,
-        symmetry * 100.0,
-        drift
+        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {}",
+        encode_result.e_lambda,
+        encode_result.e_lambda_label,
+        encode_result.trust_score * 100.0,
+        if encode_result.lossless_confirmed { "ja" } else { "nein" }
     );
-    let anchor_summary = build_anchor_summary(entropy, symmetry, drift);
-    let process_summary =
-        build_process_summary(entropy, symmetry, compression_gain_percent, &source_kind);
+    let anchor_summary = format!(
+        "{} Anker | {:.1}% Kompression | Trust: {:.0}%",
+        encode_result.anchor_count,
+        compression_gain_percent,
+        encode_result.trust_score * 100.0
+    );
+    let process_summary = format!(
+        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2}",
+        original_size, delta_size, encode_result.e_lambda
+    );
+
     Ok(FileAnalysisResult {
         entry: RegisterEntry {
             id: 0,
             owner_username: username,
             file_name: file_name.clone(),
-            full_path: path.to_string_lossy().to_string(),
+            full_path: aef_path.to_string_lossy().to_string(),
             source_kind,
             original_size,
             delta_size,
