@@ -1,0 +1,243 @@
+"""symbiont_server.py — Aether Symbiont LSP/JSON-RPC Server.
+
+Startet einen asynchronen JSON-RPC-Server auf stdin/stdout (kompatibel mit
+VS Code Language Server Protocol). Implementiert 7 Methoden:
+
+  aether/profile    → StructuralProfile für ein Signal
+  aether/razor      → RazorReport für eine Signalmenge
+  aether/snapshot   → Snapshot im Vault speichern
+  aether/diff       → Zwei Snapshots vergleichen
+  aether/twins      → Twin-Cluster in Signalmenge finden
+  aether/complete   → Completions filtern + ranken
+  aether/status     → Server-Status
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import os
+import sys
+import time
+from typing import Any, Callable, Dict, Optional
+
+# ── Pfad-Setup (Server läuft in aether-symbiont/server/) ─────────────────────
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+from modules.symbiont_core      import AetherSymbiont
+from modules.symbiont_vault     import SymbiontVault
+from modules.meta_ockham        import MetaOckhamEngine
+from modules.completion_filter  import SymbiontCompletionFilter
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s [symbiont_server] %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
+log = logging.getLogger("symbiont_server")
+
+# ── Globale Instanzen ─────────────────────────────────────────────────────────
+
+_symbiont  = AetherSymbiont()
+_vault     = SymbiontVault()
+_ockham    = MetaOckhamEngine()
+_filter    = SymbiontCompletionFilter()
+_start_ts  = time.time()
+_req_count = 0
+
+
+# ── JSON-RPC Dispatcher ───────────────────────────────────────────────────────
+
+HANDLERS: Dict[str, Callable] = {}
+
+
+def register(method: str):
+    def decorator(fn: Callable) -> Callable:
+        HANDLERS[method] = fn
+        return fn
+    return decorator
+
+
+# ── Handler ───────────────────────────────────────────────────────────────────
+
+@register("aether/profile")
+async def handle_profile(params: dict) -> dict:
+    """
+    params: { "signal": str | list[int] }
+    """
+    raw = params.get("signal", "")
+    if isinstance(raw, list):
+        signal = bytes(raw)
+    else:
+        signal = str(raw)
+    profile = _symbiont.profile(signal)
+    return profile.to_dict()
+
+
+@register("aether/razor")
+async def handle_razor(params: dict) -> dict:
+    """
+    params: { "signals": list[str] }
+    """
+    signals = [str(s) for s in params.get("signals", [])]
+    if not signals:
+        return {"error": "no_signals"}
+    report = _ockham.apply_razor(signals)
+    return report.to_dict()
+
+
+@register("aether/snapshot")
+async def handle_snapshot(params: dict) -> dict:
+    """
+    params: { "signal": str }
+    """
+    raw = params.get("signal", "")
+    signal = str(raw)
+    profile = _symbiont.profile(signal)
+    handle = _vault.store_snapshot(profile)
+    return handle.to_dict()
+
+
+@register("aether/diff")
+async def handle_diff(params: dict) -> dict:
+    """
+    params: { "snapshot_id_a": str, "snapshot_id_b": str }
+    """
+    id_a = str(params.get("snapshot_id_a", ""))
+    id_b = str(params.get("snapshot_id_b", ""))
+    pa = _vault.load_snapshot(id_a)
+    pb = _vault.load_snapshot(id_b)
+    if pa is None or pb is None:
+        return {"error": "snapshot_not_found", "id_a": id_a, "id_b": id_b}
+    delta = _symbiont.delta(
+        pa.signal_id.encode(),   # Re-profile aus gespeicherten Daten nicht möglich
+        pb.signal_id.encode(),   # → Signal-IDs als Proxy-Signale verwenden
+    )
+    return delta.to_dict()
+
+
+@register("aether/twins")
+async def handle_twins(params: dict) -> dict:
+    """
+    params: { "signals": list[str] }
+    """
+    signals = [str(s) for s in params.get("signals", [])]
+    clusters = _ockham.find_twin_clusters(signals)
+    return {"clusters": [c.to_dict() for c in clusters]}
+
+
+@register("aether/complete")
+async def handle_complete(params: dict) -> dict:
+    """
+    params: { "query": str, "completions": list[str] }
+    """
+    query       = str(params.get("query", ""))
+    completions = [str(c) for c in params.get("completions", [])]
+    result      = _filter.rank(query, completions)
+    return result.to_dict()
+
+
+@register("aether/status")
+async def handle_status(params: dict) -> dict:
+    return {
+        "status":      "running",
+        "uptime_s":    round(time.time() - _start_ts, 1),
+        "req_count":   _req_count,
+        "vault_path":  _vault._db_path,
+        "timestamp":   time.time(),
+    }
+
+
+# ── JSON-RPC Transport (stdin/stdout) ─────────────────────────────────────────
+
+async def _read_message(reader: asyncio.StreamReader) -> Optional[dict]:
+    """Liest eine JSON-RPC-Nachricht (Content-Length framed)."""
+    headers: dict[str, str] = {}
+    while True:
+        line = await reader.readline()
+        if not line:
+            return None
+        decoded = line.decode("utf-8", errors="replace").rstrip("\r\n")
+        if not decoded:
+            break
+        if ":" in decoded:
+            key, _, val = decoded.partition(":")
+            headers[key.strip().lower()] = val.strip()
+    length = int(headers.get("content-length", "0"))
+    if length == 0:
+        return None
+    body = await reader.readexactly(length)
+    try:
+        return json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+async def _write_message(writer: asyncio.StreamWriter, obj: dict) -> None:
+    """Schreibt eine JSON-RPC-Antwort (Content-Length framed)."""
+    body = json.dumps(obj).encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode("utf-8")
+    writer.write(header + body)
+    await writer.drain()
+
+
+async def _handle_request(writer: asyncio.StreamWriter, msg: dict) -> None:
+    global _req_count
+    _req_count += 1
+    req_id  = msg.get("id")
+    method  = str(msg.get("method", ""))
+    params  = msg.get("params") or {}
+
+    handler = HANDLERS.get(method)
+    if handler is None:
+        if req_id is not None:
+            await _write_message(writer, {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32601, "message": f"Method not found: {method}"},
+            })
+        return
+
+    try:
+        result = await handler(params)
+        if req_id is not None:
+            await _write_message(writer, {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": result,
+            })
+    except Exception as exc:
+        log.exception("handler error: method=%s", method)
+        if req_id is not None:
+            await _write_message(writer, {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "error": {"code": -32603, "message": str(exc)},
+            })
+
+
+async def main() -> None:
+    loop = asyncio.get_event_loop()
+    reader = asyncio.StreamReader()
+    protocol = asyncio.StreamReaderProtocol(reader)
+    await loop.connect_read_pipe(lambda: protocol, sys.stdin.buffer)
+
+    write_transport, write_protocol = await loop.connect_write_pipe(
+        asyncio.BaseProtocol, sys.stdout.buffer
+    )
+    writer = asyncio.StreamWriter(write_transport, write_protocol, reader, loop)
+
+    log.warning("Symbiont LSP server running (stdin/stdout JSON-RPC).")
+    while True:
+        msg = await _read_message(reader)
+        if msg is None:
+            break
+        asyncio.ensure_future(_handle_request(writer, msg))
+
+    _vault.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

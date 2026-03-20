@@ -431,3 +431,128 @@ impl ShaderVaultCache {
         (handle, false, hash)
     }
 }
+// ---------------------------------------------------------------------------
+// MetaLayer Pixel-Koordinaten-Erweiterungen
+// ---------------------------------------------------------------------------
+
+/// Shannon-Entropie eines 8×8-Pixel-Blocks (Graustufen-Bytes).
+/// Ergibt einen Wert in [0, 8]. Läuft in < 1 µs für 64-Byte-Blocks.
+pub fn pixel_block_entropy(block: &[u8]) -> f32 {
+    if block.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0u32; 256];
+    for &b in block {
+        counts[b as usize] += 1;
+    }
+    let n = block.len() as f32;
+    let mut entropy = 0.0f32;
+    for &c in &counts {
+        if c > 0 {
+            let p = c as f32 / n;
+            entropy -= p * p.log2();
+        }
+    }
+    entropy
+}
+
+/// Pearson-Korrelationskoeffizient zweier f32-Vektoren gleicher Länge.
+/// Rückgabe: [-1, 1]. Gibt 0.0 zurück wenn eines der Slices leer ist.
+pub fn process_cross_correlation(a: &[f32], b: &[f32]) -> f32 {
+    let n = a.len().min(b.len());
+    if n < 2 {
+        return 0.0;
+    }
+    let mean_a: f32 = a[..n].iter().sum::<f32>() / n as f32;
+    let mean_b: f32 = b[..n].iter().sum::<f32>() / n as f32;
+    let mut cov = 0.0f32;
+    let mut var_a = 0.0f32;
+    let mut var_b = 0.0f32;
+    for i in 0..n {
+        let da = a[i] - mean_a;
+        let db = b[i] - mean_b;
+        cov   += da * db;
+        var_a += da * da;
+        var_b += db * db;
+    }
+    let denom = (var_a * var_b).sqrt();
+    if denom < 1e-9 {
+        0.0
+    } else {
+        (cov / denom).clamp(-1.0, 1.0)
+    }
+}
+
+/// Beschreibt eine Bildschirmregion eines Prozesses für die CoordMatrix.
+#[derive(Debug, Clone)]
+pub struct ProcessRegion {
+    pub pid:    u32,
+    pub name:   String,
+    pub left:   i32,
+    pub top:    i32,
+    pub width:  u32,
+    pub height: u32,
+    pub score:  f32,
+}
+
+/// Eintrag in der globalen Koordinatenmatrix.
+#[derive(Debug, Clone)]
+pub struct CoordMatrixEntry {
+    pub pid:           u32,
+    pub process_name:  String,
+    pub area_px:       u64,
+    pub score:         f32,
+    pub overlap_ratio: f32,
+}
+
+/// Globale Koordinatenmatrix: aggregiert alle Prozess-Regionen und berechnet
+/// Überlappungsanteile sowie Gesamt-Score.
+pub fn build_coord_matrix(process_regions: Vec<ProcessRegion>) -> Vec<CoordMatrixEntry> {
+    let total_area: u64 = process_regions
+        .iter()
+        .map(|r| r.width as u64 * r.height as u64)
+        .sum();
+    let total_area = total_area.max(1);
+
+    process_regions
+        .iter()
+        .map(|r| {
+            let area = r.width as u64 * r.height as u64;
+            let overlap_ratio = area as f32 / total_area as f32;
+            CoordMatrixEntry {
+                pid:           r.pid,
+                process_name:  r.name.clone(),
+                area_px:       area,
+                score:         r.score,
+                overlap_ratio: overlap_ratio.clamp(0.0, 1.0),
+            }
+        })
+        .collect()
+}
+
+/// Schätzt den DWM-Koordinatenpfad-Score eines HWND-Handles (Windows only).
+/// Gibt einen Wert in [0, 1] zurück — höher = mehr Compositing-Overhead.
+/// Auf Nicht-Windows-Systemen wird immer 0.5 zurückgegeben.
+#[cfg(target_os = "windows")]
+pub fn dwm_coord_path_score(hwnd: usize) -> f32 {
+    // Heuristik: Windows-API-Stilflags auswerten um DWM-Komplexität zu schätzen.
+    // GetWindowLongPtrW(-20) = GWL_EXSTYLE
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_EXSTYLE,
+        WS_EX_LAYERED, WS_EX_NOREDIRECTIONBITMAP,
+    };
+    let ex_style = unsafe { GetWindowLongPtrW(hwnd as isize as _, GWL_EXSTYLE) };
+    let mut score = 0.5f32;
+    if ex_style as u32 & WS_EX_LAYERED != 0 {
+        score += 0.15;
+    }
+    if ex_style as u32 & WS_EX_NOREDIRECTIONBITMAP != 0 {
+        score -= 0.15; // Direktpfad → weniger Overhead
+    }
+    score.clamp(0.0, 1.0)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn dwm_coord_path_score(_hwnd: usize) -> f32 {
+    0.5
+}
