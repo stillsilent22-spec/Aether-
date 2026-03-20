@@ -508,41 +508,39 @@ impl AetherIcedShell {
 
     fn tab_button(&self, tab: Tab, icon: &'static str, label: &'static str) -> Element<'_, Message> {
         let is_active = self.active_tab == tab;
+        let accent = Color::from_rgb8(0x00, 0xE5, 0x7A);
+        let text_active = Color::from_rgb8(0xE8, 0xF4, 0xFF);
+        let text_idle = Color::from_rgb8(0x4A, 0x68, 0x84);
+
         container(
             button(
                 column![
-                    text(icon).size(18),
-                    text(label).size(12),
+                    text(icon).size(16).color(if is_active { accent } else { text_idle }),
+                    text(label).size(11).color(if is_active { text_active } else { text_idle }),
                 ]
-                .spacing(3)
+                .spacing(2)
                 .align_x(Alignment::Center),
             )
-            .padding([8, 14])
-            .on_press(Message::TabSelected(tab)),
+            .padding([8, 16])
+            .on_press(Message::TabSelected(tab))
+            .style(move |_: &Theme, _| button::Style {
+                background: None,
+                text_color: if is_active { text_active } else { text_idle },
+                ..Default::default()
+            }),
         )
-        .style(move |_theme: &Theme| {
-            if is_active {
-                container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
-                    border: Border {
-                        color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
-                        width: 1.5,
-                        radius: 8.0.into(),
-                    },
-                    text_color: Some(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
-                    ..Default::default()
-                }
+        .style(move |_: &Theme| container::Style {
+            background: if is_active {
+                Some(Background::Color(Color::from_rgba(0.0, 0.898, 0.478, 0.06)))
             } else {
-                container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x0A, 0x16, 0x24))),
-                    border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
-                        width: 1.0,
-                        radius: 8.0.into(),
-                    },
-                    ..Default::default()
-                }
-            }
+                None
+            },
+            border: Border {
+                color: if is_active { Color::from_rgb8(0x00, 0xE5, 0x7A) } else { Color::TRANSPARENT },
+                width: if is_active { 2.0 } else { 0.0 },
+                radius: 0.0.into(),
+            },
+            ..Default::default()
         })
         .into()
     }
@@ -797,107 +795,116 @@ impl AetherIcedShell {
     }
 
     fn view_tabs(&self) -> Element<'_, Message> {
-        // Tab row (left) + Status bar (right) — wie im Referenzbild
+        let logo = row![
+            canvas::Canvas::new(AetherLogoScene)
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0)),
+            text("AETHER")
+                .size(14)
+                .color(Color::from_rgb8(0x00, 0xE5, 0x7A)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
         let tabs = row![
-            self.tab_button(Tab::Home,        "\u{25c9}", "Overview"),
-            self.tab_button(Tab::Chat,        "\u{25c8}", "Chat"),
-            self.tab_button(Tab::Browser,     "\u{2295}", "Browser"),
-            self.tab_button(Tab::YouTube,     "\u{25b6}", "YouTube"),
-            self.tab_button(Tab::Data,        "\u{25a4}", "Data"),
-            self.tab_button(Tab::Settings,    "\u{2699}", "Config"),
-            self.tab_button(Tab::Logs,        "\u{25a3}", "Logs"),
-            self.tab_button(Tab::Anchors,     "\u{25c6}", "Cluster"),
-            self.tab_button(Tab::StructureMap,"\u{25ce}", "FlowSphere"),
-            self.tab_button(Tab::ADE,         "\u{25cd}", "ADE"),
-            self.tab_button(Tab::Imprint,     "\u{2139}", "Info"),
+            self.tab_button(Tab::Home,           "\u{25c9}", "Overview"),
+            self.tab_button(Tab::Chat,           "\u{25c8}", "Chat"),
+            self.tab_button(Tab::Browser,        "\u{2295}", "Browser"),
+            self.tab_button(Tab::YouTube,        "\u{25b6}", "YouTube"),
+            self.tab_button(Tab::Data,           "\u{25a4}", "Data"),
+            self.tab_button(Tab::Settings,       "\u{2699}", "Config"),
+            self.tab_button(Tab::Logs,           "\u{25a3}", "Logs"),
+            self.tab_button(Tab::Anchors,        "\u{25c6}", "Cluster"),
+            self.tab_button(Tab::StructureMap,   "\u{25ce}", "FlowSphere"),
+            self.tab_button(Tab::ADE,            "\u{25cd}", "ADE"),
+            self.tab_button(Tab::Imprint,        "\u{2139}", "Info"),
             self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"),
         ]
-        .spacing(4);
+        .spacing(0);
 
-        // Status badges top-right
         let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK");
-        let status_badge = container(
-            row![
-                canvas::Canvas::new(DotScene { color: if all_ok {
-                    Color::from_rgb8(0x4C, 0xD9, 0x6E)
-                } else {
-                    Color::from_rgb8(0xD9, 0x7A, 0x4C)
-                }})
-                .width(Length::Fixed(10.0))
-                .height(Length::Fixed(10.0)),
-                text(if all_ok { "All Systems Operational" } else { "Degraded" })
-                    .size(12)
-                    .color(Color::from_rgb8(0xA0, 0xD4, 0xA0)),
-            ]
-            .spacing(5)
-            .align_y(iced::Alignment::Center),
-        )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x08, 0x1E, 0x10))),
-            border: Border { color: Color::from_rgb8(0x28, 0x70, 0x40), width: 1.0, radius: 14.0.into() },
-            ..Default::default()
-        })
-        .padding([4, 12]);
 
-        let cluster_badge = container(
-            row![
-                text("\u{2601}").size(12).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
-                text(format!("{} Active Nodes", self.anchor_clusters().len()))
-                    .size(12).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
-            ]
-            .spacing(5)
-            .align_y(iced::Alignment::Center),
-        )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-            border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 14.0.into() },
-            ..Default::default()
-        })
-        .padding([4, 12]);
+        let status_border = if all_ok {
+            Color::from_rgb8(0x00, 0xE5, 0x7A)
+        } else {
+            Color::from_rgb8(0xD6, 0x55, 0x55)
+        };
 
-        let time_badge = container(
-            row![
-                text("\u{25d4}").size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
-                text(format!("{:02}:{:02} Live Mode",
-                    (self.tick_counter / 60) % 24,
-                    self.tick_counter % 60))
-                    .size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
-            ]
-            .spacing(5)
-            .align_y(iced::Alignment::Center),
-        )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x08, 0x14, 0x24))),
-            border: Border { color: Color::from_rgb8(0x1C, 0x34, 0x54), width: 1.0, radius: 14.0.into() },
+        let status_content: Element<'_, Message> = row![
+            canvas::Canvas::new(DotScene { color: if all_ok {
+                Color::from_rgb8(0x00, 0xE5, 0x7A)
+            } else {
+                Color::from_rgb8(0xD6, 0x55, 0x55)
+            }})
+            .width(Length::Fixed(8.0)).height(Length::Fixed(8.0)),
+            text(if all_ok { "Operational" } else { "Degraded" })
+                .size(11).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+        ].spacing(6).align_y(Alignment::Center).into();
+
+        let nodes_content: Element<'_, Message> = row![
+            text("\u{2b21}").size(11).color(Color::from_rgb8(0x00, 0xC8, 0xD4)),
+            text(format!("{} Nodes", self.anchor_clusters().len()))
+                .size(11).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+        ].spacing(6).align_y(Alignment::Center).into();
+
+        let time_content: Element<'_, Message> = row![
+            text("\u{25d4}").size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+            text(format!("{:02}:{:02} Live",
+                (self.tick_counter / 60) % 24,
+                self.tick_counter % 60))
+                .size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+        ].spacing(6).align_y(Alignment::Center).into();
+
+        let badge_style_ok = move |_: &Theme| container::Style {
+            background: None,
+            border: Border { color: status_border, width: 1.0, radius: 20.0.into() },
             ..Default::default()
-        })
-        .padding([4, 12]);
+        };
+        let badge_style_cyan = |_: &Theme| container::Style {
+            background: None,
+            border: Border { color: Color::from_rgb8(0x00, 0xC8, 0xD4), width: 1.0, radius: 20.0.into() },
+            ..Default::default()
+        };
+        let badge_style_dim = |_: &Theme| container::Style {
+            background: None,
+            border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 20.0.into() },
+            ..Default::default()
+        };
 
         container(
             row![
-                container(tabs).width(Length::Fill),
+                logo,
+                container(iced::widget::Space::new(1.0, 32.0))
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x32, 0x4A))),
+                        ..Default::default()
+                    })
+                    .width(Length::Fixed(1.0)),
+                tabs,
+                iced::widget::Space::new(Length::Fill, Length::Shrink),
                 row![
-                    status_badge,
-                    cluster_badge,
-                    time_badge,
+                    container(status_content).style(badge_style_ok).padding([4, 14]),
+                    container(nodes_content).style(badge_style_cyan).padding([4, 14]),
+                    container(time_content).style(badge_style_dim).padding([4, 14]),
                 ]
                 .spacing(8)
-                .align_y(iced::Alignment::Center),
+                .align_y(Alignment::Center),
             ]
-            .align_y(iced::Alignment::Center)
-            .spacing(12),
+            .spacing(16)
+            .align_y(Alignment::Center),
         )
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x06, 0x0F, 0x1C))),
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1C))),
             border: Border {
-                color: Color::from_rgb8(0x14, 0x2C, 0x44),
+                color: Color::from_rgb8(0x1A, 0x32, 0x4A),
                 width: 1.0,
                 radius: 0.0.into(),
             },
             ..Default::default()
         })
-        .padding([6, 12])
+        .padding([0, 16])
+        .height(Length::Fixed(52.0))
         .into()
     }
 
@@ -932,6 +939,49 @@ impl AetherIcedShell {
         container(
             scrollable(
                 column![
+                    // ── Tutorial Banner ───────────────────────────────────────
+                    {
+                        let tutorial_banner: Element<'_, Message> = if self.show_tutorial {
+                            container(
+                                row![
+                                    canvas::Canvas::new(ShanwayRobotScene { tick: self.tick_counter, size: 48.0 })
+                                        .width(Length::Fixed(60.0))
+                                        .height(Length::Fixed(70.0)),
+                                    column![
+                                        text("Willkommen bei Aether").size(16)
+                                            .color(Color::from_rgb8(0x00, 0xE5, 0x7A)),
+                                        text("Ziehe eine Datei ins Fenster \u{2192} Aether erstellt automatisch eine .aef-Datei mit Strukturanalyse.")
+                                            .size(12).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+                                        text("Data-Tab: Ergebnisse | Rekon-Tab: Originaldatei wiederherstellen | FlowSphere: Strukturvisualisierung")
+                                            .size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+                                    ]
+                                    .spacing(4),
+                                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                                    button(text("\u{2715}").size(12).color(Color::from_rgb8(0x4A, 0x68, 0x84)))
+                                        .on_press(Message::TutorialDismissed)
+                                        .style(|_: &Theme, _| button::Style {
+                                            background: None,
+                                            ..Default::default()
+                                        })
+                                        .padding([4, 8]),
+                                ]
+                                .spacing(12)
+                                .align_y(Alignment::Center),
+                            )
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(0.0, 0.898, 0.478, 0.06))),
+                                border: Border { color: Color::from_rgb8(0x00, 0xE5, 0x7A), width: 1.0, radius: 10.0.into() },
+                                ..Default::default()
+                            })
+                            .padding([12, 16])
+                            .width(Length::Fill)
+                            .into()
+                        } else {
+                            container(iced::widget::Space::new(Length::Shrink, Length::Fixed(0.0)))
+                                .into()
+                        };
+                        tutorial_banner
+                    },
                     // ── Row 1: System Metrics (wie im Bild) ──────────────────
                     row![
                         sys_metric_card(
@@ -1110,7 +1160,26 @@ impl AetherIcedShell {
         let panel = match self.chat_context {
             ChatContext::Private => self.view_private_chat(),
             ChatContext::Group => self.view_group_chat(),
-            ChatContext::Shanway => self.view_shanway_chat(),
+            ChatContext::Shanway => {
+                let avatar = container(
+                    canvas::Canvas::new(ShanwayRobotScene {
+                        tick: self.tick_counter,
+                        size: 80.0,
+                    })
+                    .width(Length::Fixed(90.0))
+                    .height(Length::Fixed(110.0)),
+                )
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
+                    border: Border { color: Color::from_rgb8(0x00, 0xE5, 0x7A), width: 1.0, radius: 10.0.into() },
+                    ..Default::default()
+                })
+                .padding(8);
+
+                row![avatar, self.view_shanway_chat()]
+                    .spacing(12)
+                    .into()
+            }
         };
         container(
             column![
@@ -1130,30 +1199,55 @@ impl AetherIcedShell {
     }
 
     fn view_browser(&self) -> Element<'_, Message> {
+        let url_bar = container(
+            row![
+                container(
+                    text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4A, 0x68, 0x84))
+                ).padding([0, 8]),
+                text_input("https://duckduckgo.com", &self.browser_address)
+                    .on_input(Message::BrowserAddressChanged)
+                    .on_submit(Message::BrowserLoadPressed)
+                    .size(13)
+                    .padding([8, 12])
+                    .width(Length::Fill),
+                button(
+                    text("\u{2192}").size(14).color(Color::from_rgb8(0x07, 0x10, 0x1C))
+                )
+                .padding([8, 14])
+                .on_press(Message::BrowserLoadPressed)
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x00, 0xE5, 0x7A))),
+                    text_color: Color::from_rgb8(0x07, 0x10, 0x1C),
+                    border: Border { radius: 6.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
+            border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 8.0.into() },
+            ..Default::default()
+        })
+        .padding([4, 4]);
+
         container(
             row![
                 scrollable(
                     column![
-                        text("Browser").size(24),
-                        text("DuckDuckGo ist direkt eingebettet. Strukturprobe und Webflaeche bleiben getrennt.")
-                            .size(16),
-                        text_input("https://ziel.tld", &self.browser_address)
-                            .on_input(Message::BrowserAddressChanged)
-                            .padding(10)
-                            .size(16),
+                        text("Browser").size(20).color(Color::from_rgb8(0xE8, 0xF4, 0xFF)),
+                        url_bar,
                         row![
-                            button(text("Im Browser laden"))
-                                .padding([10, 16])
-                                .on_press(Message::BrowserLoadPressed),
-                            button(text("Seite pruefen"))
-                                .padding([10, 16])
+                            button(text("Seite pruefen").size(13))
+                                .padding([8, 14])
                                 .on_press(Message::BrowserInspectPressed),
                         ]
                         .spacing(10),
                         text_input("Suchbegriff oder Frage", &self.browser_search_query)
                             .on_input(Message::BrowserSearchQueryChanged)
                             .padding(10)
-                            .size(16),
+                            .size(14),
                         button(text("DuckDuckGo suchen"))
                             .padding([10, 16])
                             .on_press(Message::BrowserSearchPressed),
@@ -1200,9 +1294,9 @@ impl AetherIcedShell {
                 .width(Length::Fixed(420.0)),
                 container(
                     column![
-                        text("Eingebettete Browserflaeche").size(20),
-                        text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm. Keine Popups, keine Platzhalter.")
-                            .size(15),
+                        text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xE8, 0xF4, 0xFF)),
+                        text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
+                            .size(13).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
                         container(text(" "))
                             .height(Length::Fill)
                             .width(Length::Fill),
@@ -3661,6 +3755,167 @@ fn dashboard_metric(label: &'static str, value: String, hint: String, fill: f32)
     .into()
 }
 
+// ── AetherLogoScene ──────────────────────────────────────────────────────────
+
+struct AetherLogoScene;
+impl canvas::Program<Message> for AetherLogoScene {
+    type State = ();
+    fn draw(&self, _: &(), renderer: &iced::Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let w = bounds.width;
+        let h = bounds.height;
+        let cx = w * 0.5;
+        let cy = h * 0.5;
+
+        let top = Point::new(cx, cy - h * 0.38);
+        let bl  = Point::new(cx - w * 0.38, cy + h * 0.35);
+        let br  = Point::new(cx + w * 0.38, cy + h * 0.35);
+        let ml  = Point::new(cx - w * 0.18, cy + h * 0.05);
+        let mr  = Point::new(cx + w * 0.18, cy + h * 0.05);
+
+        let a_path = canvas::Path::new(|b| {
+            b.move_to(bl); b.line_to(top); b.line_to(br);
+        });
+        frame.stroke(&a_path, canvas::Stroke {
+            style: canvas::Style::Solid(Color::from_rgb8(0xFF, 0xFF, 0xFF)),
+            width: 2.8,
+            ..canvas::Stroke::default()
+        });
+        let cross = canvas::Path::new(|b| { b.move_to(ml); b.line_to(mr); });
+        frame.stroke(&cross, canvas::Stroke {
+            style: canvas::Style::Solid(Color::from_rgb8(0xFF, 0xFF, 0xFF)),
+            width: 2.0,
+            ..canvas::Stroke::default()
+        });
+
+        let nodes = [top, bl, br, Point::new(cx, cy + h * 0.10)];
+        let net_color = Color::from_rgb8(0x00, 0xE5, 0x7A);
+        for &n in &nodes {
+            frame.fill(&canvas::Path::circle(n, 2.2), net_color);
+        }
+        for i in 0..nodes.len() {
+            for j in (i+1)..nodes.len() {
+                let mut lc = net_color; lc.a = 0.55;
+                let l = canvas::Path::new(|b| { b.move_to(nodes[i]); b.line_to(nodes[j]); });
+                frame.stroke(&l, canvas::Stroke { style: canvas::Style::Solid(lc), width: 0.8, ..canvas::Stroke::default() });
+            }
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+// ── ShanwayRobotScene ─────────────────────────────────────────────────────────
+
+struct ShanwayRobotScene {
+    tick: u64,
+    size: f32,
+}
+
+impl canvas::Program<Message> for ShanwayRobotScene {
+    type State = ();
+    fn draw(&self, _: &(), renderer: &iced::Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let t = self.tick as f32;
+        let s = self.size;
+        let cx = bounds.width * 0.5;
+        let cy = bounds.height * 0.5;
+        let green = Color::from_rgb8(0x00, 0xE5, 0x7A);
+        let cyan  = Color::from_rgb8(0x00, 0xC8, 0xD4);
+        let dark  = Color::from_rgba(0.0, 0.898, 0.478, 0.08);
+
+        // Antenne
+        let ant_x = cx;
+        let ant_top = cy - s * 0.72;
+        let ant_base = cy - s * 0.52;
+        let ant = canvas::Path::new(|b| {
+            b.move_to(Point::new(ant_x, ant_base));
+            b.line_to(Point::new(ant_x, ant_top));
+        });
+        frame.stroke(&ant, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.8, ..canvas::Stroke::default() });
+        frame.fill(&canvas::Path::circle(Point::new(ant_x, ant_top), 3.2), green);
+
+        // Kopf
+        let hw = s * 0.42;
+        let hh = s * 0.32;
+        let hy = cy - s * 0.5 + hh * 0.5;
+        let head = canvas::Path::new(|b| {
+            let r = 6.0f32;
+            b.move_to(Point::new(cx - hw + r, hy - hh));
+            b.line_to(Point::new(cx + hw - r, hy - hh));
+            b.arc_to(Point::new(cx + hw, hy - hh), Point::new(cx + hw, hy - hh + r), r);
+            b.line_to(Point::new(cx + hw, hy + hh - r));
+            b.arc_to(Point::new(cx + hw, hy + hh), Point::new(cx + hw - r, hy + hh), r);
+            b.line_to(Point::new(cx - hw + r, hy + hh));
+            b.arc_to(Point::new(cx - hw, hy + hh), Point::new(cx - hw, hy + hh - r), r);
+            b.line_to(Point::new(cx - hw, hy - hh + r));
+            b.arc_to(Point::new(cx - hw, hy - hh), Point::new(cx - hw + r, hy - hh), r);
+            b.close();
+        });
+        frame.fill(&head, dark);
+        frame.stroke(&head, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.8, ..canvas::Stroke::default() });
+
+        // Augen
+        let blink = (t % 120.0) > 116.0;
+        let eye_y = hy - s * 0.04;
+        let eye_r = if blink { 1.0 } else { s * 0.065 };
+        let eye_glow_a = 0.18 + 0.12 * (t * 0.08).sin();
+        for &ex in &[cx - hw * 0.38, cx + hw * 0.38] {
+            let mut gc = cyan; gc.a = eye_glow_a;
+            frame.fill(&canvas::Path::circle(Point::new(ex, eye_y), eye_r * 2.2), gc);
+            frame.fill(&canvas::Path::circle(Point::new(ex, eye_y), eye_r), cyan);
+        }
+
+        // Mund
+        let mouth = canvas::Path::new(|b| {
+            b.move_to(Point::new(cx - hw * 0.22, hy + hh * 0.45));
+            b.line_to(Point::new(cx + hw * 0.22, hy + hh * 0.45));
+        });
+        let mut mc = green; mc.a = 0.7;
+        frame.stroke(&mouth, canvas::Stroke { style: canvas::Style::Solid(mc), width: 1.5, ..canvas::Stroke::default() });
+
+        // Körper
+        let bw = s * 0.38;
+        let bh = s * 0.28;
+        let by = hy + hh + s * 0.04 + bh * 0.5;
+        let body = canvas::Path::new(|b| {
+            let r = 5.0f32;
+            b.move_to(Point::new(cx - bw + r, by - bh));
+            b.line_to(Point::new(cx + bw - r, by - bh));
+            b.arc_to(Point::new(cx + bw, by - bh), Point::new(cx + bw, by - bh + r), r);
+            b.line_to(Point::new(cx + bw, by + bh - r));
+            b.arc_to(Point::new(cx + bw, by + bh), Point::new(cx + bw - r, by + bh), r);
+            b.line_to(Point::new(cx - bw + r, by + bh));
+            b.arc_to(Point::new(cx - bw, by + bh), Point::new(cx - bw, by + bh - r), r);
+            b.line_to(Point::new(cx - bw, by - bh + r));
+            b.arc_to(Point::new(cx - bw, by - bh), Point::new(cx - bw + r, by - bh), r);
+            b.close();
+        });
+        frame.fill(&body, dark);
+        frame.stroke(&body, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.5, ..canvas::Stroke::default() });
+
+        // Körper-Details
+        for i in 0..3 {
+            let ly = by - bh * 0.3 + i as f32 * bh * 0.3;
+            let mut lc = green; lc.a = 0.25;
+            let l = canvas::Path::new(|b| {
+                b.move_to(Point::new(cx - bw * 0.55, ly));
+                b.line_to(Point::new(cx + bw * 0.55, ly));
+            });
+            frame.stroke(&l, canvas::Stroke { style: canvas::Style::Solid(lc), width: 1.0, ..canvas::Stroke::default() });
+        }
+
+        // Glow-Ring
+        let glow_r = hw * 1.35 + 4.0 * (t * 0.05).sin();
+        let mut glow_c = green; glow_c.a = 0.05 + 0.03 * (t * 0.05).sin();
+        frame.stroke(
+            &canvas::Path::circle(Point::new(cx, hy), glow_r),
+            canvas::Stroke { style: canvas::Style::Solid(glow_c), width: 8.0, ..canvas::Stroke::default() },
+        );
+
+        vec![frame.into_geometry()]
+    }
+}
+
 // ── Orchestration Canvas ────────────────────────────────────────────────────
 
 struct OrchestrationScene {
@@ -3736,6 +3991,51 @@ impl canvas::Program<Message> for OrchestrationScene {
             let r = if is_router { 42.0f32 } else { 34.0f32 };
             let rh = r * 0.55;
 
+            if is_router {
+                // Roboter-Kopf statt Box
+                let rw = 28.0f32; let robot_h = 22.0f32;
+                let mut hbg = *col; hbg.a = 0.14;
+                let head_rect = canvas::Path::new(|b| {
+                    b.move_to(Point::new(cx - rw, cy - robot_h - 8.0));
+                    b.line_to(Point::new(cx + rw, cy - robot_h - 8.0));
+                    b.line_to(Point::new(cx + rw, cy + robot_h - 8.0));
+                    b.line_to(Point::new(cx - rw, cy + robot_h - 8.0));
+                    b.close();
+                });
+                frame.fill(&head_rect, hbg);
+                frame.stroke(&head_rect, canvas::Stroke {
+                    style: canvas::Style::Solid(*col), width: 2.0, ..canvas::Stroke::default()
+                });
+                // Antenne
+                frame.stroke(&canvas::Path::new(|b| {
+                    b.move_to(Point::new(cx, cy - robot_h - 8.0));
+                    b.line_to(Point::new(cx, cy - robot_h - 18.0));
+                }), canvas::Stroke { style: canvas::Style::Solid(*col), width: 1.5, ..canvas::Stroke::default() });
+                frame.fill(&canvas::Path::circle(Point::new(cx, cy - robot_h - 18.0), 2.5), *col);
+                // Augen
+                let blink = (t * 1.0 % 120.0) > 116.0;
+                let er = if blink { 1.0 } else { 3.5 };
+                let ecy = cy - 8.0 - robot_h * 0.12;
+                let cyan_c = Color::from_rgb8(0x00, 0xC8, 0xD4);
+                for &ex in &[cx - rw * 0.42, cx + rw * 0.42] {
+                    frame.fill(&canvas::Path::circle(Point::new(ex, ecy), er), cyan_c);
+                }
+                // Label
+                frame.fill_text(canvas::Text {
+                    content: "Shanway".to_string(),
+                    position: Point::new(cx, cy + robot_h - 4.0),
+                    color: Color::from_rgb8(0xC8, 0xDE, 0xEE),
+                    size: iced::Pixels(9.0),
+                    horizontal_alignment: iced::alignment::Horizontal::Center,
+                    vertical_alignment: iced::alignment::Vertical::Center,
+                    ..canvas::Text::default()
+                });
+                // Glow-Ring
+                let glow_r = rw * 1.5 + 3.0 * (t * 0.06).sin();
+                let mut gc = *col; gc.a = 0.07;
+                frame.stroke(&canvas::Path::circle(Point::new(cx, cy - 8.0), glow_r),
+                    canvas::Stroke { style: canvas::Style::Solid(gc), width: 3.0, ..canvas::Stroke::default() });
+            } else {
             // Box fill
             let mut fc = *col; fc.a = 0.18;
             let rect = canvas::Path::new(|b| {
@@ -3748,8 +4048,8 @@ impl canvas::Program<Message> for OrchestrationScene {
             frame.fill(&rect, fc);
 
             // Box border
-            let mut bc = *col; bc.a = if is_router { 0.95 } else { 0.65 };
-            frame.stroke(&rect, canvas::Stroke { style: canvas::Style::Solid(bc), width: if is_router { 2.0 } else { 1.2 }, ..canvas::Stroke::default() });
+            let mut bc = *col; bc.a = 0.65;
+            frame.stroke(&rect, canvas::Stroke { style: canvas::Style::Solid(bc), width: 1.2, ..canvas::Stroke::default() });
 
             // Label
             frame.fill_text(canvas::Text {
@@ -3761,15 +4061,6 @@ impl canvas::Program<Message> for OrchestrationScene {
                 vertical_alignment: iced::alignment::Vertical::Center,
                 ..canvas::Text::default()
             });
-
-            // Glow pulse on Event Router
-            if is_router {
-                let glow_r = r + 6.0 + 3.0 * (t * 0.06).sin();
-                let mut gc = *col; gc.a = 0.08;
-                frame.stroke(
-                    &canvas::Path::circle(Point::new(cx, cy), glow_r),
-                    canvas::Stroke { style: canvas::Style::Solid(gc), width: 2.5, ..canvas::Stroke::default() },
-                );
             }
         }
 
@@ -3819,22 +4110,43 @@ fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color)
 }
 
 fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
-    let spark = make_sparkline(fill.clamp(0.0, 1.0));
     container(
         column![
-            text(label.to_owned()).size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
-            text(value).size(26).color(Color::from_rgb8(0xE0, 0xF0, 0xFF)),
-            text(spark).size(11).color(accent),
+            text(label.to_owned())
+                .size(11)
+                .color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+            text(value)
+                .size(22)
+                .color(accent),
+            container(
+                container(iced::widget::Space::new(Length::Fill, Length::Fixed(3.0)))
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(accent)),
+                        border: Border { radius: 2.0.into(), ..Default::default() },
+                        ..Default::default()
+                    })
+                    .width(Length::FillPortion((fill.clamp(0.0, 1.0) * 100.0) as u16))
+            )
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x12, 0x22, 0x34))),
+                border: Border { radius: 2.0.into(), ..Default::default() },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .height(Length::Fixed(3.0)),
         ]
-        .spacing(6)
-        .width(Length::Fill),
+        .spacing(8),
     )
-    .style(move |_: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
-        border: Border { color: accent, width: 1.5, radius: 10.0.into() },
+    .style(|_: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
+        border: Border {
+            color: Color::from_rgb8(0x1A, 0x32, 0x4A),
+            width: 1.0,
+            radius: 10.0.into(),
+        },
         ..Default::default()
     })
-    .padding(18)
+    .padding([14, 18])
     .width(Length::Fill)
     .into()
 }
@@ -3857,6 +4169,20 @@ fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<
     )
     .padding([6, 0])
     .width(Length::Fill)
+    .into()
+}
+
+fn info_badge(tooltip_text: &'static str) -> Element<'static, Message> {
+    let _ = tooltip_text; // stored for future tooltip implementation
+    container(
+        text("\u{2139}").size(9).color(Color::from_rgb8(0x4A, 0x68, 0x84))
+    )
+    .style(|_: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x0E, 0x1E, 0x30))),
+        border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 8.0.into() },
+        ..Default::default()
+    })
+    .padding([1, 5])
     .into()
 }
 
