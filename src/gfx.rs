@@ -7,6 +7,98 @@ use crate::vault_access::VaultAccessLayer;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+
+// ---------------------------------------------------------------------------
+// VRAM-Abfrage (Windows, einmalig gecacht fuer Total, TTL-gecacht fuer Used)
+// ---------------------------------------------------------------------------
+
+static VRAM_TOTAL_BITS: AtomicU32 = AtomicU32::new(0);
+static VRAM_TOTAL_READY: AtomicU32 = AtomicU32::new(0); // 0 = uninitialized, 1 = set
+static VRAM_USED_BITS: AtomicU32 = AtomicU32::new(0);
+static VRAM_USED_LAST_SEC: AtomicU64 = AtomicU64::new(0);
+const VRAM_USED_TTL_SECS: u64 = 5;
+
+fn now_unix_sec() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Fragt die Gesamtgröße des dedizierten VRAM via PowerShell ab (einmalig gecacht).
+fn vram_total_cached_mb() -> f32 {
+    if VRAM_TOTAL_READY.load(Ordering::Relaxed) == 1 {
+        return f32::from_bits(VRAM_TOTAL_BITS.load(Ordering::Relaxed));
+    }
+    let mb = query_vram_total_mb().unwrap_or(4096.0);
+    VRAM_TOTAL_BITS.store(mb.to_bits(), Ordering::Relaxed);
+    VRAM_TOTAL_READY.store(1, Ordering::Release);
+    mb
+}
+
+/// Fragt den aktuell genutzten VRAM ab (TTL-gecacht, Fallback 0).
+fn vram_used_live_mb() -> f32 {
+    let now = now_unix_sec();
+    let last = VRAM_USED_LAST_SEC.load(Ordering::Relaxed);
+    if now.saturating_sub(last) < VRAM_USED_TTL_SECS {
+        return f32::from_bits(VRAM_USED_BITS.load(Ordering::Relaxed));
+    }
+    let mb = query_vram_used_mb().unwrap_or(0.0);
+    VRAM_USED_BITS.store(mb.to_bits(), Ordering::Relaxed);
+    VRAM_USED_LAST_SEC.store(now, Ordering::Relaxed);
+    mb
+}
+
+/// Windows: AdapterRAM aus Win32_VideoController (dedizierter VRAM in Bytes → MiB).
+#[cfg(target_os = "windows")]
+fn query_vram_total_mb() -> Option<f32> {
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_VideoController | Select-Object -First 1 -ExpandProperty AdapterRAM",
+        ])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<u64>()
+        .ok()
+        .filter(|&b| b > 0)
+        .map(|b| b as f32 / 1_048_576.0)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_vram_total_mb() -> Option<f32> {
+    None
+}
+
+/// Windows: genutzten VRAM via GPU Adapter Memory Perf-Counter (in Bytes → MiB).
+#[cfg(target_os = "windows")]
+fn query_vram_used_mb() -> Option<f32> {
+    let out = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "(Get-Counter '\\GPU Adapter Memory(*)\\Dedicated Usage' -ErrorAction SilentlyContinue).CounterSamples | Measure-Object CookedValue -Sum | Select-Object -ExpandProperty Sum",
+        ])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|&b| b > 0.0)
+        .map(|b| (b / 1_048_576.0) as f32)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn query_vram_used_mb() -> Option<f32> {
+    None
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GfxTraceMode {
@@ -33,11 +125,11 @@ impl AetherGfxBackend for OpenGlBackend {
     }
 
     fn vram_used_mb(&self) -> f32 {
-        0.0
+        vram_used_live_mb()
     }
 
     fn vram_total_mb(&self) -> f32 {
-        4096.0
+        vram_total_cached_mb()
     }
 
     fn upload_raw_texture(&self, _label: &str, _bytes: &[u8]) -> u64 {
@@ -67,10 +159,12 @@ pub struct AetherGfx {
 impl AetherGfx {
     pub fn new_auto(vault: Arc<VaultAccessLayer>, bus: BusPublisher) -> Self {
         let backend = Box::new(OpenGlBackend);
+        let shader_cache_path =
+            std::path::PathBuf::from("data/rust_shell/shader_cache.json");
         Self {
             backend,
             texture_vault: TextureVaultCache::new(vault),
-            shader_cache: ShaderVaultCache::new(),
+            shader_cache: ShaderVaultCache::with_persistence(shader_cache_path),
             bus,
             trace_mode: GfxTraceMode::Stage,
             deep_trace_once: HashSet::new(),
@@ -202,7 +296,7 @@ impl AetherGfx {
                 used_mb: used,
                 total_mb: total,
                 pressure_ratio: ratio,
-                pressure_level: level,
+                pressure_level: level.clone(),
                 active_programs: vec![self.backend.backend_name().to_owned()],
             }));
         if matches!(level, VramPressureLevel::High | VramPressureLevel::Critical) {
@@ -284,12 +378,41 @@ impl TextureVaultCache {
 
 struct ShaderVaultCache {
     compiled: HashMap<String, u64>,
+    persist_path: Option<std::path::PathBuf>,
 }
 
 impl ShaderVaultCache {
     fn new() -> Self {
         Self {
             compiled: HashMap::new(),
+            persist_path: None,
+        }
+    }
+
+    /// Lädt den Cache von Disk oder legt eine leere Instanz an.
+    fn with_persistence(path: std::path::PathBuf) -> Self {
+        let compiled = if path.exists() {
+            std::fs::read_to_string(&path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<HashMap<String, u64>>(&raw).ok())
+                .unwrap_or_default()
+        } else {
+            HashMap::new()
+        };
+        Self {
+            compiled,
+            persist_path: Some(path),
+        }
+    }
+
+    /// Schreibt den Cache auf Disk (silent-fail).
+    fn flush(&self) {
+        let Some(path) = &self.persist_path else { return };
+        if let Ok(raw) = serde_json::to_string(&self.compiled) {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(path, raw);
         }
     }
 
@@ -304,6 +427,7 @@ impl ShaderVaultCache {
         }
         let handle = compile_fn();
         self.compiled.insert(hash.clone(), handle);
+        self.flush();
         (handle, false, hash)
     }
 }

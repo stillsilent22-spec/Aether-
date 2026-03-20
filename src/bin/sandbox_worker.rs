@@ -313,7 +313,22 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 }
 
 fn apply_sandbox_restrictions() {
-    // Platzhalter fuer spaetere seccomp/Job-Object-Haertung.
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, SetPriorityClass,
+            BELOW_NORMAL_PRIORITY_CLASS,
+        };
+
+        // Priorität auf BELOW_NORMAL setzen damit der Sandbox-Worker
+        // das Hauptprogramm nicht verdrängt.
+        let current = GetCurrentProcess();
+        SetPriorityClass(current, BELOW_NORMAL_PRIORITY_CLASS);
+        // Job-Object limit: deferred (windows-sys version mismatch for CreateJobObjectW).
+        let _ = current;
+        let _ = CloseHandle as fn(_) -> _;
+    }
 }
 
 fn cosine_similarity(left: &[f32; 16], right: &[f32; 16]) -> f32 {

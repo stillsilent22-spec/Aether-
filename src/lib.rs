@@ -34,3 +34,14 @@ pub mod theory_of_mind;
 pub mod vault_access;
 pub mod workflow_anchor;
 
+// ── Python-Extension-Einstieg ──────────────────────────────────────────────
+// Wird von maturin als `aether_core_rs`-Modul gebaut.
+// Stellt byte_entropy, token_entropy, zipf_score, noether_score bereit.
+use pyo3::prelude::*;
+
+#[pymodule]
+fn aether_core_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
+    py_entropy::register(_py, m)?;
+    Ok(())
+}
+

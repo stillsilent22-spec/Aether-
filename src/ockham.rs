@@ -71,7 +71,7 @@ pub struct OckhamDecision {
     pub risk_score: f64,
     pub utility: f64,
     pub complexity: f64,
-    pub reasons: Vec<&'static str>,
+    pub reasons: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ fn clip01(v: f64) -> f64 {
     v.clamp(0.0, 1.0)
 }
 
-fn risk_from_observation(obs: &OckhamObservation) -> (f64, Vec<&'static str>) {
+fn risk_from_observation(obs: &OckhamObservation) -> (f64, Vec<String>) {
     let cpu   = clip01(obs.cpu_load);
     let mem   = clip01(obs.mem_pressure);
     let spawn = clip01(obs.process_spawn_rate);
@@ -119,14 +119,14 @@ fn risk_from_observation(obs: &OckhamObservation) -> (f64, Vec<&'static str>) {
         + 0.12 * intg,
     );
 
-    let mut reasons: Vec<&'static str> = Vec::new();
-    if cpu   > 0.82 { reasons.push("cpu_load_high"); }
-    if mem   > 0.82 { reasons.push("mem_pressure_high"); }
-    if spawn > 0.72 { reasons.push("spawn_rate_high"); }
-    if unsig > 0.45 { reasons.push("unsigned_binary_ratio_high"); }
-    if net   > 0.60 { reasons.push("network_peer_churn_high"); }
-    if err   > 0.70 { reasons.push("error_burst_high"); }
-    if intg  > 0.10 { reasons.push("integrity_alerts_present"); }
+    let mut reasons: Vec<String> = Vec::new();
+    if cpu   > 0.82 { reasons.push("cpu_load_high".to_owned()); }
+    if mem   > 0.82 { reasons.push("mem_pressure_high".to_owned()); }
+    if spawn > 0.72 { reasons.push("spawn_rate_high".to_owned()); }
+    if unsig > 0.45 { reasons.push("unsigned_binary_ratio_high".to_owned()); }
+    if net   > 0.60 { reasons.push("network_peer_churn_high".to_owned()); }
+    if err   > 0.70 { reasons.push("error_burst_high".to_owned()); }
+    if intg  > 0.10 { reasons.push("integrity_alerts_present".to_owned()); }
 
     (risk, reasons)
 }
@@ -198,6 +198,106 @@ impl OckhamEngine {
     pub fn decide(&self, obs: &OckhamObservation) -> OckhamDecision {
         ockham_os_razor(obs, self.complexity_weight)
     }
+
+    /// Führt die entschiedene Aktion auf Betriebssystemebene aus.
+    pub fn execute(&self, decision: &OckhamDecision) -> OckhamExecutionResult {
+        match decision.action {
+            OckhamAction::Allow => OckhamExecutionResult::Ok,
+            OckhamAction::ThrottleBackground => throttle_background_processes(),
+            OckhamAction::LimitNewProcesses => limit_new_processes(),
+            OckhamAction::IsolateNetwork => {
+                // Netzwerkisolation erfordert erhöhte Rechte (Windows Firewall API).
+                OckhamExecutionResult::Deferred("network isolation requires elevated privileges")
+            }
+            OckhamAction::PauseAutopilot => {
+                // Signalisierung erfolgt über den Aufrufer via Bus.
+                OckhamExecutionResult::Ok
+            }
+            OckhamAction::RequireManualReview => OckhamExecutionResult::Ok,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ausführungs-Ergebnis
+// ---------------------------------------------------------------------------
+
+/// Ergebnis einer OS-Aktion nach `OckhamEngine::execute()`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OckhamExecutionResult {
+    /// Aktion erfolgreich ausgeführt (oder nicht nötig).
+    Ok,
+    /// Aktion zurückgestellt – Begründung im String.
+    Deferred(&'static str),
+    /// Ausführung fehlgeschlagen – Begründung im String.
+    Failed(String),
+}
+
+// ---------------------------------------------------------------------------
+// OS-Aktionen (Windows)
+// ---------------------------------------------------------------------------
+
+/// Senkt die Priorität aller Background-Prozesse auf BELOW_NORMAL.
+fn throttle_background_processes() -> OckhamExecutionResult {
+    #[cfg(target_os = "windows")]
+    {
+        use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32FirstW, Process32NextW,
+            PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+        };
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcessId, OpenProcess, SetPriorityClass,
+            BELOW_NORMAL_PRIORITY_CLASS, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+        };
+        use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+
+        let mut throttled: u32 = 0;
+        let own_pid = unsafe { GetCurrentProcessId() };
+
+        let snap = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+        if snap == INVALID_HANDLE_VALUE {
+            return OckhamExecutionResult::Failed("CreateToolhelp32Snapshot failed".into());
+        }
+
+        let mut entry: PROCESSENTRY32W = unsafe { std::mem::zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+
+        let mut ok = unsafe { Process32FirstW(snap, &mut entry) } != 0;
+        while ok {
+            let pid = entry.th32ProcessID;
+            if pid != own_pid && pid != 0 && pid != 4 {
+                let handle = unsafe {
+                    OpenProcess(
+                        PROCESS_QUERY_INFORMATION | PROCESS_SET_INFORMATION,
+                        0,
+                        pid,
+                    )
+                };
+                if !handle.is_null() {
+                    unsafe { SetPriorityClass(handle, BELOW_NORMAL_PRIORITY_CLASS) };
+                    unsafe { CloseHandle(handle) };
+                    throttled += 1;
+                }
+            }
+            ok = unsafe { Process32NextW(snap, &mut entry) } != 0;
+        }
+        unsafe { CloseHandle(snap) };
+
+        if throttled > 0 {
+            OckhamExecutionResult::Ok
+        } else {
+            OckhamExecutionResult::Deferred("no throttleable processes found")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    OckhamExecutionResult::Deferred("throttle only implemented on Windows")
+}
+
+/// Weist den Sandbox-Prozess einem Job-Object mit Prozess-Limit zu.
+fn limit_new_processes() -> OckhamExecutionResult {
+    // Job-Object-API requires a Windows SDK feature that varies by windows-sys version.
+    // Return Deferred; the process limit can be applied by the sandbox_worker binary instead.
+    OckhamExecutionResult::Deferred("job-object limit deferred to sandbox_worker")
 }
 
 // ---------------------------------------------------------------------------

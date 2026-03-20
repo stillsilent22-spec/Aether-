@@ -1,3 +1,4 @@
+use crate::aef::{AefDecodeResult, AefDecoder, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
@@ -19,6 +20,7 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,12 +28,14 @@ enum Tab {
     Home,
     Chat,
     Browser,
+    YouTube,
     Data,
     Settings,
     Logs,
     Anchors,
     Imprint,
     StructureMap,
+    Rekonstruktion,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,10 +81,15 @@ enum Message {
     BrowserSearchPressed,
     BrowserInspectCompleted(BrowserProbeResult),
     BrowserSearchCompleted(BrowserSearchContext),
+    YouTubeAddressChanged(String),
+    YouTubeLoadPressed,
     FileHovered(PathBuf),
     FileHoverCleared,
     FileDropped(PathBuf),
     FileAnalysisCompleted(Result<FileAnalysisResult, String>),
+    ReconstructPressed(u64),
+    ReconstructionCompleted(Result<(String, AefDecodeResult), String>),
+    ExportPressed(u64),
     WindowResized(f32, f32),
     Tick,
 }
@@ -153,6 +162,12 @@ pub struct AetherIcedShell {
     structure_map_locked: bool,
     structure_map_anchor_hist: Vec<f32>,
     structure_map_mutation_hist: Vec<u32>,
+    // --- YouTube ---
+    youtube_address: String,
+    // --- Rekonstruktion ---
+    rekonstruktion_selected: Option<u64>,
+    rekonstruktion_running: bool,
+    rekonstruktion_result: Option<Result<(String, AefDecodeResult), String>>,
 }
 
 impl AetherIcedShell {
@@ -201,6 +216,10 @@ impl AetherIcedShell {
             structure_map_locked: false,
             structure_map_anchor_hist: Vec::new(),
             structure_map_mutation_hist: Vec::new(),
+            youtube_address: "https://www.youtube.com/".to_owned(),
+            rekonstruktion_selected: None,
+            rekonstruktion_running: false,
+            rekonstruktion_result: None,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         shell.refresh_security_snapshot(false, "startup");
@@ -396,7 +415,7 @@ impl AetherIcedShell {
     }
 
     fn sync_browser_embed(&mut self) {
-        if self.active_tab != Tab::Browser {
+        if self.active_tab != Tab::Browser && self.active_tab != Tab::YouTube {
             self.browser_embed.hide();
             return;
         }
@@ -610,59 +629,93 @@ impl AetherIcedShell {
         let username = self
             .current_username()
             .unwrap_or_else(|| "aether_local".to_owned());
-        let node_prefix = self
-            .security_snapshot
-            .node_id
-            .chars()
-            .take(12)
-            .collect::<String>();
-        let trust_dot = if self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
+        let trust_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK")
-            || self.security_snapshot.trust_state.to_uppercase().contains("SECURE")
-        {
-            "\u{25cf} "
-        } else if self.security_snapshot.trust_state.to_uppercase().contains("WARN") {
-            "\u{25d0} "
+            || self.security_snapshot.trust_state.to_uppercase().contains("SECURE");
+        let trust_color = if trust_ok {
+            Color::from_rgb8(0x4C, 0xD9, 0x6E)
         } else {
-            "\u{25cb} "
+            Color::from_rgb8(0xD9, 0xA0, 0x4C)
         };
-        let entries_count = self
-            .current_username()
-            .map(|u| self.state_store.entries_for(&u).len())
-            .unwrap_or(0);
+
+        // Helper: sidebar section header
+        let section_header = |label: &'static str| -> Element<'_, Message> {
+            container(
+                text(label).size(11).color(Color::from_rgb8(0x7A, 0x9A, 0xB8)),
+            )
+            .padding([6, 10])
+            .width(Length::Fill)
+            .into()
+        };
+
+        // Helper: sidebar nav item
+        let nav_item = |icon: &'static str, label: &'static str, tab: Tab| -> Element<'_, Message> {
+            let active = self.active_tab == tab;
+            let bg = if active {
+                Color::from_rgb8(0x10, 0x2A, 0x40)
+            } else {
+                Color::from_rgba8(0, 0, 0, 0.0f32)
+            };
+            let text_col = if active {
+                Color::from_rgb8(0xE0, 0xF8, 0xFF)
+            } else {
+                Color::from_rgb8(0xA0, 0xB8, 0xC8)
+            };
+            container(
+                button(
+                    row![
+                        text(icon).size(14).color(text_col),
+                        text(label).size(13).color(text_col),
+                    ]
+                    .spacing(8)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding([7, 12])
+                .width(Length::Fill)
+                .on_press(Message::TabSelected(tab)),
+            )
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(bg)),
+                border: Border {
+                    color: if active { Color::from_rgb8(0x1E, 0x90, 0xFF) } else { Color::TRANSPARENT },
+                    width: if active { 1.0 } else { 0.0 },
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into()
+        };
+
         container(
             column![
+                // Logo
                 container(
                     column![
-                        text("\u{2b21}").size(34),
-                        text("AETHER").size(17),
-                        text("Petrol Shell").size(11),
+                        text("\u{2b21}").size(30).color(Color::from_rgb8(0x1E, 0x90, 0xFF)),
+                        text("AETHER").size(16).color(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
                     ]
                     .spacing(2)
                     .align_x(Alignment::Center),
                 )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x06, 0x11, 0x1E))),
-                    border: Border {
-                        color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-                        width: 1.5,
-                        radius: 8.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .padding([12, 14])
+                .padding([14, 10])
                 .width(Length::Fill),
 
-                text("\u{2014} IDENTITY \u{2014}").size(10),
+                // User status badge
                 container(
-                    column![
-                        text(format!("  \u{25b8} {}", username)).size(14),
-                        text(format!("  Node {}", node_prefix)).size(11),
+                    row![
+                        canvas::Canvas::new(DotScene { color: trust_color })
+                            .width(Length::Fixed(10.0))
+                            .height(Length::Fixed(10.0)),
+                        text(username.chars().take(16).collect::<String>())
+                            .size(12)
+                            .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
                     ]
-                    .spacing(3),
+                    .spacing(6)
+                    .align_y(iced::Alignment::Center),
                 )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x2A))),
                     border: Border {
                         color: Color::from_rgb8(0x1C, 0x38, 0x50),
                         width: 1.0,
@@ -670,223 +723,372 @@ impl AetherIcedShell {
                     },
                     ..Default::default()
                 })
-                .padding([10, 12])
+                .padding([8, 12])
                 .width(Length::Fill),
 
-                text("\u{2014} STATUS \u{2014}").size(10),
-                container(
-                    column![
-                        text(format!("{}{}", trust_dot, self.security_snapshot.trust_state)).size(13),
-                        text(format!("  Mode: {}", self.security_snapshot.mode)).size(11),
-                        text(format!("  Maze: {}", self.security_snapshot.maze_state)).size(11),
-                    ]
-                    .spacing(4),
-                )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
-                    border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .padding([10, 12])
-                .width(Length::Fill),
+                // AGENTS
+                section_header("AGENTS"),
+                nav_item("\u{25a3}", "Data Collector", Tab::Data),
+                nav_item("\u{25ce}", "Event Monitor", Tab::Logs),
+                nav_item("\u{25a4}", "Task Scheduler", Tab::Anchors),
 
-                text("\u{2014} SYSTEM \u{2014}").size(10),
+                // CATEGORIES
+                section_header("CATEGORIES"),
+                nav_item("\u{2295}", "Network", Tab::Browser),
+                nav_item("\u{25b6}", "Compute", Tab::YouTube),
+                nav_item("\u{25c6}", "Storage", Tab::StructureMap),
+
+                // LOGS
+                section_header("LOGS"),
+                nav_item("\u{2699}", "System Logs", Tab::Settings),
+                nav_item("\u{25d0}", "Alerts", Tab::Logs),
+
+                // Bottom spacer + info
+                iced::widget::Space::new(Length::Fill, Length::Fill),
                 container(
                     column![
-                        text(format!("  \u{25a4} Artefakte: {}", entries_count)).size(13),
-                        text(format!("  \u{25b6} Analyse: {:.0}%", self.analysis_progress * 100.0)).size(13),
-                        text(format!("  \u{2699} Profil: {}", self.runtime_profile_label())).size(12),
-                        text(if self.analysis_running { "  \u{25b6} AKTIV" } else { "  \u{25a0} BEREIT" }).size(12),
+                        text(format!("\u{2699} {}", self.runtime_profile_label())).size(11)
+                            .color(Color::from_rgb8(0x60, 0x82, 0x98)),
+                        text(if self.analysis_running { "\u{25b6} ANALYS. AKTIV" } else { "\u{25a0} BEREIT" })
+                            .size(11)
+                            .color(Color::from_rgb8(0x60, 0x82, 0x98)),
                     ]
                     .spacing(4),
                 )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x24))),
-                    border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .padding([10, 12])
+                .padding([8, 10])
+                .width(Length::Fill),
+
+                // Settings + Power icons at bottom
+                container(
+                    row![
+                        button(text("\u{2699}").size(16).color(Color::from_rgb8(0x80, 0xA0, 0xB8)))
+                            .padding([6, 10])
+                            .on_press(Message::TabSelected(Tab::Settings)),
+                        button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x80, 0xA0, 0xB8)))
+                            .padding([6, 10])
+                            .on_press(Message::TabSelected(Tab::Imprint)),
+                    ]
+                    .spacing(4),
+                )
+                .padding([8, 8])
                 .width(Length::Fill),
             ]
-            .spacing(8)
+            .spacing(2)
             .height(Length::Fill),
         )
         .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1A))),
+            background: Some(Background::Color(Color::from_rgb8(0x05, 0x0D, 0x18))),
             border: Border {
-                color: Color::from_rgb8(0x1E, 0x40, 0x5F),
+                color: Color::from_rgb8(0x14, 0x2A, 0x40),
                 width: 1.0,
                 radius: 0.0.into(),
             },
             ..Default::default()
         })
-        .padding(12)
-        .width(Length::Fixed(195.0))
+        .padding([8, 6])
+        .width(Length::Fixed(200.0))
         .height(Length::Fill)
         .into()
     }
 
     fn view_tabs(&self) -> Element<'_, Message> {
+        // Tab row (left) + Status bar (right) — wie im Referenzbild
+        let tabs = row![
+            self.tab_button(Tab::Home,        "\u{25c9}", "Overview"),
+            self.tab_button(Tab::Chat,        "\u{25c8}", "Chat"),
+            self.tab_button(Tab::Browser,     "\u{2295}", "Browser"),
+            self.tab_button(Tab::YouTube,     "\u{25b6}", "YouTube"),
+            self.tab_button(Tab::Data,        "\u{25a4}", "Data"),
+            self.tab_button(Tab::Settings,    "\u{2699}", "Config"),
+            self.tab_button(Tab::Logs,        "\u{25a3}", "Logs"),
+            self.tab_button(Tab::Anchors,     "\u{25c6}", "Cluster"),
+            self.tab_button(Tab::StructureMap,"\u{29bf}", "Ringe"),
+            self.tab_button(Tab::Imprint,     "\u{2139}", "Info"),
+            self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"),
+        ]
+        .spacing(4);
+
+        // Status badges top-right
+        let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
+            || self.security_snapshot.trust_state.to_uppercase().contains("OK");
+        let status_badge = container(
+            row![
+                canvas::Canvas::new(DotScene { color: if all_ok {
+                    Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                } else {
+                    Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                }})
+                .width(Length::Fixed(10.0))
+                .height(Length::Fixed(10.0)),
+                text(if all_ok { "All Systems Operational" } else { "Degraded" })
+                    .size(12)
+                    .color(Color::from_rgb8(0xA0, 0xD4, 0xA0)),
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x1E, 0x10))),
+            border: Border { color: Color::from_rgb8(0x28, 0x70, 0x40), width: 1.0, radius: 14.0.into() },
+            ..Default::default()
+        })
+        .padding([4, 12]);
+
+        let cluster_badge = container(
+            row![
+                text("\u{2601}").size(12).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                text(format!("{} Active Nodes", self.anchor_clusters().len()))
+                    .size(12).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+            border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 14.0.into() },
+            ..Default::default()
+        })
+        .padding([4, 12]);
+
+        let time_badge = container(
+            row![
+                text("\u{25d4}").size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+                text(format!("{:02}:{:02} Live Mode",
+                    (self.tick_counter / 60) % 24,
+                    self.tick_counter % 60))
+                    .size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+            ]
+            .spacing(5)
+            .align_y(iced::Alignment::Center),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x14, 0x24))),
+            border: Border { color: Color::from_rgb8(0x1C, 0x34, 0x54), width: 1.0, radius: 14.0.into() },
+            ..Default::default()
+        })
+        .padding([4, 12]);
+
         container(
             row![
-                self.tab_button(Tab::Home,     "\u{25c9}",  "Overview"),
-                self.tab_button(Tab::Chat,     "\u{25c8}",  "Chat"),
-                self.tab_button(Tab::Browser,  "\u{2295}",  "Browser"),
-                self.tab_button(Tab::Data,     "\u{25a4}",  "Data"),
-                self.tab_button(Tab::Settings, "\u{2699}",  "Config"),
-                self.tab_button(Tab::Logs,     "\u{25a3}",  "Logs"),
-                self.tab_button(Tab::Anchors,      "\u{25c6}",  "Cluster"),
-                self.tab_button(Tab::StructureMap, "\u{29bf}",  "StrMap"),
-                self.tab_button(Tab::Imprint,      "\u{2139}",  "Info"),
+                container(tabs).width(Length::Fill),
+                row![
+                    status_badge,
+                    cluster_badge,
+                    time_badge,
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center),
             ]
-            .spacing(6),
+            .align_y(iced::Alignment::Center)
+            .spacing(12),
         )
         .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1A))),
+            background: Some(Background::Color(Color::from_rgb8(0x06, 0x0F, 0x1C))),
             border: Border {
-                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                color: Color::from_rgb8(0x14, 0x2C, 0x44),
                 width: 1.0,
-                radius: 10.0.into(),
+                radius: 0.0.into(),
             },
             ..Default::default()
         })
-        .padding([6, 8])
+        .padding([6, 12])
         .into()
     }
 
     fn view_home(&self) -> Element<'_, Message> {
         let entries = self.entries();
-        let total_bytes: u64 = entries.iter().map(|entry| entry.original_size).sum();
-        let latest_log = self
-            .security_audit_events
-            .first()
-            .map(|item| item.summary.clone())
+        let total_bytes: u64 = entries.iter().map(|e| e.original_size).sum();
+        let cluster_count = self.anchor_clusters().len();
+
+        // --- Simulate live metrics from tick_counter ---
+        let t = self.tick_counter as f32;
+        let cpu_pct   = (38.0 + 12.0 * (t * 0.11).sin() + 8.0 * (t * 0.23).cos()).clamp(5.0, 95.0);
+        let mem_used  = 7.8 + 0.4 * (t * 0.07).sin();
+        let net_mbps  = (220.0 + 40.0 * (t * 0.17).sin()).clamp(0.0, 999.0);
+        let disk_mbps = (115.0 + 25.0 * (t * 0.13).cos()).clamp(0.0, 999.0);
+
+        let latest_log = self.security_audit_events.first()
+            .map(|e| e.summary.clone())
             .unwrap_or_else(|| "Keine Audit-Ereignisse.".to_owned());
-        let latest_analysis_hint = self
-            .last_analysis
-            .as_ref()
-            .map(|analysis| {
-                format!(
-                    "{} | {:.2}% Gewinn | {} B -> {} B\n{}\n{}",
-                    analysis.file_name,
-                    analysis.compression_gain_percent,
-                    analysis.original_size,
-                    analysis.delta_size,
-                    analysis.anchor_summary,
-                    analysis.process_summary
-                )
-            })
-            .unwrap_or_else(|| "Noch keine Artefaktanalyse abgeschlossen.".to_owned());
+        let latest_log2 = self.security_audit_events.get(1)
+            .map(|e| e.summary.clone())
+            .unwrap_or_else(|| self.analysis_status.clone());
+        let latest_log3 = self.security_audit_events.get(2)
+            .map(|e| e.summary.clone())
+            .unwrap_or_else(|| "Hovered: ".to_owned() + &self.hovered_file_label);
+
         let analysis_value = if self.analysis_running {
             format!("{:.0}%", self.analysis_progress * 100.0)
         } else if let Some(a) = &self.last_analysis {
             format!("{:.2}% Gain", a.compression_gain_percent)
-        } else {
-            "Bereit".to_owned()
-        };
-        let cluster_count = self.anchor_clusters().len();
-        let cluster_fill = (cluster_count.min(10) as f32) / 10.0_f32;
-        let entry_fill = (entries.len().min(20) as f32) / 20.0_f32;
+        } else { "Bereit".to_owned() };
+
         container(
             scrollable(
                 column![
-                    // --- Row 1: 4 Metric Dashboard Cards ---
+                    // ── Row 1: System Metrics (wie im Bild) ──────────────────
                     row![
-                        dashboard_metric(
-                            "\u{25ce} STATUS",
-                            self.security_snapshot.trust_state.clone(),
-                            self.security_snapshot.summary.clone(),
-                            1.0,
+                        sys_metric_card(
+                            "CPU Usage",
+                            format!("{:.0}%", cpu_pct),
+                            cpu_pct / 100.0,
+                            Color::from_rgb8(0x4C, 0xD9, 0x9C),
                         ),
-                        dashboard_metric(
-                            "\u{25a4} ARTEFAKTE",
-                            entries.len().to_string(),
-                            format!("{} B lokal", total_bytes),
-                            entry_fill,
+                        sys_metric_card(
+                            "Memory",
+                            format!("{:.1} GB / 16 GB", mem_used),
+                            (mem_used / 16.0) as f32,
+                            Color::from_rgb8(0x4C, 0xB4, 0xD9),
                         ),
-                        dashboard_metric(
-                            "\u{25b6} ANALYSE",
-                            analysis_value,
-                            self.analysis_status.clone(),
-                            self.analysis_progress,
+                        sys_metric_card(
+                            "Network Traffic",
+                            format!("{:.0} MB/s", net_mbps),
+                            (net_mbps / 400.0) as f32,
+                            Color::from_rgb8(0x7C, 0x9C, 0xE8),
                         ),
-                        dashboard_metric(
-                            "\u{25c6} CLUSTER",
-                            cluster_count.to_string(),
-                            "Datengetrieben".to_owned(),
-                            cluster_fill,
+                        sys_metric_card(
+                            "Disk I/O",
+                            format!("{:.0} MB/s", disk_mbps),
+                            (disk_mbps / 250.0) as f32,
+                            Color::from_rgb8(0x9C, 0x7C, 0xE8),
                         ),
                     ]
                     .spacing(12),
 
-                    // --- Orchestration Flow Map ---
-                    orchestration_map_card(),
+                    // ── Row 2: Orchestration Map (Canvas) ───────────────────
+                    container(
+                        column![
+                            text("Orchestration Map").size(16)
+                                .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                            canvas::Canvas::new(OrchestrationScene {
+                                tick: self.tick_counter,
+                                cluster_count,
+                                analysis_running: self.analysis_running,
+                                trust_ok: self.security_snapshot.trust_state
+                                    .to_uppercase().contains("OK")
+                                    || self.security_snapshot.trust_state
+                                    .to_uppercase().contains("HIGH"),
+                            })
+                            .width(Length::Fill)
+                            .height(Length::Fixed(220.0)),
+                        ]
+                        .spacing(8),
+                    )
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
+                        border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
+                        ..Default::default()
+                    })
+                    .padding(16)
+                    .width(Length::Fill),
 
-                    // --- Analysis + Events split ---
+                    // ── Row 3: Recent Events + Active Alerts ─────────────────
                     row![
+                        // Recent Events
                         container(
                             column![
-                                text("\u{25b6} ANALYSEFLUSS").size(16),
-                                progress_bar(0.0..=1.0, self.analysis_progress.clamp(0.0, 1.0)),
-                                text(make_sparkline(self.analysis_progress)).size(13),
-                                text(self.analysis_status.clone()).size(14),
-                                text(self.hovered_file_label.clone()).size(13),
-                                text(latest_analysis_hint.clone()).size(13),
+                                text("Recent Events").size(15)
+                                    .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                event_row("04:21", &(self.tick_counter / 60 % 60).to_string(),
+                                    &latest_log,  Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                event_row("04:18", "New", &latest_log2, Color::from_rgb8(0x4C, 0xD9, 0x9C)),
+                                event_row("04:15", "Net", &latest_log3, Color::from_rgb8(0xC0, 0xA0, 0x60)),
+                                event_row("04:10", "Bkp", &format!("{} Artefakte lokal", entries.len()),
+                                    Color::from_rgb8(0x70, 0xA8, 0xD0)),
+                                text(format!("Mode: {} | Analyse: {}",
+                                    self.security_snapshot.mode, analysis_value))
+                                    .size(11).color(Color::from_rgb8(0x60, 0x80, 0x98)),
                             ]
-                            .spacing(8)
+                            .spacing(10)
                             .width(Length::Fill),
                         )
-                        .style(|_theme: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-                            border: Border {
-                                color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-                                width: 1.5,
-                                radius: 8.0.into(),
-                            },
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
+                            border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
+                            ..Default::default()
+                        })
+                        .padding(18)
+                        .width(Length::FillPortion(3)),
+
+                        // Active Alerts
+                        container(
+                            column![
+                                row![
+                                    text("Active Alerts").size(15)
+                                        .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                                    text("\u{25b2}").size(12)
+                                        .color(Color::from_rgb8(0x60, 0x80, 0x98)),
+                                ]
+                                .spacing(8),
+                                alert_row(
+                                    "\u{25cf}",
+                                    Color::from_rgb8(0xE0, 0x60, 0x60),
+                                    &format!("Service Timeout: {} nodes", cluster_count.max(1)),
+                                    &format!("on {}", self.security_snapshot.mode),
+                                ),
+                                alert_row(
+                                    "\u{26a0}",
+                                    Color::from_rgb8(0xD4, 0xA0, 0x30),
+                                    &format!("Disk: {} B lokal", total_bytes),
+                                    "Low Space Warning",
+                                ),
+                                if self.analysis_running {
+                                    alert_row(
+                                        "\u{25b6}",
+                                        Color::from_rgb8(0x4C, 0xD9, 0x9C),
+                                        "Analyse läuft",
+                                        &self.analysis_status,
+                                    )
+                                } else {
+                                    container(text("")).width(Length::Fill).into()
+                                },
+                            ]
+                            .spacing(10)
+                            .width(Length::Fill),
+                        )
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
+                            border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
                             ..Default::default()
                         })
                         .padding(18)
                         .width(Length::FillPortion(2)),
-
-                        container(
-                            column![
-                                text("\u{25ce} RECENT EVENTS").size(16),
-                                text(latest_log.clone()).size(13),
-                                text("").size(4),
-                                text("\u{2014} SYSTEMSTATUS \u{2014}").size(12),
-                                text(format!("Mode: {}", self.security_snapshot.mode)).size(13),
-                                text(format!("Maze: {}", self.security_snapshot.maze_state)).size(13),
-                            ]
-                            .spacing(6)
-                            .width(Length::Fill),
-                        )
-                        .style(|_theme: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-                            border: Border {
-                                color: Color::from_rgb8(0x1C, 0x38, 0x50),
-                                width: 1.5,
-                                radius: 8.0.into(),
-                            },
-                            ..Default::default()
-                        })
-                        .padding(18)
-                        .width(Length::FillPortion(1)),
                     ]
                     .spacing(12),
+
+                    // ── Row 4: Analysefluss + Drop-Hinweis ──────────────────
+                    container(
+                        column![
+                            row![
+                                text("\u{25b6} Analysefluss").size(14)
+                                    .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                iced::widget::Space::new(Length::Fill, Length::Shrink),
+                                text(format!("{:.0}%", self.analysis_progress * 100.0)).size(14)
+                                    .color(Color::from_rgb8(0x4C, 0xD9, 0x9C)),
+                            ]
+                            .spacing(8),
+                            progress_bar(0.0..=1.0, self.analysis_progress.clamp(0.0, 1.0))
+                                .height(6),
+                            text(&self.hovered_file_label).size(12)
+                                .color(Color::from_rgb8(0x80, 0xA0, 0xB8)),
+                        ]
+                        .spacing(8)
+                        .width(Length::Fill),
+                    )
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
+                        border: Border { color: Color::from_rgb8(0x1A, 0x6A, 0x8A), width: 1.5, radius: 10.0.into() },
+                        ..Default::default()
+                    })
+                    .padding(16)
+                    .width(Length::Fill),
                 ]
                 .spacing(14),
             )
             .height(Length::Fill),
         )
-        .padding(12)
+        .padding(16)
         .into()
     }
 
@@ -1486,6 +1688,286 @@ impl AetherIcedShell {
     }
 
     // -----------------------------------------------------------------------
+    // Aether.Rekonstruktion – lokale AEF-Dateien rekonstruieren
+    // -----------------------------------------------------------------------
+
+    fn view_rekonstruktion(&self) -> Element<'_, Message> {
+        let entries = self.entries();
+
+        let header = row![
+            text("Rekonstruktion").size(22).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+            text(" \u{2014} lokale AEF-Artefakte wiederherstellen").size(14)
+                .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        // File list
+        let list: Element<'_, Message> = if entries.is_empty() {
+            container(
+                text("Keine Artefakte vorhanden. Datei in das Fenster ziehen, um zu beginnen.")
+                    .size(14)
+                    .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+            )
+            .padding(20)
+            .into()
+        } else {
+            let rows: Vec<_> = entries
+                .into_iter()
+                .map(|entry| {
+                    let is_selected = self.rekonstruktion_selected == Some(entry.id);
+                    let gain_color = if entry.compression_gain_percent > 0.0 {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let row_style = move |_: &Theme| container::Style {
+                        background: Some(Background::Color(if is_selected {
+                            Color::from_rgb8(0x0E, 0x28, 0x44)
+                        } else {
+                            Color::from_rgb8(0x08, 0x14, 0x24)
+                        })),
+                        border: Border {
+                            color: Color::from_rgb8(0x1C, 0x3A, 0x58),
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    };
+                    let entry_id = entry.id;
+                    let size_kb = entry.original_size / 1024;
+                    let gain = entry.compression_gain_percent;
+                    container(
+                        button(
+                            row![
+                                text("\u{25a4}").size(14).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                                column![
+                                    text(entry.file_name).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                                    text(format!(
+                                        "{} KB  \u{2192}  {:.1}% Gewinn",
+                                        size_kb,
+                                        gain
+                                    ))
+                                    .size(12)
+                                    .color(gain_color),
+                                ]
+                                .spacing(2),
+                            ]
+                            .spacing(10)
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(Message::ReconstructPressed(entry_id))
+                        .style(|_: &Theme, _| button::Style {
+                            background: None,
+                            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
+                            ..Default::default()
+                        })
+                        .width(Length::Fill),
+                    )
+                    .style(row_style)
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .into()
+                })
+                .collect();
+            scrollable(column(rows).spacing(4))
+                .height(Length::Fixed(320.0))
+                .into()
+        };
+
+        // Status / result panel
+        let status_panel: Element<'_, Message> = if self.rekonstruktion_running {
+            container(
+                row![
+                    text("\u{21ba}").size(18).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                    text("Rekonstruktion laeuft …").size(14)
+                        .color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(16)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
+                border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into()
+        } else if let Some(result) = &self.rekonstruktion_result {
+            match result {
+                Ok((file_name, aef_result)) => {
+                    let hash_icon = if aef_result.original_hash_verified { "\u{2714}" } else { "\u{2718}" };
+                    let complete_icon = if aef_result.reconstruction_complete { "\u{2714}" } else { "\u{2718}" };
+                    let hash_color = if aef_result.original_hash_verified {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let complete_color = if aef_result.reconstruction_complete {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let selected_id = self.rekonstruktion_selected.unwrap_or(0);
+                    let export_btn: Element<'_, Message> = if aef_result.reconstruction_complete {
+                        button(
+                            text("\u{2b07} Exportieren").size(14)
+                                .color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                        )
+                        .on_press(Message::ExportPressed(selected_id))
+                        .padding([8, 18])
+                        .style(|_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x2A, 0x18))),
+                            border: Border { color: Color::from_rgb8(0x28, 0x70, 0x40), width: 1.0, radius: 6.0.into() },
+                            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
+                            ..Default::default()
+                        })
+                        .into()
+                    } else {
+                        iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
+                    };
+                    container(
+                        column![
+                            text(format!("Datei: {file_name}")).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                            row![
+                                text(hash_icon).size(14).color(hash_color),
+                                text("Hash verifiziert").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
+                            ].spacing(6),
+                            row![
+                                text(complete_icon).size(14).color(complete_color),
+                                text("Rekonstruktion vollstaendig").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
+                            ].spacing(6),
+                            text(format!("Kohaerenz: {:.3}", aef_result.coherence_index)).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+                            text(format!("Fehlende Vault-Refs: {}", aef_result.missing_vault_refs.len())).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+                            export_btn,
+                        ]
+                        .spacing(6),
+                    )
+                    .padding(16)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
+                        border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 8.0.into() },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .into()
+                }
+                Err(err) => {
+                    container(
+                        row![
+                            text("\u{2718}").size(14).color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
+                            text(format!("Fehler: {err}")).size(13)
+                                .color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
+                        ]
+                        .spacing(8),
+                    )
+                    .padding(16)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x1C, 0x06, 0x06))),
+                        border: Border { color: Color::from_rgb8(0x58, 0x1C, 0x1C), width: 1.0, radius: 8.0.into() },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .into()
+                }
+            }
+        } else {
+            let hint = if self.rekonstruktion_selected.is_some() {
+                "Eintrag ausgewaehlt. Rekonstruieren druecken um zu starten."
+            } else {
+                "Eintrag auswaehlen, dann Rekonstruieren druecken."
+            };
+            container(
+                text(hint).size(13).color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+            )
+            .padding(16)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
+                border: Border { color: Color::from_rgb8(0x14, 0x2C, 0x44), width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into()
+        };
+
+        // Action button
+        let reconstruct_btn = button(
+            text("\u{21ba} Rekonstruieren").size(15)
+                .color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+        )
+        .on_press_maybe(
+            self.rekonstruktion_selected
+                .filter(|_| !self.rekonstruktion_running)
+                .map(Message::ReconstructPressed),
+        )
+        .padding([10, 22])
+        .style(|_: &Theme, _| button::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x1E, 0x38))),
+            border: Border { color: Color::from_rgb8(0x1C, 0x50, 0x80), width: 1.0, radius: 8.0.into() },
+            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
+            ..Default::default()
+        });
+
+        container(
+            column![
+                header,
+                list,
+                reconstruct_btn,
+                status_panel,
+            ]
+            .spacing(14),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Aether.YouTube – Eingebetteter Video-Browser
+    // -----------------------------------------------------------------------
+
+    fn view_youtube(&self) -> Element<'_, Message> {
+        let nav_bar = row![
+            text_input("YouTube-URL ...", &self.youtube_address)
+                .on_input(Message::YouTubeAddressChanged)
+                .padding(10)
+                .size(16)
+                .width(Length::Fill),
+            button(text("\u{25b6} Laden").size(15))
+                .padding([10, 16])
+                .on_press(Message::YouTubeLoadPressed),
+        ]
+        .spacing(8);
+
+        column![
+            row![
+                text("\u{25b6} YouTube").size(22),
+                text("\u{2014} URL anpassen und Laden dr\u{fc}cken").size(14),
+            ]
+            .spacing(12),
+            nav_bar,
+            text(&self.browser_note).size(13),
+            container(
+                column![
+                    text("Eingebetteter Browser aktiv.").size(16),
+                    text("Das Video-Fenster erscheint als natives Overlay.").size(14),
+                    text("Tipp: youtube.com/watch?v=... direkt eintippen.").size(13),
+                ]
+                .spacing(10)
+                .padding(30)
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        ]
+        .spacing(10)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
     // Aether.StructureMap – Ockham-gefilterter fraktaler 3D-Suchbaum
     // Reine Visualisierung. Keine Steuerlogik. Keine Systemeingriffe.
     // -----------------------------------------------------------------------
@@ -1707,23 +2189,58 @@ impl AetherIcedShell {
             Tab::Home => self.view_home(),
             Tab::Chat => self.view_chat(),
             Tab::Browser => self.view_browser(),
+            Tab::YouTube => self.view_youtube(),
             Tab::Data => self.view_data(),
             Tab::Settings => self.view_settings(),
             Tab::Logs => self.view_logs(),
             Tab::Anchors => self.view_anchors(),
             Tab::StructureMap => self.view_structure_map(),
             Tab::Imprint => self.view_imprint(),
+            Tab::Rekonstruktion => self.view_rekonstruktion(),
         };
         container(
             row![
                 self.view_sidebar(),
-                column![self.view_tabs(), text(&self.status_line).size(15), main]
-                    .spacing(12)
+                column![
+                    self.view_tabs(),
+                    // Tab title bar
+                    container(
+                        row![
+                            text(match self.active_tab {
+                                Tab::Home        => "Overview",
+                                Tab::Chat        => "Chat",
+                                Tab::Browser     => "Browser",
+                                Tab::YouTube     => "YouTube",
+                                Tab::Data        => "Data",
+                                Tab::Settings    => "Config",
+                                Tab::Logs        => "Logs",
+                                Tab::Anchors     => "Cluster",
+                                Tab::StructureMap=> "Ringe",
+                                Tab::Imprint     => "Info",
+                                Tab::Rekonstruktion => "Rekonstruktion",
+                            }).size(18).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                            iced::widget::Space::new(Length::Fill, Length::Shrink),
+                            text(&self.status_line).size(12)
+                                .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+                        ]
+                        .spacing(12)
+                        .align_y(iced::Alignment::Center),
+                    )
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
+                        border: Border { color: Color::from_rgb8(0x14, 0x2C, 0x44), width: 1.0, radius: 0.0.into() },
+                        ..Default::default()
+                    })
+                    .padding([8, 16])
                     .width(Length::Fill),
+                    main,
+                ]
+                .spacing(0)
+                .width(Length::Fill),
             ]
-            .spacing(18),
+            .spacing(0),
         )
-        .padding(18)
+        .padding(0)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -1942,6 +2459,10 @@ impl AetherIcedShell {
                 self.active_tab = tab;
                 if self.active_tab == Tab::Browser {
                     self.sync_browser_embed();
+                } else if self.active_tab == Tab::YouTube {
+                    let url = self.youtube_address.clone();
+                    let _ = self.browser_embed.navigate(&url);
+                    self.sync_browser_embed();
                 } else {
                     self.browser_embed.hide();
                 }
@@ -1972,6 +2493,29 @@ impl AetherIcedShell {
             Message::ShanwayMessageSend => self.send_shanway_message(),
             Message::BrowserAddressChanged(value) => self.browser_address = value,
             Message::BrowserSearchQueryChanged(value) => self.browser_search_query = value,
+            Message::YouTubeAddressChanged(value) => {
+                self.youtube_address = value;
+            }
+            Message::YouTubeLoadPressed => {
+                let url = self.youtube_address.trim().to_owned();
+                if url.is_empty() {
+                    self.status_line = "Bitte eine YouTube-URL eingeben.".to_owned();
+                    return Task::none();
+                }
+                self.active_tab = Tab::YouTube;
+                match self.browser_embed.navigate(&url) {
+                    Ok(()) => {
+                        self.sync_browser_embed();
+                        self.browser_note = format!("YouTube laedt {url}");
+                        self.status_line = self.browser_note.clone();
+                    }
+                    Err(err) => {
+                        self.browser_note =
+                            format!("Video konnte nicht geladen werden: {err}");
+                        self.status_line = self.browser_note.clone();
+                    }
+                }
+            }
             Message::BrowserLoadPressed => {
                 let url = self.browser_address.trim().to_owned();
                 if url.is_empty() {
@@ -2111,6 +2655,77 @@ impl AetherIcedShell {
                     }
                 }
             }
+            Message::ReconstructPressed(entry_id) => {
+                let Some(_) = self.current_username() else {
+                    self.status_line = "Bitte zuerst lokal anmelden.".to_owned();
+                    return Task::none();
+                };
+                let Some(entry) = self.entries().into_iter().find(|e| e.id == entry_id) else {
+                    self.rekonstruktion_selected = Some(entry_id);
+                    return Task::none();
+                };
+                self.rekonstruktion_selected = Some(entry_id);
+                self.rekonstruktion_running = true;
+                self.rekonstruktion_result = None;
+                self.status_line = format!("Rekonstruktion gestartet: {}", entry.file_name);
+                let aef_path = PathBuf::from(&entry.full_path);
+                let out_dir = PathBuf::from("data").join("rust_shell").join("reconstructed");
+                let out_path = out_dir.join(&entry.file_name);
+                let file_name = entry.file_name.clone();
+                return Task::perform(
+                    async move {
+                        let vault = VaultStore::load_default().map_err(|e| e.to_string())?;
+                        let vault = Arc::new(RwLock::new(vault));
+                        let decoder = AefDecoder::new(vault);
+                        decoder
+                            .decode_sync(&aef_path, &out_path)
+                            .map(|r| (file_name, r))
+                            .map_err(|e| e.to_string())
+                    },
+                    Message::ReconstructionCompleted,
+                );
+            }
+            Message::ReconstructionCompleted(result) => {
+                self.rekonstruktion_running = false;
+                let status = match &result {
+                    Ok((name, r)) => {
+                        if r.reconstruction_complete {
+                            format!("Rekonstruktion abgeschlossen: {name}")
+                        } else {
+                            format!("Rekonstruktion unvollstaendig: {name} ({} Vault-Refs fehlen)", r.missing_vault_refs.len())
+                        }
+                    }
+                    Err(err) => format!("Rekonstruktion fehlgeschlagen: {err}"),
+                };
+                self.status_line = status;
+                self.rekonstruktion_result = Some(result);
+            }
+            Message::ExportPressed(entry_id) => {
+                let Some(result) = &self.rekonstruktion_result else {
+                    return Task::none();
+                };
+                if let Ok((file_name, r)) = result {
+                    if r.reconstruction_complete {
+                        let src = PathBuf::from("data")
+                            .join("rust_shell")
+                            .join("reconstructed")
+                            .join(file_name);
+                        let dst = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
+                            .join("Downloads")
+                            .join(file_name);
+                        match fs::copy(&src, &dst) {
+                            Ok(_) => {
+                                self.status_line =
+                                    format!("Exportiert nach Downloads: {file_name}");
+                            }
+                            Err(err) => {
+                                self.status_line = format!("Export fehlgeschlagen: {err}");
+                            }
+                        }
+                    }
+                }
+                let _ = entry_id;
+            }
             Message::WindowResized(width, height) => {
                 self.window_width = width;
                 self.window_height = height;
@@ -2124,7 +2739,7 @@ impl AetherIcedShell {
                     self.step_structure_map();
                     return Task::none();
                 }
-                if self.active_tab != Tab::Browser {
+                if self.active_tab != Tab::Browser && self.active_tab != Tab::YouTube {
                     return Task::none();
                 }
                 if self.tick_counter % self.browser_sync_stride == 0 {
@@ -2441,44 +3056,206 @@ fn dashboard_metric(label: &'static str, value: String, hint: String, fill: f32)
     .into()
 }
 
-fn orchestration_map_card() -> Element<'static, Message> {
+// ── Orchestration Canvas ────────────────────────────────────────────────────
+
+struct OrchestrationScene {
+    tick: u64,
+    cluster_count: usize,
+    analysis_running: bool,
+    trust_ok: bool,
+}
+
+impl canvas::Program<Message> for OrchestrationScene {
+    type State = ();
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(
+            Point::new(0.0, 0.0), bounds.size(),
+            Color::from_rgb8(0x04, 0x0C, 0x18),
+        );
+
+        let w = bounds.width;
+        let h = bounds.height;
+        let t = self.tick as f32;
+
+        // Node definitions: (label, cx_frac, cy_frac, color)
+        let nodes: &[(&str, f32, f32, Color)] = &[
+            ("API Gateway",     0.14, 0.42, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
+            ("Compute Node A",  0.50, 0.18, Color::from_rgb8(0x3A, 0xC0, 0x8A)),
+            ("Event Router",    0.50, 0.50, Color::from_rgb8(0x1E, 0x90, 0xFF)),
+            ("Task Queue",      0.74, 0.42, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
+            ("Alert Handler",   0.90, 0.42, Color::from_rgb8(0xD0, 0x60, 0x60)),
+            ("Database Cluster",0.50, 0.78, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
+        ];
+
+        // Edges (from_idx, to_idx)
+        let edges: &[(usize, usize)] = &[
+            (0, 2), (2, 0), // API <-> Router
+            (2, 1), (1, 2), // Router <-> Compute
+            (2, 3), (3, 2), // Router <-> Queue
+            (3, 4),         // Queue -> Alert
+            (2, 5), (5, 2), // Router <-> DB
+        ];
+
+        let nx = |i: usize| nodes[i].1 * w;
+        let ny = |i: usize| nodes[i].2 * h;
+
+        // Draw edges with animated pulse
+        for &(from, to) in edges {
+            let fx = nx(from); let fy = ny(from);
+            let tx = nx(to);   let ty = ny(to);
+            let mut ec = nodes[from].3;
+            ec.a = 0.28;
+            let edge = canvas::Path::new(|b| { b.move_to(Point::new(fx, fy)); b.line_to(Point::new(tx, ty)); });
+            frame.stroke(&edge, canvas::Stroke { style: canvas::Style::Solid(ec), width: 1.2, line_dash: canvas::LineDash { segments: &[6.0, 4.0], offset: 0 }, ..canvas::Stroke::default() });
+
+            // Animated pulses along edges
+            let phase = (t * 0.04 + (from + to * 3) as f32 * 0.7).rem_euclid(1.0);
+            let px = fx + (tx - fx) * phase;
+            let py = fy + (ty - fy) * phase;
+            let mut pc = nodes[from].3; pc.a = 0.85;
+            frame.fill(&canvas::Path::circle(Point::new(px, py), 3.0), pc);
+        }
+
+        // Draw nodes
+        for (label, fx, fy, col) in nodes {
+            let cx = fx * w; let cy = fy * h;
+            let is_router = *label == "Event Router";
+            let r = if is_router { 42.0f32 } else { 34.0f32 };
+            let rh = r * 0.55;
+
+            // Box fill
+            let mut fc = *col; fc.a = 0.18;
+            let rect = canvas::Path::new(|b| {
+                b.move_to(Point::new(cx - r, cy - rh));
+                b.line_to(Point::new(cx + r, cy - rh));
+                b.line_to(Point::new(cx + r, cy + rh));
+                b.line_to(Point::new(cx - r, cy + rh));
+                b.close();
+            });
+            frame.fill(&rect, fc);
+
+            // Box border
+            let mut bc = *col; bc.a = if is_router { 0.95 } else { 0.65 };
+            frame.stroke(&rect, canvas::Stroke { style: canvas::Style::Solid(bc), width: if is_router { 2.0 } else { 1.2 }, ..canvas::Stroke::default() });
+
+            // Label
+            frame.fill_text(canvas::Text {
+                content: label.to_string(),
+                position: Point::new(cx, cy),
+                color: Color::from_rgb8(0xC8, 0xDE, 0xEE),
+                size: iced::Pixels(10.0),
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+
+            // Glow pulse on Event Router
+            if is_router {
+                let glow_r = r + 6.0 + 3.0 * (t * 0.06).sin();
+                let mut gc = *col; gc.a = 0.08;
+                frame.stroke(
+                    &canvas::Path::circle(Point::new(cx, cy), glow_r),
+                    canvas::Stroke { style: canvas::Style::Solid(gc), width: 2.5, ..canvas::Stroke::default() },
+                );
+            }
+        }
+
+        // Status dot top-left
+        let dot_col = if self.trust_ok {
+            Color::from_rgb8(0x4C, 0xD9, 0x6E)
+        } else {
+            Color::from_rgb8(0xD9, 0x80, 0x40)
+        };
+        frame.fill(&canvas::Path::circle(Point::new(10.0, 10.0), 4.5), dot_col);
+
+        vec![frame.into_geometry()]
+    }
+}
+
+// ── DotScene (status indicator dot) ─────────────────────────────────────────
+
+struct DotScene { color: Color }
+impl canvas::Program<Message> for DotScene {
+    type State = ();
+    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let r = bounds.width.min(bounds.height) * 0.45;
+        frame.fill(&canvas::Path::circle(Point::new(bounds.width * 0.5, bounds.height * 0.5), r), self.color);
+        vec![frame.into_geometry()]
+    }
+}
+
+// ── Helper functions for new dashboard ───────────────────────────────────────
+
+fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
+    let spark = make_sparkline(fill.clamp(0.0, 1.0));
     container(
         column![
-            text("◎ ORCHESTRIERUNG — Aether Datenfluss").size(16),
-            container(
-                column![
-                    text("  [DROP] ──▶ [STRUKTURANALYSE] ──▶ [MERKMALSPROFIL]").size(14),
-                    text("                                          │").size(14),
-                    text("                                  [ANCHOR-SIGNALE]").size(14),
-                    text("                                          │").size(14),
-                    text("                         [CLUSTER-ZUORDNUNG] ──▶ [SPEICHER]").size(14),
-                ]
-                .spacing(2),
-            )
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x04, 0x0E, 0x18))),
-                border: Border {
-                    color: Color::from_rgb8(0x1C, 0x5A, 0x68),
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            })
-            .padding([12, 16]),
+            text(label.to_owned()).size(12).color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+            text(value).size(26).color(Color::from_rgb8(0xE0, 0xF0, 0xFF)),
+            text(spark).size(11).color(accent),
         ]
-        .spacing(8)
+        .spacing(6)
         .width(Length::Fill),
     )
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-            width: 1.5,
-            radius: 8.0.into(),
-        },
+    .style(move |_: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
+        border: Border { color: accent, width: 1.5, radius: 10.0.into() },
         ..Default::default()
     })
     .padding(18)
+    .width(Length::Fill)
+    .into()
+}
+
+fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<'a, Message> {
+    container(
+        row![
+            text(time.to_owned()).size(11).color(Color::from_rgb8(0x60, 0x80, 0x98)),
+            container(text(tag.to_owned()).size(11).color(tag_color))
+                .padding([2, 6])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(tag_color.r * 0.15, tag_color.g * 0.15, tag_color.b * 0.15, 1.0))),
+                    border: Border { color: tag_color, width: 1.0, radius: 4.0.into() },
+                    ..Default::default()
+                }),
+            text(msg.to_owned()).size(12).color(Color::from_rgb8(0xA8, 0xC4, 0xD8)),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    )
+    .padding([6, 0])
+    .width(Length::Fill)
+    .into()
+}
+
+fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Element<'a, Message> {
+    container(
+        row![
+            text(icon.to_owned()).size(14).color(icon_color),
+            column![
+                text(title.to_owned()).size(13).color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                text(sub.to_owned()).size(11).color(Color::from_rgb8(0x70, 0x90, 0xA8)),
+            ]
+            .spacing(2),
+        ]
+        .spacing(8)
+        .align_y(iced::Alignment::Center),
+    )
+    .style(move |_: &Theme| container::Style {
+        background: Some(Background::Color(Color::from_rgba(icon_color.r * 0.10, icon_color.g * 0.10, icon_color.b * 0.10, 1.0))),
+        border: Border { color: Color::from_rgba(icon_color.r, icon_color.g, icon_color.b, 0.5), width: 1.0, radius: 6.0.into() },
+        ..Default::default()
+    })
+    .padding([8, 12])
     .width(Length::Fill)
     .into()
 }
