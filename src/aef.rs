@@ -220,7 +220,7 @@ struct StoredVaultState {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct VaultStore {
+pub struct VaultStore {
     path: PathBuf,
     version: u64,
     entries: Vec<StoredVaultEntry>,
