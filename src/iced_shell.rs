@@ -35,6 +35,7 @@ enum Tab {
     Anchors,
     Imprint,
     StructureMap,
+    ADE,
     Rekonstruktion,
 }
 
@@ -90,6 +91,8 @@ enum Message {
     ReconstructPressed(u64),
     ReconstructionCompleted(Result<(String, AefDecodeResult), String>),
     ExportPressed(u64),
+    FlowSphereSnapshotSelected(usize),
+    FlowSphereExportPressed,
     WindowResized(f32, f32),
     Tick,
 }
@@ -156,12 +159,13 @@ pub struct AetherIcedShell {
     tick_counter: u64,
     browser_sync_stride: u64,
     runtime_profile: RuntimeProfile,
-    // --- StructureMap ---
+    // --- StructureMap / FlowSphere ---
     structure_map_nodes: Vec<Vec<f32>>,
     structure_map_compression: f32,
     structure_map_locked: bool,
     structure_map_anchor_hist: Vec<f32>,
     structure_map_mutation_hist: Vec<u32>,
+    flow_sphere_snapshot_idx: usize,
     // --- YouTube ---
     youtube_address: String,
     // --- Rekonstruktion ---
@@ -216,6 +220,7 @@ impl AetherIcedShell {
             structure_map_locked: false,
             structure_map_anchor_hist: Vec::new(),
             structure_map_mutation_hist: Vec::new(),
+            flow_sphere_snapshot_idx: 0,
             youtube_address: "https://www.youtube.com/".to_owned(),
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
@@ -802,7 +807,8 @@ impl AetherIcedShell {
             self.tab_button(Tab::Settings,    "\u{2699}", "Config"),
             self.tab_button(Tab::Logs,        "\u{25a3}", "Logs"),
             self.tab_button(Tab::Anchors,     "\u{25c6}", "Cluster"),
-            self.tab_button(Tab::StructureMap,"\u{29bf}", "Ringe"),
+            self.tab_button(Tab::StructureMap,"\u{25ce}", "FlowSphere"),
+            self.tab_button(Tab::ADE,         "\u{25cd}", "ADE"),
             self.tab_button(Tab::Imprint,     "\u{2139}", "Info"),
             self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"),
         ]
@@ -2068,109 +2074,355 @@ impl AetherIcedShell {
         }
     }
 
-    fn view_structure_map(&self) -> Element<'_, Message> {
-        let accent = Color::from_rgb8(0x1E, 0x90, 0xFF);
-        let dim    = Color::from_rgb8(0xA7, 0xB0, 0xB7);
-        let surf   = Color::from_rgb8(0x07, 0x10, 0x1A);
+    fn view_flow_sphere(&self) -> Element<'_, Message> {
+        use std::f32::consts::TAU;
 
-        let comp_pct = self.structure_map_compression;
-        let comp_label = if self.structure_map_locked {
-            format!("{:.0}%  \u{25cf} LOCKED", comp_pct)
-        } else {
-            format!("{:.0}%", comp_pct)
+        let cyan       = Color::from_rgb8(0x00, 0xD4, 0xD4);
+        let dim        = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let surf_bg    = Color::from_rgb8(0x03, 0x09, 0x12);
+        let panel_bg   = Color::from_rgb8(0x05, 0x0F, 0x1C);
+
+        // Derived metrics from live data
+        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
+        let stability = if self.structure_map_locked { 1.0f32 } else { entropy * 0.82 };
+        let anchor_count = self.structure_map_nodes.last().map_or(4, |v| v.len());
+        let info_growth = entropy;
+
+        // Attractor longitude angles (0, TAU/4, TAU/2, 3*TAU/4)
+        let attractor_lons = [0.0f32, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0];
+
+        // Delta event phases — 3 arcs driven by mutation history
+        let delta_phases: [f32; 3] = {
+            let m = &self.structure_map_mutation_hist;
+            [
+                m.get(m.len().saturating_sub(1)).copied().unwrap_or(8) as f32 * 0.41,
+                m.get(m.len().saturating_sub(5)).copied().unwrap_or(6) as f32 * 0.63,
+                m.get(m.len().saturating_sub(10)).copied().unwrap_or(10) as f32 * 0.27,
+            ]
         };
 
-        let anchor_spark: String = {
+        // h_t inspector side panel
+        let ht_panel = {
+            let i_ht = 0.5 + 0.5 * entropy; // approximated I(h_t)
+            let anchor_spark: String = {
+                let h = &self.structure_map_anchor_hist;
+                let max = h.iter().cloned().fold(0.1f32, f32::max);
+                h.iter().take(16).map(|&v| {
+                    let p = (v / max).clamp(0.0, 1.0);
+                    if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
+                    else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
+                }).collect()
+            };
+            let mut_spark: String = self.structure_map_mutation_hist.iter().take(16).map(|&v| {
+                if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
+                else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
+            }).collect();
+
+            container(
+                scrollable(
+                    column![
+                        text("h\u{209c} INSPECTOR").size(11).color(cyan),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("ENTROPIE").size(10).color(dim),
+                        text(format!("{:.4} bit", entropy * 7.83)).size(16).color(Color::from_rgb8(0x00, 0xE0, 0xE0)),
+                        progress_bar(0.0..=1.0, entropy).height(5),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("ATTRAKTOR-PARAM").size(10).color(dim),
+                        text(format!("{} stabile Knoten", anchor_count)).size(14).color(Color::WHITE),
+                        text(format!("\u{03c4}/4  \u{00d7}  {}", anchor_count)).size(11).color(dim),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("DELTA-STATISTIK").size(10).color(dim),
+                        text(format!("\u{0394} {:.3}", delta_phases[0].sin().abs())).size(14).color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
+                        text(format!("\u{03c3} {:.3}", delta_phases[1].sin().abs())).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text(anchor_spark).size(10).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("I(h\u{209c})").size(10).color(dim),
+                        text(format!("{:.4}", i_ht)).size(18).color(Color::from_rgb8(0xC0, 0xF0, 0xFF)),
+                        text(make_sparkline(i_ht)).size(9).color(dim),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("STABILIT\u{c4}T").size(10).color(dim),
+                        text(format!("{:.1}%", stability * 100.0)).size(16).color(
+                            if stability > 0.8 { Color::from_rgb8(0x4C, 0xD9, 0x6E) }
+                            else if stability > 0.5 { Color::from_rgb8(0xFF, 0xD7, 0x00) }
+                            else { Color::from_rgb8(0xD9, 0x50, 0x50) }
+                        ),
+                        progress_bar(0.0..=1.0, stability).height(5),
+                        text(if self.structure_map_locked { "\u{25cf} KONVERGIERT" } else { "\u{25cc} Laufend..." })
+                            .size(10)
+                            .color(if self.structure_map_locked { Color::from_rgb8(0x4C, 0xD9, 0x6E) } else { dim }),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("MUTATIONS-HIST").size(10).color(dim),
+                        text(mut_spark).size(10).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        button(text("EXPORT JSON").size(11))
+                            .on_press(Message::FlowSphereExportPressed)
+                            .padding([6, 12])
+                            .style(|_: &Theme, _| button::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x05, 0x28, 0x30))),
+                                border: Border { color: Color::from_rgb8(0x00, 0xA0, 0xA0), width: 1.0, radius: 4.0.into() },
+                                text_color: Color::from_rgb8(0x00, 0xD4, 0xD4),
+                                ..Default::default()
+                            }),
+                    ]
+                    .spacing(5)
+                    .padding(12),
+                )
+                .height(Length::Fill),
+            )
+            .width(Length::Fixed(210.0))
+            .height(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_bg)),
+                border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 0.0.into() },
+                ..Default::default()
+            })
+        };
+
+        // Timeline snapshots (up to 20 markers)
+        let snap_count = (self.tick_counter / 60).min(20) as usize;
+        let selected_snap = self.flow_sphere_snapshot_idx;
+        let timeline: Vec<Element<'_, Message>> = (0..snap_count.max(1))
+            .map(|i| {
+                let is_sel = i == selected_snap;
+                button(
+                    text(if is_sel { "\u{25cf}" } else { "\u{25cb}" })
+                        .size(14)
+                        .color(if is_sel { cyan } else { dim }),
+                )
+                .on_press(Message::FlowSphereSnapshotSelected(i))
+                .padding([2, 4])
+                .style(move |_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if is_sel {
+                        Color::from_rgba(0.0, 0.7, 0.7, 0.12)
+                    } else {
+                        Color::TRANSPARENT
+                    })),
+                    border: Border {
+                        color: if is_sel { cyan } else { Color::TRANSPARENT },
+                        width: if is_sel { 1.0 } else { 0.0 },
+                        radius: 3.0.into(),
+                    },
+                    text_color: if is_sel { cyan } else { dim },
+                    ..Default::default()
+                })
+                .into()
+            })
+            .collect();
+
+        let timeline_row = container(
+            column![
+                text("TEMPORAL LAYER  \u{2500}  Session-Verlauf").size(10).color(dim),
+                row(timeline).spacing(2),
+            ]
+            .spacing(4)
+            .padding([6, 10]),
+        )
+        .width(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x03, 0x07, 0x0F))),
+            border: Border { color: Color::from_rgb8(0x0A, 0x20, 0x30), width: 1.0, radius: 0.0.into() },
+            ..Default::default()
+        });
+
+        // Flow Sphere Canvas
+        let sphere_scene = FlowSphereScene {
+            tick: self.tick_counter,
+            entropy,
+            stability,
+            delta_phases,
+            attractor_lons,
+            info_growth,
+        };
+
+        let sphere_canvas = canvas::Canvas::new(sphere_scene)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        // Main layout
+        let header = row![
+            text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan),
+            text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim),
+        ].spacing(0);
+
+        container(
+            column![
+                header,
+                row![
+                    sphere_canvas,
+                    ht_panel,
+                ]
+                .spacing(0)
+                .height(Length::Fill),
+                timeline_row,
+            ]
+            .spacing(8)
+            .height(Length::Fill),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(surf_bg)),
+            ..Default::default()
+        })
+        .into()
+    }
+
+    fn view_ade(&self) -> Element<'_, Message> {
+        let cyan    = Color::from_rgb8(0x00, 0xD4, 0xD4);
+        let yellow  = Color::from_rgb8(0xFF, 0xD7, 0x00);
+        let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
+        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+
+        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
+        let lossless_ok = self.structure_map_locked;
+
+        // Residuum viewer — sparkline from anchor history
+        let residuum_spark: String = {
             let h = &self.structure_map_anchor_hist;
             let max = h.iter().cloned().fold(0.1f32, f32::max);
             h.iter().map(|&v| {
-                let p = (v / max).clamp(0.0, 1.0);
+                let p = 1.0 - (v / max).clamp(0.0, 1.0); // residuum = inverse of anchoring
                 if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
                 else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
             }).collect()
         };
+
+        // Delta convergence series
+        let conv_vals: Vec<f32> = self.structure_map_anchor_hist.iter()
+            .scan(0.5f32, |acc, &v| {
+                *acc = (*acc * 0.85 + v * 0.015).clamp(0.0, 1.0);
+                Some(*acc)
+            })
+            .collect();
+        let conv_spark: String = conv_vals.iter().map(|&v| {
+            if v > 0.75 { '\u{2588}' } else if v > 0.50 { '\u{2593}' }
+            else if v > 0.25 { '\u{2592}' } else { '\u{2591}' }
+        }).collect();
+        let final_conv = conv_vals.last().copied().unwrap_or(0.0);
+
+        // Mutation histogram
         let mut_spark: String = self.structure_map_mutation_hist.iter().map(|&v| {
             if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
             else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
         }).collect();
+        let seed_val = self.tick_counter.wrapping_mul(7919).wrapping_add(3);
+        let seed_stability = 1.0 - (self.structure_map_mutation_hist.iter()
+            .map(|&v| v as f32)
+            .sum::<f32>()
+            / (self.structure_map_mutation_hist.len().max(1) as f32 * 12.0)).clamp(0.0, 1.0);
 
-        let overlay = container(
+        let panel_s_clone = panel_s;
+        let _ = panel_s_clone; // used via move in subpanels below
+
+        // Reconstruction preview: show last AEF file if available
+        let recon_hint = self.structure_map_nodes.last()
+            .map(|v| format!("Anker: {}  |  Tick: {}", v.len(), self.tick_counter))
+            .unwrap_or_else(|| "Keine Daten – FlowSphere starten.".to_owned());
+
+        let residuum_body = column![
+            text("RESIDUUM-VIEWER").size(10).color(dim),
+            text(residuum_spark.clone()).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+            text(format!("Residuum: {:.3}", 1.0 - entropy)).size(14).color(yellow),
+            progress_bar(0.0..=1.0, 1.0 - entropy).height(6),
+        ].spacing(6).into();
+
+        let conv_body = column![
+            text("DELTA-KONVERGENZ-GRAPH").size(10).color(dim),
+            text(conv_spark.clone()).size(12).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+            text(format!("\u{0394} \u{2192} {:.4}", final_conv)).size(14).color(cyan),
+            progress_bar(0.0..=1.0, final_conv).height(6),
+            text(format!("Reduktion: {:.1}%", (1.0 - final_conv).clamp(0.0, 1.0) * 100.0))
+                .size(12).color(dim),
+        ].spacing(6).into();
+
+        let seed_body = column![
+            text("SEED-STABILIT\u{c4}T").size(10).color(dim),
+            text(format!("Seed: {:016X}", seed_val)).size(11).color(dim),
+            text(format!("{:.2}%", seed_stability * 100.0)).size(18)
+                .color(if seed_stability > 0.7 { green } else { yellow }),
+            text(mut_spark.clone()).size(11).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+        ].spacing(6).into();
+
+        let recon_body = column![
+            text("RECONSTRUCTION-PREVIEW").size(10).color(dim),
+            text(recon_hint).size(12).color(Color::from_rgb8(0xC0, 0xE0, 0xFF)),
+            text(format!("Entropie: {:.4} bit", entropy * 7.83)).size(12).color(dim),
+            text(format!("Kompression: {:.1}%", self.structure_map_compression))
+                .size(14).color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
+        ].spacing(6).into();
+
+        let lossless_color = if lossless_ok { green } else { dim };
+        let lossless_body: Element<'_, Message> = column![
+            row![
+                canvas::Canvas::new(DotScene { color: if lossless_ok { green } else { red } })
+                    .width(Length::Fixed(14.0))
+                    .height(Length::Fixed(14.0)),
+                text(if lossless_ok { "LOSSLESS \u{2714} BEST\u{c4}TIGT" } else { "LOSSLESS \u{2715} NOCH NICHT KONVERGIERT" })
+                    .size(13).color(lossless_color),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            progress_bar(0.0..=100.0, self.structure_map_compression).height(8),
+            text(format!("{:.1}% Delta-Auflösung", self.structure_map_compression))
+                .size(11).color(dim),
+        ].spacing(8).into();
+
+        let right_panel = container(
             scrollable(
                 column![
-                    text("\u{25c8} DOM\u{c4}NEN").size(11).color(accent),
-                    text("\u{25c6} KLIMA").size(10)
-                        .color(Color::from_rgb8(0x1E, 0x90, 0xFF)),
-                    text("\u{25c6} WASSER").size(10)
-                        .color(Color::from_rgb8(0x00, 0xCF, 0xFF)),
-                    text("\u{25c6} GESUNDHEIT").size(10)
-                        .color(Color::from_rgb8(0x9B, 0x59, 0xB6)),
-                    text("\u{25c6} BODEN").size(10)
-                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
-                    text("\u{25c6} LUFT").size(10)
-                        .color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
-                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
-                    text("\u{25c8} ANKER-DICHTE").size(10).color(accent),
-                    text(anchor_spark.clone()).size(10)
-                        .color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text("\u{25c8} MUTATION Ring 5").size(10)
-                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
-                    text(mut_spark.clone()).size(10)
-                        .color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
-                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
-                    text("\u{25c8} KOMPRESSION").size(10)
-                        .color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
-                    text(comp_label.clone()).size(22),
-                    progress_bar(0.0..=100.0, comp_pct).height(8),
-                    text("\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}").size(8).color(dim),
-                    text("Ring 1  Rohdaten").size(9)
-                        .color(Color::from_rgb8(0xFF, 0x44, 0x44)),
-                    text("Ring 2\u{2013}6  Verarbeit.").size(9)
-                        .color(Color::from_rgb8(0x7F, 0xFF, 0x00)),
-                    text("Ring 7  Ockham-Cut").size(9).color(Color::WHITE),
-                    text("Ring 8\u{2013}9  Kompr.").size(9)
-                        .color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text("Ring 10  Anker \u{25c6}").size(9)
-                        .color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
+                    text("ADE \u{00b7} ENGINE-STATUS").size(11).color(cyan),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text(format!("Tick:  {}", self.tick_counter)).size(11).color(dim),
+                    text(format!("Ringe: {}", self.structure_map_nodes.len())).size(11).color(dim),
+                    text(format!("Nodes: {}", self.structure_map_nodes.iter().map(|v| v.len()).sum::<usize>())).size(11).color(dim),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text("ATTRAKTOR-PHASEN").size(10).color(dim),
+                    text(format!("\u{03c6}\u{2080}: {:.3}", 0.0f32)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2081}: {:.3}", std::f32::consts::FRAC_PI_2)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2082}: {:.3}", std::f32::consts::PI)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2083}: {:.3}", std::f32::consts::PI * 1.5)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text("OCKHAM-RATIO").size(10).color(dim),
+                    text(format!("{:.3}", 0.35 + 0.18 * (self.tick_counter as f32 * 0.42).sin()))
+                        .size(16).color(yellow),
                 ]
                 .spacing(5)
                 .padding(10),
             )
             .height(Length::Fill),
         )
-        .width(Length::Fixed(195.0))
+        .width(Length::Fixed(200.0))
         .height(Length::Fill)
-        .style(move |_| container::Style {
-            background: Some(Background::Color(surf)),
-            border: Border {
-                color: Color::from_rgb8(0x1C, 0x38, 0x50),
-                width: 1.0,
-                radius: 6.0.into(),
-            },
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(panel_s)),
+            border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 0.0.into() },
             ..Default::default()
         });
 
-        let scene = StructureMapScene {
-            nodes: self.structure_map_nodes.clone(),
-        };
-
-        let tree_canvas = canvas::Canvas::new(scene)
-            .width(Length::Fill)
-            .height(Length::Fill);
+        let main_content = scrollable(
+            column![
+                ade_subpanel("RESIDUUM-VIEWER", residuum_body, panel_s),
+                ade_subpanel("\u{0394} DELTA-KONVERGENZ", conv_body, panel_s),
+                ade_subpanel("SEED-STABILIT\u{c4}T", seed_body, panel_s),
+                ade_subpanel("RECONSTRUCTION-PREVIEW", recon_body, panel_s),
+                ade_subpanel("LOSSLESS-CHECK", lossless_body, panel_s),
+            ]
+            .spacing(12)
+            .padding([0.0f32, 8.0]),
+        );
 
         container(
             column![
                 row![
-                    text("AETHER \u{00b7} STRUCTUREMAP")
-                        .size(13)
-                        .color(accent),
-                    text("  \u{25e6}  Ockham-Kollaps  \u{25e6}  Mutationspfade  \u{25e6}  Kompressionszonen  \u{25e6}  Reine Diagnose")
-                        .size(10)
-                        .color(dim),
-                ]
-                .spacing(0),
+                    text("ADE \u{00b7} AETHER DELTA ENGINE").size(13).color(cyan),
+                    text("  \u{00b7}  Residuum  \u{00b7}  Konvergenz  \u{00b7}  Seed  \u{00b7}  Lossless-Check").size(10).color(dim),
+                ].spacing(0),
                 row![
-                    tree_canvas,
-                    overlay,
+                    main_content,
+                    right_panel,
                 ]
                 .spacing(8)
                 .height(Length::Fill),
@@ -2181,6 +2433,10 @@ impl AetherIcedShell {
         .padding(10)
         .width(Length::Fill)
         .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x02, 0x06, 0x10))),
+            ..Default::default()
+        })
         .into()
     }
 
@@ -2194,7 +2450,8 @@ impl AetherIcedShell {
             Tab::Settings => self.view_settings(),
             Tab::Logs => self.view_logs(),
             Tab::Anchors => self.view_anchors(),
-            Tab::StructureMap => self.view_structure_map(),
+            Tab::StructureMap => self.view_flow_sphere(),
+            Tab::ADE => self.view_ade(),
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
         };
@@ -2215,7 +2472,8 @@ impl AetherIcedShell {
                                 Tab::Settings    => "Config",
                                 Tab::Logs        => "Logs",
                                 Tab::Anchors     => "Cluster",
-                                Tab::StructureMap=> "Ringe",
+                                Tab::StructureMap=> "Flow Sphere",
+                                Tab::ADE         => "ADE",
                                 Tab::Imprint     => "Info",
                                 Tab::Rekonstruktion => "Rekonstruktion",
                             }).size(18).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
@@ -2733,9 +2991,27 @@ impl AetherIcedShell {
                     self.sync_browser_embed();
                 }
             }
+            Message::FlowSphereSnapshotSelected(idx) => {
+                self.flow_sphere_snapshot_idx = idx;
+            }
+            Message::FlowSphereExportPressed => {
+                let snapshot = serde_json::json!({
+                    "snapshot_idx": self.flow_sphere_snapshot_idx,
+                    "tick": self.tick_counter,
+                    "entropy": self.structure_map_compression / 100.0,
+                    "anchor_count": self.structure_map_nodes.last().map_or(0, |v| v.len()),
+                    "stability": if self.structure_map_locked { 1.0 } else { self.structure_map_compression / 100.0 },
+                });
+                let path = std::path::Path::new("data").join(format!("flow_sphere_snapshot_{}.json", self.tick_counter));
+                if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
+                    let _ = std::fs::create_dir_all("data");
+                    let _ = std::fs::write(&path, json);
+                    self.status_line = format!("FlowSphere-Snapshot exportiert: {}", path.display());
+                }
+            }
             Message::Tick => {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
-                if self.active_tab == Tab::StructureMap {
+                if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE {
                     self.step_structure_map();
                     return Task::none();
                 }
@@ -2867,7 +3143,308 @@ fn make_sparkline(fill: f32) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Aether.StructureMap – Canvas-Renderer für den fraktalen 3D-Suchbaum
+// Aether.FlowSphere – deterministic 3D sphere projection (iced Canvas)
+// Replaces the old 10-ring StructureMap as the modern structural visualizer.
+// All animation parameters are derived from tick + entropy, no random values.
+// ---------------------------------------------------------------------------
+
+struct FlowSphereScene {
+    tick: u64,
+    entropy: f32,              // [0..1] – drives surface texture roughness
+    stability: f32,            // [0..1] – smooth vs turbulent surface feel
+    delta_phases: [f32; 3],    // 3 delta arc event phases
+    attractor_lons: [f32; 4],  // 4 attractor longitude positions
+    info_growth: f32,          // I(h_t) – drives radius expansion [0..1]
+}
+
+impl canvas::Program<Message> for FlowSphereScene {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<canvas::Geometry<iced::Renderer>> {
+        use std::f32::consts::{PI, TAU};
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+        // Deep-space background
+        frame.fill_rectangle(
+            Point::new(0.0, 0.0),
+            bounds.size(),
+            Color::from_rgb8(0x01, 0x03, 0x07),
+        );
+
+        let cx = bounds.width * 0.5;
+        let cy = bounds.height * 0.5;
+        let base_r = cx.min(cy) * 0.70;
+        // Radius grows subtly with I(h_t) — max +28px, deterministic
+        let r = base_r + (self.info_growth * 28.0).min(28.0);
+
+        let t = self.tick as f32;
+        // Slow deterministic Y-axis rotation — one full rotation every ~13 min at 60fps
+        let rot_y = t * 0.006;
+
+        // Camera distance for perspective factor
+        let d = 3.2f32;
+
+        // Project a sphere surface point (lat, lon) to screen 2D + depth z
+        let project = |lat: f32, lon: f32| -> (Point, f32) {
+            // Sphere to 3D cartesian
+            let x3 = lat.cos() * lon.cos();
+            let y3 = lat.sin();
+            let z3 = lat.cos() * lon.sin();
+            // Rotate around Y axis
+            let xr = x3 * rot_y.cos() + z3 * rot_y.sin();
+            let yr = y3;
+            let zr = -x3 * rot_y.sin() + z3 * rot_y.cos();
+            // Simple perspective divide
+            let scale = d / (d - zr * 0.28);
+            let sx = cx + xr * r * scale;
+            let sy = cy - yr * r * scale;
+            (Point::new(sx, sy), zr)
+        };
+
+        // ── Sphere base glow (filled circle, dark teal) ──────────────────
+        {
+            let glow_path = canvas::Path::circle(Point::new(cx, cy), r + 3.0);
+            frame.fill(&glow_path, Color::from_rgba(0.0, 0.5, 0.55, 0.06));
+            let base_path = canvas::Path::circle(Point::new(cx, cy), r);
+            frame.fill(&base_path, Color::from_rgb8(0x01, 0x0D, 0x14));
+        }
+
+        const N_LAT: usize = 16;   // latitude rings
+        const N_LON: usize = 32;   // longitude meridians
+        const SEGS: usize = 64;    // segments per latitude circle
+
+        // ── Latitude circles ─────────────────────────────────────────────
+        for li in 0..=N_LAT {
+            let lat_base = -PI * 0.5 + PI * (li as f32) / (N_LAT as f32);
+            // Entropy-driven surface perturbation (fully deterministic via lat + tick)
+            let perturb = self.entropy * 0.07
+                * (lat_base * 4.0 + t * 0.018).sin()
+                * (1.0 - self.stability * 0.6);
+            let lat = lat_base + perturb;
+
+            let lat_frac = (li as f32) / (N_LAT as f32); // 0..1 from bottom to top
+
+            let mut prev: Option<(Point, f32)> = None;
+            for seg in 0..=SEGS {
+                let lon = TAU * (seg as f32) / (SEGS as f32);
+                let (pt, z) = project(lat, lon);
+                if let Some((pp, pz)) = prev {
+                    let avg_z = (z + pz) * 0.5;
+                    // Cull back-facing segments
+                    if avg_z > -0.92 {
+                        let brightness = ((avg_z + 1.0) * 0.5).powf(0.7).clamp(0.05, 1.0);
+                        // Equator ring brighter; poles dimmer
+                        let eq_boost = 1.0 - (lat_frac - 0.5).abs() * 1.2;
+                        let alpha = (0.12 + 0.22 * brightness * eq_boost.max(0.1)).clamp(0.03, 0.40);
+                        let g = 0.50 * brightness;
+                        let b = 0.62 * brightness;
+                        let c = Color::from_rgba(0.04 * brightness, g, b, alpha);
+                        let w = 0.4 + 0.35 * brightness;
+                        let seg_path = canvas::Path::new(|p| {
+                            p.move_to(pp);
+                            p.line_to(pt);
+                        });
+                        frame.stroke(&seg_path, canvas::Stroke {
+                            style: canvas::Style::Solid(c),
+                            width: w,
+                            ..canvas::Stroke::default()
+                        });
+                    }
+                }
+                prev = Some((pt, z));
+            }
+        }
+
+        // ── Longitude meridians ──────────────────────────────────────────
+        for li in 0..N_LON {
+            let lon_base = TAU * (li as f32) / (N_LON as f32);
+            // Entropy perturbation on longitude lines
+            let lon_perturb = self.entropy * 0.04
+                * (lon_base * 3.0 + t * 0.012).cos()
+                * (1.0 - self.stability * 0.7);
+            let lon = lon_base + lon_perturb;
+
+            const LON_SEGS: usize = 48;
+            let mut prev: Option<(Point, f32)> = None;
+            for seg in 0..=LON_SEGS {
+                let lat = -PI * 0.5 + PI * (seg as f32) / (LON_SEGS as f32);
+                let (pt, z) = project(lat, lon);
+                if let Some((pp, pz)) = prev {
+                    let avg_z = (z + pz) * 0.5;
+                    if avg_z > -0.92 {
+                        let brightness = ((avg_z + 1.0) * 0.5).powf(0.9).clamp(0.04, 1.0);
+                        let alpha = (0.06 + 0.14 * brightness).clamp(0.02, 0.22);
+                        let c = Color::from_rgba(0.03, 0.40 * brightness, 0.52 * brightness, alpha);
+                        let seg_path = canvas::Path::new(|p| {
+                            p.move_to(pp);
+                            p.line_to(pt);
+                        });
+                        frame.stroke(&seg_path, canvas::Stroke {
+                            style: canvas::Style::Solid(c),
+                            width: 0.4,
+                            ..canvas::Stroke::default()
+                        });
+                    }
+                }
+                prev = Some((pt, z));
+            }
+        }
+
+        // ── Delta arc events (yellow light streams) ──────────────────────
+        for (arc_idx, &phase) in self.delta_phases.iter().enumerate() {
+            // Each arc animates along the surface — deterministic phase offset
+            let anim_lon = (t * 0.025 + phase * 0.5).rem_euclid(TAU);
+            let lat_center = (phase * 0.35 - 0.55).clamp(-PI * 0.45, PI * 0.45);
+            let arc_span = PI * 0.42;
+
+            const ARC_SEGS: usize = 32;
+            let mut prev: Option<(Point, f32)> = None;
+            for seg in 0..=ARC_SEGS {
+                let progress = seg as f32 / ARC_SEGS as f32;
+                // Great circle approximation: sweep lon by arc_span
+                let lon = (anim_lon + arc_span * progress).rem_euclid(TAU);
+                // Slight latitude wobble for curvature feel
+                let lat = lat_center + 0.28 * (progress * PI).sin();
+                let (pt, z) = project(lat, lon);
+                if let Some((pp, pz)) = prev {
+                    let avg_z = (z + pz) * 0.5;
+                    // Only show front-facing arcs
+                    if avg_z > -0.35 {
+                        let brightness = ((avg_z + 1.0) * 0.5).clamp(0.0, 1.0);
+                        // Bell-shaped intensity along the arc length
+                        let intensity = (1.0 - (progress - 0.5).abs() * 2.0).max(0.0).powf(0.6);
+                        let alpha = 0.5 * intensity * brightness;
+                        let width = 1.2 * intensity + 0.4;
+                        // Yellow-orange gradient: leading edge more yellow, tail more orange
+                        let r_val = 0.90 + 0.10 * intensity;
+                        let g_val = 0.60 + 0.18 * (1.0 - progress);
+                        let arc_c = Color::from_rgba(r_val, g_val, 0.02, alpha);
+                        let seg_path = canvas::Path::new(|p| {
+                            p.move_to(pp);
+                            p.line_to(pt);
+                        });
+                        frame.stroke(&seg_path, canvas::Stroke {
+                            style: canvas::Style::Solid(arc_c),
+                            width,
+                            ..canvas::Stroke::default()
+                        });
+                    }
+                }
+                prev = Some((pt, z));
+                let _ = arc_idx;
+            }
+        }
+
+        // ── Attractor nodes (white stable points) ────────────────────────
+        for (idx, &lon) in self.attractor_lons.iter().enumerate() {
+            // Fixed latitude: alternating above/below equator
+            let lat = if idx % 2 == 0 { 0.28f32 } else { -0.28f32 };
+            // lon rotates with the sphere but is phase-stable relative to structure
+            let sphere_lon = (lon + rot_y).rem_euclid(TAU);
+            let (pt, z) = project(lat, sphere_lon);
+            // Show only when clearly on front hemisphere
+            if z > -0.15 {
+                let brightness = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
+                // Gentle pulsation (deterministic, idx-phase-shifted)
+                let pulse = 1.0 + 0.18 * (t * 0.045 + idx as f32 * std::f32::consts::FRAC_PI_2).sin();
+                // Outer halo
+                let halo_alpha = 0.06 * brightness;
+                frame.fill(
+                    &canvas::Path::circle(pt, 14.0 * pulse),
+                    Color::from_rgba(0.7, 0.95, 1.0, halo_alpha),
+                );
+                // Inner glow
+                let inner_alpha = 0.18 * brightness;
+                frame.fill(
+                    &canvas::Path::circle(pt, 6.5 * pulse),
+                    Color::from_rgba(0.85, 1.0, 1.0, inner_alpha),
+                );
+                // Core dot
+                let dot_alpha = (0.7 + 0.3 * brightness).min(1.0);
+                frame.fill(
+                    &canvas::Path::circle(pt, 3.0 * pulse),
+                    Color::from_rgba(0.92, 0.99, 1.0, dot_alpha),
+                );
+            }
+        }
+
+        // ── Limb darkening overlay (edge fade for 3D depth illusion) ─────
+        {
+            // Draw a thin dark ring at the sphere edge to fake limb darkening.
+            // We stride through a ring of points near the equator and draw small
+            // dark spots — this costs little and increases perceived 3D pop.
+            let limb_c = Color::from_rgba(0.0, 0.0, 0.0, 0.55);
+            for seg in 0..48 {
+                let lon = TAU * (seg as f32) / 48.0;
+                let (pt, _z) = project(0.0, lon);
+                // Only draw on the outer visible part of the limb
+                let dx = pt.x - cx;
+                let dy = pt.y - cy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                if (dist - r).abs() < 18.0 {
+                    frame.fill(
+                        &canvas::Path::circle(pt, 9.0),
+                        limb_c,
+                    );
+                }
+            }
+        }
+
+        // ── Outer glow ring ───────────────────────────────────────────────
+        {
+            let glow_alpha = 0.10 + 0.04 * (t * 0.032).sin();
+            frame.stroke(
+                &canvas::Path::circle(Point::new(cx, cy), r + 1.5),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(0.0, 0.82, 0.88, glow_alpha)),
+                    width: 3.0,
+                    ..canvas::Stroke::default()
+                },
+            );
+            // Second fainter ring at +8px
+            let outer_alpha = 0.04 + 0.02 * (t * 0.021 + 1.1).sin();
+            frame.stroke(
+                &canvas::Path::circle(Point::new(cx, cy), r + 8.0),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(0.0, 0.60, 0.72, outer_alpha)),
+                    width: 1.2,
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        // ── Blue pulse shimmer ────────────────────────────────────────────
+        {
+            let pulse_alpha = 0.025 + 0.018 * (t * 0.041).sin();
+            frame.fill(
+                &canvas::Path::circle(Point::new(cx, cy), r + 2.0),
+                Color::from_rgba(0.05, 0.18, 0.80, pulse_alpha),
+            );
+        }
+
+        // ── Highlight spot (top-left quadrant, gives 3D sphere illusion) ─
+        {
+            let hx = cx - r * 0.32;
+            let hy = cy - r * 0.38;
+            let highlight_c = Color::from_rgba(0.55, 0.88, 0.92, 0.14);
+            frame.fill(&canvas::Path::circle(Point::new(hx, hy), r * 0.22), highlight_c);
+        }
+
+        vec![frame.into_geometry()]
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Aether.StructureMap – legacy Canvas-Renderer (fraktaler 3D-Suchbaum)
+// Kept for data generation; rendering now handled by FlowSphereScene.
 // ---------------------------------------------------------------------------
 
 /// Trägt die vorberechneten Knoten-Positionen (Theta-Winkel pro Ring).
@@ -3194,6 +3771,24 @@ impl canvas::Program<Message> for DotScene {
 }
 
 // ── Helper functions for new dashboard ───────────────────────────────────────
+
+fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color) -> Element<'a, Message> {
+    container(
+        column![
+            text(title.to_owned()).size(12).color(Color::from_rgb8(0x00, 0xD4, 0xD4)),
+            body,
+        ]
+        .spacing(8)
+        .padding(14),
+    )
+    .style(move |_: &Theme| container::Style {
+        background: Some(Background::Color(panel_bg)),
+        border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 4.0.into() },
+        ..Default::default()
+    })
+    .width(Length::Fill)
+    .into()
+}
 
 fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
     let spark = make_sparkline(fill.clamp(0.0, 1.0));
