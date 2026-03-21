@@ -59,7 +59,7 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
 
 from .ae_evolution_core import normalize_anchor_entries
 from .blockchain_interface import AetherChain
-from .ethics_engine import EthicsAssessment, EthicsEngine
+from .ethics_engine import CodeEthicsEngine, EthicsAssessment, EthicsEngine
 from .reconstruction_engine import LosslessReconstructionEngine
 from .session_engine import SessionContext
 
@@ -904,31 +904,37 @@ class AnalysisEngine:
 
     def _parse_code_profile(self, file_path: Path, raw: bytes, category: str, subtype: str) -> dict[str, Any]:
         suffix = str(file_path.suffix.lower())
+        code_ethics = CodeEthicsEngine()
         if suffix in TEXTUAL_SUFFIXES:
             text = _safe_decode_text(raw)
-            lines = text.splitlines()
-            summary = {"line_count": int(len(lines)), "char_count": int(len(text))}
+            ethics_result = code_ethics.analyze(text)
+            summary = {
+                "line_count": int(len(text.splitlines())),
+                "char_count": int(len(text)),
+                "anomaly_score": ethics_result.get("anomaly_score", 1.0),
+                "verdict": ethics_result.get("verdict", "clean"),
+                "ethics_flags": ethics_result.get("flags", []),
+            }
             streams = [
                 self._stream_entry("code_text", text.encode("utf-8", errors="ignore"), kind="text"),
                 self._stream_entry("code_summary", _json_bytes(summary), kind="metadata"),
+                self._stream_entry("code_ethics", _json_bytes(ethics_result), kind="metadata"),
             ]
-            return {
-                "category": category,
-                "subtype": subtype,
-                "summary": summary,
-                "streams": streams,
-                "missing_dependencies": [],
-                "missing_data": [],
+        else:
+            ethics_result = code_ethics.analyze(raw[:4096].hex())
+            summary = {
+                "mz_header": bool(raw.startswith(b"MZ")),
+                "elf_header": bool(raw.startswith(b"\x7fELF")),
+                "header_size": int(min(len(raw), 1024)),
+                "anomaly_score": ethics_result.get("anomaly_score", 1.0),
+                "verdict": ethics_result.get("verdict", "clean"),
+                "ethics_flags": ethics_result.get("flags", []),
             }
-        summary = {
-            "mz_header": bool(raw.startswith(b"MZ")),
-            "elf_header": bool(raw.startswith(b"\x7fELF")),
-            "header_size": int(min(len(raw), 1024)),
-        }
-        streams = [
-            self._stream_entry("binary_header", raw[: min(len(raw), 4096)], kind="raw"),
-            self._stream_entry("binary_summary", _json_bytes(summary), kind="metadata"),
-        ]
+            streams = [
+                self._stream_entry("binary_header", raw[: min(len(raw), 4096)], kind="raw"),
+                self._stream_entry("binary_summary", _json_bytes(summary), kind="metadata"),
+                self._stream_entry("code_ethics", _json_bytes(ethics_result), kind="metadata"),
+            ]
         return {
             "category": category,
             "subtype": subtype,
@@ -936,6 +942,8 @@ class AnalysisEngine:
             "streams": streams,
             "missing_dependencies": [],
             "missing_data": [],
+            "code_ethics": ethics_result,
+            "blocked": ethics_result.get("verdict") == "anomalous",
         }
 
     def detect_and_parse_file(
