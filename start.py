@@ -39,6 +39,10 @@ if getattr(sys, "frozen", False):
 else:
     PROJECT_ROOT = Path(__file__).resolve().parent
 
+if not (PROJECT_ROOT / "keys" / "node_secret.key").exists():
+    print("[AETHER] Kein Node initialisiert. Ausfuehren: python node_init.py")
+    sys.exit(1)
+
 REQUIREMENTS_FILE = PROJECT_ROOT / "requirements.txt"
 MIN_PYTHON = (3, 10)
 REQUIRED_IMPORTS = {
@@ -458,6 +462,14 @@ def bootstrap(shanway_raster_insight: bool = False) -> None:
     from modules.ae_evolution_core import AEAlgorithmVault, AetherAnchorInterpreter
 
     session_context = SessionContext(security_session=security_session)
+    try:
+        from modules.swarm_sync import discover_nodes, pull_anchors
+
+        new_packs = pull_anchors()
+        nodes = discover_nodes()
+        print(f"[SWARM] {len(nodes)} Node(s) | {len(new_packs)} neue Pack(s)")
+    except Exception as err:
+        print(f"[SWARM WARN] Sync uebersprungen: {err}")
     security_monitor = AetherSecurityMonitor(PROJECT_ROOT, registry)
     security_snapshot = security_monitor.run_integrity_check(
         session_context=session_context,
