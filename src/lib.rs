@@ -32,6 +32,7 @@ pub mod egl_api;
 pub mod egl_example;
 pub mod shanway;
 pub mod state;
+pub mod swarm_bootstrap;
 pub mod swarm_loop;
 pub mod theory_of_mind;
 pub mod vault_access;

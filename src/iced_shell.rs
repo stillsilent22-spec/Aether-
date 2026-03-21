@@ -12,6 +12,7 @@ use crate::policy_executor::{default_analysis_rules, RuleEngine};
 use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
 use crate::shanway::{render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput};
 use crate::state::{ChatMessage, GroupRoom, PrivateThread, RegisterEntry, StateStore};
+use crate::swarm_bootstrap::{probe_swarm_startup, SwarmStartupStatus};
 use iced::theme::Palette;
 use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
 use iced::{
@@ -155,6 +156,7 @@ pub struct AetherIcedShell {
     data_key_fingerprint: String,
     security_snapshot: SecuritySnapshot,
     security_audit_events: Vec<SecurityAuditEvent>,
+    swarm_startup: SwarmStartupStatus,
     login_username: String,
     login_password: String,
     status_line: String,
@@ -205,6 +207,7 @@ pub struct AetherIcedShell {
 
 impl AetherIcedShell {
     fn bootstrap() -> Self {
+        let swarm_startup = probe_swarm_startup();
         let mut shell = Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -214,9 +217,14 @@ impl AetherIcedShell {
             data_key_fingerprint: String::new(),
             security_snapshot: SecuritySnapshot::default(),
             security_audit_events: Vec::new(),
+            swarm_startup: swarm_startup.clone(),
             login_username: String::new(),
             login_password: String::new(),
-            status_line: "Bitte lokal anmelden oder registrieren.".to_owned(),
+            status_line: if swarm_startup.node_initialized {
+                "Bitte lokal anmelden oder registrieren.".to_owned()
+            } else {
+                swarm_startup.summary.clone()
+            },
             active_tab: Tab::Home,
             chat_context: ChatContext::Shanway,
             show_tutorial: false,
@@ -269,6 +277,9 @@ impl AetherIcedShell {
             rekonstruktion_result: None,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
+        if shell.swarm_startup.node_initialized {
+            shell.analysis_status = shell.swarm_startup.summary.clone();
+        }
         shell.refresh_security_snapshot(false, "startup");
         shell
     }
@@ -667,6 +678,14 @@ impl AetherIcedShell {
                         text("Live Engine State").size(12).color(c(TEXT_M)),
                         text(format!("Tick {}", self.tick_counter)).size(14).color(c(TEXT_H)),
                         text(format!("Runtime {}", self.runtime_profile_label())).size(12).color(c(TEXT_D)),
+                        text(format!("Swarm {}", self.swarm_startup.node_count)).size(12).color(c(TEXT_D)),
+                        text(if self.swarm_startup.node_initialized {
+                            self.swarm_startup.summary.clone()
+                        } else {
+                            "Rust-Start blockiert keinen Login, aber Node-Init fehlt.".to_owned()
+                        })
+                        .size(11)
+                        .color(c(TEXT_D)),
                     ]
                     .spacing(4)
                 )
@@ -1773,8 +1792,21 @@ impl AetherIcedShell {
                 .spacing(10),
                 row![
                     info_card("Analyse-Status", &self.analysis_status),
+                    info_card(
+                        "Node-Status",
+                        if self.swarm_startup.node_initialized {
+                            "initialisiert"
+                        } else {
+                            "fehlt"
+                        }
+                    ),
+                    info_card("Swarm-Nodes", &self.swarm_startup.node_count.to_string()),
+                    info_card("Neue Packs", &self.swarm_startup.new_pack_count.to_string()),
                 ]
                 .spacing(10),
+                container(text(&self.swarm_startup.summary).size(12).color(c(TEXT_D)))
+                    .padding(10)
+                    .style(standard_card_style),
                 container(
                     text("Hinweis: Diese Profile beeinflussen Scheduler-Takt, Browser-Sync-Frequenz und Lastcharakteristik deterministisch.")
                         .size(12)
