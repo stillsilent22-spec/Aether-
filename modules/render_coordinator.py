@@ -201,6 +201,151 @@ class RenderCoordinator:
             "last_source": self._frame_history[-1].source,
         }
 
+    # ── Phase-4 Analyse-Methoden ────────────────────────────────────────────
+
+    def build_pixel_coord_graph(self) -> dict[str, Any]:
+        """Baut einen strukturellen Koordinaten-Graphen aus self._frame_history."""
+        if not self._frame_history:
+            return {"nodes": [], "edges": [], "frame_count": 0}
+        nodes = [
+            {
+                "id": f.pixel_hash[:8],
+                "pid": f.pid,
+                "entropy": round(f.entropy, 6),
+                "symmetry": round(f.symmetry, 6),
+            }
+            for f in self._frame_history
+        ]
+        edges = []
+        for i in range(len(self._frame_history) - 1):
+            fa = self._frame_history[i]
+            fb = self._frame_history[i + 1]
+            edges.append({
+                "from": fa.pixel_hash[:8],
+                "to": fb.pixel_hash[:8],
+                "weight": round(abs(fa.entropy - fb.entropy), 6),
+            })
+        return {"nodes": nodes, "edges": edges, "frame_count": len(self._frame_history)}
+
+    def detect_render_interference(self) -> dict[str, Any]:
+        """Erkennt strukturelle Interferenz im Render-Stream (Entropie-Sprünge)."""
+        if len(self._frame_history) < 2:
+            return {"interference_detected": False, "events": [], "threshold": 0.0}
+        deltas = [
+            abs(self._frame_history[i].entropy - self._frame_history[i + 1].entropy)
+            for i in range(len(self._frame_history) - 1)
+        ]
+        threshold = float(1.5 * np.std(deltas)) if len(deltas) > 1 else 0.0
+        events = []
+        for i, delta in enumerate(deltas):
+            if delta > threshold:
+                fa = self._frame_history[i]
+                fb = self._frame_history[i + 1]
+                events.append({
+                    "frame_a_hash": fa.pixel_hash[:8],
+                    "frame_b_hash": fb.pixel_hash[:8],
+                    "delta": round(delta, 6),
+                    "timestamp": round(fb.timestamp, 6),
+                })
+        return {
+            "interference_detected": len(events) > 0,
+            "events": events,
+            "threshold": round(threshold, 6),
+        }
+
+    def compute_render_drift(self) -> dict[str, Any]:
+        """Berechnet den strukturellen Drift des Render-Streams über Zeit."""
+        if not self._frame_history:
+            return {"drift_mean": 0.0, "drift_max": 0.0, "drift_series": [], "stable": True}
+        entropies = np.array([f.entropy for f in self._frame_history], dtype=np.float64)
+        overall_mean = float(np.mean(entropies))
+        window = 4
+        drift_series: list[float] = []
+        for i in range(len(entropies)):
+            start = max(0, i - window + 1)
+            win_mean = float(np.mean(entropies[start: i + 1]))
+            drift_series.append(round(abs(win_mean - overall_mean), 6))
+        drift_mean = round(float(np.mean(drift_series)), 6)
+        drift_max = round(float(np.max(drift_series)), 6)
+        return {
+            "drift_mean": drift_mean,
+            "drift_max": drift_max,
+            "drift_series": drift_series,
+            "stable": drift_max < 0.5,
+        }
+
+    def detect_render_phase_shift(self) -> dict[str, Any]:
+        """Erkennt einen Phasenwechsel im Render-Verhalten (struktureller Bruch)."""
+        if len(self._frame_history) < 2:
+            return {
+                "phase_shift_detected": False,
+                "phase_a_symmetry": 0.0,
+                "phase_b_symmetry": 0.0,
+                "delta": 0.0,
+            }
+        symmetries = [f.symmetry for f in self._frame_history]
+        mid = len(symmetries) // 2
+        phase_a = round(float(np.mean(symmetries[:mid])), 6)
+        phase_b = round(float(np.mean(symmetries[mid:])), 6)
+        delta = round(abs(phase_a - phase_b), 6)
+        return {
+            "phase_shift_detected": delta > 0.2,
+            "phase_a_symmetry": phase_a,
+            "phase_b_symmetry": phase_b,
+            "delta": delta,
+        }
+
+    def render_meta_delta(self) -> dict[str, Any]:
+        """Aggregiertes Meta-Delta über den gesamten Render-Stream."""
+        interference = self.detect_render_interference()
+        drift = self.compute_render_drift()
+        phase_shift = self.detect_render_phase_shift()
+        interference_score = 1.0 if interference["interference_detected"] else 0.0
+        drift_score = min(1.0, drift["drift_mean"])
+        phase_score = 1.0 if phase_shift["phase_shift_detected"] else 0.0
+        meta_score = round(float(np.mean([interference_score, drift_score, phase_score])), 6)
+        if meta_score < 0.3:
+            recommendation = "stable"
+        elif meta_score <= 0.6:
+            recommendation = "monitor"
+        else:
+            recommendation = "alert"
+        return {
+            "interference": interference,
+            "drift": drift,
+            "phase_shift": phase_shift,
+            "meta_score": meta_score,
+            "recommendation": recommendation,
+        }
+
+    def render_governance_advice(self) -> dict[str, Any]:
+        """Advise-only Governance-Empfehlungen basierend auf render_meta_delta(). Keine automatischen Aktionen."""
+        meta = self.render_meta_delta()
+        rec = meta["recommendation"]
+        advice: list[str] = []
+        if meta["interference"]["interference_detected"]:
+            n = len(meta["interference"]["events"])
+            advice.append(
+                f"Hohe Render-Interferenz erkannt ({n} Ereignis(se)) – Prozess prüfen."
+            )
+        if not meta["drift"]["stable"]:
+            advice.append(
+                f"Render-Drift instabil (max {meta['drift']['drift_max']:.3f}) – Stabilität überwachen."
+            )
+        if meta["phase_shift"]["phase_shift_detected"]:
+            advice.append(
+                f"Phasenwechsel im Render-Verhalten erkannt "
+                f"(Δ={meta['phase_shift']['delta']:.3f}) – Ursache untersuchen."
+            )
+        if not advice:
+            advice.append("Render-Stream strukturell stabil – keine Maßnahmen erforderlich.")
+        severity_map = {"stable": "ok", "monitor": "warning", "alert": "critical"}
+        return {
+            "advice": advice,
+            "severity": severity_map.get(rec, "ok"),
+            "meta_score": meta["meta_score"],
+        }
+
     # ── Interne Hilfsmethoden ───────────────────────────────────────────────
 
     def _get_process_window_region(self, pid: int, window_title: str = "") -> dict[str, int] | None:
