@@ -10,6 +10,8 @@ rustup-init.exe
 rustup-init-local.exe
 deltas/
 keys/
+keys/*.key
+keys/*.pem
 *.delta
 *.delta.enc
 *.key
@@ -39,6 +41,7 @@ data/*.log
 data/*.bin
 data/*.bak
 data/logs/
+data/swarm/nodes/private/
 data/observer_learning/
 data/screenshots/
 data/vault/
@@ -60,6 +63,9 @@ gcm-diagnose.log
 !data/shanway_corpus/de/.gitkeep
 !data/shanway_corpus/en/.gitkeep
 !data/trusted_publishers.json
+!data/swarm/
+!data/swarm/nodes/
+!data/anchors/
 !data/aelab_vault/
 !data/aelab_vault/*.dna
 !data/aelab_vault/legacy_imports/
