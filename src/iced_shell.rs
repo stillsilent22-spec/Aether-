@@ -3203,11 +3203,11 @@ impl AetherIcedShell {
 
     fn view_shell(&self) -> Element<'_, Message> {
         if self.active_tab == Tab::Home {
-            return self.view_home_aether_cyber();
+            return self.view_home();
         }
 
         let main = match self.active_tab {
-            Tab::Home => self.view_home_aether_cyber(),
+            Tab::Home => self.view_home(),
             Tab::Chat => self.view_chat(),
             Tab::Browser => self.view_browser(),
             Tab::YouTube => self.view_youtube(),
