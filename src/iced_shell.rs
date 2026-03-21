@@ -4,24 +4,42 @@ use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
 };
 use crate::browser_embed::{BrowserHostRect, EmbeddedBrowser};
+use crate::key_vault::DataKey;
+use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
+use crate::policy_executor::{default_analysis_rules, RuleEngine};
 use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
 use crate::shanway::{render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput};
 use crate::state::{ChatMessage, GroupRoom, PrivateThread, RegisterEntry, StateStore};
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use iced::theme::Palette;
 use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
 use iced::{
     application, event, mouse, time, window, Alignment, Background, Border, Color, Element,
-    Length, Point, Rectangle, Settings, Size, Subscription, Task, Theme,
+    Length, Point, Rectangle, Settings, Subscription, Task, Theme,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use zeroize::Zeroize;
+
+const BG_BASE: [u8; 3] = [0x05, 0x0B, 0x1A];
+const BG_CARD: [u8; 3] = [0x0C, 0x14, 0x28];
+const BG_CARD2: [u8; 3] = [0x11, 0x1B, 0x36];
+const BORDER: [u8; 3] = [0x25, 0x34, 0x52];
+const BORDER_ACT: [u8; 3] = [0x96, 0x57, 0xF7];
+const ACCENT: [u8; 3] = [0x96, 0x57, 0xF7];
+const ACCENT2: [u8; 3] = [0x2A, 0xB6, 0xFF];
+const TEXT_H: [u8; 3] = [0xEE, 0xF4, 0xFF];
+const TEXT_M: [u8; 3] = [0xA2, 0xB3, 0xCE];
+const TEXT_D: [u8; 3] = [0x63, 0x78, 0x9A];
+const WARN: [u8; 3] = [0xD4, 0xA0, 0x30];
+const DANGER: [u8; 3] = [0xD6, 0x55, 0x55];
+
+fn c(rgb: [u8; 3]) -> Color {
+    Color::from_rgb8(rgb[0], rgb[1], rgb[2])
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -64,6 +82,9 @@ enum Message {
     ChatContextSelected(ChatContext),
     SecurityModeSelected(String),
     RuntimeProfileSelected(RuntimeProfile),
+    DashboardSearchChanged(String),
+    DashboardNavSelected(String),
+    DashboardInfoToggle(String),
     SecurityRecheck,
     TutorialDismissed,
     AnchorGroupSelected(usize),
@@ -128,6 +149,8 @@ pub struct AetherIcedShell {
     state_store: StateStore,
     security_monitor: SecurityMonitor,
     current_user: Option<UserRecord>,
+    data_key: Option<DataKey>,
+    data_key_fingerprint: String,
     security_snapshot: SecuritySnapshot,
     security_audit_events: Vec<SecurityAuditEvent>,
     login_username: String,
@@ -159,6 +182,10 @@ pub struct AetherIcedShell {
     tick_counter: u64,
     browser_sync_stride: u64,
     runtime_profile: RuntimeProfile,
+    dashboard_search: String,
+    dashboard_nav: String,
+    dashboard_info_key: Option<String>,
+    dashboard_info_open_tick: u64,
     // --- StructureMap / FlowSphere ---
     structure_map_nodes: Vec<Vec<f32>>,
     structure_map_compression: f32,
@@ -181,6 +208,8 @@ impl AetherIcedShell {
             state_store: StateStore::load_default(),
             security_monitor: SecurityMonitor::new(PathBuf::from(".")),
             current_user: None,
+            data_key: None,
+            data_key_fingerprint: String::new(),
             security_snapshot: SecuritySnapshot::default(),
             security_audit_events: Vec::new(),
             login_username: String::new(),
@@ -215,6 +244,10 @@ impl AetherIcedShell {
             tick_counter: 0,
             browser_sync_stride: 3,
             runtime_profile: RuntimeProfile::Auto,
+            dashboard_search: String::new(),
+            dashboard_nav: "Overview".to_owned(),
+            dashboard_info_key: None,
+            dashboard_info_open_tick: 0,
             structure_map_nodes: Vec::new(),
             structure_map_compression: 0.0,
             structure_map_locked: false,
@@ -252,6 +285,23 @@ impl AetherIcedShell {
 
     fn current_username(&self) -> Option<String> {
         self.current_user.as_ref().map(|user| user.username.clone())
+    }
+
+    fn clear_runtime_keys(&mut self) {
+        if let Some(mut data_key) = self.data_key.take() {
+            data_key.zeroize();
+        }
+        self.data_key_fingerprint.clear();
+    }
+
+    fn derive_runtime_keys(&mut self, user: &UserRecord, password: &str) {
+        let data_key = DataKey::derive(password, &user.salt_hex, &user.username);
+        self.data_key_fingerprint = data_key.fingerprint();
+        self.data_key = Some(data_key);
+    }
+
+    fn data_key_fork(&self) -> Option<DataKey> {
+        self.data_key.as_ref().map(DataKey::fork)
     }
 
     fn security_mode(&self) -> String {
@@ -401,6 +451,18 @@ impl AetherIcedShell {
     }
 
     fn browser_embed_rect(&self) -> BrowserHostRect {
+        if self.active_tab == Tab::Home
+            && (self.dashboard_nav == "Network" || self.dashboard_nav == "Compute")
+        {
+            return BrowserHostRect {
+                x: (self.window_width * 0.44) as i32,
+                y: 178,
+                width: (self.window_width * 0.52) as i32,
+                height: (self.window_height - 210.0) as i32,
+            }
+            .normalized();
+        }
+
         let right_column_x = 18.0 + 180.0 + 18.0;
         let main_width = (self.window_width - right_column_x - 18.0).max(900.0);
         let top_tabs_height = 58.0;
@@ -420,7 +482,7 @@ impl AetherIcedShell {
     }
 
     fn sync_browser_embed(&mut self) {
-        if self.active_tab != Tab::Browser && self.active_tab != Tab::YouTube {
+        if self.browser_surface_mode().is_none() {
             self.browser_embed.hide();
             return;
         }
@@ -508,9 +570,9 @@ impl AetherIcedShell {
 
     fn tab_button(&self, tab: Tab, icon: &'static str, label: &'static str) -> Element<'_, Message> {
         let is_active = self.active_tab == tab;
-        let accent = Color::from_rgb8(0x00, 0xE5, 0x7A);
-        let text_active = Color::from_rgb8(0xE8, 0xF4, 0xFF);
-        let text_idle = Color::from_rgb8(0x4A, 0x68, 0x84);
+        let accent = c(ACCENT);
+        let text_active = c(TEXT_H);
+        let text_idle = c(TEXT_D);
 
         container(
             button(
@@ -536,7 +598,7 @@ impl AetherIcedShell {
                 None
             },
             border: Border {
-                color: if is_active { Color::from_rgb8(0x00, 0xE5, 0x7A) } else { Color::TRANSPARENT },
+                color: if is_active { c(BORDER_ACT) } else { Color::TRANSPARENT },
                 width: if is_active { 2.0 } else { 0.0 },
                 radius: 0.0.into(),
             },
@@ -550,16 +612,17 @@ impl AetherIcedShell {
         container(
             button(text(label).size(15))
                 .padding([8, 18])
-                .on_press(Message::ChatContextSelected(context)),
+                .on_press(Message::ChatContextSelected(context))
+                .style(if is_active { primary_button_style } else { secondary_button_style }),
         )
         .style(move |_theme: &Theme| {
             if is_active {
                 container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
+                    background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.12))),
                     border: Border {
-                        color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
-                        width: 1.5,
-                        radius: 6.0.into(),
+                        color: Color::from_rgb8(0xA0, 0x70, 0xFF),
+                        width: 1.2,
+                        radius: 10.0.into(),
                     },
                     text_color: Some(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
                     ..Default::default()
@@ -568,9 +631,9 @@ impl AetherIcedShell {
                 container::Style {
                     background: Some(Background::Color(Color::from_rgb8(0x0A, 0x16, 0x24))),
                     border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        color: Color::from_rgb8(0x1F, 0x36, 0x54),
                         width: 1.0,
-                        radius: 6.0.into(),
+                        radius: 10.0.into(),
                     },
                     ..Default::default()
                 }
@@ -580,52 +643,81 @@ impl AetherIcedShell {
     }
 
     fn view_auth(&self) -> Element<'_, Message> {
-        let hero = column![
-            text("AETHER").size(18),
-            text("Lokale Strukturanalyse").size(40),
-            text("Petrol-dunkelblaue Rust-Oberflaeche fuer lokale Analyse, Privacy-Boundaries und nachvollziehbare Entscheidungen.")
-                .size(18)
-                .width(Length::Fill),
-            text("Artefakte werden isoliert verarbeitet. Aether erstellt Merkmalsprofile, generiert Anchor-Signale und fuehrt nichts aus.")
-                .size(16)
-                .width(Length::Fill),
-        ]
-        .spacing(10);
-
-        let card = container(
+        let left = container(
             column![
-                text("Anmeldung / Registrierung").size(22),
-                text_input("Benutzername", &self.login_username)
+                text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
+                text("Deterministic Security Kernel").size(34).color(c(TEXT_H)),
+                text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
+                    .size(14)
+                    .color(c(TEXT_M)),
+                text("Kein Cloud-Zwang. Keine Black Box. Keine versteckte Semantik.")
+                    .size(13)
+                    .color(c(TEXT_D)),
+                container(
+                    column![
+                        text("Live Engine State").size(12).color(c(TEXT_M)),
+                        text(format!("Tick {}", self.tick_counter)).size(14).color(c(TEXT_H)),
+                        text(format!("Runtime {}", self.runtime_profile_label())).size(12).color(c(TEXT_D)),
+                    ]
+                    .spacing(4)
+                )
+                .padding(12)
+                .style(accent_card_style),
+            ]
+            .spacing(12)
+        )
+        .padding(18)
+        .style(panel_frame_style)
+        .width(Length::FillPortion(3));
+
+        let right = container(
+            column![
+                text("Sign in").size(24).color(c(TEXT_H)),
+                text_input("Username", &self.login_username)
                     .on_input(Message::LoginUsernameChanged)
-                    .padding(12)
-                    .size(18),
-                text_input("Passwort", &self.login_password)
+                    .padding([10, 12])
+                    .size(16),
+                text_input("Password", &self.login_password)
                     .on_input(Message::LoginPasswordChanged)
                     .secure(true)
-                    .padding(12)
-                    .size(18),
+                    .padding([10, 12])
+                    .size(16),
                 row![
-                    button(text("Anmelden"))
-                        .padding([12, 20])
-                        .on_press(Message::LoginPressed),
-                    button(text("Registrieren"))
-                        .padding([12, 20])
-                        .on_press(Message::RegisterPressed),
+                    button(text("Login"))
+                        .padding([10, 18])
+                        .on_press(Message::LoginPressed)
+                        .style(primary_button_style),
+                    button(text("Register"))
+                        .padding([10, 18])
+                        .on_press(Message::RegisterPressed)
+                        .style(secondary_button_style),
                 ]
-                .spacing(12),
-                text(&self.status_line).size(16),
+                .spacing(10),
+                container(text(&self.status_line).size(13).color(c(TEXT_M)))
+                    .padding(10)
+                    .style(panel_frame_style),
             ]
-            .spacing(16),
+            .spacing(12)
         )
-        .padding(24)
-        .width(Length::Fixed(560.0));
+        .padding(18)
+        .style(panel_frame_style)
+        .width(Length::FillPortion(2));
 
-        container(column![hero, card].spacing(28).max_width(920))
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .center_x(Length::Fill)
-            .center_y(Length::Fill)
-            .into()
+        container(
+            row![left, right]
+                .spacing(12)
+                .max_width(1180)
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x04, 0x08, 0x14))),
+            ..Default::default()
+        })
+        .into()
     }
 
     fn view_sidebar(&self) -> Element<'_, Message> {
@@ -801,7 +893,7 @@ impl AetherIcedShell {
                 .height(Length::Fixed(32.0)),
             text("AETHER")
                 .size(14)
-                .color(Color::from_rgb8(0x00, 0xE5, 0x7A)),
+                .color(c(ACCENT)),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -826,35 +918,49 @@ impl AetherIcedShell {
             || self.security_snapshot.trust_state.to_uppercase().contains("OK");
 
         let status_border = if all_ok {
-            Color::from_rgb8(0x00, 0xE5, 0x7A)
+            c(ACCENT)
         } else {
-            Color::from_rgb8(0xD6, 0x55, 0x55)
+            c(DANGER)
         };
 
         let status_content: Element<'_, Message> = row![
             canvas::Canvas::new(DotScene { color: if all_ok {
-                Color::from_rgb8(0x00, 0xE5, 0x7A)
+                c(ACCENT)
             } else {
-                Color::from_rgb8(0xD6, 0x55, 0x55)
+                c(DANGER)
             }})
             .width(Length::Fixed(8.0)).height(Length::Fixed(8.0)),
             text(if all_ok { "Operational" } else { "Degraded" })
-                .size(11).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+                .size(11).color(c(TEXT_M)),
         ].spacing(6).align_y(Alignment::Center).into();
 
         let nodes_content: Element<'_, Message> = row![
-            text("\u{2b21}").size(11).color(Color::from_rgb8(0x00, 0xC8, 0xD4)),
+            text("\u{2b21}").size(11).color(c(ACCENT2)),
             text(format!("{} Nodes", self.anchor_clusters().len()))
-                .size(11).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+                .size(11).color(c(TEXT_M)),
         ].spacing(6).align_y(Alignment::Center).into();
 
         let time_content: Element<'_, Message> = row![
-            text("\u{25d4}").size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+            text("\u{25d4}").size(11).color(c(TEXT_D)),
             text(format!("{:02}:{:02} Live",
                 (self.tick_counter / 60) % 24,
                 self.tick_counter % 60))
-                .size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+                .size(11).color(c(TEXT_D)),
         ].spacing(6).align_y(Alignment::Center).into();
+
+        let key_content: Element<'_, Message> = row![
+            text("\u{1f511}").size(11).color(c(ACCENT)),
+            text(if self.data_key_fingerprint.is_empty() {
+                "KEY --".to_owned()
+            } else {
+                format!("KEY {}", self.data_key_fingerprint)
+            })
+            .size(11)
+            .color(c(TEXT_M)),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into();
 
         let badge_style_ok = move |_: &Theme| container::Style {
             background: None,
@@ -863,12 +969,12 @@ impl AetherIcedShell {
         };
         let badge_style_cyan = |_: &Theme| container::Style {
             background: None,
-            border: Border { color: Color::from_rgb8(0x00, 0xC8, 0xD4), width: 1.0, radius: 20.0.into() },
+            border: Border { color: c(ACCENT2), width: 1.0, radius: 20.0.into() },
             ..Default::default()
         };
         let badge_style_dim = |_: &Theme| container::Style {
             background: None,
-            border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 20.0.into() },
+            border: Border { color: c(BORDER), width: 1.0, radius: 20.0.into() },
             ..Default::default()
         };
 
@@ -887,6 +993,7 @@ impl AetherIcedShell {
                     container(status_content).style(badge_style_ok).padding([4, 14]),
                     container(nodes_content).style(badge_style_cyan).padding([4, 14]),
                     container(time_content).style(badge_style_dim).padding([4, 14]),
+                    container(key_content).style(badge_style_dim).padding([4, 14]),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -895,9 +1002,9 @@ impl AetherIcedShell {
             .align_y(Alignment::Center),
         )
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x07, 0x10, 0x1C))),
+            background: Some(Background::Color(c(BG_BASE))),
             border: Border {
-                color: Color::from_rgb8(0x1A, 0x32, 0x4A),
+                color: c(BORDER),
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -949,10 +1056,10 @@ impl AetherIcedShell {
                                         .height(Length::Fixed(70.0)),
                                     column![
                                         text("Willkommen bei Aether").size(16)
-                                            .color(Color::from_rgb8(0x00, 0xE5, 0x7A)),
+                                            .color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
                                         text("Ziehe eine Datei ins Fenster \u{2192} Aether erstellt automatisch eine .aef-Datei mit Strukturanalyse.")
                                             .size(12).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
-                                        text("Data-Tab: Ergebnisse | Rekon-Tab: Originaldatei wiederherstellen | FlowSphere: Strukturvisualisierung")
+                                        text("Data-Tab: Ergebnisse | Rekon-Tab: Originaldatei wiederherstellen | Intuitionsblase: Strukturvisualisierung")
                                             .size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
                                     ]
                                     .spacing(4),
@@ -969,8 +1076,8 @@ impl AetherIcedShell {
                                 .align_y(Alignment::Center),
                             )
                             .style(|_: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(0.0, 0.898, 0.478, 0.06))),
-                                border: Border { color: Color::from_rgb8(0x00, 0xE5, 0x7A), width: 1.0, radius: 10.0.into() },
+                                background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.10))),
+                                border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.0, radius: 10.0.into() },
                                 ..Default::default()
                             })
                             .padding([12, 16])
@@ -1079,13 +1186,13 @@ impl AetherIcedShell {
                                 .spacing(8),
                                 alert_row(
                                     "\u{25cf}",
-                                    Color::from_rgb8(0xE0, 0x60, 0x60),
+                                    c(DANGER),
                                     &format!("Service Timeout: {} nodes", cluster_count.max(1)),
                                     &format!("on {}", self.security_snapshot.mode),
                                 ),
                                 alert_row(
                                     "\u{26a0}",
-                                    Color::from_rgb8(0xD4, 0xA0, 0x30),
+                                    c(WARN),
                                     &format!("Disk: {} B lokal", total_bytes),
                                     "Low Space Warning",
                                 ),
@@ -1148,6 +1255,532 @@ impl AetherIcedShell {
         .into()
     }
 
+    fn view_home_aether_cyber(&self) -> Element<'_, Message> {
+        let t = self.tick_counter as f32;
+        let entries = self.entries();
+        let risk_base = if self.security_snapshot.trust_state.to_ascii_uppercase().contains("HIGH") {
+            0.34
+        } else if self.security_snapshot.trust_state.to_ascii_uppercase().contains("OK") {
+            0.48
+        } else {
+            0.71
+        };
+        let risk_score = ((risk_base + 0.08 * (t * 0.021).sin()).clamp(0.05, 0.98) * 1000.0) as u32;
+        let noether_score = (0.62 + 0.25 * (t * 0.017).cos()).clamp(0.0, 1.0);
+        let total_threats = (entries.len() as f32 * 1.9 + 14.0 + (t * 0.13).sin().abs() * 22.0) as u32;
+        let video_risk = (12.0 + 8.0 * (t * 0.042).sin().abs()) as u32;
+        let image_risk = (35.0 + 14.0 * (t * 0.033).sin().abs()) as u32;
+        let docs_risk = (6.0 + 5.0 * (t * 0.051).sin().abs()) as u32;
+        let folder_risk = (52.0 + 16.0 * (t * 0.024).sin().abs()) as u32;
+        let pane_slide = ((self.tick_counter % 8) as f32 / 8.0).clamp(0.0, 1.0); // 120ms @ ~60fps
+        let node_pulse = 1.0 + 0.03 * (t * 1.57).sin(); // 40ms pulse
+        let data_flash = 0.45 + 0.55 * (t * 5.0).sin().abs(); // pulse intensity for border shimmer
+        let graph_reveal = ((self.tick_counter % 6) as f32 / 6.0).clamp(0.0, 1.0); // 90ms reveal
+        let info_reveal = (((self.tick_counter.saturating_sub(self.dashboard_info_open_tick)) as f32)
+            * self.tick_interval_ms() as f32 / 80.0)
+            .clamp(0.0, 1.0);
+
+        let threat_rows: Vec<(String, String, String, String, String)> = vec![
+            ("12-05-2024".to_owned(), "crazyfish228".to_owned(), "Code Red".to_owned(), "C:/Users/opened/file_a.jpg".to_owned(), "jpeg".to_owned()),
+            ("12-05-2024".to_owned(), "angryswan732".to_owned(), "MyDoom".to_owned(), "D:/vault/tmp/log_88.bin".to_owned(), "bin".to_owned()),
+            ("11-05-2024".to_owned(), "node-aether-3".to_owned(), "Sasser".to_owned(), "C:/snapshots/arc_19.dat".to_owned(), "dat".to_owned()),
+        ];
+        let device_rows: Vec<(String, f32)> = vec![
+            ("crazyfish228".to_owned(), (0.38 + 0.16 * (t * 0.04).sin()).clamp(0.0, 1.0)),
+            ("angryswan732".to_owned(), (0.61 + 0.12 * (t * 0.03).cos()).clamp(0.0, 1.0)),
+            ("node-aether-3".to_owned(), (0.44 + 0.14 * (t * 0.05).sin()).clamp(0.0, 1.0)),
+        ];
+
+        let q = self.dashboard_search.trim().to_ascii_lowercase();
+        let filtered_threat_rows: Vec<_> = threat_rows
+            .into_iter()
+            .filter(|(_, device, virus, path, file_type)| {
+                q.is_empty()
+                    || device.to_ascii_lowercase().contains(&q)
+                    || virus.to_ascii_lowercase().contains(&q)
+                    || path.to_ascii_lowercase().contains(&q)
+                    || file_type.to_ascii_lowercase().contains(&q)
+            })
+            .collect();
+        let filtered_device_rows: Vec<_> = device_rows
+            .into_iter()
+            .filter(|(device, _)| q.is_empty() || device.to_ascii_lowercase().contains(&q))
+            .collect();
+
+        let sidebar = {
+            let nav_item = |label: &str, section: &str, active: bool| {
+                button(text(label).size(13).color(if active { c(TEXT_H) } else { c(TEXT_M) }))
+                    .on_press(Message::DashboardNavSelected(section.to_owned()))
+                    .padding([8, 10])
+                    .style(move |_: &Theme, _| button::Style {
+                        background: Some(Background::Color(if active {
+                            Color::from_rgba(0.55, 0.25, 0.95, 0.65)
+                        } else {
+                            Color::TRANSPARENT
+                        })),
+                        border: Border {
+                            color: if active { Color::from_rgb8(0x8B, 0x52, 0xF6) } else { Color::TRANSPARENT },
+                            width: if active { 1.0 } else { 0.0 },
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    })
+            };
+
+            container(
+                column![
+                    text("AetherGuard").size(24).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
+                    text("General").size(12).color(c(TEXT_D)),
+                    nav_item("Overview", "Overview", self.dashboard_nav == "Overview"),
+                    nav_item("Issues", "Issues", self.dashboard_nav == "Issues"),
+                    nav_item("Files", "Files", self.dashboard_nav == "Files"),
+                    text("Reports").size(12).color(c(TEXT_D)),
+                    nav_item("Reports", "Reports", self.dashboard_nav == "Reports"),
+                    nav_item("Threat Details", "Threat Details", self.dashboard_nav == "Threat Details"),
+                    nav_item("Threats", "Threats", self.dashboard_nav == "Threats"),
+                    text("Engine").size(12).color(c(TEXT_D)),
+                    nav_item("Chat", "Chat", self.dashboard_nav == "Chat"),
+                    nav_item("Network", "Network", self.dashboard_nav == "Network"),
+                    nav_item("Compute", "Compute", self.dashboard_nav == "Compute"),
+                    nav_item("Storage", "Storage", self.dashboard_nav == "Storage"),
+                    text("All Modules").size(12).color(c(TEXT_D)),
+                    nav_item("Logs", "Logs", self.dashboard_nav == "Logs"),
+                    nav_item("Data", "Data", self.dashboard_nav == "Data"),
+                    nav_item("Anchors", "Anchors", self.dashboard_nav == "Anchors"),
+                    nav_item("FlowSphere", "FlowSphere", self.dashboard_nav == "FlowSphere"),
+                    nav_item("ADE", "ADE", self.dashboard_nav == "ADE"),
+                    nav_item("Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"),
+                    nav_item("Imprint", "Imprint", self.dashboard_nav == "Imprint"),
+                    text("Settings").size(12).color(c(TEXT_D)),
+                    nav_item("Performance", "Performance", self.dashboard_nav == "Performance"),
+                    nav_item("Help & Support", "Help & Support", self.dashboard_nav == "Help & Support"),
+                    nav_item("Settings", "Settings", self.dashboard_nav == "Settings"),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::Fixed(210.0))
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x08, 0x11, 0x24))),
+                border: Border { color: Color::from_rgb8(0x2D, 0x3E, 0x64), width: 1.2, radius: 14.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let topbar = row![
+            column![
+                text("Welcome! Aether Operator").size(24).color(c(TEXT_H)),
+                text("Deterministic pane-graph security telemetry").size(13).color(c(TEXT_M)),
+            ].spacing(3),
+            iced::widget::Space::new(Length::Fill, Length::Shrink),
+            container(
+                row![
+                    text("Search").size(12).color(c(TEXT_D)),
+                    text_input("Search Here", &self.dashboard_search)
+                        .on_input(Message::DashboardSearchChanged)
+                        .padding([8, 12])
+                        .size(13)
+                        .width(Length::Fixed(340.0)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+            )
+            .padding([4, 8])
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x13, 0x1F, 0x39))),
+                border: Border { color: Color::from_rgb8(0x3A, 0x4F, 0x7C), width: 1.1, radius: 24.0.into() },
+                ..Default::default()
+            }),
+            button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
+                .on_press(Message::DashboardNavSelected("Performance".to_owned()))
+                .padding([8, 12])
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
+                    border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
+                    ..Default::default()
+                }),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(12);
+
+        let kpis = row![
+            cyber_kpi_card("Total Threats", format!("{}%", total_threats), "Aether event stream", Color::from_rgb8(0xFF, 0x4D, 0xA4), "total_threats"),
+            cyber_kpi_card("Video File Risk", format!("{}%", video_risk), "Live node binding", Color::from_rgb8(0xA6, 0x4D, 0xFF), "video_risk"),
+            cyber_kpi_card("Image File Risk", format!("{}%", image_risk), "Deterministic state", Color::from_rgb8(0xFF, 0x53, 0x96), "image_risk"),
+            cyber_kpi_card("Docs File Risk", format!("{}%", docs_risk), "Aether transition", Color::from_rgb8(0x3E, 0x7B, 0xFF), "docs_risk"),
+            cyber_kpi_card("Folder File Risk", format!("{}%", folder_risk), "Overlay observer", Color::from_rgb8(0x18, 0x9E, 0xFF), "folder_risk"),
+        ]
+        .spacing(10);
+
+        let threat_summary_panel = container(
+            column![
+                row![
+                    text("Threat Summary").size(18).color(c(TEXT_H)),
+                    info_icon_button("threat_summary"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text("Yearly").size(12).color(c(TEXT_M)),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(ThreatTrendScene {
+                    tick: self.tick_counter,
+                    reveal: graph_reveal,
+                })
+                .height(Length::Fixed(210.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(14)
+        .width(Length::FillPortion(3))
+        .style(accent_card_style);
+
+        let risk_panel = container(
+            column![
+                row![
+                    text("Risk Score").size(18).color(c(TEXT_H)),
+                    info_icon_button("risk_score"),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(RiskGaugeScene {
+                    score: risk_score,
+                    pulse: node_pulse,
+                    flash: data_flash,
+                })
+                .height(Length::Fixed(200.0))
+                .width(Length::Fill),
+            ]
+            .spacing(10)
+        )
+        .padding(14)
+        .width(Length::FillPortion(2))
+        .style(accent_card_style);
+
+        let donut_panel = container(
+            column![
+                row![
+                    text("Threats By Virus").size(18).color(c(TEXT_H)),
+                    info_icon_button("virus_pie"),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(DonutScene {
+                    values: [0.22, 0.18, 0.35, 0.25],
+                    colors: [
+                        Color::from_rgb8(0xB0, 0x4D, 0xFF),
+                        Color::from_rgb8(0xFF, 0x55, 0xA0),
+                        Color::from_rgb8(0x3B, 0x8E, 0xFF),
+                        Color::from_rgb8(0x17, 0xC2, 0xFF),
+                    ],
+                    pulse: node_pulse,
+                })
+                .height(Length::Fixed(180.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(14)
+        .width(Length::FillPortion(2))
+        .style(standard_card_style);
+
+        let pane_graph = container(
+            column![
+                row![
+                    text("Aether Pane-Graph").size(16).color(c(TEXT_H)),
+                    info_icon_button("pane_graph"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text("Background · Mid · Overlay").size(11).color(c(TEXT_D)),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(CyberPaneGraphScene {
+                    tick: self.tick_counter,
+                    pulse: node_pulse,
+                    slide: pane_slide,
+                })
+                .height(Length::Fixed(130.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(12)
+        .style(standard_card_style);
+
+        let table_panel = {
+            let rows: Vec<Element<'_, Message>> = filtered_threat_rows
+                .iter()
+                .map(|(date, device, virus, path, file_type)| {
+                    row![
+                        text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
+                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                        text(virus).size(12).color(Color::from_rgb8(0xFF, 0x6C, 0xA6)).width(Length::FillPortion(2)),
+                        text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
+                        text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
+                        info_icon_button("threat_details"),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+                })
+                .collect();
+            container(
+                column![
+                    row![
+                        text("Threat Details").size(18).color(c(TEXT_H)),
+                        info_icon_button("threat_details"),
+                        iced::widget::Space::new(Length::Fill, Length::Shrink),
+                        text("Daily").size(12).color(c(TEXT_M)),
+                    ].spacing(8).align_y(Alignment::Center),
+                    row![
+                        text("Date").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
+                        text("Device ID").size(11).color(c(TEXT_D)).width(Length::FillPortion(3)),
+                        text("Virus name").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
+                        text("File Path").size(11).color(c(TEXT_D)).width(Length::FillPortion(4)),
+                        text("Type").size(11).color(c(TEXT_D)).width(Length::FillPortion(1)),
+                        text("Info").size(11).color(c(TEXT_D)),
+                    ]
+                    .spacing(8),
+                    column(rows).spacing(7),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::FillPortion(3))
+            .style(standard_card_style)
+        };
+
+        let device_panel = {
+            let rows: Vec<Element<'_, Message>> = filtered_device_rows
+                .iter()
+                .map(|(device, level)| {
+                    row![
+                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                        canvas::Canvas::new(DonutScene {
+                            values: [*level, 1.0 - *level, 0.0, 0.0],
+                            colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x22, 0x33, 0x44), Color::TRANSPARENT, Color::TRANSPARENT],
+                            pulse: 1.0,
+                        })
+                        .width(Length::Fixed(56.0))
+                        .height(Length::Fixed(56.0))
+                        .into(),
+                        info_icon_button("device_list"),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+                })
+                .collect();
+            container(
+                column![
+                    row![
+                        text("Threat by device").size(18).color(c(TEXT_H)),
+                        info_icon_button("device_list"),
+                    ].spacing(8).align_y(Alignment::Center),
+                    column(rows).spacing(8),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::FillPortion(2))
+            .style(standard_card_style)
+        };
+
+        let info_overlay: Element<'_, Message> = if let Some(key) = &self.dashboard_info_key {
+            let alpha = (0.20 + 0.80 * info_reveal).clamp(0.0, 1.0);
+            container(
+                column![
+                    row![
+                        text(format!("Info: {key}")).size(14).color(c(TEXT_H)),
+                        iced::widget::Space::new(Length::Fill, Length::Shrink),
+                        button(text("x").size(12)).on_press(Message::DashboardInfoToggle(key.clone())).padding([2, 8]),
+                    ].align_y(Alignment::Center),
+                    text(dashboard_info_text(key)).size(12).color(c(TEXT_M)),
+                ]
+                .spacing(8)
+            )
+            .padding(12)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.03, 0.10, 0.18, alpha))),
+                border: Border { color: Color::from_rgba(0.63, 0.43, 1.0, alpha), width: 1.0 + 1.2 * info_reveal, radius: (6.0 + 10.0 * info_reveal).into() },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into()
+        } else {
+            container(iced::widget::Space::new(Length::Shrink, Length::Shrink)).into()
+        };
+
+        let dashboard_body: Element<'_, Message> = if self.dashboard_nav == "Overview" {
+            column![
+                pane_graph,
+                kpis,
+                row![risk_panel, threat_summary_panel].spacing(10),
+                row![table_panel, donut_panel, device_panel].spacing(10),
+            ]
+            .spacing(10)
+            .into()
+        } else {
+            let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
+                "Issues" => self.view_logs(),
+                "Files" => self.view_data(),
+                "Reports" => self.view_anchors(),
+                "Threat Details" => self.view_ade(),
+                "Threats" => self.view_flow_sphere(),
+                "Chat" => self.view_chat(),
+                "Network" => self.view_browser(),
+                "Compute" => self.view_youtube(),
+                "Storage" => self.view_rekonstruktion(),
+                "Logs" => self.view_logs(),
+                "Data" => self.view_data(),
+                "Anchors" => self.view_anchors(),
+                "FlowSphere" => self.view_flow_sphere(),
+                "ADE" => self.view_ade(),
+                "Reconstruction" => self.view_rekonstruktion(),
+                "Imprint" => self.view_imprint(),
+                "Performance" => self.view_dashboard_performance(),
+                "Help & Support" => self.view_imprint(),
+                "Settings" => self.view_settings(),
+                _ => self.view_logs(),
+            };
+            container(embedded)
+                .padding(4)
+                .style(standard_card_style)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
+
+        let mid_layer = container(
+            column![
+                topbar,
+                dashboard_body,
+                info_overlay,
+            ]
+            .spacing(10)
+        )
+        .style(standard_card_style)
+        .padding(10)
+        .width(Length::Fill);
+
+        let background_layer = container(iced::widget::Space::new(Length::Fill, Length::Fill))
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x05, 0x0B, 0x1A))),
+                border: Border {
+                    color: Color::from_rgba(0.61, 0.39, 1.0, 0.22 + 0.28 * data_flash),
+                    width: 1.0 + 0.8 * node_pulse,
+                    radius: 14.0.into(),
+                },
+                ..Default::default()
+            });
+
+        let overlay_layer = container(
+            row![
+                text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H)),
+                info_icon_button("noether_score"),
+                text(format!("Risk {}", risk_score)).size(11).color(Color::from_rgb8(0xFF, 0xC0, 0x66)),
+                text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D)),
+                text(format!(
+                    "Runtime {} | Tick {}ms | Sync {} | Poll {}",
+                    self.runtime_profile_label(),
+                    self.tick_interval_ms(),
+                    self.browser_sync_stride,
+                    self.profile_browser_poll_batch()
+                ))
+                .size(11)
+                .color(c(TEXT_M)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+        )
+        .padding([6, 10])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.03, 0.09, 0.20, 0.65 * pane_slide + 0.25))),
+            border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.0, radius: 8.0.into() },
+            ..Default::default()
+        });
+
+        container(
+            row![
+                sidebar,
+                container(
+                    column![background_layer, mid_layer, overlay_layer]
+                        .spacing(8)
+                )
+                .width(Length::Fill),
+            ]
+            .spacing(10)
+            .height(Length::Fill)
+        )
+        .padding(10)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_dashboard_performance(&self) -> Element<'_, Message> {
+        let profile = self.runtime_profile;
+        let browser_mode = match self.browser_surface_mode() {
+            Some(Tab::Browser) => "NETWORK",
+            Some(Tab::YouTube) => "COMPUTE",
+            _ => "OFF",
+        };
+        let profile_button = |label: &'static str, p: RuntimeProfile, active: bool| {
+            button(text(if active { format!("{} [active]", label) } else { label.to_owned() }).size(13))
+                .on_press(Message::RuntimeProfileSelected(p))
+                .padding([10, 14])
+                .style(move |_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if active {
+                        Color::from_rgba(0.59, 0.34, 0.96, 0.22)
+                    } else {
+                        Color::from_rgba(0.07, 0.14, 0.24, 0.86)
+                    })),
+                    border: Border {
+                        color: if active { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2A, 0x3D, 0x64) },
+                        width: if active { 1.2 } else { 1.0 },
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                })
+        };
+
+        container(
+            column![
+                row![
+                    text("Performance Optimization").size(22).color(c(TEXT_H)),
+                    info_icon_button("performance"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text(format!("Current: {}", self.runtime_profile_label())).size(12).color(c(TEXT_M)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                text("Deterministic runtime profiles for latency, throughput and low-resource stability.")
+                    .size(13)
+                    .color(c(TEXT_M)),
+                row![
+                    profile_button("AUTO", RuntimeProfile::Auto, profile == RuntimeProfile::Auto),
+                    profile_button("BALANCED", RuntimeProfile::Balanced, profile == RuntimeProfile::Balanced),
+                    profile_button("LOW-POWER", RuntimeProfile::LowPower, profile == RuntimeProfile::LowPower),
+                    profile_button("LEGACY", RuntimeProfile::Legacy, profile == RuntimeProfile::Legacy),
+                ]
+                .spacing(10),
+                row![
+                    info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())),
+                    info_card("Browser-Sync", &format!("jede {} Ticks", self.browser_sync_stride)),
+                    info_card("Poll-Batch", &format!("{} Events", self.profile_browser_poll_batch())),
+                    info_card("Browser-Modus", browser_mode),
+                ]
+                .spacing(10),
+                row![
+                    info_card("Analyse-Status", &self.analysis_status),
+                ]
+                .spacing(10),
+                container(
+                    text("Hinweis: Diese Profile beeinflussen Scheduler-Takt, Browser-Sync-Frequenz und Lastcharakteristik deterministisch.")
+                        .size(12)
+                        .color(c(TEXT_D))
+                )
+                .padding(10)
+                .style(standard_card_style),
+            ]
+            .spacing(12)
+        )
+        .padding(12)
+        .style(accent_card_style)
+        .into()
+    }
+
     fn view_chat(&self) -> Element<'_, Message> {
         let tutorial_button: Element<'_, Message> = if self.show_tutorial {
             button(text("Tutorial ausblenden"))
@@ -1170,8 +1803,8 @@ impl AetherIcedShell {
                     .height(Length::Fixed(110.0)),
                 )
                 .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
-                    border: Border { color: Color::from_rgb8(0x00, 0xE5, 0x7A), width: 1.0, radius: 10.0.into() },
+                    background: Some(Background::Color(Color::from_rgb8(0x0E, 0x18, 0x32))),
+                    border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.1, radius: 10.0.into() },
                     ..Default::default()
                 })
                 .padding(8);
@@ -1211,13 +1844,13 @@ impl AetherIcedShell {
                     .padding([8, 12])
                     .width(Length::Fill),
                 button(
-                    text("\u{2192}").size(14).color(Color::from_rgb8(0x07, 0x10, 0x1C))
+                    text("\u{2192}").size(14).color(Color::from_rgb8(0xF6, 0xED, 0xFF))
                 )
                 .padding([8, 14])
                 .on_press(Message::BrowserLoadPressed)
                 .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x00, 0xE5, 0x7A))),
-                    text_color: Color::from_rgb8(0x07, 0x10, 0x1C),
+                    background: Some(Background::Color(Color::from_rgb8(0x96, 0x57, 0xF7))),
+                    text_color: Color::from_rgb8(0xF6, 0xED, 0xFF),
                     border: Border { radius: 6.0.into(), ..Default::default() },
                     ..Default::default()
                 }),
@@ -1226,8 +1859,8 @@ impl AetherIcedShell {
             .align_y(Alignment::Center),
         )
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
-            border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 8.0.into() },
+            background: Some(Background::Color(Color::from_rgb8(0x10, 0x1A, 0x34))),
+            border: Border { color: Color::from_rgb8(0x35, 0x4B, 0x76), width: 1.1, radius: 8.0.into() },
             ..Default::default()
         })
         .padding([4, 4]);
@@ -1241,7 +1874,8 @@ impl AetherIcedShell {
                         row![
                             button(text("Seite pruefen").size(13))
                                 .padding([8, 14])
-                                .on_press(Message::BrowserInspectPressed),
+                                .on_press(Message::BrowserInspectPressed)
+                                .style(secondary_button_style),
                         ]
                         .spacing(10),
                         text_input("Suchbegriff oder Frage", &self.browser_search_query)
@@ -1250,7 +1884,8 @@ impl AetherIcedShell {
                             .size(14),
                         button(text("DuckDuckGo suchen"))
                             .padding([10, 16])
-                            .on_press(Message::BrowserSearchPressed),
+                            .on_press(Message::BrowserSearchPressed)
+                            .style(primary_button_style),
                         info_card("Browser-Status", &self.browser_note),
                         if let Some(probe) = &self.browser_probe {
                             info_card(
@@ -1291,7 +1926,9 @@ impl AetherIcedShell {
                     ]
                     .spacing(14)
                 )
-                .width(Length::Fixed(420.0)),
+                .width(Length::Fixed(420.0))
+                .style(panel_frame_style)
+                .padding(14),
                 container(
                     column![
                         text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xE8, 0xF4, 0xFF)),
@@ -1304,6 +1941,7 @@ impl AetherIcedShell {
                     .spacing(10)
                 )
                 .padding(16)
+                .style(panel_frame_style)
                 .width(Length::Fill)
                 .height(Length::Fill),
             ]
@@ -1319,6 +1957,21 @@ impl AetherIcedShell {
             text("Data").size(24),
             text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.")
                 .size(16),
+            column![
+                row![
+                    row![text("Entropie").size(12).color(c(TEXT_M)), info_badge("Entropie beschreibt die Restunsicherheit eines Artefakts.")].spacing(6),
+                    row![text("Symmetrie").size(12).color(c(TEXT_M)), info_badge("Symmetrie markiert wiederkehrende Struktur und Invarianz.")].spacing(6),
+                    row![text("Drift").size(12).color(c(TEXT_M)), info_badge("Drift misst lokale Byte-Aenderung zwischen benachbarten Bereichen.")].spacing(6),
+                ]
+                .spacing(12),
+                row![
+                    row![text("Gain").size(12).color(c(TEXT_M)), info_badge("Gain beschreibt den Kompressionsgewinn gegen das Original.")].spacing(6),
+                    row![text("E-Lambda").size(12).color(c(TEXT_M)), info_badge("E-Lambda ist der interne Kohaerenzindikator der AEF-Pipeline.")].spacing(6),
+                    row![text("Trust").size(12).color(c(TEXT_M)), info_badge("Trust kombiniert Filter, Kohaerenz und Lossless-Bestaetigung.")].spacing(6),
+                ]
+                .spacing(12),
+            ]
+            .spacing(8),
             analysis_card(
                 self.analysis_progress,
                 &self.analysis_status,
@@ -1370,7 +2023,8 @@ impl AetherIcedShell {
                     username.clone()
                 }))
                 .padding([8, 12])
-                .on_press(Message::PrivatePartnerSelected(username)),
+                .on_press(Message::PrivatePartnerSelected(username))
+                .style(if active { primary_button_style } else { secondary_button_style }),
             );
         }
 
@@ -1401,10 +2055,12 @@ impl AetherIcedShell {
             content = content.push(
                 button(text("Nachricht lokal speichern"))
                     .padding([10, 16])
-                    .on_press(Message::PrivateMessageSend),
+                    .on_press(Message::PrivateMessageSend)
+                    .style(primary_button_style),
             );
             container(scrollable(content).height(Length::Fill))
                 .padding(16)
+                .style(panel_frame_style)
                 .into()
         } else {
             info_card(
@@ -1417,8 +2073,9 @@ impl AetherIcedShell {
             row![
                 container(scrollable(partners).height(Length::Fill))
                     .padding(16)
+                    .style(panel_frame_style)
                     .width(Length::FillPortion(1)),
-                container(conversation).width(Length::FillPortion(2)),
+                container(conversation).style(panel_frame_style).width(Length::FillPortion(2)),
             ]
             .spacing(14),
         )
@@ -1466,11 +2123,13 @@ impl AetherIcedShell {
         content = content.push(
             button(text("Gruppennachricht lokal speichern"))
                 .padding([10, 16])
-                .on_press(Message::GroupMessageSend),
+                .on_press(Message::GroupMessageSend)
+                .style(primary_button_style),
         );
 
         container(scrollable(content).height(Length::Fill))
             .padding(12)
+            .style(panel_frame_style)
             .into()
     }
 
@@ -1506,10 +2165,12 @@ impl AetherIcedShell {
         content = content.push(
             button(text("An Shanway senden"))
                 .padding([10, 16])
-                .on_press(Message::ShanwayMessageSend),
+                .on_press(Message::ShanwayMessageSend)
+                .style(primary_button_style),
         );
         container(scrollable(content).height(Length::Fill))
             .padding(12)
+            .style(panel_frame_style)
             .into()
     }
 
@@ -1530,13 +2191,16 @@ impl AetherIcedShell {
                     row![
                         button(text(if mode == "local" { "LOCAL [aktiv]" } else { "LOCAL" }))
                             .padding([10, 18])
-                            .on_press(Message::SecurityModeSelected("local".to_owned())),
+                            .on_press(Message::SecurityModeSelected("local".to_owned()))
+                            .style(if mode == "local" { primary_button_style } else { secondary_button_style }),
                         button(text(if mode == "dev" { "DEV [aktiv]" } else { "DEV" }))
                             .padding([10, 18])
-                            .on_press(Message::SecurityModeSelected("dev".to_owned())),
+                            .on_press(Message::SecurityModeSelected("dev".to_owned()))
+                            .style(if mode == "dev" { primary_button_style } else { secondary_button_style }),
                         button(text("Recheck"))
                             .padding([10, 18])
-                            .on_press(Message::SecurityRecheck),
+                            .on_press(Message::SecurityRecheck)
+                            .style(secondary_button_style),
                     ]
                     .spacing(10),
                     text("Runtime-Profil (Hardware-Inklusion)").size(20),
@@ -1549,28 +2213,32 @@ impl AetherIcedShell {
                             "AUTO"
                         }))
                         .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto)),
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto))
+                        .style(if profile == RuntimeProfile::Auto { primary_button_style } else { secondary_button_style }),
                         button(text(if profile == RuntimeProfile::Balanced {
                             "BALANCED [aktiv]"
                         } else {
                             "BALANCED"
                         }))
                         .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced)),
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced))
+                        .style(if profile == RuntimeProfile::Balanced { primary_button_style } else { secondary_button_style }),
                         button(text(if profile == RuntimeProfile::LowPower {
                             "LOW-POWER [aktiv]"
                         } else {
                             "LOW-POWER"
                         }))
                         .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower)),
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower))
+                        .style(if profile == RuntimeProfile::LowPower { primary_button_style } else { secondary_button_style }),
                         button(text(if profile == RuntimeProfile::Legacy {
                             "LEGACY [aktiv]"
                         } else {
                             "LEGACY"
                         }))
                         .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy)),
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy))
+                        .style(if profile == RuntimeProfile::Legacy { primary_button_style } else { secondary_button_style }),
                     ]
                     .spacing(8),
                     info_card(
@@ -1589,6 +2257,7 @@ impl AetherIcedShell {
             .height(Length::Fill),
         )
         .padding(12)
+        .style(panel_frame_style)
         .into()
     }
 
@@ -1667,6 +2336,7 @@ impl AetherIcedShell {
         }
         container(scrollable(items).height(Length::Fill))
             .padding(12)
+            .style(panel_frame_style)
             .into()
     }
 
@@ -1737,6 +2407,7 @@ impl AetherIcedShell {
             row![
                 container(scrollable(list).height(Length::Fill))
                     .padding(12)
+                    .style(panel_frame_style)
                     .width(Length::FillPortion(1)),
                 container(
                     column![
@@ -1747,33 +2418,32 @@ impl AetherIcedShell {
                         text(make_sparkline(detail_fill)).size(13),
                         text(format!("Groesse: {} B", selected.total_bytes)).size(14),
                         text(selected.sample_note.clone()).size(13),
-                        button(text("Download anfragen")).padding([10, 18]),
+                        button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style),
                     ]
                     .spacing(10),
                 )
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-                    border: Border {
-                        color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-                        width: 1.5,
-                        radius: 8.0.into(),
-                    },
-                    ..Default::default()
-                })
+                .style(accent_card_style)
                 .padding(22)
                 .width(Length::FillPortion(2)),
             ]
             .spacing(14),
         )
         .padding(12)
+        .style(panel_frame_style)
         .into()
     }
 
     fn view_imprint(&self) -> Element<'_, Message> {
+        let symbiont_count = self.auth_store.user_count();
         container(
             scrollable(
                 column![
                     text("Impressum").size(24),
+                    info_card(
+                        "Status",
+                        "Kurz: Die Logik ist schon richtig gebaut. Die volle selbstverstaerkende Skalierung ist vorbereitet, aber noch nicht komplett end-to-end operationalisiert.",
+                    ),
+                    info_card("Symbionten", &format!("Aktuell registrierte Symbionten: {symbiont_count}")),
                     info_card("Zweck", "Aether macht lokale Analyse, Technik und Wissen ohne Cloud-Zwang verstaendlich und nutzbar."),
                     info_card("Datenschutz", "Account, Deltas und Restanteile bleiben auf dem Geraet. Keine zentrale Wiederherstellung."),
                     info_card("Formeln", "P(n) = base + (1-base) * ln(1+n) / ln(1+Nmax)\nC(t) = vault_hits / total_chunks"),
@@ -1784,6 +2454,7 @@ impl AetherIcedShell {
             .height(Length::Fill),
         )
         .padding(12)
+        .style(panel_frame_style)
         .into()
     }
 
@@ -1823,14 +2494,14 @@ impl AetherIcedShell {
                     };
                     let row_style = move |_: &Theme| container::Style {
                         background: Some(Background::Color(if is_selected {
-                            Color::from_rgb8(0x0E, 0x28, 0x44)
+                            Color::from_rgba(0.59, 0.34, 0.96, 0.18)
                         } else {
                             Color::from_rgb8(0x08, 0x14, 0x24)
                         })),
                         border: Border {
-                            color: Color::from_rgb8(0x1C, 0x3A, 0x58),
+                            color: if is_selected { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2A, 0x3D, 0x64) },
                             width: 1.0,
-                            radius: 6.0.into(),
+                            radius: 10.0.into(),
                         },
                         ..Default::default()
                     };
@@ -1857,11 +2528,7 @@ impl AetherIcedShell {
                             .align_y(Alignment::Center),
                         )
                         .on_press(Message::ReconstructPressed(entry_id))
-                        .style(|_: &Theme, _| button::Style {
-                            background: None,
-                            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
-                            ..Default::default()
-                        })
+                        .style(secondary_button_style)
                         .width(Length::Fill),
                     )
                     .style(row_style)
@@ -1887,11 +2554,7 @@ impl AetherIcedShell {
                 .align_y(Alignment::Center),
             )
             .padding(16)
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
-                border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 8.0.into() },
-                ..Default::default()
-            })
+            .style(panel_frame_style)
             .width(Length::Fill)
             .into()
         } else if let Some(result) = &self.rekonstruktion_result {
@@ -1917,12 +2580,7 @@ impl AetherIcedShell {
                         )
                         .on_press(Message::ExportPressed(selected_id))
                         .padding([8, 18])
-                        .style(|_: &Theme, _| button::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x2A, 0x18))),
-                            border: Border { color: Color::from_rgb8(0x28, 0x70, 0x40), width: 1.0, radius: 6.0.into() },
-                            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
-                            ..Default::default()
-                        })
+                        .style(primary_button_style)
                         .into()
                     } else {
                         iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
@@ -1947,11 +2605,7 @@ impl AetherIcedShell {
                         .spacing(6),
                     )
                     .padding(16)
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
-                        border: Border { color: Color::from_rgb8(0x1C, 0x3A, 0x58), width: 1.0, radius: 8.0.into() },
-                        ..Default::default()
-                    })
+                    .style(panel_frame_style)
                     .width(Length::Fill)
                     .into()
                 }
@@ -1987,7 +2641,7 @@ impl AetherIcedShell {
                     .padding(16)
                     .style(|_: &Theme| container::Style {
                         background: Some(Background::Color(Color::from_rgb8(0x1C, 0x06, 0x06))),
-                        border: Border { color: Color::from_rgb8(0x58, 0x1C, 0x1C), width: 1.0, radius: 8.0.into() },
+                        border: Border { color: Color::from_rgb8(0xA8, 0x44, 0x44), width: 1.0, radius: 10.0.into() },
                         ..Default::default()
                     })
                     .width(Length::Fill)
@@ -2004,11 +2658,7 @@ impl AetherIcedShell {
                 text(hint).size(13).color(Color::from_rgb8(0x60, 0x88, 0xA8)),
             )
             .padding(16)
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
-                border: Border { color: Color::from_rgb8(0x14, 0x2C, 0x44), width: 1.0, radius: 8.0.into() },
-                ..Default::default()
-            })
+            .style(panel_frame_style)
             .width(Length::Fill)
             .into()
         };
@@ -2024,12 +2674,7 @@ impl AetherIcedShell {
                 .map(Message::ReconstructPressed),
         )
         .padding([10, 22])
-        .style(|_: &Theme, _| button::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x08, 0x1E, 0x38))),
-            border: Border { color: Color::from_rgb8(0x1C, 0x50, 0x80), width: 1.0, radius: 8.0.into() },
-            text_color: Color::from_rgb8(0xD0, 0xE8, 0xF8),
-            ..Default::default()
-        });
+        .style(primary_button_style);
 
         container(
             column![
@@ -2043,6 +2688,7 @@ impl AetherIcedShell {
         .padding(16)
         .width(Length::Fill)
         .height(Length::Fill)
+        .style(panel_frame_style)
         .into()
     }
 
@@ -2191,7 +2837,7 @@ impl AetherIcedShell {
     fn view_flow_sphere(&self) -> Element<'_, Message> {
         use std::f32::consts::TAU;
 
-        let cyan       = Color::from_rgb8(0x00, 0xD4, 0xD4);
+        let cyan       = Color::from_rgb8(0x9A, 0x67, 0xFF);
         let dim        = Color::from_rgb8(0x50, 0x6A, 0x7A);
         let surf_bg    = Color::from_rgb8(0x03, 0x09, 0x12);
         let panel_bg   = Color::from_rgb8(0x05, 0x0F, 0x1C);
@@ -2202,16 +2848,16 @@ impl AetherIcedShell {
         let anchor_count = self.structure_map_nodes.last().map_or(4, |v| v.len());
         let info_growth = entropy;
 
-        // Attractor longitude angles (0, TAU/4, TAU/2, 3*TAU/4)
-        let attractor_lons = [0.0f32, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0];
+        let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
 
-        // Delta event phases — 3 arcs driven by mutation history
-        let delta_phases: [f32; 3] = {
+        let delta_phases: [f32; 5] = {
             let m = &self.structure_map_mutation_hist;
             [
                 m.get(m.len().saturating_sub(1)).copied().unwrap_or(8) as f32 * 0.41,
-                m.get(m.len().saturating_sub(5)).copied().unwrap_or(6) as f32 * 0.63,
-                m.get(m.len().saturating_sub(10)).copied().unwrap_or(10) as f32 * 0.27,
+                m.get(m.len().saturating_sub(3)).copied().unwrap_or(6) as f32 * 0.63,
+                m.get(m.len().saturating_sub(7)).copied().unwrap_or(10) as f32 * 0.27,
+                m.get(m.len().saturating_sub(12)).copied().unwrap_or(7) as f32 * 0.55,
+                m.get(m.len().saturating_sub(18)).copied().unwrap_or(9) as f32 * 0.34,
             ]
         };
 
@@ -2238,7 +2884,7 @@ impl AetherIcedShell {
                         text("h\u{209c} INSPECTOR").size(11).color(cyan),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("ENTROPIE").size(10).color(dim),
-                        text(format!("{:.4} bit", entropy * 7.83)).size(16).color(Color::from_rgb8(0x00, 0xE0, 0xE0)),
+                        text(format!("{:.4} bit", entropy * 7.83)).size(16).color(Color::from_rgb8(0xAF, 0x86, 0xFF)),
                         progress_bar(0.0..=1.0, entropy).height(5),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("ATTRAKTOR-PARAM").size(10).color(dim),
@@ -2252,7 +2898,7 @@ impl AetherIcedShell {
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("I(h\u{209c})").size(10).color(dim),
                         text(format!("{:.4}", i_ht)).size(18).color(Color::from_rgb8(0xC0, 0xF0, 0xFF)),
-                        text(make_sparkline(i_ht)).size(9).color(dim),
+                        text(make_sparkline(i_ht)).size(9).color(Color::from_rgb8(0x7B, 0x8F, 0xB3)),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("STABILIT\u{c4}T").size(10).color(dim),
                         text(format!("{:.1}%", stability * 100.0)).size(16).color(
@@ -2273,8 +2919,8 @@ impl AetherIcedShell {
                             .padding([6, 12])
                             .style(|_: &Theme, _| button::Style {
                                 background: Some(Background::Color(Color::from_rgb8(0x05, 0x28, 0x30))),
-                                border: Border { color: Color::from_rgb8(0x00, 0xA0, 0xA0), width: 1.0, radius: 4.0.into() },
-                                text_color: Color::from_rgb8(0x00, 0xD4, 0xD4),
+                                border: Border { color: Color::from_rgb8(0x8E, 0x5A, 0xF4), width: 1.0, radius: 4.0.into() },
+                                text_color: Color::from_rgb8(0xB6, 0x8D, 0xFF),
                                 ..Default::default()
                             }),
                     ]
@@ -2307,7 +2953,7 @@ impl AetherIcedShell {
                 .padding([2, 4])
                 .style(move |_: &Theme, _| button::Style {
                     background: Some(Background::Color(if is_sel {
-                        Color::from_rgba(0.0, 0.7, 0.7, 0.12)
+                        Color::from_rgba(0.59, 0.34, 0.96, 0.16)
                     } else {
                         Color::TRANSPARENT
                     })),
@@ -2383,7 +3029,7 @@ impl AetherIcedShell {
     }
 
     fn view_ade(&self) -> Element<'_, Message> {
-        let cyan    = Color::from_rgb8(0x00, 0xD4, 0xD4);
+        let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
         let yellow  = Color::from_rgb8(0xFF, 0xD7, 0x00);
         let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
         let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
@@ -2490,7 +3136,7 @@ impl AetherIcedShell {
                     text("ADE \u{00b7} ENGINE-STATUS").size(11).color(cyan),
                     text("\u{2500}".repeat(20)).size(8).color(dim),
                     text(format!("Tick:  {}", self.tick_counter)).size(11).color(dim),
-                    text(format!("Ringe: {}", self.structure_map_nodes.len())).size(11).color(dim),
+                    text(format!("Layer: {}", self.structure_map_nodes.len())).size(11).color(dim),
                     text(format!("Nodes: {}", self.structure_map_nodes.iter().map(|v| v.len()).sum::<usize>())).size(11).color(dim),
                     text("\u{2500}".repeat(20)).size(8).color(dim),
                     text("ATTRAKTOR-PHASEN").size(10).color(dim),
@@ -2555,8 +3201,12 @@ impl AetherIcedShell {
     }
 
     fn view_shell(&self) -> Element<'_, Message> {
+        if self.active_tab == Tab::Home {
+            return self.view_home_aether_cyber();
+        }
+
         let main = match self.active_tab {
-            Tab::Home => self.view_home(),
+            Tab::Home => self.view_home_aether_cyber(),
             Tab::Chat => self.view_chat(),
             Tab::Browser => self.view_browser(),
             Tab::YouTube => self.view_youtube(),
@@ -2569,52 +3219,119 @@ impl AetherIcedShell {
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
         };
+
+        let nav_item = |label: &str, tab: Tab, active_tab: Tab| {
+            let active = tab == active_tab;
+            button(text(label).size(13).color(if active { c(TEXT_H) } else { c(TEXT_M) }))
+                .on_press(Message::TabSelected(tab))
+                .padding([8, 10])
+                .style(move |_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if active {
+                        Color::from_rgba(0.55, 0.25, 0.95, 0.65)
+                    } else {
+                        Color::TRANSPARENT
+                    })),
+                    border: Border {
+                        color: if active { Color::from_rgb8(0x8B, 0x52, 0xF6) } else { Color::TRANSPARENT },
+                        width: if active { 1.0 } else { 0.0 },
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
+        };
+
+        let shell_sidebar = container(
+            column![
+                text("Aether").size(24).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
+                text("Core").size(12).color(c(TEXT_D)),
+                nav_item("Overview", Tab::Home, self.active_tab),
+                nav_item("Chat", Tab::Chat, self.active_tab),
+                nav_item("Network", Tab::Browser, self.active_tab),
+                nav_item("Compute", Tab::YouTube, self.active_tab),
+                nav_item("Files", Tab::Data, self.active_tab),
+                text("Analysis").size(12).color(c(TEXT_D)),
+                nav_item("Threats", Tab::StructureMap, self.active_tab),
+                nav_item("Threat Details", Tab::ADE, self.active_tab),
+                nav_item("Reports", Tab::Anchors, self.active_tab),
+                nav_item("Logs", Tab::Logs, self.active_tab),
+                text("System").size(12).color(c(TEXT_D)),
+                nav_item("Settings", Tab::Settings, self.active_tab),
+                nav_item("Info", Tab::Imprint, self.active_tab),
+                nav_item("Reconstruction", Tab::Rekonstruktion, self.active_tab),
+            ]
+            .spacing(8)
+        )
+        .padding(14)
+        .width(Length::Fixed(220.0))
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x11, 0x24))),
+            border: Border { color: Color::from_rgb8(0x2D, 0x3E, 0x64), width: 1.2, radius: 12.0.into() },
+            ..Default::default()
+        });
+
+        let shell_header = container(
+            row![
+                column![
+                    text(match self.active_tab {
+                        Tab::Home => "Overview",
+                        Tab::Chat => "Chat",
+                        Tab::Browser => "Network",
+                        Tab::YouTube => "Compute",
+                        Tab::Data => "Files",
+                        Tab::Settings => "Settings",
+                        Tab::Logs => "Logs",
+                        Tab::Anchors => "Reports",
+                        Tab::StructureMap => "Threats",
+                        Tab::ADE => "Threat Details",
+                        Tab::Imprint => "Info",
+                        Tab::Rekonstruktion => "Reconstruction",
+                    }).size(24).color(c(TEXT_H)),
+                    text(&self.status_line).size(12).color(c(TEXT_M)),
+                ]
+                .spacing(3),
+                iced::widget::Space::new(Length::Fill, Length::Shrink),
+                button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
+                    .on_press(Message::TabSelected(Tab::Settings))
+                    .padding([8, 12])
+                    .style(|_: &Theme, _| button::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
+                        border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+            ]
+            .align_y(Alignment::Center)
+            .spacing(12)
+        )
+        .padding([10, 14])
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x13, 0x1F, 0x39))),
+            border: Border { color: Color::from_rgb8(0x3A, 0x4F, 0x7C), width: 1.1, radius: 12.0.into() },
+            ..Default::default()
+        });
+
         container(
             row![
-                self.view_sidebar(),
+                shell_sidebar,
                 column![
-                    self.view_tabs(),
-                    // Tab title bar
-                    container(
-                        row![
-                            text(match self.active_tab {
-                                Tab::Home        => "Overview",
-                                Tab::Chat        => "Chat",
-                                Tab::Browser     => "Browser",
-                                Tab::YouTube     => "YouTube",
-                                Tab::Data        => "Data",
-                                Tab::Settings    => "Config",
-                                Tab::Logs        => "Logs",
-                                Tab::Anchors     => "Cluster",
-                                Tab::StructureMap=> "Flow Sphere",
-                                Tab::ADE         => "ADE",
-                                Tab::Imprint     => "Info",
-                                Tab::Rekonstruktion => "Rekonstruktion",
-                            }).size(18).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
-                            iced::widget::Space::new(Length::Fill, Length::Shrink),
-                            text(&self.status_line).size(12)
-                                .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
-                        ]
-                        .spacing(12)
-                        .align_y(iced::Alignment::Center),
-                    )
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x10, 0x1C))),
-                        border: Border { color: Color::from_rgb8(0x14, 0x2C, 0x44), width: 1.0, radius: 0.0.into() },
-                        ..Default::default()
-                    })
-                    .padding([8, 16])
-                    .width(Length::Fill),
-                    main,
+                    shell_header,
+                    container(main)
+                        .padding(6)
+                        .style(standard_card_style)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
                 ]
-                .spacing(0)
+                .spacing(10)
                 .width(Length::Fill),
             ]
-            .spacing(0),
+            .spacing(10),
         )
-        .padding(0)
+        .padding(10)
         .width(Length::Fill)
         .height(Length::Fill)
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x04, 0x08, 0x14))),
+            ..Default::default()
+        })
         .into()
     }
 
@@ -2727,10 +3444,24 @@ impl AetherIcedShell {
         }
     }
 
+    fn browser_surface_mode(&self) -> Option<Tab> {
+        match self.active_tab {
+            Tab::Browser => Some(Tab::Browser),
+            Tab::YouTube => Some(Tab::YouTube),
+            Tab::Home => match self.dashboard_nav.as_str() {
+                "Network" => Some(Tab::Browser),
+                "Compute" => Some(Tab::YouTube),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn profile_tick_interval_ms(&self) -> u64 {
+        let browser_like = self.browser_surface_mode().is_some();
         match self.runtime_profile {
             RuntimeProfile::Auto => {
-                if self.active_tab == Tab::Browser {
+                if browser_like {
                     220
                 } else if self.analysis_running {
                     320
@@ -2739,21 +3470,21 @@ impl AetherIcedShell {
                 }
             }
             RuntimeProfile::Balanced => {
-                if self.active_tab == Tab::Browser {
+                if browser_like {
                     260
                 } else {
                     650
                 }
             }
             RuntimeProfile::LowPower => {
-                if self.active_tab == Tab::Browser {
+                if browser_like {
                     420
                 } else {
                     1150
                 }
             }
             RuntimeProfile::Legacy => {
-                if self.active_tab == Tab::Browser {
+                if browser_like {
                     650
                 } else {
                     1600
@@ -2788,53 +3519,96 @@ impl AetherIcedShell {
         match message {
             Message::LoginUsernameChanged(value) => self.login_username = value,
             Message::LoginPasswordChanged(value) => self.login_password = value,
-            Message::LoginPressed => match self
-                .auth_store
-                .authenticate(&self.login_username, &self.login_password)
-            {
-                Ok(user) => {
-                    self.show_tutorial = self.state_store.entries_for(&user.username).is_empty();
-                    self.current_user = Some(user);
-                    self.active_tab = Tab::Home;
-                    self.chat_context = ChatContext::Shanway;
-                    self.selected_private_partner = None;
-                    self.refresh_security_snapshot(true, "login");
-                    self.status_line =
-                        "Anmeldung erfolgreich. Aether ist lokal betriebsbereit.".to_owned();
-                }
-                Err(err) => self.status_line = err,
-            },
-            Message::RegisterPressed => match self
-                .auth_store
-                .register(&self.login_username, &self.login_password)
-            {
-                Ok(()) => match self
+            Message::LoginPressed => {
+                let mut login_password = self.login_password.clone();
+                match self
                     .auth_store
-                    .authenticate(&self.login_username, &self.login_password)
+                    .authenticate(&self.login_username, &login_password)
                 {
                     Ok(user) => {
+                        self.clear_runtime_keys();
+                        self.derive_runtime_keys(&user, &login_password);
+                        self.login_password.zeroize();
+                        self.login_password.clear();
+                        self.show_tutorial = self.state_store.entries_for(&user.username).is_empty();
                         self.current_user = Some(user);
-                        self.show_tutorial = true;
-                        self.active_tab = Tab::Chat;
+                        self.active_tab = Tab::Home;
                         self.chat_context = ChatContext::Shanway;
                         self.selected_private_partner = None;
-                        self.refresh_security_snapshot(true, "register");
-                        self.status_line =
-                            "Registrierung abgeschlossen. Shanway startet mit der Einfuehrung."
-                                .to_owned();
+                        self.refresh_security_snapshot(true, "login");
+                        self.status_line = format!(
+                            "Anmeldung erfolgreich. Data-Key aktiv: {}",
+                            self.data_key_fingerprint
+                        );
                     }
                     Err(err) => self.status_line = err,
-                },
-                Err(err) => self.status_line = err,
-            },
+                }
+                login_password.zeroize();
+            }
+            Message::RegisterPressed => {
+                let mut login_password = self.login_password.clone();
+                match self
+                    .auth_store
+                    .register(&self.login_username, &login_password)
+                {
+                    Ok(()) => match self
+                        .auth_store
+                        .authenticate(&self.login_username, &login_password)
+                    {
+                        Ok(user) => {
+                            self.clear_runtime_keys();
+                            self.derive_runtime_keys(&user, &login_password);
+                            self.login_password.zeroize();
+                            self.login_password.clear();
+                            self.current_user = Some(user);
+                            self.show_tutorial = true;
+                            self.active_tab = Tab::Chat;
+                            self.chat_context = ChatContext::Shanway;
+                            self.selected_private_partner = None;
+                            self.refresh_security_snapshot(true, "register");
+                            self.status_line = format!(
+                                "Registrierung abgeschlossen. Data-Key aktiv: {}",
+                                self.data_key_fingerprint
+                            );
+                        }
+                        Err(err) => self.status_line = err,
+                    },
+                    Err(err) => self.status_line = err,
+                }
+                login_password.zeroize();
+            }
             Message::TabSelected(tab) => {
                 self.active_tab = tab;
                 if self.active_tab == Tab::Browser {
-                    self.sync_browser_embed();
+                    self.browser_address = "https://duckduckgo.com/".to_owned();
+                    match self.browser_embed.navigate(&self.browser_address) {
+                        Ok(()) => {
+                            self.sync_browser_embed();
+                            self.browser_note = "DuckDuckGo wurde automatisch geladen.".to_owned();
+                            self.status_line = self.browser_note.clone();
+                        }
+                        Err(err) => {
+                            self.browser_note = format!(
+                                "DuckDuckGo konnte beim Tab-Wechsel nicht geladen werden: {err}"
+                            );
+                            self.status_line = self.browser_note.clone();
+                        }
+                    }
                 } else if self.active_tab == Tab::YouTube {
+                    self.youtube_address = "https://www.youtube.com/".to_owned();
                     let url = self.youtube_address.clone();
-                    let _ = self.browser_embed.navigate(&url);
-                    self.sync_browser_embed();
+                    match self.browser_embed.navigate(&url) {
+                        Ok(()) => {
+                            self.sync_browser_embed();
+                            self.browser_note = "YouTube wurde automatisch geladen.".to_owned();
+                            self.status_line = self.browser_note.clone();
+                        }
+                        Err(err) => {
+                            self.browser_note =
+                                format!("YouTube konnte beim Tab-Wechsel nicht geladen werden: {err}");
+                            self.status_line = self.browser_note.clone();
+                        }
+                    }
                 } else {
                     self.browser_embed.hide();
                 }
@@ -2850,6 +3624,54 @@ impl AetherIcedShell {
                     self.tick_interval_ms(),
                     self.browser_sync_stride
                 );
+            }
+            Message::DashboardSearchChanged(value) => self.dashboard_search = value,
+            Message::DashboardNavSelected(value) => {
+                self.dashboard_nav = value;
+                self.dashboard_info_key = None;
+                self.dashboard_info_open_tick = self.tick_counter;
+                if self.active_tab == Tab::Home {
+                    if self.dashboard_nav == "Network" {
+                        self.browser_address = "https://duckduckgo.com/".to_owned();
+                        match self.browser_embed.navigate(&self.browser_address) {
+                            Ok(()) => {
+                                self.sync_browser_embed();
+                                self.browser_note = "DuckDuckGo wurde im Dashboard geladen.".to_owned();
+                                self.status_line = self.browser_note.clone();
+                            }
+                            Err(err) => {
+                                self.browser_note =
+                                    format!("DuckDuckGo konnte im Dashboard nicht geladen werden: {err}");
+                                self.status_line = self.browser_note.clone();
+                            }
+                        }
+                    } else if self.dashboard_nav == "Compute" {
+                        self.youtube_address = "https://www.youtube.com/".to_owned();
+                        let url = self.youtube_address.clone();
+                        match self.browser_embed.navigate(&url) {
+                            Ok(()) => {
+                                self.sync_browser_embed();
+                                self.browser_note = "YouTube wurde im Dashboard geladen.".to_owned();
+                                self.status_line = self.browser_note.clone();
+                            }
+                            Err(err) => {
+                                self.browser_note =
+                                    format!("YouTube konnte im Dashboard nicht geladen werden: {err}");
+                                self.status_line = self.browser_note.clone();
+                            }
+                        }
+                    } else {
+                        self.browser_embed.hide();
+                    }
+                }
+            }
+            Message::DashboardInfoToggle(key) => {
+                if self.dashboard_info_key.as_ref() == Some(&key) {
+                    self.dashboard_info_key = None;
+                } else {
+                    self.dashboard_info_key = Some(key);
+                    self.dashboard_info_open_tick = self.tick_counter;
+                }
             }
             Message::ChatUserSearchChanged(value) => self.chat_user_search = value,
             Message::PrivatePartnerSelected(partner) => {
@@ -2993,8 +3815,9 @@ impl AetherIcedShell {
                 self.hovered_file_label = format!("Drop uebernommen: {}", path.display());
                 self.status_line = self.analysis_status.clone();
                 self.active_tab = Tab::Data;
+                let data_key = self.data_key_fork();
                 return Task::perform(
-                    analyze_file_for_register(path, username),
+                    analyze_file_for_register(path, username, data_key),
                     Message::FileAnalysisCompleted,
                 );
             }
@@ -3046,11 +3869,16 @@ impl AetherIcedShell {
                 let out_dir = PathBuf::from("data").join("rust_shell").join("reconstructed");
                 let out_path = out_dir.join(&entry.file_name);
                 let file_name = entry.file_name.clone();
+                let data_key = self.data_key_fork();
                 return Task::perform(
                     async move {
                         let vault = VaultStore::load_default().map_err(|e| e.to_string())?;
                         let vault = Arc::new(RwLock::new(vault));
-                        let decoder = AefDecoder::new(vault);
+                        let decoder = if let Some(dk) = data_key {
+                            AefDecoder::new(vault).withdatakey(dk)
+                        } else {
+                            AefDecoder::new(vault)
+                        };
                         decoder
                             .decode_sync(&aef_path, &out_path)
                             .map(|r| (file_name, r))
@@ -3137,7 +3965,7 @@ impl AetherIcedShell {
                     self.step_structure_map();
                     return Task::none();
                 }
-                if self.active_tab != Tab::Browser && self.active_tab != Tab::YouTube {
+                if self.browser_surface_mode().is_none() {
                     return Task::none();
                 }
                 if self.tick_counter % self.browser_sync_stride == 0 {
@@ -3272,11 +4100,11 @@ fn make_sparkline(fill: f32) -> String {
 
 struct FlowSphereScene {
     tick: u64,
-    entropy: f32,              // [0..1] – drives surface texture roughness
-    stability: f32,            // [0..1] – smooth vs turbulent surface feel
-    delta_phases: [f32; 3],    // 3 delta arc event phases
-    attractor_lons: [f32; 4],  // 4 attractor longitude positions
-    info_growth: f32,          // I(h_t) – drives radius expansion [0..1]
+    entropy: f32,
+    stability: f32,
+    delta_phases: [f32; 5],   // 5 delta arc event phases
+    attractor_lons: [f32; 6], // 6 attractor longitude positions
+    info_growth: f32,
 }
 
 impl canvas::Program<Message> for FlowSphereScene {
@@ -3298,82 +4126,66 @@ impl canvas::Program<Message> for FlowSphereScene {
         frame.fill_rectangle(
             Point::new(0.0, 0.0),
             bounds.size(),
-            Color::from_rgb8(0x01, 0x03, 0x07),
+            Color::from_rgb8(0x01, 0x02, 0x06),
         );
 
         let cx = bounds.width * 0.5;
         let cy = bounds.height * 0.5;
         let base_r = cx.min(cy) * 0.70;
-        // Radius grows subtly with I(h_t) — max +28px, deterministic
-        let r = base_r + (self.info_growth * 28.0).min(28.0);
+        let r = base_r + (self.info_growth * 32.0).min(32.0);
 
         let t = self.tick as f32;
-        // Slow deterministic Y-axis rotation — one full rotation every ~13 min at 60fps
         let rot_y = t * 0.006;
-
-        // Camera distance for perspective factor
         let d = 3.2f32;
 
-        // Project a sphere surface point (lat, lon) to screen 2D + depth z
         let project = |lat: f32, lon: f32| -> (Point, f32) {
-            // Sphere to 3D cartesian
             let x3 = lat.cos() * lon.cos();
             let y3 = lat.sin();
             let z3 = lat.cos() * lon.sin();
-            // Rotate around Y axis
             let xr = x3 * rot_y.cos() + z3 * rot_y.sin();
             let yr = y3;
             let zr = -x3 * rot_y.sin() + z3 * rot_y.cos();
-            // Simple perspective divide
             let scale = d / (d - zr * 0.28);
-            let sx = cx + xr * r * scale;
-            let sy = cy - yr * r * scale;
-            (Point::new(sx, sy), zr)
+            (Point::new(cx + xr * r * scale, cy - yr * r * scale), zr)
         };
 
-        // ── Sphere base glow (filled circle, dark teal) ──────────────────
+        // ── Deep nebula glow + dark sphere fill ─────────────────────────────────────
         {
-            let glow_path = canvas::Path::circle(Point::new(cx, cy), r + 3.0);
-            frame.fill(&glow_path, Color::from_rgba(0.0, 0.5, 0.55, 0.06));
-            let base_path = canvas::Path::circle(Point::new(cx, cy), r);
-            frame.fill(&base_path, Color::from_rgb8(0x01, 0x0D, 0x14));
+            let nb_a = 0.09 + 0.03 * (t * 0.019).sin().abs();
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.62), Color::from_rgba(0.0, 0.22, 0.55, nb_a));
+            let co_a = 0.045 + 0.02 * (t * 0.031).cos().abs();
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.28), Color::from_rgba(0.05, 0.40, 0.85, co_a));
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r), Color::from_rgb8(0x01, 0x08, 0x12));
         }
 
-        const N_LAT: usize = 16;   // latitude rings
-        const N_LON: usize = 32;   // longitude meridians
-        const SEGS: usize = 64;    // segments per latitude circle
+        const N_LAT: usize = 20;   // latitude rings
+        const N_LON: usize = 38;   // longitude meridians
+        const SEGS: usize = 80;    // segments per latitude circle
 
-        // ── Latitude circles ─────────────────────────────────────────────
+        // ── Latitude rings — vivid teal/cyan with tick-driven shimmer ───────────
         for li in 0..=N_LAT {
             let lat_base = -PI * 0.5 + PI * (li as f32) / (N_LAT as f32);
-            // Entropy-driven surface perturbation (fully deterministic via lat + tick)
-            let perturb = self.entropy * 0.07
+            let perturb = self.entropy * 0.08
                 * (lat_base * 4.0 + t * 0.018).sin()
-                * (1.0 - self.stability * 0.6);
+                * (1.0 - self.stability * 0.5);
             let lat = lat_base + perturb;
-
-            let lat_frac = (li as f32) / (N_LAT as f32); // 0..1 from bottom to top
-
+            let lat_frac = (li as f32) / (N_LAT as f32);
+            let shimmer = 0.5 + 0.5 * (t * 0.038 + lat_base * 6.0).sin();
             let mut prev: Option<(Point, f32)> = None;
             for seg in 0..=SEGS {
                 let lon = TAU * (seg as f32) / (SEGS as f32);
                 let (pt, z) = project(lat, lon);
                 if let Some((pp, pz)) = prev {
                     let avg_z = (z + pz) * 0.5;
-                    // Cull back-facing segments
                     if avg_z > -0.92 {
-                        let brightness = ((avg_z + 1.0) * 0.5).powf(0.7).clamp(0.05, 1.0);
-                        // Equator ring brighter; poles dimmer
-                        let eq_boost = 1.0 - (lat_frac - 0.5).abs() * 1.2;
-                        let alpha = (0.12 + 0.22 * brightness * eq_boost.max(0.1)).clamp(0.03, 0.40);
-                        let g = 0.50 * brightness;
-                        let b = 0.62 * brightness;
-                        let c = Color::from_rgba(0.04 * brightness, g, b, alpha);
-                        let w = 0.4 + 0.35 * brightness;
-                        let seg_path = canvas::Path::new(|p| {
-                            p.move_to(pp);
-                            p.line_to(pt);
-                        });
+                        let br = ((avg_z + 1.0) * 0.5).powf(0.6).clamp(0.05, 1.0);
+                        let eq_b = (1.0 - (lat_frac - 0.5).abs() * 1.0).max(0.1);
+                        let sh_b = 1.0 + 0.42 * shimmer * br;
+                        let alpha = (0.20 + 0.44 * br * eq_b * sh_b).clamp(0.04, 0.75);
+                        let w = 0.55 + 0.68 * br * sh_b;
+                        let r_c = 0.04 + 0.15 * (1.0 - (lat_frac - 0.5).abs() * 2.0).max(0.0);
+                        let c = Color::from_rgba(r_c * br, 0.72 * br, 0.96 * br, alpha);
+                        let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
                         frame.stroke(&seg_path, canvas::Stroke {
                             style: canvas::Style::Solid(c),
                             width: w,
@@ -3385,16 +4197,15 @@ impl canvas::Program<Message> for FlowSphereScene {
             }
         }
 
-        // ── Longitude meridians ──────────────────────────────────────────
+        // ── Longitude meridians — alternating teal / violet ───────────────
         for li in 0..N_LON {
             let lon_base = TAU * (li as f32) / (N_LON as f32);
-            // Entropy perturbation on longitude lines
-            let lon_perturb = self.entropy * 0.04
+            let lon_perturb = self.entropy * 0.05
                 * (lon_base * 3.0 + t * 0.012).cos()
-                * (1.0 - self.stability * 0.7);
+                * (1.0 - self.stability * 0.6);
             let lon = lon_base + lon_perturb;
-
-            const LON_SEGS: usize = 48;
+            let violet = li % 5 == 2;
+            const LON_SEGS: usize = 56;
             let mut prev: Option<(Point, f32)> = None;
             for seg in 0..=LON_SEGS {
                 let lat = -PI * 0.5 + PI * (seg as f32) / (LON_SEGS as f32);
@@ -3402,16 +4213,17 @@ impl canvas::Program<Message> for FlowSphereScene {
                 if let Some((pp, pz)) = prev {
                     let avg_z = (z + pz) * 0.5;
                     if avg_z > -0.92 {
-                        let brightness = ((avg_z + 1.0) * 0.5).powf(0.9).clamp(0.04, 1.0);
-                        let alpha = (0.06 + 0.14 * brightness).clamp(0.02, 0.22);
-                        let c = Color::from_rgba(0.03, 0.40 * brightness, 0.52 * brightness, alpha);
-                        let seg_path = canvas::Path::new(|p| {
-                            p.move_to(pp);
-                            p.line_to(pt);
-                        });
+                        let br = ((avg_z + 1.0) * 0.5).powf(0.85).clamp(0.04, 1.0);
+                        let alpha = (0.10 + 0.28 * br).clamp(0.03, 0.46);
+                        let c = if violet {
+                            Color::from_rgba(0.30 * br, 0.12 * br, 0.82 * br, alpha * 1.6)
+                        } else {
+                            Color::from_rgba(0.04, 0.50 * br, 0.76 * br, alpha)
+                        };
+                        let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
                         frame.stroke(&seg_path, canvas::Stroke {
                             style: canvas::Style::Solid(c),
-                            width: 0.4,
+                            width: if violet { 0.70 } else { 0.48 },
                             ..canvas::Stroke::default()
                         });
                     }
@@ -3420,144 +4232,185 @@ impl canvas::Program<Message> for FlowSphereScene {
             }
         }
 
-        // ── Delta arc events (yellow light streams) ──────────────────────
+        // ── Polar caps — glowing north/south ─────────────────────────────
+        for (pole_idx, &pole_lat) in [PI * 0.48f32, -PI * 0.48f32].iter().enumerate() {
+            let pulse = 0.75 + 0.25 * (t * 0.052 + pole_idx as f32 * PI).sin();
+            let (pole_pt, pole_z) = project(pole_lat, rot_y);
+            if pole_z > -0.55 {
+                let br = ((pole_z + 1.0) * 0.5).clamp(0.0, 1.0);
+                frame.fill(&canvas::Path::circle(pole_pt, 24.0 * pulse), Color::from_rgba(0.0,  0.75, 0.92, 0.055 * br));
+                frame.fill(&canvas::Path::circle(pole_pt, 12.0 * pulse), Color::from_rgba(0.18, 0.90, 1.0,  0.16  * br));
+                frame.fill(&canvas::Path::circle(pole_pt,  5.5 * pulse), Color::from_rgba(0.65, 0.97, 1.0,  0.62  * br));
+            }
+        }
+
+        // ── Delta arc events — 5 arcs, wide glow + sharp core ─────────────
         for (arc_idx, &phase) in self.delta_phases.iter().enumerate() {
-            // Each arc animates along the surface — deterministic phase offset
             let anim_lon = (t * 0.025 + phase * 0.5).rem_euclid(TAU);
             let lat_center = (phase * 0.35 - 0.55).clamp(-PI * 0.45, PI * 0.45);
-            let arc_span = PI * 0.42;
+            let arc_span = PI * 0.44;
+            let hot = arc_idx % 2 == 1;
+            const ARC_SEGS: usize = 40;
+            for pass in 0..2usize {
+                let mut prev: Option<(Point, f32)> = None;
+                for seg in 0..=ARC_SEGS {
+                    let progress = seg as f32 / ARC_SEGS as f32;
+                    let lon = (anim_lon + arc_span * progress).rem_euclid(TAU);
+                    let lat = lat_center + 0.30 * (progress * PI).sin();
+                    let (pt, z) = project(lat, lon);
+                    if let Some((pp, pz)) = prev {
+                        let avg_z = (z + pz) * 0.5;
+                        if avg_z > -0.30 {
+                            let br = ((avg_z + 1.0) * 0.5).clamp(0.0, 1.0);
+                            let intensity = (1.0 - (progress - 0.5).abs() * 2.0).max(0.0).powf(0.5);
+                            let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
+                            if pass == 0 {
+                                let alpha = 0.22 * intensity * br;
+                                let (rc, gc, bc) = if hot { (0.95, 0.30, 0.62) } else { (0.98, 0.88, 0.06) };
+                                frame.stroke(&seg_path, canvas::Stroke {
+                                    style: canvas::Style::Solid(Color::from_rgba(rc, gc, bc, alpha)),
+                                    width: 6.5 * intensity + 1.0,
+                                    ..canvas::Stroke::default()
+                                });
+                            } else {
+                                let alpha = (0.82 + 0.18 * br) * intensity;
+                                let (rc, gc, bc) = if hot { (1.0, 0.62, 0.82) } else { (1.0, 0.98, 0.38) };
+                                frame.stroke(&seg_path, canvas::Stroke {
+                                    style: canvas::Style::Solid(Color::from_rgba(rc, gc, bc, alpha)),
+                                    width: 1.5 * intensity + 0.4,
+                                    ..canvas::Stroke::default()
+                                });
+                            }
+                        }
+                    }
+                    prev = Some((pt, z));
+                }
+            }
+        }
 
-            const ARC_SEGS: usize = 32;
-            let mut prev: Option<(Point, f32)> = None;
-            for seg in 0..=ARC_SEGS {
-                let progress = seg as f32 / ARC_SEGS as f32;
-                // Great circle approximation: sweep lon by arc_span
-                let lon = (anim_lon + arc_span * progress).rem_euclid(TAU);
-                // Slight latitude wobble for curvature feel
-                let lat = lat_center + 0.28 * (progress * PI).sin();
+        // ── Surface data-points (golden spiral, 24 nodes) ────────────────
+        {
+            const N_SP: usize = 24;
+            let golden_angle = 2.399963f32;
+            for i in 0..N_SP {
+                let lat = ((1.0 - 2.0 * (i as f32 + 0.5) / N_SP as f32).clamp(-1.0, 1.0)).asin()
+                    .clamp(-PI * 0.46, PI * 0.46);
+                let lon = (i as f32 * golden_angle + rot_y * 0.7).rem_euclid(TAU);
                 let (pt, z) = project(lat, lon);
-                if let Some((pp, pz)) = prev {
-                    let avg_z = (z + pz) * 0.5;
-                    // Only show front-facing arcs
-                    if avg_z > -0.35 {
-                        let brightness = ((avg_z + 1.0) * 0.5).clamp(0.0, 1.0);
-                        // Bell-shaped intensity along the arc length
-                        let intensity = (1.0 - (progress - 0.5).abs() * 2.0).max(0.0).powf(0.6);
-                        let alpha = 0.5 * intensity * brightness;
-                        let width = 1.2 * intensity + 0.4;
-                        // Yellow-orange gradient: leading edge more yellow, tail more orange
-                        let r_val = 0.90 + 0.10 * intensity;
-                        let g_val = 0.60 + 0.18 * (1.0 - progress);
-                        let arc_c = Color::from_rgba(r_val, g_val, 0.02, alpha);
-                        let seg_path = canvas::Path::new(|p| {
-                            p.move_to(pp);
-                            p.line_to(pt);
-                        });
-                        frame.stroke(&seg_path, canvas::Stroke {
-                            style: canvas::Style::Solid(arc_c),
-                            width,
+                if z > 0.0 {
+                    let br = ((z + 1.0) * 0.5).clamp(0.3, 1.0);
+                    let blink = 0.6 + 0.4 * (t * 0.07 + i as f32 * 0.93).sin().abs();
+                    let alpha = 0.65 * br * blink;
+                    let hp = (i as f32 * 0.43 + t * 0.008).rem_euclid(TAU);
+                    let rc = 0.38 + 0.55 * hp.sin().abs();
+                    let gc = 0.72 + 0.25 * (hp + 2.1).cos().abs();
+                    let bc = 0.88 + 0.12 * (hp + 4.2).sin().abs();
+                    frame.fill(&canvas::Path::circle(pt, 2.8 * blink), Color::from_rgba(rc, gc, bc, alpha));
+                }
+            }
+        }
+
+        // ── Attractor nodes — 6 nodes, halos, neural arcs, pulse rings ───
+        let mut apts: Vec<(Point, f32, f32)> = Vec::with_capacity(6);
+        for (idx, &lon) in self.attractor_lons.iter().enumerate() {
+            let lat = match idx % 3 { 0 => 0.30f32, 1 => -0.22f32, _ => 0.0f32 };
+            let (pt, z) = project(lat, (lon + rot_y).rem_euclid(TAU));
+            let pulse = 1.0 + 0.22 * (t * 0.045 + idx as f32 * std::f32::consts::FRAC_PI_2).sin();
+            apts.push((pt, z, pulse));
+        }
+
+        // Neural arcs between selected pairs
+        let pairs: [(usize, usize); 7] = [(0,1),(1,2),(2,3),(3,4),(4,5),(0,3),(2,5)];
+        for (a, b) in pairs {
+            let (pa, za, _) = apts[a];
+            let (pb, zb, _) = apts[b];
+            if za > -0.1 && zb > -0.1 {
+                let br = (((za + zb) * 0.5 + 1.0) * 0.5).clamp(0.0, 1.0);
+                let ap = (t * 0.033 + a as f32 * 1.1).rem_euclid(TAU);
+                let alpha = (0.08 + 0.16 * ap.sin().abs()) * br;
+                let arc_path = canvas::Path::new(|p| { p.move_to(pa); p.line_to(pb); });
+                frame.stroke(&arc_path, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(0.18, 0.90, 0.98, alpha)),
+                    width: 0.85,
+                    ..canvas::Stroke::default()
+                });
+            }
+        }
+
+        // Pulse rings + dot halos
+        for (idx, &(pt, z, pulse)) in apts.iter().enumerate() {
+            if z > -0.20 {
+                let br = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
+                // Expanding pulse rings
+                for ring in 0..2usize {
+                    let raw = (t * 0.018 + idx as f32 * 1.57 + ring as f32 * PI).rem_euclid(TAU) / TAU;
+                    let ring_r = raw * r * 0.28;
+                    let ring_a = (1.0 - raw) * 0.15 * br;
+                    if ring_a > 0.005 {
+                        frame.stroke(&canvas::Path::circle(pt, ring_r), canvas::Stroke {
+                            style: canvas::Style::Solid(Color::from_rgba(0.08, 0.92, 0.98, ring_a)),
+                            width: 1.2 * (1.0 - raw),
                             ..canvas::Stroke::default()
                         });
                     }
                 }
-                prev = Some((pt, z));
-                let _ = arc_idx;
+                // Halo layers
+                frame.fill(&canvas::Path::circle(pt, 20.0 * pulse), Color::from_rgba(0.22, 0.92, 1.0, 0.048 * br));
+                frame.fill(&canvas::Path::circle(pt, 10.0 * pulse), Color::from_rgba(0.55, 0.98, 1.0, 0.15  * br));
+                frame.fill(&canvas::Path::circle(pt,  5.0 * pulse), Color::from_rgba(0.85, 1.0,  1.0, 0.50  * br));
+                frame.fill(&canvas::Path::circle(pt,  2.2),         Color::from_rgba(1.0,  1.0,  1.0, (0.88 + 0.12 * br).min(1.0)));
             }
         }
 
-        // ── Attractor nodes (white stable points) ────────────────────────
-        for (idx, &lon) in self.attractor_lons.iter().enumerate() {
-            // Fixed latitude: alternating above/below equator
-            let lat = if idx % 2 == 0 { 0.28f32 } else { -0.28f32 };
-            // lon rotates with the sphere but is phase-stable relative to structure
-            let sphere_lon = (lon + rot_y).rem_euclid(TAU);
-            let (pt, z) = project(lat, sphere_lon);
-            // Show only when clearly on front hemisphere
-            if z > -0.15 {
-                let brightness = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
-                // Gentle pulsation (deterministic, idx-phase-shifted)
-                let pulse = 1.0 + 0.18 * (t * 0.045 + idx as f32 * std::f32::consts::FRAC_PI_2).sin();
-                // Outer halo
-                let halo_alpha = 0.06 * brightness;
-                frame.fill(
-                    &canvas::Path::circle(pt, 14.0 * pulse),
-                    Color::from_rgba(0.7, 0.95, 1.0, halo_alpha),
-                );
-                // Inner glow
-                let inner_alpha = 0.18 * brightness;
-                frame.fill(
-                    &canvas::Path::circle(pt, 6.5 * pulse),
-                    Color::from_rgba(0.85, 1.0, 1.0, inner_alpha),
-                );
-                // Core dot
-                let dot_alpha = (0.7 + 0.3 * brightness).min(1.0);
-                frame.fill(
-                    &canvas::Path::circle(pt, 3.0 * pulse),
-                    Color::from_rgba(0.92, 0.99, 1.0, dot_alpha),
-                );
-            }
+        // ── Limb darkening — clean dark rings at sphere edge ─────────────
+        for i in 0..3usize {
+            let ring_r = r - i as f32 * 4.5;
+            let alpha = 0.24 / (i as f32 + 1.0);
+            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), ring_r), canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.0, 0.0, alpha)),
+                width: 11.0 - i as f32 * 3.0,
+                ..canvas::Stroke::default()
+            });
         }
 
-        // ── Limb darkening overlay (edge fade for 3D depth illusion) ─────
+        // ── Outer corona — three layered glow rings ───────────────────────
         {
-            // Draw a thin dark ring at the sphere edge to fake limb darkening.
-            // We stride through a ring of points near the equator and draw small
-            // dark spots — this costs little and increases perceived 3D pop.
-            let limb_c = Color::from_rgba(0.0, 0.0, 0.0, 0.55);
-            for seg in 0..48 {
-                let lon = TAU * (seg as f32) / 48.0;
-                let (pt, _z) = project(0.0, lon);
-                // Only draw on the outer visible part of the limb
-                let dx = pt.x - cx;
-                let dy = pt.y - cy;
-                let dist = (dx * dx + dy * dy).sqrt();
-                if (dist - r).abs() < 18.0 {
-                    frame.fill(
-                        &canvas::Path::circle(pt, 9.0),
-                        limb_c,
-                    );
-                }
-            }
-        }
-
-        // ── Outer glow ring ───────────────────────────────────────────────
-        {
-            let glow_alpha = 0.10 + 0.04 * (t * 0.032).sin();
-            frame.stroke(
-                &canvas::Path::circle(Point::new(cx, cy), r + 1.5),
-                canvas::Stroke {
-                    style: canvas::Style::Solid(Color::from_rgba(0.0, 0.82, 0.88, glow_alpha)),
-                    width: 3.0,
-                    ..canvas::Stroke::default()
-                },
-            );
-            // Second fainter ring at +8px
-            let outer_alpha = 0.04 + 0.02 * (t * 0.021 + 1.1).sin();
-            frame.stroke(
-                &canvas::Path::circle(Point::new(cx, cy), r + 8.0),
-                canvas::Stroke {
-                    style: canvas::Style::Solid(Color::from_rgba(0.0, 0.60, 0.72, outer_alpha)),
-                    width: 1.2,
-                    ..canvas::Stroke::default()
-                },
-            );
+            let a0 = 0.24 + 0.09 * (t * 0.032).sin();
+            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 1.5), canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.95, 1.0, a0)),
+                width: 2.8,
+                ..canvas::Stroke::default()
+            });
+            let a1 = 0.12 + 0.055 * (t * 0.021 + 1.1).sin();
+            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 9.0), canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.72, 0.90, a1)),
+                width: 1.6,
+                ..canvas::Stroke::default()
+            });
+            let a2 = 0.058 + 0.030 * (t * 0.014 + 2.3).sin();
+            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 22.0), canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.20, 0.40, 0.95, a2)),
+                width: 1.1,
+                ..canvas::Stroke::default()
+            });
         }
 
         // ── Blue pulse shimmer ────────────────────────────────────────────
         {
-            let pulse_alpha = 0.025 + 0.018 * (t * 0.041).sin();
+            let pulse_alpha = 0.042 + 0.030 * (t * 0.041).sin();
             frame.fill(
                 &canvas::Path::circle(Point::new(cx, cy), r + 2.0),
-                Color::from_rgba(0.05, 0.18, 0.80, pulse_alpha),
+                Color::from_rgba(0.04, 0.14, 0.92, pulse_alpha),
             );
         }
 
-        // ── Highlight spot (top-left quadrant, gives 3D sphere illusion) ─
+        // ── Specular highlight (top-left quadrant, 3D illusion) ───────────
         {
-            let hx = cx - r * 0.32;
-            let hy = cy - r * 0.38;
-            let highlight_c = Color::from_rgba(0.55, 0.88, 0.92, 0.14);
-            frame.fill(&canvas::Path::circle(Point::new(hx, hy), r * 0.22), highlight_c);
+            let hx = cx - r * 0.30;
+            let hy = cy - r * 0.36;
+            let hi_a = 0.22 + 0.08 * (t * 0.027).sin();
+            frame.fill(&canvas::Path::circle(Point::new(hx, hy), r * 0.21), Color::from_rgba(0.62, 0.92, 0.97, hi_a));
+            frame.fill(&canvas::Path::circle(Point::new(hx + r * 0.05, hy + r * 0.04), r * 0.08), Color::from_rgba(0.93, 1.0, 1.0, 0.15));
         }
 
         vec![frame.into_geometry()]
@@ -3729,32 +4582,6 @@ impl canvas::Program<Message> for StructureMapScene {
     }
 }
 
-fn dashboard_metric(label: &'static str, value: String, hint: String, fill: f32) -> Element<'static, Message> {
-    let bar = make_sparkline(fill);
-    container(
-        column![
-            text(label).size(12),
-            text(value).size(28),
-            text(bar).size(13),
-            text(hint).size(12),
-        ]
-        .spacing(6)
-        .width(Length::Fill),
-    )
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-            width: 1.5,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .padding(18)
-    .width(Length::Fill)
-    .into()
-}
-
 // ── AetherLogoScene ──────────────────────────────────────────────────────────
 
 struct AetherLogoScene;
@@ -3789,7 +4616,7 @@ impl canvas::Program<Message> for AetherLogoScene {
         });
 
         let nodes = [top, bl, br, Point::new(cx, cy + h * 0.10)];
-        let net_color = Color::from_rgb8(0x00, 0xE5, 0x7A);
+        let net_color = Color::from_rgb8(0xA0, 0x70, 0xFF);
         for &n in &nodes {
             frame.fill(&canvas::Path::circle(n, 2.2), net_color);
         }
@@ -3819,9 +4646,9 @@ impl canvas::Program<Message> for ShanwayRobotScene {
         let s = self.size;
         let cx = bounds.width * 0.5;
         let cy = bounds.height * 0.5;
-        let green = Color::from_rgb8(0x00, 0xE5, 0x7A);
-        let cyan  = Color::from_rgb8(0x00, 0xC8, 0xD4);
-        let dark  = Color::from_rgba(0.0, 0.898, 0.478, 0.08);
+        let green = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let cyan  = Color::from_rgb8(0x2A, 0xB6, 0xFF);
+        let dark  = Color::from_rgba(0.59, 0.34, 0.96, 0.10);
 
         // Antenne
         let ant_x = cx;
@@ -3944,6 +4771,7 @@ impl canvas::Program<Message> for OrchestrationScene {
         let w = bounds.width;
         let h = bounds.height;
         let t = self.tick as f32;
+        let analysis_alpha = if self.analysis_running { 0.95 } else { 0.55 };
 
         // Node definitions: (label, cx_frac, cy_frac, color)
         let nodes: &[(&str, f32, f32, Color)] = &[
@@ -3980,9 +4808,19 @@ impl canvas::Program<Message> for OrchestrationScene {
             let phase = (t * 0.04 + (from + to * 3) as f32 * 0.7).rem_euclid(1.0);
             let px = fx + (tx - fx) * phase;
             let py = fy + (ty - fy) * phase;
-            let mut pc = nodes[from].3; pc.a = 0.85;
+            let mut pc = nodes[from].3; pc.a = analysis_alpha;
             frame.fill(&canvas::Path::circle(Point::new(px, py), 3.0), pc);
         }
+
+        frame.fill_text(canvas::Text {
+            content: format!("Nodes {} | Analysis {}", self.cluster_count, if self.analysis_running { "active" } else { "idle" }),
+            position: Point::new(16.0, h - 16.0),
+            color: Color::from_rgb8(0x70, 0x90, 0xA8),
+            size: iced::Pixels(10.0),
+            horizontal_alignment: iced::alignment::Horizontal::Left,
+            vertical_alignment: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
 
         // Draw nodes
         for (label, fx, fy, col) in nodes {
@@ -4089,12 +4927,241 @@ impl canvas::Program<Message> for DotScene {
     }
 }
 
+struct ThreatTrendScene {
+    tick: u64,
+    reveal: f32,
+}
+
+impl canvas::Program<Message> for ThreatTrendScene {
+    type State = ();
+    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let w = bounds.width;
+        let h = bounds.height;
+        let t = self.tick as f32;
+        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x08, 0x12, 0x24));
+        let points = 60usize;
+        let reveal_count = ((points as f32) * self.reveal.clamp(0.02, 1.0)) as usize;
+        let mut last: Option<Point> = None;
+        for i in 0..reveal_count.max(2) {
+            let x = (i as f32 / (points - 1) as f32) * (w - 18.0) + 9.0;
+            let yv = 0.52 + 0.18 * ((i as f32 * 0.31 + t * 0.03).sin()) + 0.06 * ((i as f32 * 0.91 + t * 0.02).cos());
+            let y = (1.0 - yv.clamp(0.08, 0.92)) * (h - 20.0) + 10.0;
+            let p = Point::new(x, y);
+            if let Some(lp) = last {
+                let seg = canvas::Path::new(|b| {
+                    b.move_to(lp);
+                    b.line_to(p);
+                });
+                frame.stroke(&seg, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(0.72, 0.30, 1.0, 0.85)),
+                    width: 2.0,
+                    ..canvas::Stroke::default()
+                });
+            }
+            last = Some(p);
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+struct RiskGaugeScene {
+    score: u32,
+    pulse: f32,
+    flash: f32,
+}
+
+impl canvas::Program<Message> for RiskGaugeScene {
+    type State = ();
+    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        use std::f32::consts::PI;
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let cxy = Point::new(bounds.width * 0.5, bounds.height * 0.56);
+        let r = bounds.width.min(bounds.height) * 0.34;
+        let ratio = (self.score as f32 / 1000.0).clamp(0.0, 1.0);
+        let start = PI * 0.84;
+        let end = PI * 2.16;
+        let span = end - start;
+        let track = canvas::Path::new(|b| {
+            b.arc(canvas::path::Arc { center: cxy, radius: r, start_angle: iced::Radians(start), end_angle: iced::Radians(end) });
+        });
+        frame.stroke(&track, canvas::Stroke { style: canvas::Style::Solid(Color::from_rgba(0.18, 0.25, 0.35, 0.9)), width: 14.0, ..canvas::Stroke::default() });
+        let val = canvas::Path::new(|b| {
+            b.arc(canvas::path::Arc { center: cxy, radius: r, start_angle: iced::Radians(start), end_angle: iced::Radians(start + span * ratio) });
+        });
+        frame.stroke(&val, canvas::Stroke {
+            style: canvas::Style::Solid(Color::from_rgba(1.0, 0.48 + 0.30 * self.flash, 0.26, 0.95)),
+            width: 14.0 * self.pulse,
+            ..canvas::Stroke::default()
+        });
+        frame.fill_text(canvas::Text {
+            content: format!("{}", self.score),
+            position: Point::new(cxy.x, cxy.y),
+            color: Color::from_rgb8(0xF8, 0xFD, 0xFF),
+            size: iced::Pixels(28.0),
+            horizontal_alignment: iced::alignment::Horizontal::Center,
+            vertical_alignment: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+        vec![frame.into_geometry()]
+    }
+}
+
+struct DonutScene {
+    values: [f32; 4],
+    colors: [Color; 4],
+    pulse: f32,
+}
+
+impl canvas::Program<Message> for DonutScene {
+    type State = ();
+    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        use std::f32::consts::TAU;
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let cxy = Point::new(bounds.width * 0.5, bounds.height * 0.5);
+        let r = bounds.width.min(bounds.height) * 0.34;
+        let mut cursor = -TAU * 0.25;
+        for i in 0..4 {
+            let seg = self.values[i].max(0.0);
+            if seg <= 0.0001 {
+                continue;
+            }
+            let next = cursor + seg * TAU;
+            let arc = canvas::Path::new(|b| {
+                b.arc(canvas::path::Arc {
+                    center: cxy,
+                    radius: r,
+                    start_angle: iced::Radians(cursor),
+                    end_angle: iced::Radians(next),
+                });
+            });
+            frame.stroke(&arc, canvas::Stroke {
+                style: canvas::Style::Solid(self.colors[i]),
+                width: 16.0 * self.pulse,
+                ..canvas::Stroke::default()
+            });
+            cursor = next;
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
+struct CyberPaneGraphScene {
+    tick: u64,
+    pulse: f32,
+    slide: f32,
+}
+
+impl canvas::Program<Message> for CyberPaneGraphScene {
+    type State = ();
+    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x07, 0x12, 0x24));
+        let t = self.tick as f32;
+        let panes = [
+            (0.12f32, 0.22f32, 0.24f32, 0.52f32, Color::from_rgba(0.14, 0.42, 0.98, 0.24), "Background"),
+            (0.42f32, 0.14f32, 0.22f32, 0.66f32, Color::from_rgba(0.11, 0.82, 0.92, 0.24), "Mid"),
+            (0.70f32, 0.24f32, 0.18f32, 0.50f32, Color::from_rgba(0.96, 0.24, 0.66, 0.24), "Overlay"),
+        ];
+        let mut centers: Vec<Point> = Vec::with_capacity(panes.len());
+        for (idx, (x, y, w, h, color, label)) in panes.iter().enumerate() {
+            let px = bounds.width * x + (1.0 - self.slide) * 22.0;
+            let py = bounds.height * y;
+            let pw = bounds.width * w;
+            let ph = bounds.height * h;
+            let pane = canvas::Path::rectangle(Point::new(px, py), iced::Size::new(pw, ph));
+            frame.fill(&pane, *color);
+            frame.stroke(&pane, canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.20, 0.95, 1.0, 0.60)),
+                width: 1.0 + 0.8 * self.pulse,
+                ..canvas::Stroke::default()
+            });
+            let cx = px + pw * 0.5;
+            let cy = py + ph * 0.5;
+            centers.push(Point::new(cx, cy));
+            frame.fill_text(canvas::Text {
+                content: format!("{} / {}", label, idx + 1),
+                position: Point::new(cx, py + 18.0),
+                color: Color::from_rgb8(0xC0, 0xEA, 0xFF),
+                size: iced::Pixels(11.0),
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+            let pulse_r = 4.0 + 2.5 * (t * 0.09 + idx as f32).sin().abs();
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), pulse_r), Color::from_rgba(0.0, 1.0, 1.0, 0.9));
+        }
+        for i in 0..centers.len().saturating_sub(1) {
+            let edge = canvas::Path::new(|b| {
+                b.move_to(centers[i]);
+                b.line_to(centers[i + 1]);
+            });
+            frame.stroke(&edge, canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.16, 0.90, 1.0, 0.70)),
+                width: 1.2,
+                ..canvas::Stroke::default()
+            });
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
 // ── Helper functions for new dashboard ───────────────────────────────────────
+
+fn info_icon_button(key: &str) -> Element<'static, Message> {
+    button(text("i").size(11).color(c(TEXT_H)))
+        .on_press(Message::DashboardInfoToggle(key.to_owned()))
+        .padding([2, 8])
+        .style(|_: &Theme, _| button::Style {
+            background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.14))),
+            border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.0, radius: 9.0.into() },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn cyber_kpi_card(label: &str, value: String, sub: &str, accent: Color, info_key: &str) -> Element<'static, Message> {
+    container(
+        column![
+            row![
+                text("\u{25cf}").size(12).color(accent),
+                text(label.to_owned()).size(11).color(c(TEXT_M)),
+                iced::widget::Space::new(Length::Fill, Length::Shrink),
+                info_icon_button(info_key),
+            ]
+            .align_y(Alignment::Center),
+            text(value).size(32).color(accent),
+            text(sub.to_owned()).size(11).color(c(TEXT_D)),
+        ]
+        .spacing(6)
+    )
+    .style(accent_card_style)
+    .padding(12)
+    .width(Length::Fill)
+    .into()
+}
+
+fn dashboard_info_text(key: &str) -> &'static str {
+    match key {
+        "noether_score" => "Noether Score misst die zeitliche Kohärenz der Strukturanker. Hoeher bedeutet stabilere Invarianz ueber die Pipeline.",
+        "risk_score" => "Risk Score ist ein deterministischer Aggregatwert (0..1000) aus Trust-State, Event-Dichte und Dateirisiko-Verteilung.",
+        "image_risk" => "Image File Risk misst strukturale Auffaelligkeit in Bildartefakten (Entropie-Gradient, Frequenzbruch, Musterdrift).",
+        "video_risk" => "Video File Risk erfasst periodische und fraktale Anomalien in sequenziellen Datenstroemen.",
+        "total_threats" => "Total Threats zeigt die aktuelle Anzahl detektierter Aether-Events im aktiven Zeitfenster.",
+        "threat_summary" => "Threat Summary visualisiert die deterministische Verlaufskurve ueber den Aether Event Stream.",
+        "virus_pie" => "Threats By Virus zeigt die proportionale Verteilung ueber Klassen im aktuellen Event-Fenster.",
+        "threat_details" => "Threat Details listet die verifizierten Events mit Device-ID, Signaturklasse, Pfad und Dateityp.",
+        "device_list" => "Threat by device zeigt die per-Node Last und den relativen Risikoanteil jeder Instanz.",
+        "pane_graph" => "Pane-Graph ersetzt den Seitenbaum: alle Panels sind Knoten im Aether-Graph mit Live-Bindings und festen Transitionen.",
+        "performance" => "Performance steuert den deterministischen Laufzeitmodus: AUTO, BALANCED, LOW-POWER oder LEGACY fuer planbare Lastprofile.",
+        _ => "Aether erklaert jeden Wert deterministisch: gleicher Input erzeugt dieselbe Metrik und dieselbe Darstellung.",
+    }
+}
 
 fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color) -> Element<'a, Message> {
     container(
         column![
-            text(title.to_owned()).size(12).color(Color::from_rgb8(0x00, 0xD4, 0xD4)),
+            text(title.to_owned()).size(12).color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
             body,
         ]
         .spacing(8)
@@ -4107,6 +5174,80 @@ fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color)
     })
     .width(Length::Fill)
     .into()
+}
+
+fn standard_card_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(c(BG_CARD))),
+        border: Border {
+            color: c(BORDER),
+            width: 1.2,
+            radius: 14.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn accent_card_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(c(BG_CARD2))),
+        border: Border {
+            color: c(BORDER_ACT),
+            width: 1.4,
+            radius: 14.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn selected_item_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.20))),
+        border: Border {
+            color: c(BORDER_ACT),
+            width: 1.5,
+            radius: 10.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn primary_button_style(_: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x96, 0x57, 0xF7))),
+        text_color: Color::from_rgb8(0xF2, 0xED, 0xFF),
+        border: Border {
+            color: Color::from_rgb8(0xB4, 0x84, 0xFF),
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn secondary_button_style(_: &Theme, _status: button::Status) -> button::Style {
+    button::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x12, 0x1B, 0x33))),
+        text_color: c(TEXT_H),
+        border: Border {
+            color: Color::from_rgb8(0x2A, 0x3D, 0x64),
+            width: 1.0,
+            radius: 12.0.into(),
+        },
+        ..Default::default()
+    }
+}
+
+fn panel_frame_style(_: &Theme) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(0x0B, 0x14, 0x2A))),
+        border: Border {
+            color: Color::from_rgb8(0x2B, 0x40, 0x68),
+            width: 1.2,
+            radius: 14.0.into(),
+        },
+        ..Default::default()
+    }
 }
 
 fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
@@ -4137,15 +5278,7 @@ fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Elem
         ]
         .spacing(8),
     )
-    .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x0B, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1A, 0x32, 0x4A),
-            width: 1.0,
-            radius: 10.0.into(),
-        },
-        ..Default::default()
-    })
+    .style(accent_card_style)
     .padding([14, 18])
     .width(Length::Fill)
     .into()
@@ -4209,30 +5342,6 @@ fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Eleme
     .into()
 }
 
-fn metric_card<'a>(label: &'a str, value: String, hint: String) -> Element<'a, Message> {
-    container(
-        column![
-            text(label).size(12),
-            text(value).size(26),
-            text(hint).size(12),
-        ]
-        .spacing(6)
-        .width(Length::Fill),
-    )
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
-            width: 1.5,
-            radius: 8.0.into(),
-        },
-        ..Default::default()
-    })
-    .padding(18)
-    .width(Length::Fill)
-    .into()
-}
-
 fn info_card<'a>(title: &str, body: &str) -> Element<'a, Message> {
     container(
         column![
@@ -4242,15 +5351,7 @@ fn info_card<'a>(title: &str, body: &str) -> Element<'a, Message> {
         .spacing(6)
         .width(Length::Fill),
     )
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1C, 0x38, 0x50),
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    })
+    .style(standard_card_style)
     .padding(16)
     .width(Length::Fill)
     .into()
@@ -4307,15 +5408,7 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
         ]
         .spacing(5),
     )
-    .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
-        border: Border {
-            color: Color::from_rgb8(0x1C, 0x38, 0x50),
-            width: 1.0,
-            radius: 6.0.into(),
-        },
-        ..Default::default()
-    })
+    .style(selected_item_style)
     .padding(14)
     .width(Length::Fill)
     .into()
@@ -4324,6 +5417,7 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
 async fn analyze_file_for_register(
     path: PathBuf,
     username: String,
+    data_key: Option<DataKey>,
 ) -> Result<FileAnalysisResult, String> {
     // Create AEF output directory
     let aef_dir = PathBuf::from("data")
@@ -4342,7 +5436,11 @@ async fn analyze_file_for_register(
     let vault = VaultStore::load_default().map_err(|e| format!("Vault: {e}"))?;
     let vault = Arc::new(RwLock::new(vault));
     let engine = Arc::new(EnginePipeline::new());
-    let encoder = AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine));
+    let encoder = if let Some(dk) = data_key {
+        AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine)).withdatakey(dk)
+    } else {
+        AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine))
+    };
 
     // Encode the file to .aef
     let encode_result = encoder
@@ -4359,12 +5457,90 @@ async fn analyze_file_for_register(
         .unwrap_or("unbekannt")
         .to_owned();
     let source_kind = detect_source_kind(&path, &[]);
+    let mut metrics = BTreeMap::from([
+        ("entropy_mean".to_owned(), encode_result.coherence_index as f64),
+        ("trust_score".to_owned(), encode_result.trust_score as f64),
+        (
+            "compression_gain_percent".to_owned(),
+            compression_gain_percent as f64,
+        ),
+        (
+            "anchor_count".to_owned(),
+            encode_result.anchor_count as f64,
+        ),
+    ]);
+
+    // Hard boundary: any lab-like metrics must pass strict schema validation before use.
+    let safe_id = format!("{}_{}", username, file_stem)
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    let lab_response = LabResponse {
+        schema_version: LAB_SCHEMA_VERSION,
+        request_id: format!("reg_{safe_id}"),
+        model: "observer".to_owned(),
+        metrics: BTreeMap::from([
+            ("h_lambda".to_owned(), encode_result.coherence_index as f64),
+            (
+                "observer_coherence".to_owned(),
+                encode_result.coherence_index as f64,
+            ),
+            ("beauty_score".to_owned(), encode_result.trust_score as f64),
+            (
+                "graph_density".to_owned(),
+                (compression_gain_percent as f64 / 100.0).clamp(0.0, 1.0),
+            ),
+        ]),
+        diagnostics: vec!["local_rust_analysis".to_owned()],
+    };
+    validate_response(&lab_response)
+        .map_err(|err| format!("Boundary-Reject (fail-closed): {err}"))?;
+    let stable_metrics = extract_stable_metrics(&lab_response);
+    if let Some(value) = stable_metrics.h_lambda {
+        metrics.insert("lab_h_lambda".to_owned(), value);
+    }
+    if let Some(value) = stable_metrics.observer_coherence {
+        metrics.insert("lab_observer_coherence".to_owned(), value);
+    }
+    if let Some(value) = stable_metrics.graph_density {
+        metrics.insert("lab_graph_density".to_owned(), value);
+    }
+    if let Some(value) = stable_metrics.beauty_score {
+        metrics.insert("lab_beauty_score".to_owned(), value);
+    }
+    let evidence_refs = vec![aef_path.display().to_string()];
+    let policy_engine = RuleEngine::new(default_analysis_rules(), None)
+        .map_err(|err| format!("Policy-Engine fehlgeschlagen: {err}"))?;
+    let policy_hits = policy_engine.evaluate_all(
+        &metrics,
+        &file_name,
+        "aether_iced_analysis",
+        &evidence_refs,
+        true,
+    );
+    let policy_summary = if policy_hits.is_empty() {
+        "Policy: keine Regel aktiv".to_owned()
+    } else {
+        let labels = policy_hits
+            .iter()
+            .map(|entry| format!("{}:{}", entry.action, entry.rule_ids.join("+")))
+            .collect::<Vec<_>>()
+            .join(" | ");
+        format!("Policy: {labels}")
+    };
     let preview_note = format!(
-        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {}",
+        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {} | {}",
         encode_result.e_lambda,
         encode_result.e_lambda_label,
         encode_result.trust_score * 100.0,
-        if encode_result.lossless_confirmed { "ja" } else { "nein" }
+        if encode_result.lossless_confirmed { "ja" } else { "nein" },
+        policy_summary
     );
     let anchor_summary = format!(
         "{} Anker | {:.1}% Kompression | Trust: {:.0}%",
@@ -4373,8 +5549,8 @@ async fn analyze_file_for_register(
         encode_result.trust_score * 100.0
     );
     let process_summary = format!(
-        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2}",
-        original_size, delta_size, encode_result.e_lambda
+        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2} | {}",
+        original_size, delta_size, encode_result.e_lambda, policy_summary
     );
 
     Ok(FileAnalysisResult {
@@ -4439,99 +5615,3 @@ fn detect_file_type_from_name(file_name: &str) -> String {
     }
 }
 
-fn estimate_compressed_size(bytes: &[u8]) -> Result<u64, String> {
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
-    encoder
-        .write_all(bytes)
-        .map_err(|err| format!("Kompressionsprobe fehlgeschlagen: {err}"))?;
-    let output = encoder
-        .finish()
-        .map_err(|err| format!("Kompressionsprobe konnte nicht abgeschlossen werden: {err}"))?;
-    Ok(output.len() as u64)
-}
-
-fn shannon_entropy(bytes: &[u8]) -> f32 {
-    if bytes.is_empty() {
-        return 0.0;
-    }
-    let mut counts = [0usize; 256];
-    for byte in bytes {
-        counts[*byte as usize] += 1;
-    }
-    let total = bytes.len() as f32;
-    counts
-        .iter()
-        .filter(|count| **count > 0)
-        .map(|count| {
-            let probability = *count as f32 / total;
-            -(probability * probability.log2())
-        })
-        .sum()
-}
-
-fn byte_drift(bytes: &[u8]) -> f32 {
-    if bytes.len() < 2 {
-        return 0.0;
-    }
-    let total: u64 = bytes
-        .windows(2)
-        .map(|window| (window[0] as i32 - window[1] as i32).unsigned_abs() as u64)
-        .sum();
-    total as f32 / bytes.len().saturating_sub(1) as f32
-}
-
-fn estimated_symmetry(bytes: &[u8]) -> f32 {
-    if bytes.len() < 4 {
-        return 1.0;
-    }
-    let half = bytes.len() / 2;
-    if half == 0 {
-        return 1.0;
-    }
-    let left = &bytes[..half];
-    let right = &bytes[bytes.len() - half..];
-    let mut score = 0.0f32;
-    for (lhs, rhs) in left.iter().zip(right.iter().rev()) {
-        let distance = ((*lhs as i16 - *rhs as i16).unsigned_abs() as f32) / 255.0;
-        score += 1.0 - distance;
-    }
-    (score / half as f32).clamp(0.0, 1.0)
-}
-
-fn build_anchor_summary(entropy: f32, symmetry: f32, drift: f32) -> String {
-    let noether = if symmetry >= 0.82 {
-        "Noether: starke Invarianzfelder"
-    } else if symmetry >= 0.62 {
-        "Noether: teilweise erhaltene Invarianten"
-    } else {
-        "Noether: Symmetriebruch dominant"
-    };
-    let mandelbrot = if drift <= 36.0 {
-        "Mandelbrot: wiederkehrende lokale Formen"
-    } else {
-        "Mandelbrot: stark zerstreute Byte-Landschaft"
-    };
-    let heisenberg = if entropy >= 6.0 {
-        "Heisenberg: Beobachtergrenze hoch"
-    } else {
-        "Heisenberg: Beobachtergrenze kontrollierbar"
-    };
-    format!(
-        "{noether} | {mandelbrot} | {heisenberg} | Entropie {:.2}",
-        entropy
-    )
-}
-
-fn build_process_summary(
-    entropy: f32,
-    symmetry: f32,
-    compression_gain_percent: f32,
-    source_kind: &str,
-) -> String {
-    format!(
-        "Quelle: {source_kind}\nVerdichtung: {:.2}% Gewinn\nEntropiepfad: {:.2} bit\nSymmetriestabilitaet: {:.1}%",
-        compression_gain_percent,
-        entropy,
-        symmetry * 100.0
-    )
-}
