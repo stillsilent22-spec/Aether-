@@ -315,7 +315,6 @@ fn flag_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
 fn apply_sandbox_restrictions() {
     #[cfg(target_os = "windows")]
     unsafe {
-        use windows_sys::Win32::Foundation::CloseHandle;
         use windows_sys::Win32::System::Threading::{
             GetCurrentProcess, SetPriorityClass,
             BELOW_NORMAL_PRIORITY_CLASS,
@@ -327,7 +326,6 @@ fn apply_sandbox_restrictions() {
         SetPriorityClass(current, BELOW_NORMAL_PRIORITY_CLASS);
         // Job-Object limit: deferred (windows-sys version mismatch for CreateJobObjectW).
         let _ = current;
-        let _ = CloseHandle as fn(_) -> _;
     }
 }
 

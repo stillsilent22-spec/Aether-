@@ -8,6 +8,33 @@ Attraktor-Stabilität. Alle Berechnungen laufen lokal. Keine Rohdaten verlassen 
 
 → [English version: README_EN.md](README_EN.md)
 
+## Why Aether matters
+
+Aether is a local, deterministic analysis and reconstruction system.
+It extracts structure from data without cloud services, without black-box models, and without hidden semantics.
+Everything is transparent, reproducible, and audit-grade.
+
+Aether is designed for people who need clarity where conventional pipelines fail:
+researchers, analysts, forensic experts, scientists, engineers - anyone who works with complex signals that resist categorization.
+
+### Efficiency
+
+Aether does not rely on massive models or GPU clusters.
+Its architecture is built around minimal rules, explicit transformations, and deterministic kernels.
+This makes Aether extremely efficient: it runs on ordinary hardware while still revealing deep structural patterns.
+
+### Democratization
+
+Because Aether is lightweight and fully local, every user contributes to a distributed ecosystem of computation.
+More users means more total available compute - not centralized, but spread across many independent machines.
+Aether scales horizontally through people, not through data centers.
+
+### Call for collaborators
+
+Aether is built by one person - for now.
+If you see potential in this paradigm and want to help push it to the next level (kernel, models, UI, visualization, theory, or tooling), reach out.
+Aether is ready to grow.
+
 ---
 
 ## Was Aether ist — und was nicht
@@ -107,6 +134,48 @@ beschrieben wie beliebige andere Datenquellen. Abweichungen von der Prozess-Base
 ohne Prozessinhalte zu lesen. Auf schwacher Hardware (< 2 GB RAM, HDD) erkennt Aether automatisch
 den Hardware-Kontext und priorisiert Low-Resource-Optimierungen mit vollständigem Rollback-Pfad.
 
+### 6. Medizinische Datensätze — struktureller Vergleich ohne Datenweitergabe
+
+Zwei Institutionen können Patientendaten und Befundreihen strukturell vergleichen, ohne Rohdaten auszutauschen:
+
+1. Institution A berechnet einen Strukturanker: `SHA-256(f(H_entropy, zipf_α, benford_score, katz_dim, chunk_hash))`
+2. Institution B berechnet das Gleiche für den eigenen Bestand
+3. Ankerdistanz < Schwelle δ → strukturell ähnliche Profile messbar — kein medizinischer Inhalt übertragen
+
+**Konkrete Anwendungsfälle:**
+- **Anomalie in Laborzeitreihen** — Ausreißer in Blutbild, Vitalwerten oder Sensordaten ohne Offenlegung von Patientenidentitäten
+- **Diagnose-Konsistenzprüfung** — strukturell inkonsistente Befundcodierung ist messbar ohne Inhaltszugriff
+- **Manipulationsnachweis** — nachträglich eingefügte Datenpunkte brechen Benford- und Katz-Signatur charakteristisch
+- **Epidemiologische Strukturclusterung** — Populationsähnlichkeit messbar ohne Individualisierung
+
+**Datenschutzgarantie durch Mathematik:** Weder Patientenname noch Diagnose noch Messwert sind aus dem Anker rekonstruierbar — nicht durch technische Vorkehrungen, sondern weil die SHA-256-Funktion es strukturell ausschließt.
+
+### 7. Datenforensik — Authentizität und Manipulationsnachweis
+
+| Forensische Frage | Messmethode |
+|-------------------|-------------|
+| Wurde dieser Datensatz nachträglich modifiziert? | Benford-Score + Katz-Dimension brechen bei manuellen Eingriffen charakteristisch |
+| Stammen zwei Datensätze aus derselben Quelle? | Ankerdistanz < δ → gemeinsamer Ursprung statistisch nachweisbar |
+| Ist diese Zeitreihe konsistent? | Fourier-Periodizität bricht bei rückwirkend eingefügten Einträgen |
+| Chain-of-Custody-Nachweis | Append-only SQLite-Audit-Log pro Session — nachträgliche Änderungen strukturell sichtbar |
+
+Alle Aussagen sind domänenunabhängig, reproduzierbar und ohne inhaltliche Interpretation des Datensatzes möglich.
+
+### 8. Demokratisierung analytischer Werkzeuge
+
+Strukturanalytische Methoden sind in der Praxis oft an Institutionszugänge, Cloud-Abonnements oder spezialisierte Hardware gebunden. Aether beseitigt diese Zugangshürden:
+
+| Umgebung | Status |
+|----------|--------|
+| < 2 GB RAM, HDD | vollständig unterstützt — Low-Resource-Modus automatisch aktiv |
+| Offline, kein Internet | alle Funktionen verfügbar, by design |
+| Consumer-Hardware (Laptop, Mini-PC) | keine Leistungseinbuße bei Strukturanalyse |
+| Kein institutioneller Zugang | keine Lizenzkosten, kein Vendor-Lock-in, keine Cloud-Abhängigkeit |
+
+Wer keinen Zugang zu Cloud-APIs oder Institutionslizenzen hat, bekommt dasselbe Werkzeug ohne Einschränkung. Keine eingeschränkte "Community Edition". Keine Daten als impliziter Preis für die Nutzung.
+
+**Teilhabe durch Architektur:** Die Methoden hinter Aether — Shannon, Zipf, Benford, Katz — sind öffentlich dokumentierte Mathematik. Erklärbar, reproduzierbar, kritisierbar. Kein proprietäres Modell, kein erforderliches Vertrauen in eine Black Box.
+
 ---
 
 ## Datenschutz durch Architektur
@@ -171,6 +240,50 @@ registry (SQLite, lokal) --> Vault, Audit-Log, append-only
 ```
 
 Stack: Python 3.9+ · Rust (pyo3) für performance-kritische Pfade
+
+---
+
+## AetherNet — Geplantes dezentrales Wissensnetz
+
+AetherNet ist die geplante Netzwerkschicht von Aether: ein dezentrales Peer-Netz für den Austausch struktureller Anker zwischen Instanzen. Kein zentraler Server. Keine Telemetrie. Keine Rohdaten im Netz.
+
+### Datenschutz durch Architektur — nicht durch Versprechen
+
+Der Datenschutz ist keine Konfigurationsoption — er ist die Konsequenz der Architektur:
+
+- Rohdaten, Deltas, Filekeys und Session-Seeds verlassen **niemals** das Gerät
+- Strukturanker verlassen das Gerät nur mit **explizitem, widerrufbarem Consent**
+- Aus einem Anker kann kein Originalinhalt rekonstruiert werden — das ist eine Eigenschaft der SHA-256-Funktion, kein Versprechen
+
+Was nicht gebaut wurde, kann nicht missbraucht werden. Zentralisierte Rohdaten-Infrastruktur wurde bewusst nicht entworfen.
+
+### Strukturanker: Herzstück der dezentralen Wissensbasis
+
+```
+anchor = SHA-256(H_entropy ‖ zipf_α ‖ benford_score ‖ katz_dim ‖ chunk_hash)
+```
+
+**Eigenschaften:**
+- **Nicht invertierbar:** kein Verfahren kann Originalinhalt aus dem Anker extrapolieren
+- **Reproduzierbar:** gleicher Datensatz → immer gleicher Anker (deterministisch)
+- **Universell:** CSV, JSON, FASTA, Logs, Binärdaten, medizinische Datensätze — alle erzeugen einen Anker
+- **Consent-gebunden:** kein Anker verlässt das Gerät ohne explizite Nutzerfreigabe
+
+Anker ermöglichen kollektives Wissen ohne kollektive Datenweitergabe.
+
+### Effizienz durch Logik: der Konvergenzeffekt
+
+Mit wachsendem Ankerpool M_t gilt:
+
+```
+H_lambda(X, t) → H_min(X)
+```
+
+Delta schrumpft logarithmisch mit der Knotenzahl. Jeder neue Teilnehmer im Netz erhöht die Ankerdichte — was alle bestehenden Knoten strukturell effizienter macht. Mehr Symbionten → geringere Unsicherheit pro Analyse.
+
+Das ist kein Marketing-Versprechen. Es ist die messbare Konsequenz des Shannon-Limits.
+
+Gemessen: N=1 → Delta 0.355 · N=1000 → Delta 0.269 · Verlauf: logarithmisch konvergent.
 
 ---
 

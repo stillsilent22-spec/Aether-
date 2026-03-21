@@ -1,9 +1,14 @@
+use crate::key_vault::DataKey;
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
 use chrono::{DateTime, Utc};
 use crc32fast::Hasher as Crc32Hasher;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use flate2::read::ZlibDecoder;
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
+use rand::rngs::OsRng;
+use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -67,6 +72,7 @@ pub enum AefError {
     Format(String),
     Signature(String),
     Vault(String),
+    Crypto(String),
 }
 
 impl std::fmt::Display for AefError {
@@ -76,6 +82,7 @@ impl std::fmt::Display for AefError {
             Self::Format(value) => write!(f, "{value}"),
             Self::Signature(value) => write!(f, "{value}"),
             Self::Vault(value) => write!(f, "{value}"),
+            Self::Crypto(value) => write!(f, "{value}"),
         }
     }
 }
@@ -137,6 +144,10 @@ pub enum SignalType {
 pub struct AefDeltaLayer {
     pub original_size: u64,
     pub compression_algo: u8,
+    #[serde(default)]
+    pub encryption_mode: u8,
+    #[serde(default)]
+    pub key_fingerprint: String,
     pub data: Vec<u8>,
 }
 
@@ -379,7 +390,7 @@ impl EnginePipeline {
         }
     }
 
-    pub fn evaluate(
+    pub(crate) fn evaluate(
         &self,
         original: &[u8],
         delta_uncompressed: &[u8],
@@ -495,6 +506,7 @@ impl Default for EnginePipeline {
 pub struct AefEncoder {
     pub vault: Arc<RwLock<VaultStore>>,
     pub engine_pipeline: Arc<EnginePipeline>,
+    pub data_key: Option<DataKey>,
 }
 
 impl AefEncoder {
@@ -502,17 +514,32 @@ impl AefEncoder {
         Self {
             vault,
             engine_pipeline,
+            data_key: None,
         }
+    }
+
+    pub fn withdatakey(mut self, data_key: DataKey) -> Self {
+        self.data_key = Some(data_key);
+        self
     }
 }
 
 pub struct AefDecoder {
     pub vault: Arc<RwLock<VaultStore>>,
+    pub data_key: Option<DataKey>,
 }
 
 impl AefDecoder {
     pub fn new(vault: Arc<RwLock<VaultStore>>) -> Self {
-        Self { vault }
+        Self {
+            vault,
+            data_key: None,
+        }
+    }
+
+    pub fn withdatakey(mut self, data_key: DataKey) -> Self {
+        self.data_key = Some(data_key);
+        self
     }
 }
 
@@ -571,6 +598,16 @@ impl AefEncoder {
 
         let delta_uncompressed = xor_bytes(&original, &predicted);
         let delta_compressed = zlib_compress(&delta_uncompressed)?;
+        let (delta_data, encryption_mode, key_fingerprint) = if let Some(data_key) = &self.data_key
+        {
+            (
+                encrypt_delta_payload(&delta_compressed, data_key)?,
+                0x01,
+                data_key.fingerprint(),
+            )
+        } else {
+            (delta_compressed, 0x00, String::new())
+        };
         let evaluation =
             self.engine_pipeline
                 .evaluate(&original, &delta_uncompressed, anchors.len());
@@ -588,7 +625,9 @@ impl AefEncoder {
             delta_layer: AefDeltaLayer {
                 original_size: delta_uncompressed.len() as u64,
                 compression_algo: 0x01,
-                data: delta_compressed,
+                encryption_mode,
+                key_fingerprint,
+                data: delta_data,
             },
             trust_metadata: AefTrustMetadata {
                 coherence_index: evaluation.coherence_index,
@@ -614,7 +653,7 @@ impl AefEncoder {
             let vault = self.vault.read().map_err(|_| {
                 AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned())
             })?;
-            file.reconstruct_bytes(&vault)?
+            file.reconstruct_bytes_with_key(&vault, self.data_key.as_ref())?
         };
         let lossless_confirmed = probe_reconstruction.1.is_empty()
             && probe_reconstruction.0 == original
@@ -669,7 +708,7 @@ impl AefDecoder {
             let vault = self.vault.read().map_err(|_| {
                 AefError::Vault("Vault-Lock konnte nicht gelesen werden".to_owned())
             })?;
-            file.reconstruct_bytes(&vault)?
+            file.reconstruct_bytes_with_key(&vault, self.data_key.as_ref())?
         };
         let original_hash_verified = sha256_bytes(&reconstructed) == file.header.original_hash;
         let reconstruction_complete = original_hash_verified && missing_refs.is_empty();
@@ -855,6 +894,14 @@ impl AefFile {
         &self,
         vault: &VaultStore,
     ) -> Result<(Vec<u8>, Vec<[u8; 32]>), AefError> {
+        self.reconstruct_bytes_with_key(vault, None)
+    }
+
+    pub fn reconstruct_bytes_with_key(
+        &self,
+        vault: &VaultStore,
+        data_key: Option<&DataKey>,
+    ) -> Result<(Vec<u8>, Vec<[u8; 32]>), AefError> {
         let mut predicted = vec![0u8; self.header.original_size as usize];
         let mut missing = Vec::new();
         for anchor in &self.anchor_map.anchors {
@@ -870,7 +917,31 @@ impl AefFile {
                 None => missing.push(anchor.vault_ref),
             }
         }
-        let delta = zlib_decompress(&self.delta_layer.data)?;
+        let delta_payload = match self.delta_layer.encryption_mode {
+            0x00 => self.delta_layer.data.clone(),
+            0x01 => {
+                let Some(key) = data_key else {
+                    return Err(AefError::Crypto(
+                        "Delta-Layer ist verschluesselt, aber kein Data-Key ist vorhanden".to_owned(),
+                    ));
+                };
+                let expected_fingerprint = key.fingerprint();
+                if !self.delta_layer.key_fingerprint.is_empty()
+                    && self.delta_layer.key_fingerprint != expected_fingerprint
+                {
+                    return Err(AefError::Crypto(
+                        "Data-Key-Fingerprint stimmt nicht mit dem Delta-Layer ueberein".to_owned(),
+                    ));
+                }
+                decrypt_delta_payload(&self.delta_layer.data, key)?
+            }
+            other => {
+                return Err(AefError::Format(format!(
+                    "Unbekannter Delta-Encryption-Mode: {other}"
+                )))
+            }
+        };
+        let delta = zlib_decompress(&delta_payload)?;
         if delta.len() != self.delta_layer.original_size as usize || delta.len() != predicted.len()
         {
             return Err(AefError::Format(
@@ -909,6 +980,11 @@ impl AefFile {
         bytes.extend_from_slice(&(self.delta_layer.data.len() as u64).to_le_bytes());
         bytes.extend_from_slice(&self.delta_layer.original_size.to_le_bytes());
         bytes.push(self.delta_layer.compression_algo);
+        bytes.push(self.delta_layer.encryption_mode);
+        let fingerprint = self.delta_layer.key_fingerprint.as_bytes();
+        let fingerprint_len = fingerprint.len().min(u8::MAX as usize) as u8;
+        bytes.push(fingerprint_len);
+        bytes.extend_from_slice(&fingerprint[..fingerprint_len as usize]);
         bytes.extend_from_slice(&self.delta_layer.data);
         bytes
     }
@@ -1007,6 +1083,12 @@ fn read_delta_layer(cursor: &mut std::io::Cursor<&[u8]>) -> Result<AefDeltaLayer
     let delta_size = read_u64(cursor)? as usize;
     let original_size = read_u64(cursor)?;
     let compression_algo = read_u8(cursor)?;
+    let encryption_mode = read_u8(cursor)?;
+    let fingerprint_len = read_u8(cursor)? as usize;
+    let mut fingerprint_bytes = vec![0u8; fingerprint_len];
+    cursor.read_exact(&mut fingerprint_bytes)?;
+    let key_fingerprint = String::from_utf8(fingerprint_bytes)
+        .map_err(|err| AefError::Format(format!("Delta-Fingerprint ungueltig: {err}")))?;
     let mut data = vec![0u8; delta_size];
     cursor.read_exact(&mut data)?;
     let end = cursor.position() as usize;
@@ -1016,6 +1098,8 @@ fn read_delta_layer(cursor: &mut std::io::Cursor<&[u8]>) -> Result<AefDeltaLayer
     Ok(AefDeltaLayer {
         original_size,
         compression_algo,
+        encryption_mode,
+        key_fingerprint,
         data,
     })
 }
@@ -1194,6 +1278,34 @@ fn zlib_decompress(data: &[u8]) -> Result<Vec<u8>, AefError> {
     let mut output = Vec::new();
     decoder.read_to_end(&mut output)?;
     Ok(output)
+}
+
+fn encrypt_delta_payload(data: &[u8], key: &DataKey) -> Result<Vec<u8>, AefError> {
+    let cipher = Aes256Gcm::new_from_slice(key.as_bytes())
+        .map_err(|err| AefError::Crypto(format!("AES-Init fehlgeschlagen: {err}")))?;
+    let mut nonce = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce);
+    let ciphertext = cipher
+        .encrypt(Nonce::from_slice(&nonce), data)
+        .map_err(|err| AefError::Crypto(format!("Delta-Verschluesselung fehlgeschlagen: {err}")))?;
+    let mut payload = Vec::with_capacity(12 + ciphertext.len());
+    payload.extend_from_slice(&nonce);
+    payload.extend_from_slice(&ciphertext);
+    Ok(payload)
+}
+
+fn decrypt_delta_payload(payload: &[u8], key: &DataKey) -> Result<Vec<u8>, AefError> {
+    if payload.len() < 12 {
+        return Err(AefError::Crypto(
+            "Delta-Verschluesselung ungueltig: Nonce fehlt".to_owned(),
+        ));
+    }
+    let (nonce, ciphertext) = payload.split_at(12);
+    let cipher = Aes256Gcm::new_from_slice(key.as_bytes())
+        .map_err(|err| AefError::Crypto(format!("AES-Init fehlgeschlagen: {err}")))?;
+    cipher
+        .decrypt(Nonce::from_slice(nonce), ciphertext)
+        .map_err(|err| AefError::Crypto(format!("Delta-Entschluesselung fehlgeschlagen: {err}")))
 }
 
 fn now_epoch() -> u64 {

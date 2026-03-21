@@ -8,6 +8,33 @@ attractor stability. All computation runs locally. No raw data leaves the device
 
 → [Deutsche Version: README.md](README.md)
 
+## Why Aether matters
+
+Aether is a local, deterministic analysis and reconstruction system.
+It extracts structure from data without cloud services, without black-box models, and without hidden semantics.
+Everything is transparent, reproducible, and audit-grade.
+
+Aether is designed for people who need clarity where conventional pipelines fail:
+researchers, analysts, forensic experts, scientists, engineers - anyone who works with complex signals that resist categorization.
+
+### Efficiency
+
+Aether does not rely on massive models or GPU clusters.
+Its architecture is built around minimal rules, explicit transformations, and deterministic kernels.
+This makes Aether extremely efficient: it runs on ordinary hardware while still revealing deep structural patterns.
+
+### Democratization
+
+Because Aether is lightweight and fully local, every user contributes to a distributed ecosystem of computation.
+More users means more total available compute - not centralized, but spread across many independent machines.
+Aether scales horizontally through people, not through data centers.
+
+### Call for collaborators
+
+Aether is built by one person - for now.
+If you see potential in this paradigm and want to help push it to the next level (kernel, models, UI, visualization, theory, or tooling), reach out.
+Aether is ready to grow.
+
 ---
 
 ## What Aether Is — and Is Not

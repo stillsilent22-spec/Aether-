@@ -1,9 +1,15 @@
+use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
+
+const BRIDGE_BOUNDARY_AUDIT_PATH: &str = "logs/boundary_audit.jsonl";
+const MAX_EVENT_TEXT_LEN: usize = 4096;
 
 #[derive(Debug, Clone, Default)]
 pub struct EmbeddedBrowserEvent {
@@ -12,6 +18,29 @@ pub struct EmbeddedBrowserEvent {
     pub title: String,
     pub message: String,
     pub secure: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserBridgeWireEvent {
+    kind: String,
+    #[serde(default)]
+    url: String,
+    #[serde(default)]
+    title: String,
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    secure: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct BridgeBoundaryAuditEvent {
+    ts: String,
+    channel: String,
+    accepted: bool,
+    reason: String,
+    payload_len: usize,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -228,14 +257,29 @@ fn spawn_stdout_reader(stdout: std::process::ChildStdout, tx: mpsc::Sender<Embed
             if trimmed.is_empty() {
                 continue;
             }
-            let event = serde_json::from_str::<Value>(trimmed)
-                .ok()
-                .map(parse_event)
-                .unwrap_or_else(|| EmbeddedBrowserEvent {
-                    kind: "error".to_owned(),
-                    message: format!("Browser-Bridge sendete unlesbaren Text: {trimmed}"),
-                    ..EmbeddedBrowserEvent::default()
-                });
+            let (event, accepted, reason) = match parse_and_validate_wire_event(trimmed) {
+                Ok(parsed) => (
+                    EmbeddedBrowserEvent {
+                        kind: parsed.kind,
+                        url: parsed.url,
+                        title: parsed.title,
+                        message: parsed.message,
+                        secure: parsed.secure,
+                    },
+                    true,
+                    "accepted",
+                ),
+                Err(err) => (
+                    EmbeddedBrowserEvent {
+                        kind: "boundary_reject".to_owned(),
+                        message: format!("Boundary-Reject (fail-closed): {err}"),
+                        ..EmbeddedBrowserEvent::default()
+                    },
+                    false,
+                    "rejected",
+                ),
+            };
+            append_boundary_audit("browser_bridge_stdout", accepted, reason, trimmed.len());
             let _ = tx.send(event);
         }
     });
@@ -261,33 +305,54 @@ fn spawn_stderr_reader(stderr: std::process::ChildStderr, tx: mpsc::Sender<Embed
     });
 }
 
-fn parse_event(value: Value) -> EmbeddedBrowserEvent {
-    EmbeddedBrowserEvent {
-        kind: value
-            .get("kind")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        url: value
-            .get("url")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        title: value
-            .get("title")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        message: value
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        secure: value
-            .get("secure")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
+fn parse_and_validate_wire_event(input: &str) -> Result<BrowserBridgeWireEvent, String> {
+    let raw = serde_json::from_str::<Value>(input)
+        .map_err(|err| format!("ungueltiges JSON: {err}"))?;
+    let event = serde_json::from_value::<BrowserBridgeWireEvent>(raw)
+        .map_err(|err| format!("Schema-Fehler: {err}"))?;
+    validate_wire_event(&event)?;
+    Ok(event)
+}
+
+fn validate_wire_event(event: &BrowserBridgeWireEvent) -> Result<(), String> {
+    validate_event_text("kind", &event.kind, 64)?;
+    validate_event_text("url", &event.url, MAX_EVENT_TEXT_LEN)?;
+    validate_event_text("title", &event.title, 256)?;
+    validate_event_text("message", &event.message, MAX_EVENT_TEXT_LEN)?;
+    Ok(())
+}
+
+fn validate_event_text(label: &str, value: &str, max_len: usize) -> Result<(), String> {
+    if value.len() > max_len {
+        return Err(format!("{label} zu lang ({})", value.len()));
     }
+    if !value.chars().all(|ch| ch != '\u{0000}') {
+        return Err(format!("{label} enthaelt unzulaessige Null-Bytes"));
+    }
+    Ok(())
+}
+
+fn append_boundary_audit(channel: &str, accepted: bool, reason: &str, payload_len: usize) {
+    let event = BridgeBoundaryAuditEvent {
+        ts: Utc::now().to_rfc3339(),
+        channel: channel.to_owned(),
+        accepted,
+        reason: reason.to_owned(),
+        payload_len,
+    };
+    let Ok(serialized) = serde_json::to_string(&event) else {
+        return;
+    };
+    let path = PathBuf::from(BRIDGE_BOUNDARY_AUDIT_PATH);
+    if let Some(parent) = path.parent() {
+        if fs::create_dir_all(parent).is_err() {
+            return;
+        }
+    }
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
+        return;
+    };
+    let _ = writeln!(file, "{serialized}");
 }
 
 fn detect_python_command() -> Option<String> {

@@ -195,119 +195,12 @@ fn walk_json_files(root: &Path) -> Vec<PathBuf> {
 }
 
 fn cmd_prove() {
-    use pyo3::prelude::*;
-    use pyo3::types::{PyList, PyModule};
-
     println!("⬡ Aether — Delta-Konvergenz Beweis");
     println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-    let result = Python::with_gil(|py| -> PyResult<(String, f64, f64, bool)> {
-        // Extend sys.path so Python modules are found relative to cwd
-        let sys = py.import("sys")?;
-        let path: &PyList = sys.getattr("path")?.downcast()?;
-        path.insert(0, ".")?;
-
-        // Import tracker module
-        let tracker_mod = PyModule::import(py, "modules.delta_convergence_tracker")?;
-        let tracker = tracker_mod
-            .getattr("DeltaConvergenceTracker")?
-            .call0()?;
-
-        // Signal: try first .dna file in vault, fall back to fixed bytes
-        let signal: Vec<u8> = std::fs::read_dir("data/aelab_vault")
-            .ok()
-            .and_then(|mut dir| {
-                dir.find_map(|entry| {
-                    let path = entry.ok()?.path();
-                    if path.extension()?.to_str()? == "dna" {
-                        std::fs::read(&path).ok()
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or_else(|| {
-                b"Aether structural convergence proof. \
-                  H_lambda(X,t) approaches H_min(X). \
-                  Delta shrinks logarithmically with N. \
-                  pi phi sqrt2 e mathematical anchors."
-                    .repeat(80)
-                    .to_vec()
-            });
-
-        // Measure N-scaling (first call → ASCII plot)
-        let measurements =
-            tracker.call_method("measure_node_scaling", (&signal[..],), None)?;
-
-        // ASCII plot
-        let plot_mod = PyModule::import(py, "tools.convergence_plot")?;
-        let ascii = plot_mod
-            .getattr("ascii_plot")?
-            .call1((measurements,))?
-            .extract::<String>()?;
-
-        // Measure again → HTML export (measurements was consumed above)
-        let measurements2 =
-            tracker.call_method("measure_node_scaling", (&signal[..],), None)?;
-        plot_mod.getattr("html_plot")?.call1((measurements2,))?;
-
-        // Export proof JSON → verdict string
-        let verdict = tracker.call_method0("export_proof")?.extract::<String>()?;
-
-        // Summary stats for the node_scaling series
-        let summary = tracker.call_method1("get_summary", ("node_scaling",))?;
-        let delta_start: f64 = summary
-            .get_item("delta_start")
-            .and_then(|v| v.extract::<f64>())
-            .unwrap_or(0.0);
-        let delta_current: f64 = summary
-            .get_item("delta_current")
-            .and_then(|v| v.extract::<f64>())
-            .unwrap_or(0.0);
-        let converging: bool = summary
-            .get_item("converging")
-            .and_then(|v| v.extract::<bool>())
-            .unwrap_or(false);
-
-        // verdict drives the exit code; ascii + numeric info are returned
-        let _ = verdict; // embedded in convergence_proof.json
-        Ok((ascii, delta_start, delta_current, converging))
-    });
-
-    match result {
-        Ok((ascii, delta_start, delta_current, converging)) => {
-            println!("{}", ascii);
-
-            let reduction = if delta_start > 0.0 {
-                (1.0 - delta_current / delta_start) * 100.0
-            } else {
-                0.0
-            };
-
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-            if converging {
-                println!("✓ KONVERGENZ NACHGEWIESEN");
-            } else {
-                println!("⟳ KONVERGENZ LÄUFT");
-            }
-            println!(
-                "  Delta N=1 → N=1000: {:.3} → {:.3} ({:.1}% Reduktion)",
-                delta_start, delta_current, reduction
-            );
-            println!("  Beweis:  data/convergence_proof.json");
-            println!("  Plot:    data/convergence_plot.html");
-            println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-
-            std::process::exit(if converging { 0 } else { 1 });
-        }
-        Err(e) => {
-            eprintln!("Fehler: {}", e);
-            eprintln!("Stelle sicher dass Python-Module vorhanden sind:");
-            eprintln!("  modules/delta_convergence_tracker.py");
-            eprintln!("  tools/convergence_plot.py");
-            std::process::exit(2);
-        }
-    }
+    println!("Python-Laufzeit wurde entfernt (Rust Fortress Mode).");
+    println!("Delta-Konvergenz wird nativ über bayes::BayesEngine berechnet.");
+    println!("Verwende die Iced-Shell → FlowSphere für die Visualisierung.");
+    println!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
 fn print_usage() {

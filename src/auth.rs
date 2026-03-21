@@ -17,17 +17,17 @@ pub struct UserRecord {
     pub role: String,
     #[serde(default)]
     pub user_settings: HashMap<String, String>,
-    #[serde(default)]
+    #[serde(skip, default)]
     pub session_id: String,
-    #[serde(default)]
+    #[serde(skip, default)]
     pub login_at_epoch: u64,
-    #[serde(default)]
+    #[serde(skip, default)]
     pub live_session_key: String,
     #[serde(default)]
     pub live_session_fingerprint: String,
-    #[serde(default)]
+    #[serde(skip, default)]
     pub session_seed: u64,
-    #[serde(default)]
+    #[serde(skip, default)]
     pub raw_storage_key_hex: String,
     #[serde(default)]
     pub raw_storage_fingerprint: String,
@@ -136,6 +136,10 @@ impl AuthStore {
             .collect::<Vec<_>>();
         usernames.sort();
         usernames
+    }
+
+    pub fn user_count(&self) -> usize {
+        self.users.len()
     }
 
     pub fn save(&self) -> Result<(), String> {

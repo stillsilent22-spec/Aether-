@@ -4,6 +4,7 @@ use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
 };
 use crate::browser_embed::{BrowserHostRect, EmbeddedBrowser};
+use crate::ethics::{code_suspicion_score, structural_text_integrity};
 use crate::key_vault::DataKey;
 use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
 use crate::policy_executor::{default_analysis_rules, RuleEngine};
@@ -24,18 +25,18 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use zeroize::Zeroize;
 
-const BG_BASE: [u8; 3] = [0x05, 0x0B, 0x1A];
-const BG_CARD: [u8; 3] = [0x0C, 0x14, 0x28];
-const BG_CARD2: [u8; 3] = [0x11, 0x1B, 0x36];
-const BORDER: [u8; 3] = [0x25, 0x34, 0x52];
-const BORDER_ACT: [u8; 3] = [0x96, 0x57, 0xF7];
-const ACCENT: [u8; 3] = [0x96, 0x57, 0xF7];
-const ACCENT2: [u8; 3] = [0x2A, 0xB6, 0xFF];
-const TEXT_H: [u8; 3] = [0xEE, 0xF4, 0xFF];
-const TEXT_M: [u8; 3] = [0xA2, 0xB3, 0xCE];
-const TEXT_D: [u8; 3] = [0x63, 0x78, 0x9A];
-const WARN: [u8; 3] = [0xD4, 0xA0, 0x30];
-const DANGER: [u8; 3] = [0xD6, 0x55, 0x55];
+const BG_BASE: [u8; 3] = [0x0C, 0x0B, 0x12];
+const BG_CARD: [u8; 3] = [0x14, 0x13, 0x1E];
+const BG_CARD2: [u8; 3] = [0x1C, 0x1B, 0x2A];
+const BORDER: [u8; 3] = [0x2E, 0x2C, 0x46];
+const BORDER_ACT: [u8; 3] = [0xA0, 0x60, 0xFF];
+const ACCENT: [u8; 3] = [0xA0, 0x60, 0xFF];
+const ACCENT2: [u8; 3] = [0x00, 0xD4, 0xFF];
+const TEXT_H: [u8; 3] = [0xF0, 0xEE, 0xFF];
+const TEXT_M: [u8; 3] = [0x9E, 0x98, 0xC4];
+const TEXT_D: [u8; 3] = [0x5C, 0x58, 0x82];
+const WARN: [u8; 3] = [0xFF, 0xA0, 0x20];
+const DANGER: [u8; 3] = [0xFF, 0x4C, 0x4C];
 
 fn c(rgb: [u8; 3]) -> Color {
     Color::from_rgb8(rgb[0], rgb[1], rgb[2])
@@ -593,7 +594,7 @@ impl AetherIcedShell {
         )
         .style(move |_: &Theme| container::Style {
             background: if is_active {
-                Some(Background::Color(Color::from_rgba(0.0, 0.898, 0.478, 0.06)))
+                Some(Background::Color(Color::from_rgba(0.502, 0.31, 0.98, 0.08)))
             } else {
                 None
             },
@@ -624,14 +625,14 @@ impl AetherIcedShell {
                         width: 1.2,
                         radius: 10.0.into(),
                     },
-                    text_color: Some(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
+                    text_color: Some(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
                     ..Default::default()
                 }
             } else {
                 container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x0A, 0x16, 0x24))),
+                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x11, 0x1C))),
                     border: Border {
-                        color: Color::from_rgb8(0x1F, 0x36, 0x54),
+                        color: Color::from_rgb8(0x2C, 0x2A, 0x46),
                         width: 1.0,
                         radius: 10.0.into(),
                     },
@@ -645,7 +646,7 @@ impl AetherIcedShell {
     fn view_auth(&self) -> Element<'_, Message> {
         let left = container(
             column![
-                text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
+                text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)),
                 text("Deterministic Security Kernel").size(34).color(c(TEXT_H)),
                 text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
                     .size(14)
@@ -736,7 +737,7 @@ impl AetherIcedShell {
         // Helper: sidebar section header
         let section_header = |label: &'static str| -> Element<'_, Message> {
             container(
-                text(label).size(11).color(Color::from_rgb8(0x7A, 0x9A, 0xB8)),
+                text(label).size(11).color(Color::from_rgb8(0x7E, 0x76, 0xA8)),
             )
             .padding([6, 10])
             .width(Length::Fill)
@@ -747,14 +748,14 @@ impl AetherIcedShell {
         let nav_item = |icon: &'static str, label: &'static str, tab: Tab| -> Element<'_, Message> {
             let active = self.active_tab == tab;
             let bg = if active {
-                Color::from_rgb8(0x10, 0x2A, 0x40)
+                Color::from_rgb8(0x20, 0x18, 0x38)
             } else {
                 Color::from_rgba8(0, 0, 0, 0.0f32)
             };
             let text_col = if active {
-                Color::from_rgb8(0xE0, 0xF8, 0xFF)
+                Color::from_rgb8(0xF0, 0xEE, 0xFF)
             } else {
-                Color::from_rgb8(0xA0, 0xB8, 0xC8)
+                Color::from_rgb8(0x9E, 0x96, 0xC0)
             };
             container(
                 button(
@@ -788,7 +789,7 @@ impl AetherIcedShell {
                 container(
                     column![
                         text("\u{2b21}").size(30).color(Color::from_rgb8(0x1E, 0x90, 0xFF)),
-                        text("AETHER").size(16).color(Color::from_rgb8(0xE0, 0xF8, 0xFF)),
+                        text("AETHER").size(16).color(Color::from_rgb8(0xF0, 0xEE, 0xFF)),
                     ]
                     .spacing(2)
                     .align_x(Alignment::Center),
@@ -804,15 +805,15 @@ impl AetherIcedShell {
                             .height(Length::Fixed(10.0)),
                         text(username.chars().take(16).collect::<String>())
                             .size(12)
-                            .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                            .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                     ]
                     .spacing(6)
                     .align_y(iced::Alignment::Center),
                 )
                 .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x2A))),
+                    background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
                     border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        color: Color::from_rgb8(0x28, 0x26, 0x42),
                         width: 1.0,
                         radius: 6.0.into(),
                     },
@@ -843,10 +844,10 @@ impl AetherIcedShell {
                 container(
                     column![
                         text(format!("\u{2699} {}", self.runtime_profile_label())).size(11)
-                            .color(Color::from_rgb8(0x60, 0x82, 0x98)),
+                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
                         text(if self.analysis_running { "\u{25b6} ANALYS. AKTIV" } else { "\u{25a0} BEREIT" })
                             .size(11)
-                            .color(Color::from_rgb8(0x60, 0x82, 0x98)),
+                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
                     ]
                     .spacing(4),
                 )
@@ -856,10 +857,10 @@ impl AetherIcedShell {
                 // Settings + Power icons at bottom
                 container(
                     row![
-                        button(text("\u{2699}").size(16).color(Color::from_rgb8(0x80, 0xA0, 0xB8)))
+                        button(text("\u{2699}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
                             .padding([6, 10])
                             .on_press(Message::TabSelected(Tab::Settings)),
-                        button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x80, 0xA0, 0xB8)))
+                        button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
                             .padding([6, 10])
                             .on_press(Message::TabSelected(Tab::Imprint)),
                     ]
@@ -872,9 +873,9 @@ impl AetherIcedShell {
             .height(Length::Fill),
         )
         .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x05, 0x0D, 0x18))),
+            background: Some(Background::Color(Color::from_rgb8(0x0D, 0x0C, 0x14))),
             border: Border {
-                color: Color::from_rgb8(0x14, 0x2A, 0x40),
+                color: Color::from_rgb8(0x24, 0x22, 0x3A),
                 width: 1.0,
                 radius: 0.0.into(),
             },
@@ -983,7 +984,7 @@ impl AetherIcedShell {
                 logo,
                 container(iced::widget::Space::new(1.0, 32.0))
                     .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x32, 0x4A))),
+                        background: Some(Background::Color(Color::from_rgb8(0x20, 0x1E, 0x30))),
                         ..Default::default()
                     })
                     .width(Length::Fixed(1.0)),
@@ -1058,13 +1059,13 @@ impl AetherIcedShell {
                                         text("Willkommen bei Aether").size(16)
                                             .color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
                                         text("Ziehe eine Datei ins Fenster \u{2192} Aether erstellt automatisch eine .aef-Datei mit Strukturanalyse.")
-                                            .size(12).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+                                            .size(12).color(Color::from_rgb8(0x90, 0x88, 0xBC)),
                                         text("Data-Tab: Ergebnisse | Rekon-Tab: Originaldatei wiederherstellen | Intuitionsblase: Strukturvisualisierung")
-                                            .size(11).color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+                                            .size(11).color(Color::from_rgb8(0x4E, 0x4A, 0x76)),
                                     ]
                                     .spacing(4),
                                     iced::widget::Space::new(Length::Fill, Length::Shrink),
-                                    button(text("\u{2715}").size(12).color(Color::from_rgb8(0x4A, 0x68, 0x84)))
+                                    button(text("\u{2715}").size(12).color(Color::from_rgb8(0x4E, 0x4A, 0x76)))
                                         .on_press(Message::TutorialDismissed)
                                         .style(|_: &Theme, _| button::Style {
                                             background: None,
@@ -1122,7 +1123,7 @@ impl AetherIcedShell {
                     container(
                         column![
                             text("Orchestration Map").size(16)
-                                .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                             canvas::Canvas::new(OrchestrationScene {
                                 tick: self.tick_counter,
                                 cluster_count,
@@ -1138,8 +1139,8 @@ impl AetherIcedShell {
                         .spacing(8),
                     )
                     .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
-                        border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
+                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                        border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
                         ..Default::default()
                     })
                     .padding(16)
@@ -1151,23 +1152,23 @@ impl AetherIcedShell {
                         container(
                             column![
                                 text("Recent Events").size(15)
-                                    .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                    .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                                 event_row("04:21", &(self.tick_counter / 60 % 60).to_string(),
-                                    &latest_log,  Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                    &latest_log,  Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                                 event_row("04:18", "New", &latest_log2, Color::from_rgb8(0x4C, 0xD9, 0x9C)),
                                 event_row("04:15", "Net", &latest_log3, Color::from_rgb8(0xC0, 0xA0, 0x60)),
                                 event_row("04:10", "Bkp", &format!("{} Artefakte lokal", entries.len()),
-                                    Color::from_rgb8(0x70, 0xA8, 0xD0)),
+                                    Color::from_rgb8(0x72, 0x9A, 0xD8)),
                                 text(format!("Mode: {} | Analyse: {}",
                                     self.security_snapshot.mode, analysis_value))
-                                    .size(11).color(Color::from_rgb8(0x60, 0x80, 0x98)),
+                                    .size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)),
                             ]
                             .spacing(10)
                             .width(Length::Fill),
                         )
                         .style(|_: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
-                            border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
+                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                            border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
                             ..Default::default()
                         })
                         .padding(18)
@@ -1178,10 +1179,10 @@ impl AetherIcedShell {
                             column![
                                 row![
                                     text("Active Alerts").size(15)
-                                        .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                        .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                                     iced::widget::Space::new(Length::Fill, Length::Shrink),
                                     text("\u{25b2}").size(12)
-                                        .color(Color::from_rgb8(0x60, 0x80, 0x98)),
+                                        .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
                                 ]
                                 .spacing(8),
                                 alert_row(
@@ -1211,8 +1212,8 @@ impl AetherIcedShell {
                             .width(Length::Fill),
                         )
                         .style(|_: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
-                            border: Border { color: Color::from_rgb8(0x1E, 0x3C, 0x5A), width: 1.5, radius: 10.0.into() },
+                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                            border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
                             ..Default::default()
                         })
                         .padding(18)
@@ -1225,7 +1226,7 @@ impl AetherIcedShell {
                         column![
                             row![
                                 text("\u{25b6} Analysefluss").size(14)
-                                    .color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                                    .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                                 iced::widget::Space::new(Length::Fill, Length::Shrink),
                                 text(format!("{:.0}%", self.analysis_progress * 100.0)).size(14)
                                     .color(Color::from_rgb8(0x4C, 0xD9, 0x9C)),
@@ -1234,14 +1235,14 @@ impl AetherIcedShell {
                             progress_bar(0.0..=1.0, self.analysis_progress.clamp(0.0, 1.0))
                                 .height(6),
                             text(&self.hovered_file_label).size(12)
-                                .color(Color::from_rgb8(0x80, 0xA0, 0xB8)),
+                                .color(Color::from_rgb8(0x84, 0x7C, 0xB2)),
                         ]
                         .spacing(8)
                         .width(Length::Fill),
                     )
                     .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x06, 0x12, 0x20))),
-                        border: Border { color: Color::from_rgb8(0x1A, 0x6A, 0x8A), width: 1.5, radius: 10.0.into() },
+                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                        border: Border { color: Color::from_rgb8(0x70, 0x40, 0xCC), width: 1.5, radius: 10.0.into() },
                         ..Default::default()
                     })
                     .padding(16)
@@ -1329,7 +1330,7 @@ impl AetherIcedShell {
 
             container(
                 column![
-                    text("AetherGuard").size(24).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
+                    text("AetherGuard").size(24).color(Color::from_rgb8(0xA0, 0x60, 0xFF)),
                     text("General").size(12).color(c(TEXT_D)),
                     nav_item("Overview", "Overview", self.dashboard_nav == "Overview"),
                     nav_item("Issues", "Issues", self.dashboard_nav == "Issues"),
@@ -1361,8 +1362,8 @@ impl AetherIcedShell {
             .padding(14)
             .width(Length::Fixed(210.0))
             .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x08, 0x11, 0x24))),
-                border: Border { color: Color::from_rgb8(0x2D, 0x3E, 0x64), width: 1.2, radius: 14.0.into() },
+                background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                border: Border { color: Color::from_rgb8(0x30, 0x2E, 0x4E), width: 1.2, radius: 14.0.into() },
                 ..Default::default()
             })
         };
@@ -1387,8 +1388,8 @@ impl AetherIcedShell {
             )
             .padding([4, 8])
             .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x13, 0x1F, 0x39))),
-                border: Border { color: Color::from_rgb8(0x3A, 0x4F, 0x7C), width: 1.1, radius: 24.0.into() },
+                background: Some(Background::Color(Color::from_rgb8(0x1A, 0x19, 0x28))),
+                border: Border { color: Color::from_rgb8(0x3C, 0x38, 0x60), width: 1.1, radius: 24.0.into() },
                 ..Default::default()
             }),
             button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
@@ -1506,7 +1507,7 @@ impl AetherIcedShell {
                     row![
                         text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
                         text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                        text(virus).size(12).color(Color::from_rgb8(0xFF, 0x6C, 0xA6)).width(Length::FillPortion(2)),
+                        text(virus).size(12).color(Color::from_rgb8(0xFF, 0x60, 0xA0)).width(Length::FillPortion(2)),
                         text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
                         text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
                         info_icon_button("threat_details"),
@@ -1550,7 +1551,7 @@ impl AetherIcedShell {
                         text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
                         canvas::Canvas::new(DonutScene {
                             values: [*level, 1.0 - *level, 0.0, 0.0],
-                            colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x22, 0x33, 0x44), Color::TRANSPARENT, Color::TRANSPARENT],
+                            colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x1C, 0x1B, 0x2A), Color::TRANSPARENT, Color::TRANSPARENT],
                             pulse: 1.0,
                         })
                         .width(Length::Fixed(56.0))
@@ -1657,7 +1658,7 @@ impl AetherIcedShell {
 
         let background_layer = container(iced::widget::Space::new(Length::Fill, Length::Fill))
             .style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x05, 0x0B, 0x1A))),
+                background: Some(Background::Color(Color::from_rgb8(0x0C, 0x0B, 0x12))),
                 border: Border {
                     color: Color::from_rgba(0.61, 0.39, 1.0, 0.22 + 0.28 * data_flash),
                     width: 1.0 + 0.8 * node_pulse,
@@ -1727,7 +1728,7 @@ impl AetherIcedShell {
                         Color::from_rgba(0.07, 0.14, 0.24, 0.86)
                     })),
                     border: Border {
-                        color: if active { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2A, 0x3D, 0x64) },
+                        color: if active { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2E, 0x2C, 0x4C) },
                         width: if active { 1.2 } else { 1.0 },
                         radius: 10.0.into(),
                     },
@@ -1803,7 +1804,7 @@ impl AetherIcedShell {
                     .height(Length::Fixed(110.0)),
                 )
                 .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x0E, 0x18, 0x32))),
+                    background: Some(Background::Color(Color::from_rgb8(0x15, 0x14, 0x22))),
                     border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.1, radius: 10.0.into() },
                     ..Default::default()
                 })
@@ -1835,7 +1836,7 @@ impl AetherIcedShell {
         let url_bar = container(
             row![
                 container(
-                    text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4A, 0x68, 0x84))
+                    text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
                 ).padding([0, 8]),
                 text_input("https://duckduckgo.com", &self.browser_address)
                     .on_input(Message::BrowserAddressChanged)
@@ -1859,8 +1860,8 @@ impl AetherIcedShell {
             .align_y(Alignment::Center),
         )
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x10, 0x1A, 0x34))),
-            border: Border { color: Color::from_rgb8(0x35, 0x4B, 0x76), width: 1.1, radius: 8.0.into() },
+            background: Some(Background::Color(Color::from_rgb8(0x17, 0x16, 0x24))),
+            border: Border { color: Color::from_rgb8(0x36, 0x34, 0x56), width: 1.1, radius: 8.0.into() },
             ..Default::default()
         })
         .padding([4, 4]);
@@ -1869,7 +1870,7 @@ impl AetherIcedShell {
             row![
                 scrollable(
                     column![
-                        text("Browser").size(20).color(Color::from_rgb8(0xE8, 0xF4, 0xFF)),
+                        text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
                         url_bar,
                         row![
                             button(text("Seite pruefen").size(13))
@@ -1931,9 +1932,9 @@ impl AetherIcedShell {
                 .padding(14),
                 container(
                     column![
-                        text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xE8, 0xF4, 0xFF)),
+                        text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
                         text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
-                            .size(13).color(Color::from_rgb8(0x90, 0xAC, 0xC8)),
+                            .size(13).color(Color::from_rgb8(0x90, 0x88, 0xBC)),
                         container(text(" "))
                             .height(Length::Fill)
                             .width(Length::Fill),
@@ -2277,9 +2278,9 @@ impl AetherIcedShell {
                     .spacing(6),
                 )
                 .style(|_theme: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                    background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
                     border: Border {
-                        color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                        color: Color::from_rgb8(0x2A, 0x28, 0x44),
                         width: 1.0,
                         radius: 6.0.into(),
                     },
@@ -2299,7 +2300,7 @@ impl AetherIcedShell {
                     } else if trust_upper.contains("ERR") || trust_upper.contains("CRIT") {
                         ("\u{25cf} CRIT", Color::from_rgb8(0xC6, 0x6A, 0x6A))
                     } else {
-                        ("\u{25cb} INFO", Color::from_rgb8(0x1E, 0x82, 0x8F))
+                        ("\u{25cb} INFO", Color::from_rgb8(0x48, 0x90, 0xFF))
                     };
                 let summary = event.summary.clone();
                 let reason = event.reason.clone();
@@ -2321,7 +2322,7 @@ impl AetherIcedShell {
                         .width(Length::Fill),
                     )
                     .style(move |_theme: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
                         border: Border {
                             color: border_col,
                             width: 1.5,
@@ -2377,7 +2378,7 @@ impl AetherIcedShell {
                         container::Style {
                             background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
                             border: Border {
-                                color: Color::from_rgb8(0x2B, 0xC5, 0xD6),
+                                color: Color::from_rgb8(0x78, 0x44, 0xD8),
                                 width: 1.5,
                                 radius: 6.0.into(),
                             },
@@ -2385,9 +2386,9 @@ impl AetherIcedShell {
                         }
                     } else {
                         container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
                             border: Border {
-                                color: Color::from_rgb8(0x1C, 0x38, 0x50),
+                                color: Color::from_rgb8(0x2A, 0x28, 0x44),
                                 width: 1.0,
                                 radius: 6.0.into(),
                             },
@@ -2496,10 +2497,10 @@ impl AetherIcedShell {
                         background: Some(Background::Color(if is_selected {
                             Color::from_rgba(0.59, 0.34, 0.96, 0.18)
                         } else {
-                            Color::from_rgb8(0x08, 0x14, 0x24)
+                            Color::from_rgb8(0x12, 0x11, 0x1E)
                         })),
                         border: Border {
-                            color: if is_selected { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2A, 0x3D, 0x64) },
+                            color: if is_selected { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2E, 0x2C, 0x4C) },
                             width: 1.0,
                             radius: 10.0.into(),
                         },
@@ -3264,8 +3265,8 @@ impl AetherIcedShell {
         .padding(14)
         .width(Length::Fixed(220.0))
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x08, 0x11, 0x24))),
-            border: Border { color: Color::from_rgb8(0x2D, 0x3E, 0x64), width: 1.2, radius: 12.0.into() },
+            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+            border: Border { color: Color::from_rgb8(0x30, 0x2E, 0x50), width: 1.2, radius: 12.0.into() },
             ..Default::default()
         });
 
@@ -3305,7 +3306,7 @@ impl AetherIcedShell {
         .padding([10, 14])
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(Color::from_rgb8(0x13, 0x1F, 0x39))),
-            border: Border { color: Color::from_rgb8(0x3A, 0x4F, 0x7C), width: 1.1, radius: 12.0.into() },
+            border: Border { color: Color::from_rgb8(0x3C, 0x38, 0x60), width: 1.1, radius: 12.0.into() },
             ..Default::default()
         });
 
@@ -3426,9 +3427,9 @@ impl AetherIcedShell {
         Theme::custom(
             "Aether Petrol".to_owned(),
             Palette {
-                background: Color::from_rgb8(0x08, 0x14, 0x22),
+                background: Color::from_rgb8(0x12, 0x11, 0x1E),
                 text: Color::from_rgb8(0xE4, 0xEE, 0xF2),
-                primary: Color::from_rgb8(0x1E, 0x82, 0x8F),
+                primary: Color::from_rgb8(0x66, 0x40, 0xCD),
                 success: Color::from_rgb8(0x70, 0xB3, 0x92),
                 danger: Color::from_rgb8(0xC6, 0x6A, 0x6A),
             },
@@ -4152,7 +4153,7 @@ impl canvas::Program<Message> for FlowSphereScene {
         // ── Deep nebula glow + dark sphere fill ─────────────────────────────────────
         {
             let nb_a = 0.09 + 0.03 * (t * 0.019).sin().abs();
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.62), Color::from_rgba(0.0, 0.22, 0.55, nb_a));
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.62), Color::from_rgba(0.38, 0.18, 0.72, nb_a));
             let co_a = 0.045 + 0.02 * (t * 0.031).cos().abs();
             frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.28), Color::from_rgba(0.05, 0.40, 0.85, co_a));
             frame.fill(&canvas::Path::circle(Point::new(cx, cy), r), Color::from_rgb8(0x01, 0x08, 0x12));
@@ -4377,13 +4378,13 @@ impl canvas::Program<Message> for FlowSphereScene {
         {
             let a0 = 0.24 + 0.09 * (t * 0.032).sin();
             frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 1.5), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.95, 1.0, a0)),
+                style: canvas::Style::Solid(Color::from_rgba(0.58, 0.30, 1.0, a0)),
                 width: 2.8,
                 ..canvas::Stroke::default()
             });
             let a1 = 0.12 + 0.055 * (t * 0.021 + 1.1).sin();
             frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 9.0), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.72, 0.90, a1)),
+                style: canvas::Style::Solid(Color::from_rgba(0.42, 0.22, 0.88, a1)),
                 width: 1.6,
                 ..canvas::Stroke::default()
             });
@@ -4862,7 +4863,7 @@ impl canvas::Program<Message> for OrchestrationScene {
                 frame.fill_text(canvas::Text {
                     content: "Shanway".to_string(),
                     position: Point::new(cx, cy + robot_h - 4.0),
-                    color: Color::from_rgb8(0xC8, 0xDE, 0xEE),
+                    color: Color::from_rgb8(0xCC, 0xC6, 0xF4),
                     size: iced::Pixels(9.0),
                     horizontal_alignment: iced::alignment::Horizontal::Center,
                     vertical_alignment: iced::alignment::Vertical::Center,
@@ -4893,7 +4894,7 @@ impl canvas::Program<Message> for OrchestrationScene {
             frame.fill_text(canvas::Text {
                 content: label.to_string(),
                 position: Point::new(cx, cy),
-                color: Color::from_rgb8(0xC8, 0xDE, 0xEE),
+                color: Color::from_rgb8(0xCC, 0xC6, 0xF4),
                 size: iced::Pixels(10.0),
                 horizontal_alignment: iced::alignment::Horizontal::Center,
                 vertical_alignment: iced::alignment::Vertical::Center,
@@ -4939,7 +4940,7 @@ impl canvas::Program<Message> for ThreatTrendScene {
         let w = bounds.width;
         let h = bounds.height;
         let t = self.tick as f32;
-        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x08, 0x12, 0x24));
+        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0C, 0x0B, 0x12));
         let points = 60usize;
         let reveal_count = ((points as f32) * self.reveal.clamp(0.02, 1.0)) as usize;
         let mut last: Option<Point> = None;
@@ -5056,7 +5057,7 @@ impl canvas::Program<Message> for CyberPaneGraphScene {
     type State = ();
     fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x07, 0x12, 0x24));
+        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0C, 0x0B, 0x12));
         let t = self.tick as f32;
         let panes = [
             (0.12f32, 0.22f32, 0.24f32, 0.52f32, Color::from_rgba(0.14, 0.42, 0.98, 0.24), "Background"),
@@ -5230,7 +5231,7 @@ fn secondary_button_style(_: &Theme, _status: button::Status) -> button::Style {
         background: Some(Background::Color(Color::from_rgb8(0x12, 0x1B, 0x33))),
         text_color: c(TEXT_H),
         border: Border {
-            color: Color::from_rgb8(0x2A, 0x3D, 0x64),
+            color: Color::from_rgb8(0x2E, 0x2C, 0x4C),
             width: 1.0,
             radius: 12.0.into(),
         },
@@ -5240,9 +5241,9 @@ fn secondary_button_style(_: &Theme, _status: button::Status) -> button::Style {
 
 fn panel_frame_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x0B, 0x14, 0x2A))),
+        background: Some(Background::Color(Color::from_rgb8(0x13, 0x12, 0x1E))),
         border: Border {
-            color: Color::from_rgb8(0x2B, 0x40, 0x68),
+            color: Color::from_rgb8(0x2E, 0x2C, 0x4E),
             width: 1.2,
             radius: 14.0.into(),
         },
@@ -5255,7 +5256,7 @@ fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Elem
         column![
             text(label.to_owned())
                 .size(11)
-                .color(Color::from_rgb8(0x4A, 0x68, 0x84)),
+                .color(Color::from_rgb8(0x4E, 0x4A, 0x76)),
             text(value)
                 .size(22)
                 .color(accent),
@@ -5287,7 +5288,7 @@ fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Elem
 fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<'a, Message> {
     container(
         row![
-            text(time.to_owned()).size(11).color(Color::from_rgb8(0x60, 0x80, 0x98)),
+            text(time.to_owned()).size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)),
             container(text(tag.to_owned()).size(11).color(tag_color))
                 .padding([2, 6])
                 .style(move |_: &Theme| container::Style {
@@ -5308,11 +5309,11 @@ fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<
 fn info_badge(tooltip_text: &'static str) -> Element<'static, Message> {
     let _ = tooltip_text; // stored for future tooltip implementation
     container(
-        text("\u{2139}").size(9).color(Color::from_rgb8(0x4A, 0x68, 0x84))
+        text("\u{2139}").size(9).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
     )
     .style(|_: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x0E, 0x1E, 0x30))),
-        border: Border { color: Color::from_rgb8(0x1A, 0x32, 0x4A), width: 1.0, radius: 8.0.into() },
+        background: Some(Background::Color(Color::from_rgb8(0x16, 0x15, 0x24))),
+        border: Border { color: Color::from_rgb8(0x22, 0x20, 0x36), width: 1.0, radius: 8.0.into() },
         ..Default::default()
     })
     .padding([1, 5])
@@ -5324,7 +5325,7 @@ fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Eleme
         row![
             text(icon.to_owned()).size(14).color(icon_color),
             column![
-                text(title.to_owned()).size(13).color(Color::from_rgb8(0xC8, 0xDE, 0xEE)),
+                text(title.to_owned()).size(13).color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
                 text(sub.to_owned()).size(11).color(Color::from_rgb8(0x70, 0x90, 0xA8)),
             ]
             .spacing(2),
@@ -5376,9 +5377,9 @@ fn analysis_card<'a>(
         .width(Length::Fill),
     )
     .style(|_theme: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x08, 0x18, 0x28))),
+        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
         border: Border {
-            color: Color::from_rgb8(0x1E, 0x82, 0x8F),
+            color: Color::from_rgb8(0x70, 0x40, 0xCC),
             width: 1.5,
             radius: 8.0.into(),
         },
@@ -5391,6 +5392,11 @@ fn analysis_card<'a>(
 
 fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
     let gain_fill = entry.compression_gain_percent / 100.0;
+    let preview_upper = entry.preview_note.to_ascii_uppercase();
+    let suspicious = preview_upper.contains("EICAR")
+        || preview_upper.contains("OBF")
+        || preview_upper.contains("QUARANTINE")
+        || preview_upper.contains("CRITICAL");
     container(
         column![
             text(format!("▤ {} | {}", entry.id, entry.file_name)).size(16),
@@ -5404,11 +5410,31 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
             .size(13),
             text(make_sparkline(gain_fill)).size(12),
             text(entry.anchor_summary.clone()).size(13),
-            text(entry.preview_note.clone()).size(13),
+            text(entry.preview_note.clone())
+                .size(13)
+                .color(if suspicious {
+                    Color::from_rgb8(0xFF, 0xAE, 0x42)
+                } else {
+                    c(TEXT_M)
+                }),
         ]
         .spacing(5),
     )
-    .style(selected_item_style)
+    .style(move |_: &Theme| {
+        if suspicious {
+            container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.42, 0.18, 0.02, 0.36))),
+                border: Border {
+                    color: Color::from_rgb8(0xFF, 0xAE, 0x42),
+                    width: 1.4,
+                    radius: 10.0.into(),
+                },
+                ..Default::default()
+            }
+        } else {
+            selected_item_style(&Theme::Dark)
+        }
+    })
     .padding(14)
     .width(Length::Fill)
     .into()
@@ -5419,6 +5445,9 @@ async fn analyze_file_for_register(
     username: String,
     data_key: Option<DataKey>,
 ) -> Result<FileAnalysisResult, String> {
+    let original_bytes = fs::read(&path)
+        .map_err(|e| format!("Datei konnte nicht gelesen werden: {e}"))?;
+
     // Create AEF output directory
     let aef_dir = PathBuf::from("data")
         .join("rust_shell")
@@ -5456,7 +5485,26 @@ async fn analyze_file_for_register(
         .and_then(|n| n.to_str())
         .unwrap_or("unbekannt")
         .to_owned();
-    let source_kind = detect_source_kind(&path, &[]);
+    let source_kind = detect_source_kind(&path, &original_bytes);
+
+    let original_text = if is_text_like_file(&path) {
+        String::from_utf8_lossy(&original_bytes).to_string()
+    } else {
+        String::new()
+    };
+    let ethics = structural_text_integrity(
+        &original_text,
+        Some(encode_result.coherence_index),
+    );
+    let obfuscation = if original_text.is_empty() {
+        0.0
+    } else {
+        code_suspicion_score(&original_text)
+    };
+    let eicar_hit = original_text
+        .to_ascii_uppercase()
+        .contains("EICAR-STANDARD-ANTIVIRUS-TEST-FILE");
+
     let mut metrics = BTreeMap::from([
         ("entropy_mean".to_owned(), encode_result.coherence_index as f64),
         ("trust_score".to_owned(), encode_result.trust_score as f64),
@@ -5468,6 +5516,11 @@ async fn analyze_file_for_register(
             "anchor_count".to_owned(),
             encode_result.anchor_count as f64,
         ),
+        ("ethics_score".to_owned(), ethics.score),
+        ("ethics_zipf".to_owned(), ethics.zipf),
+        ("ethics_noether".to_owned(), ethics.noether),
+        ("obfuscation_score".to_owned(), obfuscation),
+        ("eicar_hit".to_owned(), if eicar_hit { 1.0 } else { 0.0 }),
     ]);
 
     // Hard boundary: any lab-like metrics must pass strict schema validation before use.
@@ -5534,13 +5587,20 @@ async fn analyze_file_for_register(
             .join(" | ");
         format!("Policy: {labels}")
     };
+    let cascade_summary = format!(
+        "Cascade: Ethics {:.2} | Obf {:.2} | EICAR {}",
+        ethics.score,
+        obfuscation,
+        if eicar_hit { "HIT" } else { "no" }
+    );
     let preview_note = format!(
-        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {} | {}",
+        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {} | {} | {}",
         encode_result.e_lambda,
         encode_result.e_lambda_label,
         encode_result.trust_score * 100.0,
         if encode_result.lossless_confirmed { "ja" } else { "nein" },
-        policy_summary
+        policy_summary,
+        cascade_summary
     );
     let anchor_summary = format!(
         "{} Anker | {:.1}% Kompression | Trust: {:.0}%",
@@ -5549,8 +5609,8 @@ async fn analyze_file_for_register(
         encode_result.trust_score * 100.0
     );
     let process_summary = format!(
-        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2} | {}",
-        original_size, delta_size, encode_result.e_lambda, policy_summary
+        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2} | {} | {}",
+        original_size, delta_size, encode_result.e_lambda, policy_summary, cascade_summary
     );
 
     Ok(FileAnalysisResult {
@@ -5613,5 +5673,32 @@ fn detect_file_type_from_name(file_name: &str) -> String {
         "pdf" => "pdf".to_owned(),
         _ => "binary".to_owned(),
     }
+}
+
+fn is_text_like_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(OsStr::to_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "txt"
+            | "md"
+            | "json"
+            | "toml"
+            | "yaml"
+            | "yml"
+            | "rs"
+            | "py"
+            | "js"
+            | "ts"
+            | "html"
+            | "css"
+            | "xml"
+            | "csv"
+            | "ini"
+            | "log"
+    )
 }
 

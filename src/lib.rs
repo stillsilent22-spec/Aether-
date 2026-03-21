@@ -1,7 +1,6 @@
 pub mod aef;
 pub mod app;
 pub mod ockham;
-pub mod py_entropy;
 pub mod auth;
 pub mod browser;
 pub mod browser_embed;
@@ -11,9 +10,12 @@ pub mod delta_vault;
 pub mod gfx;
 pub mod iced_shell;
 pub mod inter_layer_bus;
+pub mod key_vault;
+pub mod lab_boundary;
 pub mod observation;
 pub mod offline_cache;
 pub mod pack;
+pub mod policy_executor;
 pub mod priority;
 pub mod public_ttd;
 pub mod runtime_signal;
@@ -30,18 +32,14 @@ pub mod egl_api;
 pub mod egl_example;
 pub mod shanway;
 pub mod state;
+pub mod swarm_loop;
 pub mod theory_of_mind;
 pub mod vault_access;
 pub mod workflow_anchor;
 
-// ── Python-Extension-Einstieg ──────────────────────────────────────────────
-// Wird von maturin als `aether_core_rs`-Modul gebaut.
-// Stellt byte_entropy, token_entropy, zipf_score, noether_score bereit.
-use pyo3::prelude::*;
-
-#[pymodule]
-fn aether_core_rs(_py: Python<'_>, m: &PyModule) -> PyResult<()> {
-    py_entropy::register(_py, m)?;
-    Ok(())
-}
+// ── Native Rust Engines ────────────────────────────────────────────────────
+pub mod hardware;
+pub mod ethics;
+pub mod bayes;
+pub mod observer;
 
