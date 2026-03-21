@@ -707,7 +707,7 @@ impl AetherIcedShell {
         container(
             row![left, right]
                 .spacing(12)
-                .max_width(1180)
+                .width(1180)
         )
         .padding(16)
         .width(Length::Fill)
@@ -1253,6 +1253,1951 @@ impl AetherIcedShell {
             .height(Length::Fill),
         )
         .padding(16)
+        .into()
+    }
+
+    fn view_home_aether_cyber(&self) -> Element<'_, Message> {
+        let t = self.tick_counter as f32;
+        let entries = self.entries();
+        let risk_base = if self.security_snapshot.trust_state.to_ascii_uppercase().contains("HIGH") {
+            0.34
+        } else if self.security_snapshot.trust_state.to_ascii_uppercase().contains("OK") {
+            0.48
+        } else {
+            0.71
+        };
+        let risk_score = ((risk_base + 0.08 * (t * 0.021).sin()).clamp(0.05, 0.98) * 1000.0) as u32;
+        let noether_score = (0.62 + 0.25 * (t * 0.017).cos()).clamp(0.0, 1.0);
+        let total_threats = (entries.len() as f32 * 1.9 + 14.0 + (t * 0.13).sin().abs() * 22.0) as u32;
+        let video_risk = (12.0 + 8.0 * (t * 0.042).sin().abs()) as u32;
+        let image_risk = (35.0 + 14.0 * (t * 0.033).sin().abs()) as u32;
+        let docs_risk = (6.0 + 5.0 * (t * 0.051).sin().abs()) as u32;
+        let folder_risk = (52.0 + 16.0 * (t * 0.024).sin().abs()) as u32;
+        let pane_slide = ((self.tick_counter % 8) as f32 / 8.0).clamp(0.0, 1.0); // 120ms @ ~60fps
+        let node_pulse = 1.0 + 0.03 * (t * 1.57).sin(); // 40ms pulse
+        let data_flash = 0.45 + 0.55 * (t * 5.0).sin().abs(); // pulse intensity for border shimmer
+        let graph_reveal = ((self.tick_counter % 6) as f32 / 6.0).clamp(0.0, 1.0); // 90ms reveal
+        let info_reveal = (((self.tick_counter.saturating_sub(self.dashboard_info_open_tick)) as f32)
+            * self.tick_interval_ms() as f32 / 80.0)
+            .clamp(0.0, 1.0);
+
+        let threat_rows: Vec<(String, String, String, String, String)> = vec![
+            ("12-05-2024".to_owned(), "crazyfish228".to_owned(), "Code Red".to_owned(), "C:/Users/opened/file_a.jpg".to_owned(), "jpeg".to_owned()),
+            ("12-05-2024".to_owned(), "angryswan732".to_owned(), "MyDoom".to_owned(), "D:/vault/tmp/log_88.bin".to_owned(), "bin".to_owned()),
+            ("11-05-2024".to_owned(), "node-aether-3".to_owned(), "Sasser".to_owned(), "C:/snapshots/arc_19.dat".to_owned(), "dat".to_owned()),
+        ];
+        let device_rows: Vec<(String, f32)> = vec![
+            ("crazyfish228".to_owned(), (0.38 + 0.16 * (t * 0.04).sin()).clamp(0.0, 1.0)),
+            ("angryswan732".to_owned(), (0.61 + 0.12 * (t * 0.03).cos()).clamp(0.0, 1.0)),
+            ("node-aether-3".to_owned(), (0.44 + 0.14 * (t * 0.05).sin()).clamp(0.0, 1.0)),
+        ];
+
+        let q = self.dashboard_search.trim().to_ascii_lowercase();
+        let filtered_threat_rows: Vec<_> = threat_rows
+            .into_iter()
+            .filter(|(_, device, virus, path, file_type)| {
+                q.is_empty()
+                    || device.to_ascii_lowercase().contains(&q)
+                    || virus.to_ascii_lowercase().contains(&q)
+                    || path.to_ascii_lowercase().contains(&q)
+                    || file_type.to_ascii_lowercase().contains(&q)
+            })
+            .collect();
+        let filtered_device_rows: Vec<_> = device_rows
+            .into_iter()
+            .filter(|(device, _)| q.is_empty() || device.to_ascii_lowercase().contains(&q))
+            .collect();
+
+        let sidebar = {
+            let nav_item = |label: &str, section: &str, active: bool| {
+                button(text(label).size(13).color(if active { c(TEXT_H) } else { c(TEXT_M) }))
+                    .on_press(Message::DashboardNavSelected(section.to_owned()))
+                    .padding([8, 10])
+                    .style(move |_: &Theme, _| button::Style {
+                        background: Some(Background::Color(if active {
+                            Color::from_rgba(0.55, 0.25, 0.95, 0.65)
+                        } else {
+                            Color::TRANSPARENT
+                        })),
+                        border: Border {
+                            color: if active { Color::from_rgb8(0x8B, 0x52, 0xF6) } else { Color::TRANSPARENT },
+                            width: if active { 1.0 } else { 0.0 },
+                            radius: 8.0.into(),
+                        },
+                        ..Default::default()
+                    })
+            };
+
+            container(
+                column![
+                    text("AetherGuard").size(24).color(Color::from_rgb8(0xA0, 0x60, 0xFF)),
+                    text("General").size(12).color(c(TEXT_D)),
+                    nav_item("Overview", "Overview", self.dashboard_nav == "Overview"),
+                    nav_item("Issues", "Issues", self.dashboard_nav == "Issues"),
+                    nav_item("Files", "Files", self.dashboard_nav == "Files"),
+                    text("Reports").size(12).color(c(TEXT_D)),
+                    nav_item("Reports", "Reports", self.dashboard_nav == "Reports"),
+                    nav_item("Threat Details", "Threat Details", self.dashboard_nav == "Threat Details"),
+                    nav_item("Threats", "Threats", self.dashboard_nav == "Threats"),
+                    text("Engine").size(12).color(c(TEXT_D)),
+                    nav_item("Chat", "Chat", self.dashboard_nav == "Chat"),
+                    nav_item("Network", "Network", self.dashboard_nav == "Network"),
+                    nav_item("Compute", "Compute", self.dashboard_nav == "Compute"),
+                    nav_item("Storage", "Storage", self.dashboard_nav == "Storage"),
+                    text("All Modules").size(12).color(c(TEXT_D)),
+                    nav_item("Logs", "Logs", self.dashboard_nav == "Logs"),
+                    nav_item("Data", "Data", self.dashboard_nav == "Data"),
+                    nav_item("Anchors", "Anchors", self.dashboard_nav == "Anchors"),
+                    nav_item("FlowSphere", "FlowSphere", self.dashboard_nav == "FlowSphere"),
+                    nav_item("ADE", "ADE", self.dashboard_nav == "ADE"),
+                    nav_item("Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"),
+                    nav_item("Imprint", "Imprint", self.dashboard_nav == "Imprint"),
+                    text("Settings").size(12).color(c(TEXT_D)),
+                    nav_item("Performance", "Performance", self.dashboard_nav == "Performance"),
+                    nav_item("Help & Support", "Help & Support", self.dashboard_nav == "Help & Support"),
+                    nav_item("Settings", "Settings", self.dashboard_nav == "Settings"),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::Fixed(210.0))
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                border: Border { color: Color::from_rgb8(0x30, 0x2E, 0x4E), width: 1.2, radius: 14.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let topbar = row![
+            column![
+                text("Welcome! Aether Operator").size(24).color(c(TEXT_H)),
+                text("Deterministic pane-graph security telemetry").size(13).color(c(TEXT_M)),
+            ].spacing(3),
+            iced::widget::Space::new(Length::Fill, Length::Shrink),
+            container(
+                row![
+                    text("Search").size(12).color(c(TEXT_D)),
+                    text_input("Search Here", &self.dashboard_search)
+                        .on_input(Message::DashboardSearchChanged)
+                        .padding([8, 12])
+                        .size(13)
+                        .width(Length::Fixed(340.0)),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center)
+            )
+            .padding([4, 8])
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x1A, 0x19, 0x28))),
+                border: Border { color: Color::from_rgb8(0x3C, 0x38, 0x60), width: 1.1, radius: 24.0.into() },
+                ..Default::default()
+            }),
+            button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
+                .on_press(Message::DashboardNavSelected("Performance".to_owned()))
+                .padding([8, 12])
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
+                    border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
+                    ..Default::default()
+                }),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(12);
+
+        let kpis = row![
+            cyber_kpi_card("Total Threats", format!("{}%", total_threats), "Aether event stream", Color::from_rgb8(0xFF, 0x4D, 0xA4), "total_threats"),
+            cyber_kpi_card("Video File Risk", format!("{}%", video_risk), "Live node binding", Color::from_rgb8(0xA6, 0x4D, 0xFF), "video_risk"),
+            cyber_kpi_card("Image File Risk", format!("{}%", image_risk), "Deterministic state", Color::from_rgb8(0xFF, 0x53, 0x96), "image_risk"),
+            cyber_kpi_card("Docs File Risk", format!("{}%", docs_risk), "Aether transition", Color::from_rgb8(0x3E, 0x7B, 0xFF), "docs_risk"),
+            cyber_kpi_card("Folder File Risk", format!("{}%", folder_risk), "Overlay observer", Color::from_rgb8(0x18, 0x9E, 0xFF), "folder_risk"),
+        ]
+        .spacing(10);
+
+        let threat_summary_panel = container(
+            column![
+                row![
+                    text("Threat Summary").size(18).color(c(TEXT_H)),
+                    info_icon_button("threat_summary"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text("Yearly").size(12).color(c(TEXT_M)),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(ThreatTrendScene {
+                    tick: self.tick_counter,
+                    reveal: graph_reveal,
+                })
+                .height(Length::Fixed(210.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(14)
+        .width(Length::FillPortion(3))
+        .style(accent_card_style);
+
+        let risk_panel = container(
+            column![
+                row![
+                    text("Risk Score").size(18).color(c(TEXT_H)),
+                    info_icon_button("risk_score"),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(RiskGaugeScene {
+                    score: risk_score,
+                    pulse: node_pulse,
+                    flash: data_flash,
+                })
+                .height(Length::Fixed(200.0))
+                .width(Length::Fill),
+            ]
+            .spacing(10)
+        )
+        .padding(14)
+        .width(Length::FillPortion(2))
+        .style(accent_card_style);
+
+        let donut_panel = container(
+            column![
+                row![
+                    text("Threats By Virus").size(18).color(c(TEXT_H)),
+                    info_icon_button("virus_pie"),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(DonutScene {
+                    values: [0.22, 0.18, 0.35, 0.25],
+                    colors: [
+                        Color::from_rgb8(0xB0, 0x4D, 0xFF),
+                        Color::from_rgb8(0xFF, 0x55, 0xA0),
+                        Color::from_rgb8(0x3B, 0x8E, 0xFF),
+                        Color::from_rgb8(0x17, 0xC2, 0xFF),
+                    ],
+                    pulse: node_pulse,
+                })
+                .height(Length::Fixed(180.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(14)
+        .width(Length::FillPortion(2))
+        .style(standard_card_style);
+
+        let pane_graph = container(
+            column![
+                row![
+                    text("Aether Pane-Graph").size(16).color(c(TEXT_H)),
+                    info_icon_button("pane_graph"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text("Background · Mid · Overlay").size(11).color(c(TEXT_D)),
+                ].spacing(8).align_y(Alignment::Center),
+                canvas::Canvas::new(CyberPaneGraphScene {
+                    tick: self.tick_counter,
+                    pulse: node_pulse,
+                    slide: pane_slide,
+                })
+                .height(Length::Fixed(130.0))
+                .width(Length::Fill),
+            ]
+            .spacing(8)
+        )
+        .padding(12)
+        .style(standard_card_style);
+
+        let table_panel = {
+            let rows: Vec<Element<'_, Message>> = filtered_threat_rows
+                .iter()
+                .map(|(date, device, virus, path, file_type)| {
+                    row![
+                        text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
+                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                        text(virus).size(12).color(Color::from_rgb8(0xFF, 0x60, 0xA0)).width(Length::FillPortion(2)),
+                        text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
+                        text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
+                        info_icon_button("threat_details"),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+                })
+                .collect();
+            container(
+                column![
+                    row![
+                        text("Threat Details").size(18).color(c(TEXT_H)),
+                        info_icon_button("threat_details"),
+                        iced::widget::Space::new(Length::Fill, Length::Shrink),
+                        text("Daily").size(12).color(c(TEXT_M)),
+                    ].spacing(8).align_y(Alignment::Center),
+                    row![
+                        text("Date").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
+                        text("Device ID").size(11).color(c(TEXT_D)).width(Length::FillPortion(3)),
+                        text("Virus name").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
+                        text("File Path").size(11).color(c(TEXT_D)).width(Length::FillPortion(4)),
+                        text("Type").size(11).color(c(TEXT_D)).width(Length::FillPortion(1)),
+                        text("Info").size(11).color(c(TEXT_D)),
+                    ]
+                    .spacing(8),
+                    column(rows).spacing(7),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::FillPortion(3))
+            .style(standard_card_style)
+        };
+
+        let device_panel = {
+            let rows: Vec<Element<'_, Message>> = filtered_device_rows
+                .iter()
+                .map(|(device, level)| {
+                    row![
+                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                        canvas::Canvas::new(DonutScene {
+                            values: [*level, 1.0 - *level, 0.0, 0.0],
+                            colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x1C, 0x1B, 0x2A), Color::TRANSPARENT, Color::TRANSPARENT],
+                            pulse: 1.0,
+                        })
+                        .width(Length::Fixed(56.0))
+                        .height(Length::Fixed(56.0))
+                        .into(),
+                        info_icon_button("device_list"),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+                })
+                .collect();
+            container(
+                column![
+                    row![
+                        text("Threat by device").size(18).color(c(TEXT_H)),
+                        info_icon_button("device_list"),
+                    ].spacing(8).align_y(Alignment::Center),
+                    column(rows).spacing(8),
+                ]
+                .spacing(8)
+            )
+            .padding(14)
+            .width(Length::FillPortion(2))
+            .style(standard_card_style)
+        };
+
+        let info_overlay: Element<'_, Message> = if let Some(key) = &self.dashboard_info_key {
+            let alpha = (0.20 + 0.80 * info_reveal).clamp(0.0, 1.0);
+            container(
+                column![
+                    row![
+                        text(format!("Info: {key}")).size(14).color(c(TEXT_H)),
+                        iced::widget::Space::new(Length::Fill, Length::Shrink),
+                        button(text("x").size(12)).on_press(Message::DashboardInfoToggle(key.clone())).padding([2, 8]),
+                    ].align_y(Alignment::Center),
+                    text(dashboard_info_text(key)).size(12).color(c(TEXT_M)),
+                ]
+                .spacing(8)
+            )
+            .padding(12)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.03, 0.10, 0.18, alpha))),
+                border: Border { color: Color::from_rgba(0.63, 0.43, 1.0, alpha), width: 1.0 + 1.2 * info_reveal, radius: (6.0 + 10.0 * info_reveal).into() },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into()
+        } else {
+            container(iced::widget::Space::new(Length::Shrink, Length::Shrink)).into()
+        };
+
+        let dashboard_body: Element<'_, Message> = if self.dashboard_nav == "Overview" {
+            column![
+                pane_graph,
+                kpis,
+                row![risk_panel, threat_summary_panel].spacing(10),
+                row![table_panel, donut_panel, device_panel].spacing(10),
+            ]
+            .spacing(10)
+            .into()
+        } else {
+            let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
+                "Issues" => self.view_logs(),
+                "Files" => self.view_data(),
+                "Reports" => self.view_anchors(),
+                "Threat Details" => self.view_ade(),
+                "Threats" => self.view_flow_sphere(),
+                "Chat" => self.view_chat(),
+                "Network" => self.view_browser(),
+                "Compute" => self.view_youtube(),
+                "Storage" => self.view_rekonstruktion(),
+                "Logs" => self.view_logs(),
+                "Data" => self.view_data(),
+                "Anchors" => self.view_anchors(),
+                "FlowSphere" => self.view_flow_sphere(),
+                "ADE" => self.view_ade(),
+                "Reconstruction" => self.view_rekonstruktion(),
+                "Imprint" => self.view_imprint(),
+                "Performance" => self.view_dashboard_performance(),
+                "Help & Support" => self.view_imprint(),
+                "Settings" => self.view_settings(),
+                _ => self.view_logs(),
+            };
+            container(embedded)
+                .padding(4)
+                .style(standard_card_style)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        };
+
+        let mid_layer = container(
+            column![
+                topbar,
+                dashboard_body,
+                info_overlay,
+            ]
+            .spacing(10)
+        )
+        .style(standard_card_style)
+        .padding(10)
+        .width(Length::Fill);
+
+        let background_layer = container(iced::widget::Space::new(Length::Fill, Length::Fill))
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x0C, 0x0B, 0x12))),
+                border: Border {
+                    color: Color::from_rgba(0.61, 0.39, 1.0, 0.22 + 0.28 * data_flash),
+                    width: 1.0 + 0.8 * node_pulse,
+                    radius: 14.0.into(),
+                },
+                ..Default::default()
+            });
+
+        let overlay_layer = container(
+            row![
+                text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H)),
+                info_icon_button("noether_score"),
+                text(format!("Risk {}", risk_score)).size(11).color(Color::from_rgb8(0xFF, 0xC0, 0x66)),
+                text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D)),
+                text(format!(
+                    "Runtime {} | Tick {}ms | Sync {} | Poll {}",
+                    self.runtime_profile_label(),
+                    self.tick_interval_ms(),
+                    self.browser_sync_stride,
+                    self.profile_browser_poll_batch()
+                ))
+                .size(11)
+                .color(c(TEXT_M)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center)
+        )
+        .padding([6, 10])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.03, 0.09, 0.20, 0.65 * pane_slide + 0.25))),
+            border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.0, radius: 8.0.into() },
+            ..Default::default()
+        });
+
+        container(
+            row![
+                sidebar,
+                container(
+                    column![background_layer, mid_layer, overlay_layer]
+                        .spacing(8)
+                )
+                .width(Length::Fill),
+            ]
+            .spacing(10)
+            .height(Length::Fill)
+        )
+        .padding(10)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_dashboard_performance(&self) -> Element<'_, Message> {
+        let profile = self.runtime_profile;
+        let browser_mode = match self.browser_surface_mode() {
+            Some(Tab::Browser) => "NETWORK",
+            Some(Tab::YouTube) => "COMPUTE",
+            _ => "OFF",
+        };
+        let profile_button = |label: &'static str, p: RuntimeProfile, active: bool| {
+            button(text(if active { format!("{} [active]", label) } else { label.to_owned() }).size(13))
+                .on_press(Message::RuntimeProfileSelected(p))
+                .padding([10, 14])
+                .style(move |_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if active {
+                        Color::from_rgba(0.59, 0.34, 0.96, 0.22)
+                    } else {
+                        Color::from_rgba(0.07, 0.14, 0.24, 0.86)
+                    })),
+                    border: Border {
+                        color: if active { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2E, 0x2C, 0x4C) },
+                        width: if active { 1.2 } else { 1.0 },
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                })
+        };
+
+        container(
+            column![
+                row![
+                    text("Performance Optimization").size(22).color(c(TEXT_H)),
+                    info_icon_button("performance"),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    text(format!("Current: {}", self.runtime_profile_label())).size(12).color(c(TEXT_M)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                text("Deterministic runtime profiles for latency, throughput and low-resource stability.")
+                    .size(13)
+                    .color(c(TEXT_M)),
+                row![
+                    profile_button("AUTO", RuntimeProfile::Auto, profile == RuntimeProfile::Auto),
+                    profile_button("BALANCED", RuntimeProfile::Balanced, profile == RuntimeProfile::Balanced),
+                    profile_button("LOW-POWER", RuntimeProfile::LowPower, profile == RuntimeProfile::LowPower),
+                    profile_button("LEGACY", RuntimeProfile::Legacy, profile == RuntimeProfile::Legacy),
+                ]
+                .spacing(10),
+                row![
+                    info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())),
+                    info_card("Browser-Sync", &format!("jede {} Ticks", self.browser_sync_stride)),
+                    info_card("Poll-Batch", &format!("{} Events", self.profile_browser_poll_batch())),
+                    info_card("Browser-Modus", browser_mode),
+                ]
+                .spacing(10),
+                row![
+                    info_card("Analyse-Status", &self.analysis_status),
+                ]
+                .spacing(10),
+                container(
+                    text("Hinweis: Diese Profile beeinflussen Scheduler-Takt, Browser-Sync-Frequenz und Lastcharakteristik deterministisch.")
+                        .size(12)
+                        .color(c(TEXT_D))
+                )
+                .padding(10)
+                .style(standard_card_style),
+            ]
+            .spacing(12)
+        )
+        .padding(12)
+        .style(accent_card_style)
+        .into()
+    }
+
+    fn view_chat(&self) -> Element<'_, Message> {
+        let tutorial_button: Element<'_, Message> = if self.show_tutorial {
+            button(text("Tutorial ausblenden"))
+                .padding([8, 14])
+                .on_press(Message::TutorialDismissed)
+                .into()
+        } else {
+            container(text("")).into()
+        };
+        let panel = match self.chat_context {
+            ChatContext::Private => self.view_private_chat(),
+            ChatContext::Group => self.view_group_chat(),
+            ChatContext::Shanway => {
+                let avatar = container(
+                    canvas::Canvas::new(ShanwayRobotScene {
+                        tick: self.tick_counter,
+                        size: 80.0,
+                    })
+                    .width(Length::Fixed(90.0))
+                    .height(Length::Fixed(110.0)),
+                )
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x15, 0x14, 0x22))),
+                    border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.1, radius: 10.0.into() },
+                    ..Default::default()
+                })
+                .padding(8);
+
+                row![avatar, self.view_shanway_chat()]
+                    .spacing(12)
+                    .into()
+            }
+        };
+        container(
+            column![
+                row![
+                    self.context_button(ChatContext::Private, "Privat"),
+                    self.context_button(ChatContext::Group, "Gruppen"),
+                    self.context_button(ChatContext::Shanway, "Shanway"),
+                    tutorial_button,
+                ]
+                .spacing(10),
+                panel,
+            ]
+            .spacing(16),
+        )
+        .padding(12)
+        .into()
+    }
+
+    fn view_browser(&self) -> Element<'_, Message> {
+        let url_bar = container(
+            row![
+                container(
+                    text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
+                ).padding([0, 8]),
+                text_input("https://duckduckgo.com", &self.browser_address)
+                    .on_input(Message::BrowserAddressChanged)
+                    .on_submit(Message::BrowserLoadPressed)
+                    .size(13)
+                    .padding([8, 12])
+                    .width(Length::Fill),
+                button(
+                    text("\u{2192}").size(14).color(Color::from_rgb8(0xF6, 0xED, 0xFF))
+                )
+                .padding([8, 14])
+                .on_press(Message::BrowserLoadPressed)
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x96, 0x57, 0xF7))),
+                    text_color: Color::from_rgb8(0xF6, 0xED, 0xFF),
+                    border: Border { radius: 6.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x17, 0x16, 0x24))),
+            border: Border { color: Color::from_rgb8(0x36, 0x34, 0x56), width: 1.1, radius: 8.0.into() },
+            ..Default::default()
+        })
+        .padding([4, 4]);
+
+        container(
+            row![
+                scrollable(
+                    column![
+                        text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
+                        url_bar,
+                        row![
+                            button(text("Seite pruefen").size(13))
+                                .padding([8, 14])
+                                .on_press(Message::BrowserInspectPressed)
+                                .style(secondary_button_style),
+                        ]
+                        .spacing(10),
+                        text_input("Suchbegriff oder Frage", &self.browser_search_query)
+                            .on_input(Message::BrowserSearchQueryChanged)
+                            .padding(10)
+                            .size(14),
+                        button(text("DuckDuckGo suchen"))
+                            .padding([10, 16])
+                            .on_press(Message::BrowserSearchPressed)
+                            .style(primary_button_style),
+                        info_card("Browser-Status", &self.browser_note),
+                        if let Some(probe) = &self.browser_probe {
+                            info_card(
+                                "Seitenanalyse",
+                                &format!(
+                                    "URL: {}\nStatus: {} | Risiko: {} ({:.0}%)\nTyp: {}\n{}\n{}",
+                                    probe.final_url,
+                                    probe.status_code,
+                                    probe.risk_label,
+                                    probe.risk_score * 100.0,
+                                    probe.content_type,
+                                    probe.frontend_summary,
+                                    probe.summary
+                                ),
+                            )
+                        } else {
+                            info_card(
+                                "Seitenanalyse",
+                                "Noch keine Seitenanalyse vorhanden. Aether prueft nur strukturell und fuehrt nichts aus.",
+                            )
+                        },
+                        if let Some(context) = &self.browser_search_context {
+                            info_card(
+                                "Suchkontext",
+                                &format!(
+                                    "Provider: {}\nQuelle: {}\n{}",
+                                    context.provider,
+                                    context.search_url,
+                                    context.summary
+                                ),
+                            )
+                        } else {
+                            info_card(
+                                "Suchkontext",
+                                "Noch kein Suchkontext geladen. DuckDuckGo bleibt explizit und fail-closed.",
+                            )
+                        },
+                    ]
+                    .spacing(14)
+                )
+                .width(Length::Fixed(420.0))
+                .style(panel_frame_style)
+                .padding(14),
+                container(
+                    column![
+                        text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
+                        text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
+                            .size(13).color(Color::from_rgb8(0x90, 0x88, 0xBC)),
+                        container(text(" "))
+                            .height(Length::Fill)
+                            .width(Length::Fill),
+                    ]
+                    .spacing(10)
+                )
+                .padding(16)
+                .style(panel_frame_style)
+                .width(Length::Fill)
+                .height(Length::Fill),
+            ]
+            .spacing(18)
+            .height(Length::Fill),
+        )
+        .padding(12)
+        .into()
+    }
+
+    fn view_data(&self) -> Element<'_, Message> {
+        let mut items = column![
+            text("Data").size(24),
+            text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.")
+                .size(16),
+            column![
+                row![
+                    row![text("Entropie").size(12).color(c(TEXT_M)), info_badge("Entropie beschreibt die Restunsicherheit eines Artefakts.")].spacing(6),
+                    row![text("Symmetrie").size(12).color(c(TEXT_M)), info_badge("Symmetrie markiert wiederkehrende Struktur und Invarianz.")].spacing(6),
+                    row![text("Drift").size(12).color(c(TEXT_M)), info_badge("Drift misst lokale Byte-Aenderung zwischen benachbarten Bereichen.")].spacing(6),
+                ]
+                .spacing(12),
+                row![
+                    row![text("Gain").size(12).color(c(TEXT_M)), info_badge("Gain beschreibt den Kompressionsgewinn gegen das Original.")].spacing(6),
+                    row![text("E-Lambda").size(12).color(c(TEXT_M)), info_badge("E-Lambda ist der interne Kohaerenzindikator der AEF-Pipeline.")].spacing(6),
+                    row![text("Trust").size(12).color(c(TEXT_M)), info_badge("Trust kombiniert Filter, Kohaerenz und Lossless-Bestaetigung.")].spacing(6),
+                ]
+                .spacing(12),
+            ]
+            .spacing(8),
+            analysis_card(
+                self.analysis_progress,
+                &self.analysis_status,
+                &self.hovered_file_label,
+                &self
+                    .last_analysis
+                    .as_ref()
+                    .map(|analysis| format!(
+                        "{}\n{}\n{}",
+                        analysis.preview_note, analysis.anchor_summary, analysis.process_summary
+                    ))
+                    .unwrap_or_else(|| {
+                        "Kompressionsgewinn, Delta und Anker erscheinen nach dem ersten Drop."
+                            .to_owned()
+                    }),
+            ),
+        ]
+        .spacing(14);
+        let entries = self.entries();
+        if entries.is_empty() {
+            items = items.push(info_card(
+                "Leerer Datenraum",
+                "Sobald lokale Artefakte analysiert werden, erscheinen hier Analysepfade und Anchor-Signale.",
+            ));
+        } else {
+            for entry in entries.into_iter().take(24) {
+                items = items.push(register_card(entry));
+            }
+        }
+        container(scrollable(items).height(Length::Fill))
+            .padding(12)
+            .into()
+    }
+
+    fn view_private_chat(&self) -> Element<'_, Message> {
+        let selected_partner = self.active_private_partner();
+        let mut partners = column![text_input("Nutzer suchen", &self.chat_user_search)
+            .on_input(Message::ChatUserSearchChanged)
+            .padding(10)
+            .size(16)]
+        .spacing(10);
+
+        for username in self.other_usernames().into_iter().take(12) {
+            let active = selected_partner.as_deref() == Some(username.as_str());
+            partners = partners.push(
+                button(text(if active {
+                    format!("{username} [aktiv]")
+                } else {
+                    username.clone()
+                }))
+                .padding([8, 12])
+                .on_press(Message::PrivatePartnerSelected(username))
+                .style(if active { primary_button_style } else { secondary_button_style }),
+            );
+        }
+
+        let messages = self.active_private_messages();
+        let conversation = if let Some(partner) = &selected_partner {
+            let mut content = column![
+                text(format!("Privater Kanal | {partner}")).size(20),
+                text("Suche nach Nutzernamen oeffnet lokale Threads. Inhalte bleiben im privaten Bereich.")
+                    .size(15),
+            ]
+            .spacing(10);
+            if messages.is_empty() {
+                content = content.push(info_card(
+                    "Leerer Thread",
+                    "Noch keine lokalen Nachrichten. Du kannst den Thread sofort beginnen.",
+                ));
+            } else {
+                for message in messages.iter().take(32) {
+                    content = content.push(info_card(&message.author, &message.body));
+                }
+            }
+            content = content.push(
+                text_input("Nachricht verfassen", &self.private_message_draft)
+                    .on_input(Message::PrivateMessageChanged)
+                    .padding(10)
+                    .size(16),
+            );
+            content = content.push(
+                button(text("Nachricht lokal speichern"))
+                    .padding([10, 16])
+                    .on_press(Message::PrivateMessageSend)
+                    .style(primary_button_style),
+            );
+            container(scrollable(content).height(Length::Fill))
+                .padding(16)
+                .style(panel_frame_style)
+                .into()
+        } else {
+            info_card(
+                "Kein Nutzer gewaehlt",
+                "Suche links nach einem vorhandenen Nutzernamen, um einen privaten Thread zu oeffnen.",
+            )
+        };
+
+        container(
+            row![
+                container(scrollable(partners).height(Length::Fill))
+                    .padding(16)
+                    .style(panel_frame_style)
+                    .width(Length::FillPortion(1)),
+                container(conversation).style(panel_frame_style).width(Length::FillPortion(2)),
+            ]
+            .spacing(14),
+        )
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_group_chat(&self) -> Element<'_, Message> {
+        let rooms = self.group_rooms();
+        let mut content = column![
+            text("Gruppen").size(20),
+            text("Gruppen bleiben lokal organisiert. Der Standardraum dient als gemeinsamer lokaler Arbeitskontext.")
+                .size(15),
+        ]
+        .spacing(12);
+
+        if rooms.is_empty() {
+            content = content.push(info_card(
+                "Keine Gruppenraeume",
+                "Sobald du eine lokale Gruppennachricht speicherst, erscheint hier der Raum Allgemein.",
+            ));
+        } else {
+            for room in rooms.iter().take(8) {
+                let body = if room.messages.is_empty() {
+                    "Noch keine lokalen Nachrichten.".to_owned()
+                } else {
+                    room.messages
+                        .iter()
+                        .rev()
+                        .take(3)
+                        .map(|message| format!("{}: {}", message.author, message.body))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
+                content = content.push(info_card(&room.name, &body));
+            }
+        }
+
+        content = content.push(
+            text_input("Nachricht an Allgemein", &self.group_message_draft)
+                .on_input(Message::GroupMessageChanged)
+                .padding(10)
+                .size(16),
+        );
+        content = content.push(
+            button(text("Gruppennachricht lokal speichern"))
+                .padding([10, 16])
+                .on_press(Message::GroupMessageSend)
+                .style(primary_button_style),
+        );
+
+        container(scrollable(content).height(Length::Fill))
+            .padding(12)
+            .style(panel_frame_style)
+            .into()
+    }
+
+    fn view_shanway_chat(&self) -> Element<'_, Message> {
+        let messages = self.shanway_messages();
+        let mut content = column![
+            text("Shanway").size(24),
+            text("Ruhig, klar und professionell.").size(16),
+        ]
+        .spacing(12);
+        let paragraph = if self.show_tutorial {
+            "Willkommen. Aether ist ein vollstaendig lokales System fuer Strukturanalyse, sichere Verarbeitung und nachvollziehbare Organisation. DNA-Daten sind lokale Analysepakete: Sie beschreiben Merkmale einer Quelle, nicht deine Rohdaten. Anker sind stabile Strukturpunkte, mit denen Dateien, Prozesse und Artefakte in Cluster eingeordnet werden. Deltas, Restanteile und Zugangsdaten bleiben auf deinem Geraet; es gibt keine zentrale Wiederherstellung. Aether existiert, um Technik und Wissen ohne Cloud-Zwang verstaendlich und praktisch zugaenglich zu machen. Wenn du ein Artefakt in das Fenster ziehst, startet eine isolierte Strukturanalyse ohne Ausfuehrung."
+        } else {
+            "Ich erklaere den lokalen Zustand verstaendlich und ohne Effekte. Dateien werden isoliert verarbeitet, private Kontexte blockiert und die Analyse endet nach Merkmalsprofil, Anchor-Signalen und Cluster-Zuordnung."
+        };
+        content = content.push(info_card("Einfuehrung", paragraph));
+        if messages.is_empty() {
+            content = content.push(info_card(
+                "Dialogstart",
+                "Du kannst Shanway direkt fragen, wie Aether arbeitet, was DNA-Daten sind, wie Anker verwendet werden oder wie deine Daten lokal geschuetzt bleiben.",
+            ));
+        } else {
+            for message in messages.iter().take(40) {
+                content = content.push(info_card(&message.author, &message.body));
+            }
+        }
+        content = content.push(
+            text_input("Frage an Shanway", &self.shanway_message_draft)
+                .on_input(Message::ShanwayMessageChanged)
+                .padding(10)
+                .size(16),
+        );
+        content = content.push(
+            button(text("An Shanway senden"))
+                .padding([10, 16])
+                .on_press(Message::ShanwayMessageSend)
+                .style(primary_button_style),
+        );
+        container(scrollable(content).height(Length::Fill))
+            .padding(12)
+            .style(panel_frame_style)
+            .into()
+    }
+
+    fn view_settings(&self) -> Element<'_, Message> {
+        let mode = self.security_mode();
+        let profile = self.runtime_profile;
+        container(
+            scrollable(
+                column![
+                    text("Einstellungen").size(24),
+                    row![
+                        info_card("OS-Layer", "Sandbox: strikt\nPrivacy-Boundary: hard block\nIntegrationsgrad: lokal"),
+                        info_card("Telemetrie", "Standard: nur lokal\nOptionen: aus, gedrosselt, sicherheitsrelevant"),
+                        info_card("Agenten", "Lokale Agenten koennen aktiviert, begrenzt und mit Sicherheitsprofilen versehen werden."),
+                    ]
+                    .spacing(14),
+                    text("Security-Modus").size(20),
+                    row![
+                        button(text(if mode == "local" { "LOCAL [aktiv]" } else { "LOCAL" }))
+                            .padding([10, 18])
+                            .on_press(Message::SecurityModeSelected("local".to_owned()))
+                            .style(if mode == "local" { primary_button_style } else { secondary_button_style }),
+                        button(text(if mode == "dev" { "DEV [aktiv]" } else { "DEV" }))
+                            .padding([10, 18])
+                            .on_press(Message::SecurityModeSelected("dev".to_owned()))
+                            .style(if mode == "dev" { primary_button_style } else { secondary_button_style }),
+                        button(text("Recheck"))
+                            .padding([10, 18])
+                            .on_press(Message::SecurityRecheck)
+                            .style(secondary_button_style),
+                    ]
+                    .spacing(10),
+                    text("Runtime-Profil (Hardware-Inklusion)").size(20),
+                    text("AUTO passt dynamisch an. LEGACY priorisiert niedrige Dauerlast fuer aeltere Systeme.")
+                        .size(14),
+                    row![
+                        button(text(if profile == RuntimeProfile::Auto {
+                            "AUTO [aktiv]"
+                        } else {
+                            "AUTO"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto))
+                        .style(if profile == RuntimeProfile::Auto { primary_button_style } else { secondary_button_style }),
+                        button(text(if profile == RuntimeProfile::Balanced {
+                            "BALANCED [aktiv]"
+                        } else {
+                            "BALANCED"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced))
+                        .style(if profile == RuntimeProfile::Balanced { primary_button_style } else { secondary_button_style }),
+                        button(text(if profile == RuntimeProfile::LowPower {
+                            "LOW-POWER [aktiv]"
+                        } else {
+                            "LOW-POWER"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower))
+                        .style(if profile == RuntimeProfile::LowPower { primary_button_style } else { secondary_button_style }),
+                        button(text(if profile == RuntimeProfile::Legacy {
+                            "LEGACY [aktiv]"
+                        } else {
+                            "LEGACY"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy))
+                        .style(if profile == RuntimeProfile::Legacy { primary_button_style } else { secondary_button_style }),
+                    ]
+                    .spacing(8),
+                    info_card(
+                        "Aktive Runtime-Parameter",
+                        &format!(
+                            "Profil: {}\nTick-Intervall: {} ms\nBrowser-Sync: alle {} Ticks\nBrowser-Event-Batch: {}",
+                            self.runtime_profile_label(),
+                            self.tick_interval_ms(),
+                            self.browser_sync_stride,
+                            self.profile_browser_poll_batch()
+                        ),
+                    ),
+                ]
+                .spacing(16),
+            )
+            .height(Length::Fill),
+        )
+        .padding(12)
+        .style(panel_frame_style)
+        .into()
+    }
+
+    fn view_logs(&self) -> Element<'_, Message> {
+        let mut items = column![
+            text("\u{25a3} LOGS \u{2014} Audit & Security").size(22),
+            text("Lokale technische Meldungen fuer Audit und Security.").size(13),
+        ]
+        .spacing(12);
+        if self.security_audit_events.is_empty() {
+            items = items.push(
+                container(
+                    column![
+                        text("\u{25cb} Noch keine Logs").size(16),
+                        text("Nach Anmeldung oder Security-Recheck erscheinen hier Ereignisse.").size(14),
+                    ]
+                    .spacing(6),
+                )
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                    border: Border {
+                        color: Color::from_rgb8(0x2A, 0x28, 0x44),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .padding(16)
+                .width(Length::Fill),
+            );
+        } else {
+            for event in &self.security_audit_events {
+                let trust_upper = event.trust_state.to_uppercase();
+                let (badge, border_col) =
+                    if trust_upper.contains("HIGH") || trust_upper.contains("OK") || trust_upper.contains("SECURE") {
+                        ("\u{25cf} OK", Color::from_rgb8(0x70, 0xB3, 0x92))
+                    } else if trust_upper.contains("WARN") || trust_upper.contains("MED") {
+                        ("\u{25d0} WARN", Color::from_rgb8(0xD4, 0xA0, 0x50))
+                    } else if trust_upper.contains("ERR") || trust_upper.contains("CRIT") {
+                        ("\u{25cf} CRIT", Color::from_rgb8(0xC6, 0x6A, 0x6A))
+                    } else {
+                        ("\u{25cb} INFO", Color::from_rgb8(0x48, 0x90, 0xFF))
+                    };
+                let summary = event.summary.clone();
+                let reason = event.reason.clone();
+                let trust_state = event.trust_state.clone();
+                let mode = event.mode.clone();
+                let maze = event.maze_state.clone();
+                items = items.push(
+                    container(
+                        column![
+                            row![
+                                text(badge).size(13),
+                                text(format!("  {} | {}", reason, trust_state)).size(14),
+                            ]
+                            .spacing(6),
+                            text(summary).size(13),
+                            text(format!("Mode: {} | Maze: {}", mode, maze)).size(12),
+                        ]
+                        .spacing(4)
+                        .width(Length::Fill),
+                    )
+                    .style(move |_theme: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                        border: Border {
+                            color: border_col,
+                            width: 1.5,
+                            radius: 6.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .padding([12, 16])
+                    .width(Length::Fill),
+                );
+            }
+        }
+        container(scrollable(items).height(Length::Fill))
+            .padding(12)
+            .style(panel_frame_style)
+            .into()
+    }
+
+    fn view_anchors(&self) -> Element<'_, Message> {
+        let clusters = self.anchor_clusters();
+        let selected = clusters
+            .get(self.selected_anchor_group)
+            .cloned()
+            .or_else(|| clusters.first().cloned())
+            .unwrap();
+        let mut list = column![
+            text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22),
+            text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13),
+        ]
+        .spacing(10);
+        for (index, cluster) in clusters.iter().enumerate() {
+            let is_sel = index == self.selected_anchor_group;
+            let bar = make_sparkline((cluster.item_count.min(20) as f32) / 20.0_f32);
+            let title = cluster.title.clone();
+            let descriptor = cluster.descriptor.clone();
+            let item_count = cluster.item_count;
+            list = list.push(
+                container(
+                    button(
+                        column![
+                            text(format!("\u{25c6} {}", title)).size(15),
+                            text(descriptor).size(12),
+                            text(format!("{} [{}]", bar, item_count)).size(12),
+                        ]
+                        .spacing(3),
+                    )
+                    .padding([10, 12])
+                    .width(Length::Fill)
+                    .on_press(Message::AnchorGroupSelected(index)),
+                )
+                .style(move |_theme: &Theme| {
+                    if is_sel {
+                        container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x12, 0x5A, 0x68))),
+                            border: Border {
+                                color: Color::from_rgb8(0x78, 0x44, 0xD8),
+                                width: 1.5,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    } else {
+                        container::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
+                            border: Border {
+                                color: Color::from_rgb8(0x2A, 0x28, 0x44),
+                                width: 1.0,
+                                radius: 6.0.into(),
+                            },
+                            ..Default::default()
+                        }
+                    }
+                })
+                .width(Length::Fill),
+            );
+        }
+        let detail_fill = if selected.total_bytes == 0 {
+            0.0_f32
+        } else {
+            (selected.total_bytes.min(10_000_000) as f32) / 10_000_000.0
+        };
+        container(
+            row![
+                container(scrollable(list).height(Length::Fill))
+                    .padding(12)
+                    .style(panel_frame_style)
+                    .width(Length::FillPortion(1)),
+                container(
+                    column![
+                        text(format!("\u{25c6} {}", selected.title)).size(22),
+                        text(selected.descriptor.clone()).size(15),
+                        text(format!("Artefakte: {}", selected.item_count)).size(14),
+                        progress_bar(0.0..=1.0, detail_fill),
+                        text(make_sparkline(detail_fill)).size(13),
+                        text(format!("Groesse: {} B", selected.total_bytes)).size(14),
+                        text(selected.sample_note.clone()).size(13),
+                        button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style),
+                    ]
+                    .spacing(10),
+                )
+                .style(accent_card_style)
+                .padding(22)
+                .width(Length::FillPortion(2)),
+            ]
+            .spacing(14),
+        )
+        .padding(12)
+        .style(panel_frame_style)
+        .into()
+    }
+
+    fn view_imprint(&self) -> Element<'_, Message> {
+        let symbiont_count = self.auth_store.user_count();
+        container(
+            scrollable(
+                column![
+                    text("Impressum").size(24),
+                    info_card(
+                        "Status",
+                        "Kurz: Die Logik ist schon richtig gebaut. Die volle selbstverstaerkende Skalierung ist vorbereitet, aber noch nicht komplett end-to-end operationalisiert.",
+                    ),
+                    info_card("Symbionten", &format!("Aktuell registrierte Symbionten: {symbiont_count}")),
+                    info_card("Zweck", "Aether macht lokale Analyse, Technik und Wissen ohne Cloud-Zwang verstaendlich und nutzbar."),
+                    info_card("Datenschutz", "Account, Deltas und Restanteile bleiben auf dem Geraet. Keine zentrale Wiederherstellung."),
+                    info_card("Formeln", "P(n) = base + (1-base) * ln(1+n) / ln(1+Nmax)\nC(t) = vault_hits / total_chunks"),
+                    info_card("Systembild", "Aether arbeitet eher wie eine Leitstelle als wie ein Agent: lokale Signale werden geordnet, priorisiert und in stabile Entscheidungen ueberfuehrt."),
+                ]
+                .spacing(16),
+            )
+            .height(Length::Fill),
+        )
+        .padding(12)
+        .style(panel_frame_style)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Aether.Rekonstruktion – lokale AEF-Dateien rekonstruieren
+    // -----------------------------------------------------------------------
+
+    fn view_rekonstruktion(&self) -> Element<'_, Message> {
+        let entries = self.entries();
+
+        let header = row![
+            text("Rekonstruktion").size(22).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+            text(" \u{2014} lokale AEF-Artefakte wiederherstellen").size(14)
+                .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        // File list
+        let list: Element<'_, Message> = if entries.is_empty() {
+            container(
+                text("Keine Artefakte vorhanden. Datei in das Fenster ziehen, um zu beginnen.")
+                    .size(14)
+                    .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+            )
+            .padding(20)
+            .into()
+        } else {
+            let rows: Vec<_> = entries
+                .into_iter()
+                .map(|entry| {
+                    let is_selected = self.rekonstruktion_selected == Some(entry.id);
+                    let gain_color = if entry.compression_gain_percent > 0.0 {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let row_style = move |_: &Theme| container::Style {
+                        background: Some(Background::Color(if is_selected {
+                            Color::from_rgba(0.59, 0.34, 0.96, 0.18)
+                        } else {
+                            Color::from_rgb8(0x12, 0x11, 0x1E)
+                        })),
+                        border: Border {
+                            color: if is_selected { Color::from_rgb8(0xA0, 0x70, 0xFF) } else { Color::from_rgb8(0x2E, 0x2C, 0x4C) },
+                            width: 1.0,
+                            radius: 10.0.into(),
+                        },
+                        ..Default::default()
+                    };
+                    let entry_id = entry.id;
+                    let size_kb = entry.original_size / 1024;
+                    let gain = entry.compression_gain_percent;
+                    container(
+                        button(
+                            row![
+                                text("\u{25a4}").size(14).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                                column![
+                                    text(entry.file_name).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                                    text(format!(
+                                        "{} KB  \u{2192}  {:.1}% Gewinn",
+                                        size_kb,
+                                        gain
+                                    ))
+                                    .size(12)
+                                    .color(gain_color),
+                                ]
+                                .spacing(2),
+                            ]
+                            .spacing(10)
+                            .align_y(Alignment::Center),
+                        )
+                        .on_press(Message::ReconstructPressed(entry_id))
+                        .style(secondary_button_style)
+                        .width(Length::Fill),
+                    )
+                    .style(row_style)
+                    .padding([6, 10])
+                    .width(Length::Fill)
+                    .into()
+                })
+                .collect();
+            scrollable(column(rows).spacing(4))
+                .height(Length::Fixed(320.0))
+                .into()
+        };
+
+        // Status / result panel
+        let status_panel: Element<'_, Message> = if self.rekonstruktion_running {
+            container(
+                row![
+                    text("\u{21ba}").size(18).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                    text("Rekonstruktion laeuft …").size(14)
+                        .color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding(16)
+            .style(panel_frame_style)
+            .width(Length::Fill)
+            .into()
+        } else if let Some(result) = &self.rekonstruktion_result {
+            match result {
+                Ok((file_name, aef_result)) => {
+                    let hash_icon = if aef_result.original_hash_verified { "\u{2714}" } else { "\u{2718}" };
+                    let complete_icon = if aef_result.reconstruction_complete { "\u{2714}" } else { "\u{2718}" };
+                    let hash_color = if aef_result.original_hash_verified {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let complete_color = if aef_result.reconstruction_complete {
+                        Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                    } else {
+                        Color::from_rgb8(0xD9, 0x7A, 0x4C)
+                    };
+                    let selected_id = self.rekonstruktion_selected.unwrap_or(0);
+                    let export_btn: Element<'_, Message> = if aef_result.reconstruction_complete {
+                        button(
+                            text("\u{2b07} Exportieren").size(14)
+                                .color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                        )
+                        .on_press(Message::ExportPressed(selected_id))
+                        .padding([8, 18])
+                        .style(primary_button_style)
+                        .into()
+                    } else {
+                        iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
+                    };
+                    container(
+                        column![
+                            text(format!("Datei: {file_name}")).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+                            row![
+                                text(hash_icon).size(14).color(hash_color),
+                                text("Hash verifiziert").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
+                            ].spacing(6),
+                            row![
+                                text(complete_icon).size(14).color(complete_color),
+                                text("Rekonstruktion vollstaendig").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
+                            ].spacing(6),
+                            text(format!("Kohaerenz: {:.3}", aef_result.coherence_index)).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+                            text(format!("Fehlende Vault-Refs: {}", aef_result.missing_vault_refs.len())).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
+                            export_btn,
+                        ]
+                        .spacing(6),
+                    )
+                    .padding(16)
+                    .style(panel_frame_style)
+                    .width(Length::Fill)
+                    .into()
+                }
+                Err(err) => {
+                    let is_aef_err = err.contains("Magic Bytes")
+                        || err.contains("ungültig")
+                        || err.contains("droppen");
+                    let mut col = column![
+                        row![
+                            text("\u{2718}").size(14).color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
+                            text(format!("Fehler: {err}")).size(13)
+                                .color(Color::from_rgb8(0xD9, 0x7A, 0x4C)),
+                        ]
+                        .spacing(8),
+                    ]
+                    .spacing(8);
+                    if is_aef_err {
+                        col = col.push(
+                            container(
+                                text("\u{26a0} Diese Datei wurde noch nicht als AEF analysiert. Ziehe sie erneut in das Fenster.")
+                                    .size(13)
+                                    .color(Color::from_rgb8(0xFF, 0xCC, 0x44)),
+                            )
+                            .padding([8, 12])
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x2A, 0x18, 0x00))),
+                                border: Border { color: Color::from_rgb8(0x88, 0x66, 0x00), width: 1.0, radius: 4.0.into() },
+                                ..Default::default()
+                            }),
+                        );
+                    }
+                    container(col)
+                    .padding(16)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x1C, 0x06, 0x06))),
+                        border: Border { color: Color::from_rgb8(0xA8, 0x44, 0x44), width: 1.0, radius: 10.0.into() },
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .into()
+                }
+            }
+        } else {
+            let hint = if self.rekonstruktion_selected.is_some() {
+                "Eintrag ausgewaehlt. Rekonstruieren druecken um zu starten."
+            } else {
+                "Eintrag auswaehlen, dann Rekonstruieren druecken."
+            };
+            container(
+                text(hint).size(13).color(Color::from_rgb8(0x60, 0x88, 0xA8)),
+            )
+            .padding(16)
+            .style(panel_frame_style)
+            .width(Length::Fill)
+            .into()
+        };
+
+        // Action button
+        let reconstruct_btn = button(
+            text("\u{21ba} Rekonstruieren").size(15)
+                .color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
+        )
+        .on_press_maybe(
+            self.rekonstruktion_selected
+                .filter(|_| !self.rekonstruktion_running)
+                .map(Message::ReconstructPressed),
+        )
+        .padding([10, 22])
+        .style(primary_button_style);
+
+        container(
+            column![
+                header,
+                list,
+                reconstruct_btn,
+                status_panel,
+            ]
+            .spacing(14),
+        )
+        .padding(16)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(panel_frame_style)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Aether.YouTube – Eingebetteter Video-Browser
+    // -----------------------------------------------------------------------
+
+    fn view_youtube(&self) -> Element<'_, Message> {
+        let nav_bar = row![
+            text_input("YouTube-URL ...", &self.youtube_address)
+                .on_input(Message::YouTubeAddressChanged)
+                .padding(10)
+                .size(16)
+                .width(Length::Fill),
+            button(text("\u{25b6} Laden").size(15))
+                .padding([10, 16])
+                .on_press(Message::YouTubeLoadPressed),
+        ]
+        .spacing(8);
+
+        column![
+            row![
+                text("\u{25b6} YouTube").size(22),
+                text("\u{2014} URL anpassen und Laden dr\u{fc}cken").size(14),
+            ]
+            .spacing(12),
+            nav_bar,
+            text(&self.browser_note).size(13),
+            container(
+                column![
+                    text("Eingebetteter Browser aktiv.").size(16),
+                    text("Das Video-Fenster erscheint als natives Overlay.").size(14),
+                    text("Tipp: youtube.com/watch?v=... direkt eintippen.").size(13),
+                ]
+                .spacing(10)
+                .padding(30)
+            )
+            .width(Length::Fill)
+            .height(Length::Fill),
+        ]
+        .spacing(10)
+        .into()
+    }
+
+    // -----------------------------------------------------------------------
+    // Aether.StructureMap – Ockham-gefilterter fraktaler 3D-Suchbaum
+    // Reine Visualisierung. Keine Steuerlogik. Keine Systemeingriffe.
+    // -----------------------------------------------------------------------
+
+    fn step_structure_map(&mut self) {
+        use rand::{Rng, SeedableRng};
+        use rand::rngs::StdRng;
+        use std::f32::consts::TAU;
+
+        let mut rng = StdRng::seed_from_u64(
+            self.tick_counter.wrapping_mul(7919).wrapping_add(3),
+        );
+        const N_RINGS: usize = 10;
+        let mut nodes: Vec<Vec<f32>> = Vec::with_capacity(N_RINGS);
+
+        // Ring 1 – Rohdaten: 6 zufällige Positionen
+        let ring1: Vec<f32> = (0..6).map(|_| rng.gen_range(0.0f32..TAU)).collect();
+        nodes.push(ring1);
+
+        // Ring 2–6 – Verarbeitung: Verzweigung mit Variation
+        for ring in 1..6 {
+            let prev = nodes[ring - 1].clone();
+            let mut curr: Vec<f32> = Vec::new();
+            for &t in &prev {
+                curr.push((t + rng.gen_range(-0.26f32..0.26f32)).rem_euclid(TAU));
+                if ring >= 2 && rng.gen::<f32>() < 0.38 {
+                    curr.push((t + rng.gen_range(-0.52f32..0.52f32)).rem_euclid(TAU));
+                }
+            }
+            curr.truncate(24);
+            nodes.push(curr);
+        }
+
+        // Ring 7 – Ockham-Schnitt: probabilistischer Ast-Kollaps
+        let prev7 = nodes.last().unwrap().clone();
+        let rate = 0.35 + 0.18 * ((self.tick_counter as f32 * 0.42).sin());
+        let filtered: Vec<f32> = prev7.into_iter()
+            .filter(|_| rng.gen::<f32>() < rate)
+            .collect();
+        let ring7: Vec<f32> = if filtered.is_empty() {
+            (0..3).map(|_| rng.gen_range(0.0f32..TAU)).collect()
+        } else {
+            filtered.into_iter()
+                .map(|t| (t + rng.gen_range(-0.04f32..0.04f32)).rem_euclid(TAU))
+                .collect()
+        };
+        nodes.push(ring7);
+
+        // Ring 8–9 – Kompression: Konvergenz zu 4 Anker-Clustern
+        let anchors = [0.0f32, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0];
+        for _ in 0..2 {
+            let prev = nodes.last().unwrap().clone();
+            let mut curr: Vec<f32> = Vec::with_capacity(prev.len());
+            for t in prev {
+                let near = anchors.iter().copied()
+                    .min_by(|&a, &b| {
+                        let da = (a - t).abs().min(TAU - (a - t).abs());
+                        let db = (b - t).abs().min(TAU - (b - t).abs());
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .unwrap_or(0.0);
+                curr.push(
+                    (t + 0.74 * (near - t) + rng.gen_range(-0.022f32..0.022f32))
+                        .rem_euclid(TAU),
+                );
+            }
+            nodes.push(curr);
+        }
+
+        // Ring 10 – Anker: 4 feste Diamant-Knoten
+        nodes.push(anchors.to_vec());
+        self.structure_map_nodes = nodes;
+
+        // Anker-Dichte-Historie
+        let n = self.structure_map_nodes.last().map_or(0, |v| v.len());
+        self.structure_map_anchor_hist
+            .push(n as f32 + rng.gen_range(-0.25f32..0.25f32));
+        if self.structure_map_anchor_hist.len() > 30 {
+            self.structure_map_anchor_hist.remove(0);
+        }
+
+        // Mutations-Histogramm (Ring 5)
+        let m = ((12.0 + rng.gen_range(-3.2f32..3.2f32)).max(0.0)) as u32;
+        self.structure_map_mutation_hist.push(m);
+        if self.structure_map_mutation_hist.len() > 20 {
+            self.structure_map_mutation_hist.remove(0);
+        }
+
+        // Lossless-Compression-Ratio (wächst bis 100%, rastet ein)
+        if !self.structure_map_locked {
+            self.structure_map_compression = (self.structure_map_compression
+                + rng.gen_range(3.8f32..7.2f32))
+                .min(100.0);
+            if self.structure_map_compression >= 100.0 {
+                self.structure_map_compression = 100.0;
+                self.structure_map_locked = true;
+            }
+        }
+    }
+
+    fn view_flow_sphere(&self) -> Element<'_, Message> {
+        use std::f32::consts::TAU;
+
+        let cyan       = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let dim        = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let surf_bg    = Color::from_rgb8(0x03, 0x09, 0x12);
+        let panel_bg   = Color::from_rgb8(0x05, 0x0F, 0x1C);
+
+        // Derived metrics from live data
+        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
+        let stability = if self.structure_map_locked { 1.0f32 } else { entropy * 0.82 };
+        let anchor_count = self.structure_map_nodes.last().map_or(4, |v| v.len());
+        let info_growth = entropy;
+
+        let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
+
+        let delta_phases: [f32; 5] = {
+            let m = &self.structure_map_mutation_hist;
+            [
+                m.get(m.len().saturating_sub(1)).copied().unwrap_or(8) as f32 * 0.41,
+                m.get(m.len().saturating_sub(3)).copied().unwrap_or(6) as f32 * 0.63,
+                m.get(m.len().saturating_sub(7)).copied().unwrap_or(10) as f32 * 0.27,
+                m.get(m.len().saturating_sub(12)).copied().unwrap_or(7) as f32 * 0.55,
+                m.get(m.len().saturating_sub(18)).copied().unwrap_or(9) as f32 * 0.34,
+            ]
+        };
+
+        // h_t inspector side panel
+        let ht_panel = {
+            let i_ht = 0.5 + 0.5 * entropy; // approximated I(h_t)
+            let anchor_spark: String = {
+                let h = &self.structure_map_anchor_hist;
+                let max = h.iter().cloned().fold(0.1f32, f32::max);
+                h.iter().take(16).map(|&v| {
+                    let p = (v / max).clamp(0.0, 1.0);
+                    if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
+                    else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
+                }).collect()
+            };
+            let mut_spark: String = self.structure_map_mutation_hist.iter().take(16).map(|&v| {
+                if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
+                else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
+            }).collect();
+
+            container(
+                scrollable(
+                    column![
+                        text("h\u{209c} INSPECTOR").size(11).color(cyan),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("ENTROPIE").size(10).color(dim),
+                        text(format!("{:.4} bit", entropy * 7.83)).size(16).color(Color::from_rgb8(0xAF, 0x86, 0xFF)),
+                        progress_bar(0.0..=1.0, entropy).height(5),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("ATTRAKTOR-PARAM").size(10).color(dim),
+                        text(format!("{} stabile Knoten", anchor_count)).size(14).color(Color::WHITE),
+                        text(format!("\u{03c4}/4  \u{00d7}  {}", anchor_count)).size(11).color(dim),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("DELTA-STATISTIK").size(10).color(dim),
+                        text(format!("\u{0394} {:.3}", delta_phases[0].sin().abs())).size(14).color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
+                        text(format!("\u{03c3} {:.3}", delta_phases[1].sin().abs())).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text(anchor_spark).size(10).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("I(h\u{209c})").size(10).color(dim),
+                        text(format!("{:.4}", i_ht)).size(18).color(Color::from_rgb8(0xC0, 0xF0, 0xFF)),
+                        text(make_sparkline(i_ht)).size(9).color(Color::from_rgb8(0x7B, 0x8F, 0xB3)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("STABILIT\u{c4}T").size(10).color(dim),
+                        text(format!("{:.1}%", stability * 100.0)).size(16).color(
+                            if stability > 0.8 { Color::from_rgb8(0x4C, 0xD9, 0x6E) }
+                            else if stability > 0.5 { Color::from_rgb8(0xFF, 0xD7, 0x00) }
+                            else { Color::from_rgb8(0xD9, 0x50, 0x50) }
+                        ),
+                        progress_bar(0.0..=1.0, stability).height(5),
+                        text(if self.structure_map_locked { "\u{25cf} KONVERGIERT" } else { "\u{25cc} Laufend..." })
+                            .size(10)
+                            .color(if self.structure_map_locked { Color::from_rgb8(0x4C, 0xD9, 0x6E) } else { dim }),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        text("MUTATIONS-HIST").size(10).color(dim),
+                        text(mut_spark).size(10).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        button(text("EXPORT JSON").size(11))
+                            .on_press(Message::FlowSphereExportPressed)
+                            .padding([6, 12])
+                            .style(|_: &Theme, _| button::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x05, 0x28, 0x30))),
+                                border: Border { color: Color::from_rgb8(0x8E, 0x5A, 0xF4), width: 1.0, radius: 4.0.into() },
+                                text_color: Color::from_rgb8(0xB6, 0x8D, 0xFF),
+                                ..Default::default()
+                            }),
+                    ]
+                    .spacing(5)
+                    .padding(12),
+                )
+                .height(Length::Fill),
+            )
+            .width(Length::Fixed(210.0))
+            .height(Length::Fill)
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_bg)),
+                border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 0.0.into() },
+                ..Default::default()
+            })
+        };
+
+        // Timeline snapshots (up to 20 markers)
+        let snap_count = (self.tick_counter / 60).min(20) as usize;
+        let selected_snap = self.flow_sphere_snapshot_idx;
+        let timeline: Vec<Element<'_, Message>> = (0..snap_count.max(1))
+            .map(|i| {
+                let is_sel = i == selected_snap;
+                button(
+                    text(if is_sel { "\u{25cf}" } else { "\u{25cb}" })
+                        .size(14)
+                        .color(if is_sel { cyan } else { dim }),
+                )
+                .on_press(Message::FlowSphereSnapshotSelected(i))
+                .padding([2, 4])
+                .style(move |_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if is_sel {
+                        Color::from_rgba(0.59, 0.34, 0.96, 0.16)
+                    } else {
+                        Color::TRANSPARENT
+                    })),
+                    border: Border {
+                        color: if is_sel { cyan } else { Color::TRANSPARENT },
+                        width: if is_sel { 1.0 } else { 0.0 },
+                        radius: 3.0.into(),
+                    },
+                    text_color: if is_sel { cyan } else { dim },
+                    ..Default::default()
+                })
+                .into()
+            })
+            .collect();
+
+        let timeline_row = container(
+            column![
+                text("TEMPORAL LAYER  \u{2500}  Session-Verlauf").size(10).color(dim),
+                row(timeline).spacing(2),
+            ]
+            .spacing(4)
+            .padding([6, 10]),
+        )
+        .width(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x03, 0x07, 0x0F))),
+            border: Border { color: Color::from_rgb8(0x0A, 0x20, 0x30), width: 1.0, radius: 0.0.into() },
+            ..Default::default()
+        });
+
+        // Flow Sphere Canvas
+        let sphere_scene = FlowSphereScene {
+            tick: self.tick_counter,
+            entropy,
+            stability,
+            delta_phases,
+            attractor_lons,
+            info_growth,
+        };
+
+        let sphere_canvas = canvas::Canvas::new(sphere_scene)
+            .width(Length::Fill)
+            .height(Length::Fill);
+
+        // Main layout
+        let header = row![
+            text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan),
+            text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim),
+        ].spacing(0);
+
+        container(
+            column![
+                header,
+                row![
+                    sphere_canvas,
+                    ht_panel,
+                ]
+                .spacing(0)
+                .height(Length::Fill),
+                timeline_row,
+            ]
+            .spacing(8)
+            .height(Length::Fill),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(surf_bg)),
+            ..Default::default()
+        })
+        .into()
+    }
+
+    fn view_ade(&self) -> Element<'_, Message> {
+        let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let yellow  = Color::from_rgb8(0xFF, 0xD7, 0x00);
+        let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
+        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+
+        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
+        let lossless_ok = self.structure_map_locked;
+
+        // Residuum viewer — sparkline from anchor history
+        let residuum_spark: String = {
+            let h = &self.structure_map_anchor_hist;
+            let max = h.iter().cloned().fold(0.1f32, f32::max);
+            h.iter().map(|&v| {
+                let p = 1.0 - (v / max).clamp(0.0, 1.0); // residuum = inverse of anchoring
+                if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
+                else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
+            }).collect()
+        };
+
+        // Delta convergence series
+        let conv_vals: Vec<f32> = self.structure_map_anchor_hist.iter()
+            .scan(0.5f32, |acc, &v| {
+                *acc = (*acc * 0.85 + v * 0.015).clamp(0.0, 1.0);
+                Some(*acc)
+            })
+            .collect();
+        let conv_spark: String = conv_vals.iter().map(|&v| {
+            if v > 0.75 { '\u{2588}' } else if v > 0.50 { '\u{2593}' }
+            else if v > 0.25 { '\u{2592}' } else { '\u{2591}' }
+        }).collect();
+        let final_conv = conv_vals.last().copied().unwrap_or(0.0);
+
+        // Mutation histogram
+        let mut_spark: String = self.structure_map_mutation_hist.iter().map(|&v| {
+            if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
+            else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
+        }).collect();
+        let seed_val = self.tick_counter.wrapping_mul(7919).wrapping_add(3);
+        let seed_stability = 1.0 - (self.structure_map_mutation_hist.iter()
+            .map(|&v| v as f32)
+            .sum::<f32>()
+            / (self.structure_map_mutation_hist.len().max(1) as f32 * 12.0)).clamp(0.0, 1.0);
+
+        let panel_s_clone = panel_s;
+        let _ = panel_s_clone; // used via move in subpanels below
+
+        // Reconstruction preview: show last AEF file if available
+        let recon_hint = self.structure_map_nodes.last()
+            .map(|v| format!("Anker: {}  |  Tick: {}", v.len(), self.tick_counter))
+            .unwrap_or_else(|| "Keine Daten – FlowSphere starten.".to_owned());
+
+        let residuum_body = column![
+            text("RESIDUUM-VIEWER").size(10).color(dim),
+            text(residuum_spark.clone()).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+            text(format!("Residuum: {:.3}", 1.0 - entropy)).size(14).color(yellow),
+            progress_bar(0.0..=1.0, 1.0 - entropy).height(6),
+        ].spacing(6).into();
+
+        let conv_body = column![
+            text("DELTA-KONVERGENZ-GRAPH").size(10).color(dim),
+            text(conv_spark.clone()).size(12).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+            text(format!("\u{0394} \u{2192} {:.4}", final_conv)).size(14).color(cyan),
+            progress_bar(0.0..=1.0, final_conv).height(6),
+            text(format!("Reduktion: {:.1}%", (1.0 - final_conv).clamp(0.0, 1.0) * 100.0))
+                .size(12).color(dim),
+        ].spacing(6).into();
+
+        let seed_body = column![
+            text("SEED-STABILIT\u{c4}T").size(10).color(dim),
+            text(format!("Seed: {:016X}", seed_val)).size(11).color(dim),
+            text(format!("{:.2}%", seed_stability * 100.0)).size(18)
+                .color(if seed_stability > 0.7 { green } else { yellow }),
+            text(mut_spark.clone()).size(11).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+        ].spacing(6).into();
+
+        let recon_body = column![
+            text("RECONSTRUCTION-PREVIEW").size(10).color(dim),
+            text(recon_hint).size(12).color(Color::from_rgb8(0xC0, 0xE0, 0xFF)),
+            text(format!("Entropie: {:.4} bit", entropy * 7.83)).size(12).color(dim),
+            text(format!("Kompression: {:.1}%", self.structure_map_compression))
+                .size(14).color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
+        ].spacing(6).into();
+
+        let lossless_color = if lossless_ok { green } else { dim };
+        let lossless_body: Element<'_, Message> = column![
+            row![
+                canvas::Canvas::new(DotScene { color: if lossless_ok { green } else { red } })
+                    .width(Length::Fixed(14.0))
+                    .height(Length::Fixed(14.0)),
+                text(if lossless_ok { "LOSSLESS \u{2714} BEST\u{c4}TIGT" } else { "LOSSLESS \u{2715} NOCH NICHT KONVERGIERT" })
+                    .size(13).color(lossless_color),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
+            progress_bar(0.0..=100.0, self.structure_map_compression).height(8),
+            text(format!("{:.1}% Delta-Auflösung", self.structure_map_compression))
+                .size(11).color(dim),
+        ].spacing(8).into();
+
+        let right_panel = container(
+            scrollable(
+                column![
+                    text("ADE \u{00b7} ENGINE-STATUS").size(11).color(cyan),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text(format!("Tick:  {}", self.tick_counter)).size(11).color(dim),
+                    text(format!("Layer: {}", self.structure_map_nodes.len())).size(11).color(dim),
+                    text(format!("Nodes: {}", self.structure_map_nodes.iter().map(|v| v.len()).sum::<usize>())).size(11).color(dim),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text("ATTRAKTOR-PHASEN").size(10).color(dim),
+                    text(format!("\u{03c6}\u{2080}: {:.3}", 0.0f32)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2081}: {:.3}", std::f32::consts::FRAC_PI_2)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2082}: {:.3}", std::f32::consts::PI)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text(format!("\u{03c6}\u{2083}: {:.3}", std::f32::consts::PI * 1.5)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
+                    text("\u{2500}".repeat(20)).size(8).color(dim),
+                    text("OCKHAM-RATIO").size(10).color(dim),
+                    text(format!("{:.3}", 0.35 + 0.18 * (self.tick_counter as f32 * 0.42).sin()))
+                        .size(16).color(yellow),
+                ]
+                .spacing(5)
+                .padding(10),
+            )
+            .height(Length::Fill),
+        )
+        .width(Length::Fixed(200.0))
+        .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(panel_s)),
+            border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 0.0.into() },
+            ..Default::default()
+        });
+
+        let main_content = scrollable(
+            column![
+                ade_subpanel("RESIDUUM-VIEWER", residuum_body, panel_s),
+                ade_subpanel("\u{0394} DELTA-KONVERGENZ", conv_body, panel_s),
+                ade_subpanel("SEED-STABILIT\u{c4}T", seed_body, panel_s),
+                ade_subpanel("RECONSTRUCTION-PREVIEW", recon_body, panel_s),
+                ade_subpanel("LOSSLESS-CHECK", lossless_body, panel_s),
+            ]
+            .spacing(12)
+            .padding([0.0f32, 8.0]),
+        );
+
+        container(
+            column![
+                row![
+                    text("ADE \u{00b7} AETHER DELTA ENGINE").size(13).color(cyan),
+                    text("  \u{00b7}  Residuum  \u{00b7}  Konvergenz  \u{00b7}  Seed  \u{00b7}  Lossless-Check").size(10).color(dim),
+                ].spacing(0),
+                row![
+                    main_content,
+                    right_panel,
+                ]
+                .spacing(8)
+                .height(Length::Fill),
+            ]
+            .spacing(8)
+            .height(Length::Fill),
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x02, 0x06, 0x10))),
+            ..Default::default()
+        })
         .into()
     }
 
