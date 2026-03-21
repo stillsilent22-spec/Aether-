@@ -1,5 +1,6 @@
 use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
+use crate::hardware;
 use crate::browser::{
     BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
 };
@@ -244,7 +245,14 @@ impl AetherIcedShell {
             window_height: 900.0,
             tick_counter: 0,
             browser_sync_stride: 3,
-            runtime_profile: RuntimeProfile::Auto,
+            runtime_profile: {
+                use crate::hardware::RecommendedProfile;
+                match hardware::detect().recommended_profile() {
+                    RecommendedProfile::Legacy   => RuntimeProfile::Legacy,
+                    RecommendedProfile::LowPower => RuntimeProfile::LowPower,
+                    RecommendedProfile::Auto     => RuntimeProfile::Auto,
+                }
+            },
             dashboard_search: String::new(),
             dashboard_nav: "Overview".to_owned(),
             dashboard_info_key: None,
