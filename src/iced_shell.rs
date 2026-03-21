@@ -1576,14 +1576,15 @@ impl AetherIcedShell {
                 .map(|(device, level)| {
                     row![
                         text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                        canvas::Canvas::new(DonutScene {
-                            values: [*level, 1.0 - *level, 0.0, 0.0],
-                            colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x1C, 0x1B, 0x2A), Color::TRANSPARENT, Color::TRANSPARENT],
-                            pulse: 1.0,
-                        })
-                        .width(Length::Fixed(56.0))
-                        .height(Length::Fixed(56.0))
-                        .into(),
+                        iced::Element::from(
+                            canvas::Canvas::new(DonutScene {
+                                values: [*level, 1.0 - *level, 0.0, 0.0],
+                                colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x1C, 0x1B, 0x2A), Color::TRANSPARENT, Color::TRANSPARENT],
+                                pulse: 1.0,
+                            })
+                            .width(Length::Fixed(56.0))
+                            .height(Length::Fixed(56.0))
+                        ),
                         info_icon_button("device_list"),
                     ]
                     .spacing(8)
@@ -1908,7 +1909,7 @@ impl AetherIcedShell {
 
         container(
             row![
-                scrollable(
+                container(scrollable(
                     column![
                         text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
                         url_bar,
@@ -1968,6 +1969,7 @@ impl AetherIcedShell {
                     .spacing(14)
                 )
                 .width(Length::Fixed(420.0))
+                    )
                 .style(panel_frame_style)
                 .padding(14),
                 container(
@@ -3261,7 +3263,7 @@ impl AetherIcedShell {
             Tab::Rekonstruktion => self.view_rekonstruktion(),
         };
 
-        let nav_item = |label: &str, tab: Tab, active_tab: Tab| {
+        let nav_item = |label: &'static str, tab: Tab, active_tab: Tab| {
             let active = tab == active_tab;
             button(text(label).size(13).color(if active { c(TEXT_H) } else { c(TEXT_M) }))
                 .on_press(Message::TabSelected(tab))
