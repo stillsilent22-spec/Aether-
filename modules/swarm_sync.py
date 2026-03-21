@@ -1,0 +1,64 @@
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+
+
+ANCHOR_DIR = Path("data/anchors")
+NODES_DIR = Path("data/swarm/nodes")
+
+
+def pull_anchors() -> list[str]:
+    known_before = {path.stem for path in ANCHOR_DIR.glob("*.pack")}
+    try:
+        subprocess.run(["git", "pull", "origin", "main"], check=True, capture_output=True)
+    except subprocess.CalledProcessError as err:
+        print(f"[SWARM] Pull fehlgeschlagen: {err}")
+        return []
+    return list({path.stem for path in ANCHOR_DIR.glob("*.pack")} - known_before)
+
+
+def push_anchor_pack(pack: dict) -> bool:
+    ANCHOR_DIR.mkdir(parents=True, exist_ok=True)
+    path = ANCHOR_DIR / f"{pack['pack_id']}.pack"
+    path.write_text(json.dumps(pack, sort_keys=True, ensure_ascii=True), encoding="utf-8")
+    try:
+        subprocess.run(["git", "add", str(path)], check=True)
+        subprocess.run(["git", "commit", "-m", f"anchor: {pack['pack_id'][:12]}"], check=True)
+        subprocess.run(["git", "push", "origin", "main"], check=True)
+        return True
+    except subprocess.CalledProcessError as err:
+        print(f"[SWARM] Push fehlgeschlagen: {err}")
+        return False
+
+
+def discover_nodes() -> dict[str, str]:
+    nodes: dict[str, str] = {}
+    for file_path in NODES_DIR.glob("*.json"):
+        try:
+            data = json.loads(file_path.read_text(encoding="utf-8"))
+            node_id = str(data.get("node_id", ""))
+            if node_id:
+                nodes[node_id] = str(data.get("public_key_pem", ""))
+        except Exception:
+            continue
+    return nodes
+
+
+def build_kpi_report(node_id: str, kpis: dict[str, float]) -> dict:
+    import time
+
+    return {
+        "schema_version": 1,
+        "node_id": node_id,
+        "epoch_minute": int(time.time() // 60),
+        "kpis": {key: float(value) for key, value in kpis.items()},
+        "rule_feedback": {},
+    }
+
+
+def verify_pack_basic(pack: dict, node_id: str) -> bool:
+    if not (NODES_DIR / f"{node_id}.json").exists():
+        return False
+    return all(len(str(anchor.get("sig", ""))) == 64 for anchor in pack.get("anchors", []))
