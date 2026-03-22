@@ -114,6 +114,7 @@ struct VisualizationMetrics {
     entropy_norm: f32,
     symmetry: f32,
     drift_norm: f32,
+    #[allow(dead_code)]
     compression_gain: f32,
     residual_ratio: f32,
     coherence: f32,
@@ -169,6 +170,7 @@ pub struct AetherRustShell {
     gfx: AetherGfx,
     bus_publisher: BusPublisher,
     bus_receiver: Receiver<BusEvent>,
+    #[allow(dead_code)]
     bus_drain_handle: Option<JoinHandle<()>>,
     bus_publish_offset: u64,
     public_ttd_pool: PublicTtdPoolStore,

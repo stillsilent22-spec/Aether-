@@ -27,18 +27,22 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use zeroize::Zeroize;
 
+#[allow(dead_code)]
 const BG_BASE: [u8; 3] = [0x0C, 0x0B, 0x12];
-const BG_CARD: [u8; 3] = [0x14, 0x13, 0x1E];
-const BG_CARD2: [u8; 3] = [0x1C, 0x1B, 0x2A];
-const BORDER: [u8; 3] = [0x2E, 0x2C, 0x46];
-const BORDER_ACT: [u8; 3] = [0xA0, 0x60, 0xFF];
-const ACCENT: [u8; 3] = [0xA0, 0x60, 0xFF];
-const ACCENT2: [u8; 3] = [0x00, 0xD4, 0xFF];
-const TEXT_H: [u8; 3] = [0xF0, 0xEE, 0xFF];
-const TEXT_M: [u8; 3] = [0x9E, 0x98, 0xC4];
-const TEXT_D: [u8; 3] = [0x5C, 0x58, 0x82];
-const WARN: [u8; 3] = [0xFF, 0xA0, 0x20];
-const DANGER: [u8; 3] = [0xFF, 0x4C, 0x4C];
+const BG_CARD: [u8; 3] = [0x0B, 0x12, 0x18];
+const BG_CARD2: [u8; 3] = [0x16, 0x20, 0x28];
+const BORDER: [u8; 3] = [0x1F, 0x2A, 0x33];
+#[allow(dead_code)]
+const BORDER_ACT: [u8; 3] = [0x2F, 0xA3, 0xB5];
+const ACCENT: [u8; 3] = [0x3F, 0xBA, 0xC2];
+#[allow(dead_code)]
+const ACCENT2: [u8; 3] = [0x7F, 0xB8, 0xC7];
+const TEXT_H: [u8; 3] = [0xE8, 0xEC, 0xEF];
+const TEXT_M: [u8; 3] = [0xA7, 0xB0, 0xB7];
+const TEXT_D: [u8; 3] = [0x74, 0x83, 0x8E];
+const WARN: [u8; 3] = [0xC7, 0xA0, 0x4A];
+#[allow(dead_code)]
+const DANGER: [u8; 3] = [0xD9, 0x50, 0x50];
 
 fn c(rgb: [u8; 3]) -> Color {
     Color::from_rgb8(rgb[0], rgb[1], rgb[2])
@@ -47,6 +51,10 @@ fn c(rgb: [u8; 3]) -> Color {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
     Home,
+    Control,
+    Symbiont,
+    SwarmOps,
+    Privacy,
     Chat,
     Browser,
     YouTube,
@@ -68,11 +76,23 @@ enum ChatContext {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AppMode {
+    Overlay,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RuntimeProfile {
     Auto,
     Balanced,
     LowPower,
     Legacy,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UiLanguage {
+    German,
+    English,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +105,7 @@ enum Message {
     ChatContextSelected(ChatContext),
     SecurityModeSelected(String),
     RuntimeProfileSelected(RuntimeProfile),
+    UiLanguageSelected(UiLanguage),
     DashboardSearchChanged(String),
     DashboardNavSelected(String),
     DashboardInfoToggle(String),
@@ -117,6 +138,8 @@ enum Message {
     ExportPressed(u64),
     FlowSphereSnapshotSelected(usize),
     FlowSphereExportPressed,
+    OpenFullTab(Tab),
+    ToggleMode,
     WindowResized(f32, f32),
     Tick,
 }
@@ -160,6 +183,7 @@ pub struct AetherIcedShell {
     login_username: String,
     login_password: String,
     status_line: String,
+    app_mode: AppMode,
     active_tab: Tab,
     chat_context: ChatContext,
     show_tutorial: bool,
@@ -186,6 +210,7 @@ pub struct AetherIcedShell {
     tick_counter: u64,
     browser_sync_stride: u64,
     runtime_profile: RuntimeProfile,
+    ui_language: UiLanguage,
     dashboard_search: String,
     dashboard_nav: String,
     dashboard_info_key: Option<String>,
@@ -203,6 +228,15 @@ pub struct AetherIcedShell {
     rekonstruktion_selected: Option<u64>,
     rekonstruktion_running: bool,
     rekonstruktion_result: Option<Result<(String, AefDecodeResult), String>>,
+    // --- IPC Bridge: Python backend state ---
+    backend_vault_main: u64,
+    backend_vault_sub: u64,
+    backend_entropy_mean: f32,
+    backend_anchor_count: u64,
+    backend_cpu_pct: f32,
+    backend_mem_used_gb: f32,
+    backend_shanway_last: String,
+    backend_state_loaded: bool,
 }
 
 impl AetherIcedShell {
@@ -225,6 +259,7 @@ impl AetherIcedShell {
             } else {
                 swarm_startup.summary.clone()
             },
+            app_mode: AppMode::Overlay,
             active_tab: Tab::Home,
             chat_context: ChatContext::Shanway,
             show_tutorial: false,
@@ -261,6 +296,7 @@ impl AetherIcedShell {
                     RecommendedProfile::Auto     => RuntimeProfile::Auto,
                 }
             },
+            ui_language: UiLanguage::German,
             dashboard_search: String::new(),
             dashboard_nav: "Overview".to_owned(),
             dashboard_info_key: None,
@@ -275,6 +311,14 @@ impl AetherIcedShell {
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
             rekonstruktion_result: None,
+            backend_vault_main: 0,
+            backend_vault_sub: 0,
+            backend_entropy_mean: 0.0,
+            backend_anchor_count: 0,
+            backend_cpu_pct: 0.0,
+            backend_mem_used_gb: 0.0,
+            backend_shanway_last: String::new(),
+            backend_state_loaded: false,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -282,6 +326,39 @@ impl AetherIcedShell {
         }
         shell.refresh_security_snapshot(false, "startup");
         shell
+    }
+
+    fn ui_text<'a>(&self, de: &'a str, en: &'a str) -> &'a str {
+        match self.ui_language {
+            UiLanguage::German => de,
+            UiLanguage::English => en,
+        }
+    }
+
+    fn poll_backend_state(&mut self) {
+        let path = std::path::Path::new("data/interbus/backend_state.json");
+        if !path.exists() {
+            return;
+        }
+        let Ok(raw) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return;
+        };
+        self.backend_vault_main = val["vault_main"].as_u64().unwrap_or(self.backend_vault_main);
+        self.backend_vault_sub = val["vault_sub"].as_u64().unwrap_or(self.backend_vault_sub);
+        self.backend_entropy_mean =
+            val["entropy_mean"].as_f64().unwrap_or(self.backend_entropy_mean as f64) as f32;
+        self.backend_anchor_count = val["anchor_count"].as_u64().unwrap_or(self.backend_anchor_count);
+        self.backend_cpu_pct = val["cpu_pct"].as_f64().unwrap_or(self.backend_cpu_pct as f64) as f32;
+        self.backend_mem_used_gb =
+            val["mem_used_gb"].as_f64().unwrap_or(self.backend_mem_used_gb as f64) as f32;
+        self.backend_shanway_last = val["shanway_last"]
+            .as_str()
+            .unwrap_or(&self.backend_shanway_last.clone())
+            .to_owned();
+        self.backend_state_loaded = true;
     }
 
     fn refresh_security_snapshot(&mut self, persist_audit: bool, reason: &str) {
@@ -472,7 +549,7 @@ impl AetherIcedShell {
 
     fn browser_embed_rect(&self) -> BrowserHostRect {
         if self.active_tab == Tab::Home
-            && (self.dashboard_nav == "Network" || self.dashboard_nav == "Compute")
+            && (self.dashboard_nav == "Browser" || self.dashboard_nav == "YouTube")
         {
             return BrowserHostRect {
                 x: (self.window_width * 0.44) as i32,
@@ -588,6 +665,7 @@ impl AetherIcedShell {
             .collect()
     }
 
+    #[allow(dead_code)]
     fn tab_button(&self, tab: Tab, icon: &'static str, label: &'static str) -> Element<'_, Message> {
         let is_active = self.active_tab == tab;
         let accent = c(ACCENT);
@@ -748,6 +826,7 @@ impl AetherIcedShell {
         .into()
     }
 
+    #[allow(dead_code)]
     fn view_sidebar(&self) -> Element<'_, Message> {
         let username = self
             .current_username()
@@ -914,6 +993,7 @@ impl AetherIcedShell {
         .into()
     }
 
+    #[allow(dead_code)]
     fn view_tabs(&self) -> Element<'_, Message> {
         let logo = row![
             canvas::Canvas::new(AetherLogoScene)
@@ -1044,262 +1124,22 @@ impl AetherIcedShell {
     }
 
     fn view_home(&self) -> Element<'_, Message> {
-        let entries = self.entries();
-        let total_bytes: u64 = entries.iter().map(|e| e.original_size).sum();
-        let cluster_count = self.anchor_clusters().len();
-
-        // --- Simulate live metrics from tick_counter ---
-        let t = self.tick_counter as f32;
-        let cpu_pct   = (38.0 + 12.0 * (t * 0.11).sin() + 8.0 * (t * 0.23).cos()).clamp(5.0, 95.0);
-        let mem_used  = 7.8 + 0.4 * (t * 0.07).sin();
-        let net_mbps  = (220.0 + 40.0 * (t * 0.17).sin()).clamp(0.0, 999.0);
-        let disk_mbps = (115.0 + 25.0 * (t * 0.13).cos()).clamp(0.0, 999.0);
-
-        let latest_log = self.security_audit_events.first()
-            .map(|e| e.summary.clone())
-            .unwrap_or_else(|| "Keine Audit-Ereignisse.".to_owned());
-        let latest_log2 = self.security_audit_events.get(1)
-            .map(|e| e.summary.clone())
-            .unwrap_or_else(|| self.analysis_status.clone());
-        let latest_log3 = self.security_audit_events.get(2)
-            .map(|e| e.summary.clone())
-            .unwrap_or_else(|| "Hovered: ".to_owned() + &self.hovered_file_label);
-
-        let analysis_value = if self.analysis_running {
-            format!("{:.0}%", self.analysis_progress * 100.0)
-        } else if let Some(a) = &self.last_analysis {
-            format!("{:.2}% Gain", a.compression_gain_percent)
-        } else { "Bereit".to_owned() };
-
-        container(
-            scrollable(
-                column![
-                    // ── Tutorial Banner ───────────────────────────────────────
-                    {
-                        let tutorial_banner: Element<'_, Message> = if self.show_tutorial {
-                            container(
-                                row![
-                                    canvas::Canvas::new(ShanwayRobotScene { tick: self.tick_counter, size: 48.0 })
-                                        .width(Length::Fixed(60.0))
-                                        .height(Length::Fixed(70.0)),
-                                    column![
-                                        text("Willkommen bei Aether").size(16)
-                                            .color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
-                                        text("Ziehe eine Datei ins Fenster \u{2192} Aether erstellt automatisch eine .aef-Datei mit Strukturanalyse.")
-                                            .size(12).color(Color::from_rgb8(0x90, 0x88, 0xBC)),
-                                        text("Data-Tab: Ergebnisse | Rekon-Tab: Originaldatei wiederherstellen | Intuitionsblase: Strukturvisualisierung")
-                                            .size(11).color(Color::from_rgb8(0x4E, 0x4A, 0x76)),
-                                    ]
-                                    .spacing(4),
-                                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                                    button(text("\u{2715}").size(12).color(Color::from_rgb8(0x4E, 0x4A, 0x76)))
-                                        .on_press(Message::TutorialDismissed)
-                                        .style(|_: &Theme, _| button::Style {
-                                            background: None,
-                                            ..Default::default()
-                                        })
-                                        .padding([4, 8]),
-                                ]
-                                .spacing(12)
-                                .align_y(Alignment::Center),
-                            )
-                            .style(|_: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.10))),
-                                border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.0, radius: 10.0.into() },
-                                ..Default::default()
-                            })
-                            .padding([12, 16])
-                            .width(Length::Fill)
-                            .into()
-                        } else {
-                            container(iced::widget::Space::new(Length::Shrink, Length::Fixed(0.0)))
-                                .into()
-                        };
-                        tutorial_banner
-                    },
-                    // ── Row 1: System Metrics (wie im Bild) ──────────────────
-                    row![
-                        sys_metric_card(
-                            "CPU Usage",
-                            format!("{:.0}%", cpu_pct),
-                            cpu_pct / 100.0,
-                            Color::from_rgb8(0x4C, 0xD9, 0x9C),
-                        ),
-                        sys_metric_card(
-                            "Memory",
-                            format!("{:.1} GB / 16 GB", mem_used),
-                            (mem_used / 16.0) as f32,
-                            Color::from_rgb8(0x4C, 0xB4, 0xD9),
-                        ),
-                        sys_metric_card(
-                            "Network Traffic",
-                            format!("{:.0} MB/s", net_mbps),
-                            (net_mbps / 400.0) as f32,
-                            Color::from_rgb8(0x7C, 0x9C, 0xE8),
-                        ),
-                        sys_metric_card(
-                            "Disk I/O",
-                            format!("{:.0} MB/s", disk_mbps),
-                            (disk_mbps / 250.0) as f32,
-                            Color::from_rgb8(0x9C, 0x7C, 0xE8),
-                        ),
-                    ]
-                    .spacing(12),
-
-                    // ── Row 2: Orchestration Map (Canvas) ───────────────────
-                    container(
-                        column![
-                            text("Orchestration Map").size(16)
-                                .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                            canvas::Canvas::new(OrchestrationScene {
-                                tick: self.tick_counter,
-                                cluster_count,
-                                analysis_running: self.analysis_running,
-                                trust_ok: self.security_snapshot.trust_state
-                                    .to_uppercase().contains("OK")
-                                    || self.security_snapshot.trust_state
-                                    .to_uppercase().contains("HIGH"),
-                            })
-                            .width(Length::Fill)
-                            .height(Length::Fixed(220.0)),
-                        ]
-                        .spacing(8),
-                    )
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                        border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
-                        ..Default::default()
-                    })
-                    .padding(16)
-                    .width(Length::Fill),
-
-                    // ── Row 3: Recent Events + Active Alerts ─────────────────
-                    row![
-                        // Recent Events
-                        container(
-                            column![
-                                text("Recent Events").size(15)
-                                    .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                                event_row("04:21", &(self.tick_counter / 60 % 60).to_string(),
-                                    &latest_log,  Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                                event_row("04:18", "New", &latest_log2, Color::from_rgb8(0x4C, 0xD9, 0x9C)),
-                                event_row("04:15", "Net", &latest_log3, Color::from_rgb8(0xC0, 0xA0, 0x60)),
-                                event_row("04:10", "Bkp", &format!("{} Artefakte lokal", entries.len()),
-                                    Color::from_rgb8(0x72, 0x9A, 0xD8)),
-                                text(format!("Mode: {} | Analyse: {}",
-                                    self.security_snapshot.mode, analysis_value))
-                                    .size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)),
-                            ]
-                            .spacing(10)
-                            .width(Length::Fill),
-                        )
-                        .style(|_: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                            border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
-                            ..Default::default()
-                        })
-                        .padding(18)
-                        .width(Length::FillPortion(3)),
-
-                        // Active Alerts
-                        container(
-                            column![
-                                row![
-                                    text("Active Alerts").size(15)
-                                        .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                                    text("\u{25b2}").size(12)
-                                        .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
-                                ]
-                                .spacing(8),
-                                alert_row(
-                                    "\u{25cf}",
-                                    c(DANGER),
-                                    &format!("Service Timeout: {} nodes", cluster_count.max(1)),
-                                    &format!("on {}", self.security_snapshot.mode),
-                                ),
-                                alert_row(
-                                    "\u{26a0}",
-                                    c(WARN),
-                                    &format!("Disk: {} B lokal", total_bytes),
-                                    "Low Space Warning",
-                                ),
-                                if self.analysis_running {
-                                    alert_row(
-                                        "\u{25b6}",
-                                        Color::from_rgb8(0x4C, 0xD9, 0x9C),
-                                        "Analyse läuft",
-                                        &self.analysis_status,
-                                    )
-                                } else {
-                                    container(text("")).width(Length::Fill).into()
-                                },
-                            ]
-                            .spacing(10)
-                            .width(Length::Fill),
-                        )
-                        .style(|_: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                            border: Border { color: Color::from_rgb8(0x2A, 0x28, 0x44), width: 1.5, radius: 10.0.into() },
-                            ..Default::default()
-                        })
-                        .padding(18)
-                        .width(Length::FillPortion(2)),
-                    ]
-                    .spacing(12),
-
-                    // ── Row 4: Analysefluss + Drop-Hinweis ──────────────────
-                    container(
-                        column![
-                            row![
-                                text("\u{25b6} Analysefluss").size(14)
-                                    .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                                iced::widget::Space::new(Length::Fill, Length::Shrink),
-                                text(format!("{:.0}%", self.analysis_progress * 100.0)).size(14)
-                                    .color(Color::from_rgb8(0x4C, 0xD9, 0x9C)),
-                            ]
-                            .spacing(8),
-                            progress_bar(0.0..=1.0, self.analysis_progress.clamp(0.0, 1.0))
-                                .height(6),
-                            text(&self.hovered_file_label).size(12)
-                                .color(Color::from_rgb8(0x84, 0x7C, 0xB2)),
-                        ]
-                        .spacing(8)
-                        .width(Length::Fill),
-                    )
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                        border: Border { color: Color::from_rgb8(0x70, 0x40, 0xCC), width: 1.5, radius: 10.0.into() },
-                        ..Default::default()
-                    })
-                    .padding(16)
-                    .width(Length::Fill),
-                ]
-                .spacing(14),
-            )
-            .height(Length::Fill),
-        )
-        .padding(16)
-        .into()
+        self.view_home_aether_cyber()
     }
 
     fn view_home_aether_cyber(&self) -> Element<'_, Message> {
         let t = self.tick_counter as f32;
-        let entries = self.entries();
-        let risk_base = if self.security_snapshot.trust_state.to_ascii_uppercase().contains("HIGH") {
-            0.34
-        } else if self.security_snapshot.trust_state.to_ascii_uppercase().contains("OK") {
-            0.48
-        } else {
-            0.71
-        };
-        let risk_score = ((risk_base + 0.08 * (t * 0.021).sin()).clamp(0.05, 0.98) * 1000.0) as u32;
-        let noether_score = (0.62 + 0.25 * (t * 0.017).cos()).clamp(0.0, 1.0);
-        let total_threats = (entries.len() as f32 * 1.9 + 14.0 + (t * 0.13).sin().abs() * 22.0) as u32;
-        let video_risk = (12.0 + 8.0 * (t * 0.042).sin().abs()) as u32;
-        let image_risk = (35.0 + 14.0 * (t * 0.033).sin().abs()) as u32;
-        let docs_risk = (6.0 + 5.0 * (t * 0.051).sin().abs()) as u32;
-        let folder_risk = (52.0 + 16.0 * (t * 0.024).sin().abs()) as u32;
+            let risk_score = (self.backend_entropy_mean * 1000.0) as u32;
+            let noether_score = if self.backend_state_loaded {
+                (self.backend_entropy_mean / 8.0).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let total_threats = self.backend_anchor_count as u32;
+            let video_risk: u32 = 0;
+            let image_risk: u32 = 0;
+            let docs_risk: u32 = 0;
+            let folder_risk: u32 = 0;
         let pane_slide = ((self.tick_counter % 8) as f32 / 8.0).clamp(0.0, 1.0); // 120ms @ ~60fps
         let node_pulse = 1.0 + 0.03 * (t * 1.57).sin(); // 40ms pulse
         let data_flash = 0.45 + 0.55 * (t * 5.0).sin().abs(); // pulse intensity for border shimmer
@@ -1336,7 +1176,7 @@ impl AetherIcedShell {
             .collect();
 
         let sidebar = {
-            let nav_item = |label: &str, section: &str, active: bool| {
+            let nav_item = |label: &'static str, section: &'static str, active: bool| {
                 button(text(label).size(13).color(if active { c(TEXT_H) } else { c(TEXT_M) }))
                     .on_press(Message::DashboardNavSelected(section.to_owned()))
                     .padding([8, 10])
@@ -1357,32 +1197,28 @@ impl AetherIcedShell {
 
             container(
                 column![
-                    text("AetherGuard").size(24).color(Color::from_rgb8(0xA0, 0x60, 0xFF)),
-                    text("General").size(12).color(c(TEXT_D)),
-                    nav_item("Overview", "Overview", self.dashboard_nav == "Overview"),
-                    nav_item("Issues", "Issues", self.dashboard_nav == "Issues"),
-                    nav_item("Files", "Files", self.dashboard_nav == "Files"),
-                    text("Reports").size(12).color(c(TEXT_D)),
-                    nav_item("Reports", "Reports", self.dashboard_nav == "Reports"),
-                    nav_item("Threat Details", "Threat Details", self.dashboard_nav == "Threat Details"),
-                    nav_item("Threats", "Threats", self.dashboard_nav == "Threats"),
-                    text("Engine").size(12).color(c(TEXT_D)),
-                    nav_item("Chat", "Chat", self.dashboard_nav == "Chat"),
-                    nav_item("Network", "Network", self.dashboard_nav == "Network"),
-                    nav_item("Compute", "Compute", self.dashboard_nav == "Compute"),
-                    nav_item("Storage", "Storage", self.dashboard_nav == "Storage"),
-                    text("All Modules").size(12).color(c(TEXT_D)),
-                    nav_item("Logs", "Logs", self.dashboard_nav == "Logs"),
-                    nav_item("Data", "Data", self.dashboard_nav == "Data"),
-                    nav_item("Anchors", "Anchors", self.dashboard_nav == "Anchors"),
-                    nav_item("FlowSphere", "FlowSphere", self.dashboard_nav == "FlowSphere"),
-                    nav_item("ADE", "ADE", self.dashboard_nav == "ADE"),
-                    nav_item("Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"),
-                    nav_item("Imprint", "Imprint", self.dashboard_nav == "Imprint"),
-                    text("Settings").size(12).color(c(TEXT_D)),
-                    nav_item("Performance", "Performance", self.dashboard_nav == "Performance"),
-                    nav_item("Help & Support", "Help & Support", self.dashboard_nav == "Help & Support"),
-                    nav_item("Settings", "Settings", self.dashboard_nav == "Settings"),
+                    text("AetherGuard").size(24).color(c(ACCENT)),
+                    text("Quick Start").size(12).color(c(TEXT_D)),
+                    nav_item("1. Overview", "Overview", self.dashboard_nav == "Overview"),
+                    nav_item("2. Control Center", "Control", self.dashboard_nav == "Control"),
+                    nav_item("3. Files", "Files", self.dashboard_nav == "Files"),
+                    nav_item("4. Chat", "Chat", self.dashboard_nav == "Chat"),
+                    nav_item("5. Logs", "Logs", self.dashboard_nav == "Logs"),
+                    text("Advanced").size(12).color(c(TEXT_D)),
+                    nav_item("6. Symbiont", "Symbiont", self.dashboard_nav == "Symbiont"),
+                    nav_item("7. Swarm Ops", "Swarm Ops", self.dashboard_nav == "Swarm Ops"),
+                    nav_item("8. Privacy", "Privacy", self.dashboard_nav == "Privacy"),
+                    text("Analysis").size(12).color(c(TEXT_D)),
+                    nav_item("9. Threat Analysis", "Threat Analysis", self.dashboard_nav == "Threat Analysis"),
+                    nav_item("10. Threat Graph", "Threat Graph", self.dashboard_nav == "Threat Graph"),
+                    nav_item("11. Anchors", "Anchors", self.dashboard_nav == "Anchors"),
+                    text("Workspace").size(12).color(c(TEXT_D)),
+                    nav_item("12. Browser", "Browser", self.dashboard_nav == "Browser"),
+                    nav_item("13. YouTube", "YouTube", self.dashboard_nav == "YouTube"),
+                    nav_item("14. Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"),
+                    nav_item("15. Info", "Info", self.dashboard_nav == "Info"),
+                    text("System").size(12).color(c(TEXT_D)),
+                    nav_item("16. Runtime", "Runtime", self.dashboard_nav == "Runtime"),
                 ]
                 .spacing(8)
             )
@@ -1423,8 +1259,8 @@ impl AetherIcedShell {
                 .on_press(Message::DashboardNavSelected("Performance".to_owned()))
                 .padding([8, 12])
                 .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
-                    border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
+                    background: Some(Background::Color(Color::from_rgba(0.14, 0.20, 0.24, 0.96))),
+                    border: Border { color: c(ACCENT), width: 1.0, radius: 10.0.into() },
                     ..Default::default()
                 }),
         ]
@@ -1432,11 +1268,11 @@ impl AetherIcedShell {
         .spacing(12);
 
         let kpis = row![
-            cyber_kpi_card("Total Threats", format!("{}%", total_threats), "Aether event stream", Color::from_rgb8(0xFF, 0x4D, 0xA4), "total_threats"),
-            cyber_kpi_card("Video File Risk", format!("{}%", video_risk), "Live node binding", Color::from_rgb8(0xA6, 0x4D, 0xFF), "video_risk"),
-            cyber_kpi_card("Image File Risk", format!("{}%", image_risk), "Deterministic state", Color::from_rgb8(0xFF, 0x53, 0x96), "image_risk"),
-            cyber_kpi_card("Docs File Risk", format!("{}%", docs_risk), "Aether transition", Color::from_rgb8(0x3E, 0x7B, 0xFF), "docs_risk"),
-            cyber_kpi_card("Folder File Risk", format!("{}%", folder_risk), "Overlay observer", Color::from_rgb8(0x18, 0x9E, 0xFF), "folder_risk"),
+            cyber_kpi_card("Total Threats", format!("{}%", total_threats), "Aether event stream", Color::from_rgb8(0x3F, 0xBA, 0xC2), "total_threats"),
+            cyber_kpi_card("Video File Risk", format!("{}%", video_risk), "Live node binding", Color::from_rgb8(0x7F, 0xB8, 0xC7), "video_risk"),
+            cyber_kpi_card("Image File Risk", format!("{}%", image_risk), "Deterministic state", Color::from_rgb8(0x5A, 0xAE, 0x84), "image_risk"),
+            cyber_kpi_card("Docs File Risk", format!("{}%", docs_risk), "Aether transition", Color::from_rgb8(0xC7, 0xA0, 0x4A), "docs_risk"),
+            cyber_kpi_card("Folder File Risk", format!("{}%", folder_risk), "Overlay observer", Color::from_rgb8(0x6B, 0xC0, 0xD0), "folder_risk"),
         ]
         .spacing(10);
 
@@ -1490,10 +1326,10 @@ impl AetherIcedShell {
                 canvas::Canvas::new(DonutScene {
                     values: [0.22, 0.18, 0.35, 0.25],
                     colors: [
-                        Color::from_rgb8(0xB0, 0x4D, 0xFF),
-                        Color::from_rgb8(0xFF, 0x55, 0xA0),
-                        Color::from_rgb8(0x3B, 0x8E, 0xFF),
-                        Color::from_rgb8(0x17, 0xC2, 0xFF),
+                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
+                        Color::from_rgb8(0x7F, 0xB8, 0xC7),
+                        Color::from_rgb8(0x5A, 0xAE, 0x84),
+                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
                     ],
                     pulse: node_pulse,
                 })
@@ -1528,22 +1364,6 @@ impl AetherIcedShell {
         .style(standard_card_style);
 
         let table_panel = {
-            let rows: Vec<Element<'_, Message>> = filtered_threat_rows
-                .iter()
-                .map(|(date, device, virus, path, file_type)| {
-                    row![
-                        text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
-                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                        text(virus).size(12).color(Color::from_rgb8(0xFF, 0x60, 0xA0)).width(Length::FillPortion(2)),
-                        text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
-                        text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
-                        info_icon_button("threat_details"),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into()
-                })
-                .collect();
             container(
                 column![
                     row![
@@ -1561,7 +1381,25 @@ impl AetherIcedShell {
                         text("Info").size(11).color(c(TEXT_D)),
                     ]
                     .spacing(8),
-                    column(rows).spacing(7),
+                    column(
+                        filtered_threat_rows
+                            .into_iter()
+                            .map(|(date, device, virus, path, file_type)| {
+                                row![
+                                    text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
+                                    text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                                    text(virus).size(12).color(c(ACCENT)).width(Length::FillPortion(2)),
+                                    text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
+                                    text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
+                                    info_icon_button("threat_details"),
+                                ]
+                                .spacing(8)
+                                .align_y(Alignment::Center)
+                                .into()
+                            })
+                            .collect::<Vec<Element<'_, Message>>>()
+                    )
+                    .spacing(7),
                 ]
                 .spacing(8)
             )
@@ -1571,34 +1409,36 @@ impl AetherIcedShell {
         };
 
         let device_panel = {
-            let rows: Vec<Element<'_, Message>> = filtered_device_rows
-                .iter()
-                .map(|(device, level)| {
-                    row![
-                        text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                        iced::Element::from(
-                            canvas::Canvas::new(DonutScene {
-                                values: [*level, 1.0 - *level, 0.0, 0.0],
-                                colors: [Color::from_rgb8(0xFF, 0x9A, 0x3D), Color::from_rgb8(0x1C, 0x1B, 0x2A), Color::TRANSPARENT, Color::TRANSPARENT],
-                                pulse: 1.0,
-                            })
-                            .width(Length::Fixed(56.0))
-                            .height(Length::Fixed(56.0))
-                        ),
-                        info_icon_button("device_list"),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into()
-                })
-                .collect();
             container(
                 column![
                     row![
                         text("Threat by device").size(18).color(c(TEXT_H)),
                         info_icon_button("device_list"),
                     ].spacing(8).align_y(Alignment::Center),
-                    column(rows).spacing(8),
+                    column(
+                        filtered_device_rows
+                            .into_iter()
+                            .map(|(device, level)| {
+                                row![
+                                    text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
+                                    iced::Element::from(
+                                        canvas::Canvas::new(DonutScene {
+                                            values: [level, 1.0 - level, 0.0, 0.0],
+                                            colors: [Color::from_rgb8(0xC7, 0xA0, 0x4A), Color::from_rgb8(0x12, 0x1B, 0x22), Color::TRANSPARENT, Color::TRANSPARENT],
+                                            pulse: 1.0,
+                                        })
+                                        .width(Length::Fixed(56.0))
+                                        .height(Length::Fixed(56.0))
+                                    ),
+                                    info_icon_button("device_list"),
+                                ]
+                                .spacing(8)
+                                .align_y(Alignment::Center)
+                                .into()
+                            })
+                            .collect::<Vec<Element<'_, Message>>>()
+                    )
+                    .spacing(8),
                 ]
                 .spacing(8)
             )
@@ -1643,25 +1483,17 @@ impl AetherIcedShell {
             .into()
         } else {
             let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
-                "Issues" => self.view_logs(),
                 "Files" => self.view_data(),
-                "Reports" => self.view_anchors(),
-                "Threat Details" => self.view_ade(),
-                "Threats" => self.view_flow_sphere(),
                 "Chat" => self.view_chat(),
-                "Network" => self.view_browser(),
-                "Compute" => self.view_youtube(),
-                "Storage" => self.view_rekonstruktion(),
                 "Logs" => self.view_logs(),
-                "Data" => self.view_data(),
+                "Threat Analysis" => self.view_ade(),
+                "Threat Graph" => self.view_flow_sphere(),
                 "Anchors" => self.view_anchors(),
-                "FlowSphere" => self.view_flow_sphere(),
-                "ADE" => self.view_ade(),
+                "Browser" => self.view_browser(),
+                "YouTube" => self.view_youtube(),
                 "Reconstruction" => self.view_rekonstruktion(),
-                "Imprint" => self.view_imprint(),
-                "Performance" => self.view_dashboard_performance(),
-                "Help & Support" => self.view_imprint(),
-                "Settings" => self.view_settings(),
+                "Info" => self.view_imprint(),
+                "Runtime" => self.view_dashboard_performance(),
                 _ => self.view_logs(),
             };
             container(embedded)
@@ -1699,7 +1531,7 @@ impl AetherIcedShell {
             row![
                 text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H)),
                 info_icon_button("noether_score"),
-                text(format!("Risk {}", risk_score)).size(11).color(Color::from_rgb8(0xFF, 0xC0, 0x66)),
+                text(format!("Risk {}", risk_score)).size(11).color(c(WARN)),
                 text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D)),
                 text(format!(
                     "Runtime {} | Tick {}ms | Sync {} | Poll {}",
@@ -1717,7 +1549,7 @@ impl AetherIcedShell {
         .padding([6, 10])
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(Color::from_rgba(0.03, 0.09, 0.20, 0.65 * pane_slide + 0.25))),
-            border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.0, radius: 8.0.into() },
+            border: Border { color: c(BORDER), width: 1.0, radius: 8.0.into() },
             ..Default::default()
         });
 
@@ -1837,12 +1669,9 @@ impl AetherIcedShell {
             ChatContext::Group => self.view_group_chat(),
             ChatContext::Shanway => {
                 let avatar = container(
-                    canvas::Canvas::new(ShanwayRobotScene {
-                        tick: self.tick_counter,
-                        size: 80.0,
-                    })
-                    .width(Length::Fixed(90.0))
-                    .height(Length::Fixed(110.0)),
+                    canvas::Canvas::new(AetherLogoScene)
+                        .width(Length::Fixed(90.0))
+                        .height(Length::Fixed(110.0)),
                 )
                 .style(|_: &Theme| container::Style {
                     background: Some(Background::Color(Color::from_rgb8(0x15, 0x14, 0x22))),
@@ -2220,10 +2049,31 @@ impl AetherIcedShell {
     fn view_settings(&self) -> Element<'_, Message> {
         let mode = self.security_mode();
         let profile = self.runtime_profile;
+        let lang = self.ui_language;
         container(
             scrollable(
                 column![
-                    text("Einstellungen").size(24),
+                    text(self.ui_text("Einstellungen", "Settings")).size(24),
+                    text(self.ui_text("Interface-Sprache", "Interface language")).size(20),
+                    row![
+                        button(text(if lang == UiLanguage::German {
+                            "Deutsch [aktiv]"
+                        } else {
+                            "Deutsch"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::UiLanguageSelected(UiLanguage::German))
+                        .style(if lang == UiLanguage::German { primary_button_style } else { secondary_button_style }),
+                        button(text(if lang == UiLanguage::English {
+                            "English [active]"
+                        } else {
+                            "English"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::UiLanguageSelected(UiLanguage::English))
+                        .style(if lang == UiLanguage::English { primary_button_style } else { secondary_button_style }),
+                    ]
+                    .spacing(8),
                     row![
                         info_card("OS-Layer", "Sandbox: strikt\nPrivacy-Boundary: hard block\nIntegrationsgrad: lokal"),
                         info_card("Telemetrie", "Standard: nur lokal\nOptionen: aus, gedrosselt, sicherheitsrelevant"),
@@ -3244,12 +3094,12 @@ impl AetherIcedShell {
     }
 
     fn view_shell(&self) -> Element<'_, Message> {
-        if self.active_tab == Tab::Home {
-            return self.view_home();
-        }
-
         let main = match self.active_tab {
             Tab::Home => self.view_home(),
+            Tab::Control => self.view_control_center(),
+            Tab::Symbiont => self.view_symbiont(),
+            Tab::SwarmOps => self.view_swarm_ops(),
+            Tab::Privacy => self.view_privacy_ops(),
             Tab::Chat => self.view_chat(),
             Tab::Browser => self.view_browser(),
             Tab::YouTube => self.view_youtube(),
@@ -3285,30 +3135,37 @@ impl AetherIcedShell {
 
         let shell_sidebar = container(
             column![
-                text("Aether").size(24).color(Color::from_rgb8(0xA0, 0x6A, 0xFF)),
-                text("Core").size(12).color(c(TEXT_D)),
-                nav_item("Overview", Tab::Home, self.active_tab),
-                nav_item("Chat", Tab::Chat, self.active_tab),
-                nav_item("Network", Tab::Browser, self.active_tab),
-                nav_item("Compute", Tab::YouTube, self.active_tab),
-                nav_item("Files", Tab::Data, self.active_tab),
+                text("AetherGuard").size(26).color(Color::from_rgb8(0xD3, 0xC6, 0xFF)),
+                text("Security is a process, not a product.").size(11).color(c(TEXT_D)),
+                text("Quick Start").size(12).color(c(TEXT_D)),
+                nav_item("1. Overview", Tab::Home, self.active_tab),
+                nav_item("2. Control Center", Tab::Control, self.active_tab),
+                nav_item("3. Files", Tab::Data, self.active_tab),
+                nav_item("4. Chat", Tab::Chat, self.active_tab),
+                nav_item("5. Logs", Tab::Logs, self.active_tab),
+                text("Advanced").size(12).color(c(TEXT_D)),
+                nav_item("6. Symbiont", Tab::Symbiont, self.active_tab),
+                nav_item("7. Swarm Ops", Tab::SwarmOps, self.active_tab),
+                nav_item("8. Privacy", Tab::Privacy, self.active_tab),
                 text("Analysis").size(12).color(c(TEXT_D)),
-                nav_item("Threats", Tab::StructureMap, self.active_tab),
-                nav_item("Threat Details", Tab::ADE, self.active_tab),
-                nav_item("Reports", Tab::Anchors, self.active_tab),
-                nav_item("Logs", Tab::Logs, self.active_tab),
+                nav_item("9. Threat Analysis", Tab::ADE, self.active_tab),
+                nav_item("10. Threat Graph", Tab::StructureMap, self.active_tab),
+                nav_item("11. Anchors", Tab::Anchors, self.active_tab),
+                text("Workspace").size(12).color(c(TEXT_D)),
+                nav_item("12. Browser", Tab::Browser, self.active_tab),
+                nav_item("13. YouTube", Tab::YouTube, self.active_tab),
+                nav_item("14. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("15. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D)),
-                nav_item("Settings", Tab::Settings, self.active_tab),
-                nav_item("Info", Tab::Imprint, self.active_tab),
-                nav_item("Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("16. Runtime", Tab::Settings, self.active_tab),
             ]
             .spacing(8)
         )
-        .padding(14)
+        .padding(16)
         .width(Length::Fixed(220.0))
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-            border: Border { color: Color::from_rgb8(0x30, 0x2E, 0x50), width: 1.2, radius: 12.0.into() },
+            background: Some(Background::Color(Color::from_rgb8(0x0D, 0x14, 0x2A))),
+            border: Border { color: Color::from_rgb8(0x1E, 0x2A, 0x46), width: 1.0, radius: 14.0.into() },
             ..Default::default()
         });
 
@@ -3317,21 +3174,50 @@ impl AetherIcedShell {
                 column![
                     text(match self.active_tab {
                         Tab::Home => "Overview",
+                        Tab::Control => "Control Center",
+                        Tab::Symbiont => "Symbiont",
+                        Tab::SwarmOps => "Swarm Ops",
+                        Tab::Privacy => "Privacy",
                         Tab::Chat => "Chat",
-                        Tab::Browser => "Network",
-                        Tab::YouTube => "Compute",
+                        Tab::Browser => "Browser",
+                        Tab::YouTube => "YouTube",
                         Tab::Data => "Files",
-                        Tab::Settings => "Settings",
+                        Tab::Settings => "Runtime",
                         Tab::Logs => "Logs",
-                        Tab::Anchors => "Reports",
-                        Tab::StructureMap => "Threats",
-                        Tab::ADE => "Threat Details",
+                        Tab::Anchors => "Anchors",
+                        Tab::StructureMap => "Threat Graph",
+                        Tab::ADE => "Threat Analysis",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
                     }).size(24).color(c(TEXT_H)),
-                    text(&self.status_line).size(12).color(c(TEXT_M)),
+                    text(match self.active_tab {
+                        Tab::Home => "Start here: your current health, alerts, and quick state.",
+                        Tab::Control => "Most important actions in one place: run checks, stabilize, and recover.",
+                        Tab::Symbiont => "Manage collaborator nodes and companion runtime links.",
+                        Tab::SwarmOps => "Bootstrap, inspect, and maintain swarm node coordination.",
+                        Tab::Privacy => "Tune redaction, retention, and trust/privacy guardrails.",
+                        Tab::Chat => "Ask questions and control workflows with guided conversation.",
+                        Tab::Browser => "Use the embedded browser for secure operator workflows.",
+                        Tab::YouTube => "Open media diagnostics and linked mission context.",
+                        Tab::Data => "Inspect files, evidence, and local output artifacts.",
+                        Tab::Settings => "Adjust runtime profile, cadence, and behavior controls.",
+                        Tab::Logs => "Review recent events, errors, and execution timeline.",
+                        Tab::Anchors => "View immutable checkpoints and anchor integrity evidence.",
+                        Tab::StructureMap => "Visualize graph relations and threat structure links.",
+                        Tab::ADE => "Run threat analysis and inspect signal confidence.",
+                        Tab::Imprint => "Read version, policy, and legal metadata.",
+                        Tab::Rekonstruktion => "Generate or inspect reconstruction outputs from traces.",
+                    }).size(12).color(c(TEXT_M)),
                 ]
                 .spacing(3),
+                container(
+                    text_input("Search Here", &self.dashboard_search)
+                        .on_input(Message::DashboardSearchChanged)
+                        .padding([9, 14])
+                        .size(13)
+                        .width(Length::Fixed(330.0)),
+                )
+                .padding([0, 8]),
                 iced::widget::Space::new(Length::Fill, Length::Shrink),
                 button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
                     .on_press(Message::TabSelected(Tab::Settings))
@@ -3347,8 +3233,8 @@ impl AetherIcedShell {
         )
         .padding([10, 14])
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x13, 0x1F, 0x39))),
-            border: Border { color: Color::from_rgb8(0x3C, 0x38, 0x60), width: 1.1, radius: 12.0.into() },
+            background: Some(Background::Color(Color::from_rgb8(0x0E, 0x1A, 0x31))),
+            border: Border { color: Color::from_rgb8(0x1F, 0x2B, 0x49), width: 1.0, radius: 12.0.into() },
             ..Default::default()
         });
 
@@ -3372,7 +3258,7 @@ impl AetherIcedShell {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x04, 0x08, 0x14))),
+            background: Some(Background::Color(Color::from_rgb8(0x06, 0x0D, 0x1F))),
             ..Default::default()
         })
         .into()
@@ -3492,8 +3378,8 @@ impl AetherIcedShell {
             Tab::Browser => Some(Tab::Browser),
             Tab::YouTube => Some(Tab::YouTube),
             Tab::Home => match self.dashboard_nav.as_str() {
-                "Network" => Some(Tab::Browser),
-                "Compute" => Some(Tab::YouTube),
+                "Browser" => Some(Tab::Browser),
+                "YouTube" => Some(Tab::YouTube),
                 _ => None,
             },
             _ => None,
@@ -3668,13 +3554,41 @@ impl AetherIcedShell {
                     self.browser_sync_stride
                 );
             }
+            Message::UiLanguageSelected(lang) => {
+                self.ui_language = lang;
+                self.status_line = match self.ui_language {
+                    UiLanguage::German => "Sprache auf Deutsch gesetzt.".to_owned(),
+                    UiLanguage::English => "Interface language switched to English.".to_owned(),
+                };
+            }
             Message::DashboardSearchChanged(value) => self.dashboard_search = value,
             Message::DashboardNavSelected(value) => {
-                self.dashboard_nav = value;
+                self.dashboard_nav = value.clone();
                 self.dashboard_info_key = None;
                 self.dashboard_info_open_tick = self.tick_counter;
-                if self.active_tab == Tab::Home {
-                    if self.dashboard_nav == "Network" {
+                let target = match value.as_str() {
+                    "Overview" => Some(Tab::Home),
+                    "Control" => Some(Tab::Control),
+                    "Symbiont" => Some(Tab::Symbiont),
+                    "Swarm Ops" => Some(Tab::SwarmOps),
+                    "Privacy" => Some(Tab::Privacy),
+                    "Logs" => Some(Tab::Logs),
+                    "Files" => Some(Tab::Data),
+                    "Anchors" => Some(Tab::Anchors),
+                    "Threat Analysis" => Some(Tab::ADE),
+                    "Threat Graph" => Some(Tab::StructureMap),
+                    "Chat" => Some(Tab::Chat),
+                    "Browser" => Some(Tab::Browser),
+                    "YouTube" => Some(Tab::YouTube),
+                    "Reconstruction" => Some(Tab::Rekonstruktion),
+                    "Info" => Some(Tab::Imprint),
+                    "Runtime" => Some(Tab::Settings),
+                    _ => None,
+                };
+
+                if let Some(tab) = target {
+                    self.active_tab = tab;
+                    if self.active_tab == Tab::Browser {
                         self.browser_address = "https://duckduckgo.com/".to_owned();
                         match self.browser_embed.navigate(&self.browser_address) {
                             Ok(()) => {
@@ -3688,7 +3602,7 @@ impl AetherIcedShell {
                                 self.status_line = self.browser_note.clone();
                             }
                         }
-                    } else if self.dashboard_nav == "Compute" {
+                    } else if self.active_tab == Tab::YouTube {
                         self.youtube_address = "https://www.youtube.com/".to_owned();
                         let url = self.youtube_address.clone();
                         match self.browser_embed.navigate(&url) {
@@ -4002,8 +3916,39 @@ impl AetherIcedShell {
                     self.status_line = format!("FlowSphere-Snapshot exportiert: {}", path.display());
                 }
             }
+            Message::OpenFullTab(tab) => {
+                self.active_tab = tab;
+                self.app_mode = AppMode::Full;
+                return window::get_latest().then(|id_opt| {
+                    if let Some(id) = id_opt {
+                        window::resize(id, iced::Size::new(1560.0, 900.0))
+                    } else {
+                        Task::none()
+                    }
+                });
+            }
+            Message::ToggleMode => {
+                self.app_mode = match self.app_mode {
+                    AppMode::Overlay => AppMode::Full,
+                    AppMode::Full => AppMode::Overlay,
+                };
+                let (new_w, new_h) = match self.app_mode {
+                    AppMode::Full => (1560.0f32, 900.0f32),
+                    AppMode::Overlay => (480.0f32, 36.0f32),
+                };
+                return window::get_latest().then(move |id_opt| {
+                    if let Some(id) = id_opt {
+                        window::resize(id, iced::Size::new(new_w, new_h))
+                    } else {
+                        Task::none()
+                    }
+                });
+            }
             Message::Tick => {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
+                if self.tick_counter % 120 == 0 {
+                    self.poll_backend_state();
+                }
                 if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE {
                     self.step_structure_map();
                     return Task::none();
@@ -4065,11 +4010,573 @@ impl AetherIcedShell {
         Task::none()
     }
 
-    fn root_view(&self) -> Element<'_, Message> {
-        if self.current_user.is_none() {
-            self.view_auth()
+    fn view_overlay(&self) -> Element<'_, Message> {
+        let entropy_str = if self.backend_state_loaded {
+            format!("E {:.2}", self.backend_entropy_mean)
         } else {
-            self.view_shell()
+            "E --".to_owned()
+        };
+        let vault_str = if self.backend_state_loaded {
+            format!("V {}", self.backend_vault_main)
+        } else {
+            "V --".to_owned()
+        };
+        let cpu_str = if self.backend_state_loaded {
+            format!("CPU {:.0}%", self.backend_cpu_pct)
+        } else {
+            "CPU --".to_owned()
+        };
+
+        let quick_button = |label: &str, tab: Tab| {
+            button(text(label).size(11))
+                .on_press(Message::OpenFullTab(tab))
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border {
+                        color: c(BORDER),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: c(TEXT_M),
+                    ..Default::default()
+                })
+                .padding([3, 8])
+        };
+
+        let bar = row![
+            text("⬡ AETHER").size(13).color(c(ACCENT)),
+            text(entropy_str).size(12).color(c(TEXT_M)),
+            text(vault_str).size(12).color(c(TEXT_M)),
+            text(cpu_str).size(12).color(c(TEXT_M)),
+            quick_button(self.ui_text("Kontrolle", "Control"), Tab::Control),
+            quick_button(self.ui_text("Symbiont", "Symbiont"), Tab::Symbiont),
+            quick_button(self.ui_text("Swarm Ops", "Swarm Ops"), Tab::SwarmOps),
+            quick_button(self.ui_text("Privatsphaere", "Privacy"), Tab::Privacy),
+            quick_button(self.ui_text("Dateien", "Files"), Tab::Data),
+            quick_button(self.ui_text("Verlauf", "Logs"), Tab::Logs),
+            quick_button(self.ui_text("Chat", "Chat"), Tab::Chat),
+            button(text(self.ui_text("▲ Oeffnen", "▲ Open")).size(12))
+                .on_press(Message::OpenFullTab(self.active_tab))
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border { color: c(BORDER_ACT), width: 1.0, radius: 4.0.into() },
+                    text_color: c(ACCENT),
+                    ..Default::default()
+                })
+                .padding([4, 10]),
+        ]
+        .spacing(16)
+        .align_y(iced::Alignment::Center)
+        .padding([0, 16]);
+
+        container(bar)
+            .width(Length::Fill)
+            .height(Length::Fixed(36.0))
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(c(BG_BASE))),
+                border: Border { color: c(BORDER), width: 1.0, radius: 0.0.into() },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_symbiont(&self) -> Element<'_, Message> {
+        let status = if self.backend_state_loaded {
+            format!(
+                "Backend aktiv | Entropy {:.2} | Vault {} | Last: {}",
+                self.backend_entropy_mean,
+                self.backend_vault_main,
+                if self.backend_shanway_last.is_empty() {
+                    "--"
+                } else {
+                    "vorhanden"
+                }
+            )
+        } else {
+            "Backend noch nicht geladen. Overlay laeuft trotzdem weiter.".to_owned()
+        };
+
+        container(
+            column![
+                text("Symbiont Control").size(28).color(c(TEXT_H)),
+                text("Zentrale Stelle fuer Signal-/Strukturanalyse. Symbiont-Module leben teils im Backend, hier bekommst du klare Einstiegspunkte.")
+                    .size(13)
+                    .color(c(TEXT_M)),
+                container(text(status).size(12).color(c(TEXT_D)))
+                    .padding(10)
+                    .style(panel_frame_style),
+                row![
+                    cyber_kpi_card(
+                        "Entropy Mean",
+                        format!("{:.2}", self.backend_entropy_mean),
+                        "aus IPC Bridge",
+                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
+                        "sym_entropy"
+                    ),
+                    cyber_kpi_card(
+                        "Anchor Count",
+                        format!("{}", self.backend_anchor_count),
+                        "stream health",
+                        Color::from_rgb8(0x5A, 0xAE, 0x84),
+                        "sym_anchor"
+                    ),
+                    cyber_kpi_card(
+                        "Local Users",
+                        format!("{}", self.auth_store.user_count()),
+                        "symbiont scope",
+                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
+                        "sym_users"
+                    ),
+                ]
+                .spacing(10),
+                row![
+                    button(text("Open Data Analysis").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Data))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Threat Analysis").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::ADE))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Chat / Shanway").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Chat))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                ]
+                .spacing(10),
+                info_card(
+                    "Hinweis",
+                    "aether-symbiont (VSCode) und symbiont_core.py sind separate Ebenen. Dieser Tab ist die zentrale Steuerflaeche im Hauptprogramm.",
+                ),
+            ]
+            .spacing(12),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_swarm_ops(&self) -> Element<'_, Message> {
+        let swarm_state = if self.swarm_startup.node_initialized {
+            format!(
+                "Node bereit | nodes={} | new_packs={}",
+                self.swarm_startup.node_count,
+                self.swarm_startup.new_pack_count
+            )
+        } else {
+            "Node noch nicht initialisiert".to_owned()
+        };
+
+        container(
+            column![
+                text("Swarm Operations").size(28).color(c(TEXT_H)),
+                text("Alles rund um Anchors, P2P, Sync und Runtime-Status an einer Stelle.")
+                    .size(13)
+                    .color(c(TEXT_M)),
+                container(text(swarm_state).size(12).color(c(TEXT_D)))
+                    .padding(10)
+                    .style(panel_frame_style),
+                row![
+                    cyber_kpi_card(
+                        "Swarm Nodes",
+                        format!("{}", self.swarm_startup.node_count),
+                        "bootstrap",
+                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
+                        "swarm_nodes"
+                    ),
+                    cyber_kpi_card(
+                        "New Packs",
+                        format!("{}", self.swarm_startup.new_pack_count),
+                        "transport",
+                        Color::from_rgb8(0x5A, 0xAE, 0x84),
+                        "swarm_packs"
+                    ),
+                    cyber_kpi_card(
+                        "Runtime",
+                        self.runtime_profile_label().to_owned(),
+                        "tick scheduler",
+                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
+                        "swarm_runtime"
+                    ),
+                ]
+                .spacing(10),
+                row![
+                    button(text("Open Anchors").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Anchors))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Runtime").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Settings))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Logs").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Logs))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                ]
+                .spacing(10),
+                info_card(
+                    "Hinweis",
+                    "P2P-Anchor-Pool, swarm_sync und public_ttd_transport laufen im Backend. Dieser Tab ist dein UI-Kontrollpunkt.",
+                ),
+            ]
+            .spacing(12),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_privacy_ops(&self) -> Element<'_, Message> {
+        container(
+            column![
+                text("Privacy & Process Monitor").size(28).color(c(TEXT_H)),
+                text("Privacy Observer, Process Engine und Sicherheitschecks fuer den Alltag einfach bedienbar.")
+                    .size(13)
+                    .color(c(TEXT_M)),
+                row![
+                    cyber_kpi_card(
+                        "CPU",
+                        if self.backend_state_loaded {
+                            format!("{:.0}%", self.backend_cpu_pct)
+                        } else {
+                            "--".to_owned()
+                        },
+                        "live",
+                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
+                        "privacy_cpu"
+                    ),
+                    cyber_kpi_card(
+                        "Memory",
+                        if self.backend_state_loaded {
+                            format!("{:.2} GB", self.backend_mem_used_gb)
+                        } else {
+                            "--".to_owned()
+                        },
+                        "live",
+                        Color::from_rgb8(0x5A, 0xAE, 0x84),
+                        "privacy_mem"
+                    ),
+                    cyber_kpi_card(
+                        "Trust",
+                        self.security_snapshot.trust_state.clone(),
+                        "security monitor",
+                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
+                        "privacy_trust"
+                    ),
+                ]
+                .spacing(10),
+                row![
+                    button(text("Security Recheck").size(12).color(c(TEXT_H)))
+                        .on_press(Message::SecurityRecheck)
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Logs").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Logs))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                    button(text("Open Browser").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Browser))
+                        .padding([8, 12])
+                        .style(primary_button_style),
+                ]
+                .spacing(10),
+                info_card(
+                    "Hinweis",
+                    "Die tieferen Privacy-Backends (WindowsPrivacyObserver/ProcessEngine) laufen in Python. Dieser Tab bietet die wichtigsten UI-Einstiege ohne Dateichaos.",
+                ),
+            ]
+            .spacing(12),
+        )
+        .padding(12)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_control_center(&self) -> Element<'_, Message> {
+            let module_card = |
+                title: &'static str,
+                desc: &'static str,
+                status: String,
+                route_label: &'static str,
+                route_tab: Tab,
+            | {
+                container(
+                    column![
+                        row![
+                            text(title).size(18).color(c(TEXT_H)),
+                            iced::widget::Space::new(Length::Fill, Length::Shrink),
+                            container(text(status).size(11).color(c(ACCENT)))
+                                .padding([4, 8])
+                                .style(|_: &Theme| container::Style {
+                                    background: Some(Background::Color(Color::from_rgba(0.12, 0.24, 0.28, 0.85))),
+                                    border: Border { color: c(BORDER), width: 1.0, radius: 8.0.into() },
+                                    ..Default::default()
+                                }),
+                        ]
+                        .align_y(Alignment::Center),
+                        text(desc).size(13).color(c(TEXT_M)),
+                        button(text(route_label).size(12).color(c(TEXT_H)))
+                            .on_press(Message::TabSelected(route_tab))
+                            .padding([8, 12])
+                            .style(primary_button_style),
+                    ]
+                    .spacing(10),
+                )
+                .padding(14)
+                .style(standard_card_style)
+                .width(Length::Fill)
+            };
+
+            let backend_status = if self.backend_state_loaded {
+                format!(
+                    "Vault {} | Entropy {:.2} | CPU {:.0}%",
+                    self.backend_vault_main,
+                    self.backend_entropy_mean,
+                    self.backend_cpu_pct
+                )
+            } else {
+                self.ui_text("Backend-State noch nicht geladen", "Backend state not loaded yet").to_owned()
+            };
+
+            let trust_lower = self.security_snapshot.trust_state.to_ascii_lowercase();
+            let backend_color = if self.backend_state_loaded {
+                Color::from_rgb8(0x3A, 0xA6, 0x64)
+            } else {
+                Color::from_rgb8(0xC7, 0xA0, 0x4A)
+            };
+            let backend_label = if self.backend_state_loaded {
+                self.ui_text("Gruen", "Green")
+            } else {
+                self.ui_text("Gelb", "Yellow")
+            };
+            let swarm_color = if self.swarm_startup.node_initialized {
+                Color::from_rgb8(0x3A, 0xA6, 0x64)
+            } else {
+                Color::from_rgb8(0xC0, 0x58, 0x58)
+            };
+            let swarm_label = if self.swarm_startup.node_initialized {
+                self.ui_text("Gruen", "Green")
+            } else {
+                self.ui_text("Rot", "Red")
+            };
+            let (trust_color, trust_label) = if trust_lower.contains("critical")
+                || trust_lower.contains("danger")
+                || trust_lower.contains("blocked")
+            {
+                (Color::from_rgb8(0xC0, 0x58, 0x58), self.ui_text("Rot", "Red"))
+            } else if trust_lower.contains("warn")
+                || trust_lower.contains("monitor")
+                || trust_lower.contains("limited")
+            {
+                (Color::from_rgb8(0xC7, 0xA0, 0x4A), self.ui_text("Gelb", "Yellow"))
+            } else {
+                (Color::from_rgb8(0x3A, 0xA6, 0x64), self.ui_text("Gruen", "Green"))
+            };
+
+            let status_chip = |title: &str, value: &str, color: Color| {
+                container(
+                    row![
+                        text("●").size(14).color(color),
+                        text(format!("{}: {}", title, value)).size(12).color(c(TEXT_M)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([6, 10])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border { color: c(BORDER), width: 1.0, radius: 8.0.into() },
+                    ..Default::default()
+                })
+            };
+
+            let traffic_row = row![
+                status_chip(self.ui_text("Backend", "Backend"), backend_label, backend_color),
+                status_chip(self.ui_text("Startnode", "Start node"), swarm_label, swarm_color),
+                status_chip(self.ui_text("Trust", "Trust"), trust_label, trust_color),
+            ]
+            .spacing(10);
+
+            let top_summary = row![
+                cyber_kpi_card(
+                    "Backend Vault",
+                    format!("{}", self.backend_vault_main),
+                    "IPC file bridge",
+                    Color::from_rgb8(0x3F, 0xBA, 0xC2),
+                    "backend_vault"
+                ),
+                cyber_kpi_card(
+                    "Swarm Nodes",
+                    format!("{}", self.swarm_startup.node_count),
+                    "Bootstrap discovery",
+                    Color::from_rgb8(0x5A, 0xAE, 0x84),
+                    "swarm_nodes"
+                ),
+                cyber_kpi_card(
+                    "Users / Symbiont",
+                    format!("{}", self.auth_store.user_count()),
+                    "Rust shell knows local user scope",
+                    Color::from_rgb8(0xC7, 0xA0, 0x4A),
+                    "symbiont_scope"
+                ),
+            ]
+            .spacing(10);
+
+            let core_row = row![
+                module_card(
+                    "Core Workspace",
+                    "Overview, Chat, Browser, Files, Reconstruction und Runtime sind die Hauptfunktionen fuer den Alltag.",
+                    "aktiv".to_owned(),
+                    "Open Files",
+                    Tab::Data,
+                ),
+                module_card(
+                    "Threat & Analysis",
+                    "Threat Graph, ADE, Logs und Anchors decken die Hauptanalyse im Rust-Frontend bereits ab.",
+                    "aktiv".to_owned(),
+                    "Open Threat Analysis",
+                    Tab::ADE,
+                ),
+            ]
+            .spacing(10);
+
+            let advanced_row = row![
+                module_card(
+                    "Symbiont",
+                    "Symbiont-Core und aether-symbiont sind hier als eigener Bedienbereich gebuendelt und verlinken direkt zu Analysepfaden.",
+                    "aktiv".to_owned(),
+                    "Open Symbiont",
+                    Tab::Symbiont,
+                ),
+                module_card(
+                    "Privacy & Process Monitor",
+                    "Privacy Observer, Process Engine und Sicherheitschecks sind als eigener Tab verfuegbar und direkt bedienbar.",
+                    "aktiv".to_owned(),
+                    "Open Privacy",
+                    Tab::Privacy,
+                ),
+            ]
+            .spacing(10);
+
+            let infra_row = row![
+                module_card(
+                    "Swarm / P2P / Anchors",
+                    "Swarm-Sync, P2P-Anchor-Pool und Public-TTD-Transport sind im Bereich Swarm Ops zusammengefuehrt.",
+                    format!(
+                        "{} node(s) | startnode {}",
+                        self.swarm_startup.node_count,
+                        if self.swarm_startup.node_initialized { "ja" } else { "nein" }
+                    ),
+                    "Open Swarm Ops",
+                    Tab::SwarmOps,
+                ),
+                module_card(
+                    "Policies / Vault / Trust",
+                    "Rule Engine, Vault Chain und Governance existieren, aber nicht als eigener Bedienbereich. Relevante Kontrolle liegt derzeit in Runtime und Files.",
+                    "teilweise exponiert".to_owned(),
+                    "Open Runtime",
+                    Tab::Settings,
+                ),
+            ]
+            .spacing(10);
+
+            let quick_start_row = row![
+                button(text(self.ui_text("1) Uebersicht", "1) Overview")).size(12).color(c(TEXT_H)))
+                    .on_press(Message::TabSelected(Tab::Home))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text(self.ui_text("2) Security-Pruefung", "2) Security Recheck")).size(12).color(c(TEXT_H)))
+                    .on_press(Message::SecurityRecheck)
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text(self.ui_text("3) Kontrollzentrum", "3) Control Center")).size(12).color(c(TEXT_H)))
+                    .on_press(Message::TabSelected(Tab::Control))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text("4) Swarm Ops").size(12).color(c(TEXT_H)))
+                    .on_press(Message::TabSelected(Tab::SwarmOps))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text("5) Runtime").size(12).color(c(TEXT_H)))
+                    .on_press(Message::TabSelected(Tab::Settings))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+            ]
+            .spacing(10);
+
+            container(
+                scrollable(
+                    column![
+                        text(self.ui_text("Kontrollzentrum", "Control Center")).size(28).color(c(TEXT_H)),
+                        text(self.ui_text(
+                            "Zentraler Einstieg fuer alle sinnvollen Bedienflaechen und fuer fortgeschrittene Subsysteme, die bisher nur verteilt in Modulen existieren.",
+                            "Central entry point for practical controls and advanced subsystems that were previously spread across modules.",
+                        ))
+                            .size(13)
+                            .color(c(TEXT_M)),
+                        traffic_row,
+                        info_card(
+                            self.ui_text("Erste Schritte", "First steps"),
+                            self.ui_text(
+                                "Folge den 5 Buttons von links nach rechts fuer einen sicheren Standard-Start ohne Modulwissen.",
+                                "Follow the 5 buttons from left to right for a safe default startup without module knowledge.",
+                            ),
+                        ),
+                        quick_start_row,
+                        container(text(backend_status).size(12).color(c(TEXT_D)))
+                            .padding(10)
+                            .style(panel_frame_style),
+                        top_summary,
+                        core_row,
+                        advanced_row,
+                        infra_row,
+                    ]
+                    .spacing(12)
+                    .padding([4, 4]),
+                )
+            )
+            .padding(12)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn root_view(&self) -> Element<'_, Message> {
+        match self.app_mode {
+            AppMode::Overlay => self.view_overlay(),
+            AppMode::Full => {
+                if self.current_user.is_none() {
+                    self.view_auth()
+                } else {
+                    let shell = self.view_shell();
+                    let minimize_bar = container(
+                        row![
+                            button(text("▼ Minimize").size(11))
+                                .on_press(Message::ToggleMode)
+                                .style(|_: &Theme, _| button::Style {
+                                    background: Some(Background::Color(c(BG_CARD))),
+                                    border: Border { color: c(BORDER), width: 1.0, radius: 4.0.into() },
+                                    text_color: c(TEXT_M),
+                                    ..Default::default()
+                                })
+                                .padding([3, 10]),
+                        ]
+                        .padding([4, 12])
+                    )
+                    .width(Length::Fill)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(c(BG_BASE))),
+                        border: Border { color: c(BORDER), width: 1.0, radius: 0.0.into() },
+                        ..Default::default()
+                    });
+
+                    column![shell, minimize_bar].into()
+                }
+            }
         }
     }
 }
@@ -4121,8 +4628,11 @@ pub fn run() -> iced::Result {
             ..Settings::default()
         })
         .window(window::Settings {
-            size: iced::Size::new(1560.0, 900.0),
-            min_size: Some(iced::Size::new(1260.0, 760.0)),
+            size: iced::Size::new(480.0, 36.0),
+            min_size: Some(iced::Size::new(320.0, 36.0)),
+            position: window::Position::Specific(iced::Point::new(0.0, 0.0)),
+            decorations: false,
+            level: window::Level::AlwaysOnTop,
             ..window::Settings::default()
         })
         .run_with(|| (AetherIcedShell::bootstrap(), Task::none()))
@@ -4466,6 +4976,7 @@ impl canvas::Program<Message> for FlowSphereScene {
 // ---------------------------------------------------------------------------
 
 /// Trägt die vorberechneten Knoten-Positionen (Theta-Winkel pro Ring).
+#[allow(dead_code)]
 struct StructureMapScene {
     nodes: Vec<Vec<f32>>,
 }
@@ -4676,6 +5187,7 @@ impl canvas::Program<Message> for AetherLogoScene {
 
 // ── ShanwayRobotScene ─────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 struct ShanwayRobotScene {
     tick: u64,
     size: f32,
@@ -4788,6 +5300,7 @@ impl canvas::Program<Message> for ShanwayRobotScene {
 
 // ── Orchestration Canvas ────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 struct OrchestrationScene {
     tick: u64,
     cluster_count: usize,
@@ -5099,12 +5612,12 @@ impl canvas::Program<Message> for CyberPaneGraphScene {
     type State = ();
     fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0C, 0x0B, 0x12));
+        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0B, 0x12, 0x18));
         let t = self.tick as f32;
         let panes = [
-            (0.12f32, 0.22f32, 0.24f32, 0.52f32, Color::from_rgba(0.14, 0.42, 0.98, 0.24), "Background"),
-            (0.42f32, 0.14f32, 0.22f32, 0.66f32, Color::from_rgba(0.11, 0.82, 0.92, 0.24), "Mid"),
-            (0.70f32, 0.24f32, 0.18f32, 0.50f32, Color::from_rgba(0.96, 0.24, 0.66, 0.24), "Overlay"),
+            (0.12f32, 0.22f32, 0.24f32, 0.52f32, Color::from_rgba(0.18, 0.33, 0.38, 0.34), "Background"),
+            (0.42f32, 0.14f32, 0.22f32, 0.66f32, Color::from_rgba(0.25, 0.45, 0.48, 0.34), "Mid"),
+            (0.70f32, 0.24f32, 0.18f32, 0.50f32, Color::from_rgba(0.35, 0.38, 0.24, 0.30), "Overlay"),
         ];
         let mut centers: Vec<Point> = Vec::with_capacity(panes.len());
         for (idx, (x, y, w, h, color, label)) in panes.iter().enumerate() {
@@ -5115,8 +5628,8 @@ impl canvas::Program<Message> for CyberPaneGraphScene {
             let pane = canvas::Path::rectangle(Point::new(px, py), iced::Size::new(pw, ph));
             frame.fill(&pane, *color);
             frame.stroke(&pane, canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.20, 0.95, 1.0, 0.60)),
-                width: 1.0 + 0.8 * self.pulse,
+                style: canvas::Style::Solid(Color::from_rgba(0.25, 0.60, 0.64, 0.55)),
+                width: 1.0 + 0.4 * self.pulse,
                 ..canvas::Stroke::default()
             });
             let cx = px + pw * 0.5;
@@ -5125,14 +5638,14 @@ impl canvas::Program<Message> for CyberPaneGraphScene {
             frame.fill_text(canvas::Text {
                 content: format!("{} / {}", label, idx + 1),
                 position: Point::new(cx, py + 18.0),
-                color: Color::from_rgb8(0xC0, 0xEA, 0xFF),
+                color: Color::from_rgb8(0xA7, 0xB0, 0xB7),
                 size: iced::Pixels(11.0),
                 horizontal_alignment: iced::alignment::Horizontal::Center,
                 vertical_alignment: iced::alignment::Vertical::Center,
                 ..canvas::Text::default()
             });
             let pulse_r = 4.0 + 2.5 * (t * 0.09 + idx as f32).sin().abs();
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), pulse_r), Color::from_rgba(0.0, 1.0, 1.0, 0.9));
+            frame.fill(&canvas::Path::circle(Point::new(cx, cy), pulse_r), Color::from_rgba(0.25, 0.73, 0.76, 0.78));
         }
         for i in 0..centers.len().saturating_sub(1) {
             let edge = canvas::Path::new(|b| {
@@ -5140,8 +5653,8 @@ impl canvas::Program<Message> for CyberPaneGraphScene {
                 b.line_to(centers[i + 1]);
             });
             frame.stroke(&edge, canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.16, 0.90, 1.0, 0.70)),
-                width: 1.2,
+                style: canvas::Style::Solid(Color::from_rgba(0.25, 0.60, 0.64, 0.55)),
+                width: 1.0,
                 ..canvas::Stroke::default()
             });
         }
@@ -5156,8 +5669,8 @@ fn info_icon_button(key: &str) -> Element<'static, Message> {
         .on_press(Message::DashboardInfoToggle(key.to_owned()))
         .padding([2, 8])
         .style(|_: &Theme, _| button::Style {
-            background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.14))),
-            border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.0, radius: 9.0.into() },
+            background: Some(Background::Color(Color::from_rgba(0.10, 0.16, 0.20, 0.96))),
+            border: Border { color: c(BORDER), width: 1.0, radius: 9.0.into() },
             ..Default::default()
         })
         .into()
@@ -5173,7 +5686,7 @@ fn cyber_kpi_card(label: &str, value: String, sub: &str, accent: Color, info_key
                 info_icon_button(info_key),
             ]
             .align_y(Alignment::Center),
-            text(value).size(32).color(accent),
+            text(value).size(30).color(c(TEXT_H)),
             text(sub.to_owned()).size(11).color(c(TEXT_D)),
         ]
         .spacing(6)
@@ -5204,7 +5717,7 @@ fn dashboard_info_text(key: &str) -> &'static str {
 fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color) -> Element<'a, Message> {
     container(
         column![
-            text(title.to_owned()).size(12).color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
+            text(title.to_owned()).size(12).color(c(ACCENT)),
             body,
         ]
         .spacing(8)
@@ -5212,7 +5725,7 @@ fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color)
     )
     .style(move |_: &Theme| container::Style {
         background: Some(Background::Color(panel_bg)),
-        border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 4.0.into() },
+        border: Border { color: c(BORDER), width: 1.0, radius: 8.0.into() },
         ..Default::default()
     })
     .width(Length::Fill)
@@ -5224,8 +5737,8 @@ fn standard_card_style(_: &Theme) -> container::Style {
         background: Some(Background::Color(c(BG_CARD))),
         border: Border {
             color: c(BORDER),
-            width: 1.2,
-            radius: 14.0.into(),
+            width: 1.0,
+            radius: 16.0.into(),
         },
         ..Default::default()
     }
@@ -5235,9 +5748,9 @@ fn accent_card_style(_: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(c(BG_CARD2))),
         border: Border {
-            color: c(BORDER_ACT),
-            width: 1.4,
-            radius: 14.0.into(),
+            color: c(BORDER),
+            width: 1.0,
+            radius: 16.0.into(),
         },
         ..Default::default()
     }
@@ -5245,11 +5758,11 @@ fn accent_card_style(_: &Theme) -> container::Style {
 
 fn selected_item_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.20))),
+        background: Some(Background::Color(Color::from_rgba(0.18, 0.27, 0.31, 0.92))),
         border: Border {
-            color: c(BORDER_ACT),
-            width: 1.5,
-            radius: 10.0.into(),
+            color: c(BORDER),
+            width: 1.0,
+            radius: 12.0.into(),
         },
         ..Default::default()
     }
@@ -5257,10 +5770,10 @@ fn selected_item_style(_: &Theme) -> container::Style {
 
 fn primary_button_style(_: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x96, 0x57, 0xF7))),
-        text_color: Color::from_rgb8(0xF2, 0xED, 0xFF),
+        background: Some(Background::Color(c(ACCENT))),
+        text_color: Color::from_rgb8(0x0B, 0x12, 0x18),
         border: Border {
-            color: Color::from_rgb8(0xB4, 0x84, 0xFF),
+            color: c(ACCENT),
             width: 1.0,
             radius: 12.0.into(),
         },
@@ -5270,10 +5783,10 @@ fn primary_button_style(_: &Theme, _status: button::Status) -> button::Style {
 
 fn secondary_button_style(_: &Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x12, 0x1B, 0x33))),
+        background: Some(Background::Color(c(BG_CARD))),
         text_color: c(TEXT_H),
         border: Border {
-            color: Color::from_rgb8(0x2E, 0x2C, 0x4C),
+            color: c(BORDER),
             width: 1.0,
             radius: 12.0.into(),
         },
@@ -5283,16 +5796,17 @@ fn secondary_button_style(_: &Theme, _status: button::Status) -> button::Style {
 
 fn panel_frame_style(_: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(0x13, 0x12, 0x1E))),
+        background: Some(Background::Color(c(BG_CARD))),
         border: Border {
-            color: Color::from_rgb8(0x2E, 0x2C, 0x4E),
-            width: 1.2,
-            radius: 14.0.into(),
+            color: c(BORDER),
+            width: 1.0,
+            radius: 16.0.into(),
         },
         ..Default::default()
     }
 }
 
+#[allow(dead_code)]
 fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
     container(
         column![
@@ -5327,6 +5841,7 @@ fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Elem
     .into()
 }
 
+#[allow(dead_code)]
 fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<'a, Message> {
     container(
         row![
@@ -5362,6 +5877,7 @@ fn info_badge(tooltip_text: &'static str) -> Element<'static, Message> {
     .into()
 }
 
+#[allow(dead_code)]
 fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Element<'a, Message> {
     container(
         row![

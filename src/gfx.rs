@@ -382,6 +382,7 @@ struct ShaderVaultCache {
 }
 
 impl ShaderVaultCache {
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             compiled: HashMap::new(),

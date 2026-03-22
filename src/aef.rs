@@ -371,7 +371,7 @@ pub struct EnginePipeline {
 }
 
 #[derive(Debug, Clone)]
-struct EngineEvaluation {
+pub(crate) struct EngineEvaluation {
     coherence_index: f64,
     trust_score: f32,
     engine_flags: u64,

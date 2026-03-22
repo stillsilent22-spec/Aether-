@@ -468,6 +468,7 @@ class VeiraGUI:
             bus_publish_fn=self._publish_aether_vision_event,
         )
 
+        self._last_shanway_output: str = ""
         self._configure_styles()
         self.renderer.set_storage_layer(self.storage_layer_var.get())
         self.session_context.generate_honeypots()
@@ -501,6 +502,7 @@ class VeiraGUI:
         self.root.after(2600, lambda: self._sync_remote_public_ttd_pool(silent=True))
         self.bus_bridge.start(callback=self.shanway_interface.on_bus_event)
         self.aether_vision.start()
+        self._start_ipc_writer()
 
     @staticmethod
     def _ae_anchor_preview(anchors: list[dict[str, object]], limit: int = 3) -> str:
@@ -533,6 +535,39 @@ class VeiraGUI:
         widget.delete("1.0", "end")
         widget.insert("1.0", str(text or ""))
         widget.configure(state="disabled")
+
+    def _start_ipc_writer(self) -> None:
+        """Schreibt alle 2 Sekunden den Backend-State als JSON nach data/interbus/backend_state.json."""
+        import pathlib
+
+        def _write_loop() -> None:
+            out_path = pathlib.Path("data/interbus/backend_state.json")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            while True:
+                try:
+                    summary: dict[str, Any] = {}
+                    if hasattr(self, "vault_summary") and self.vault_summary:
+                        summary = self.vault_summary
+                    payload = {
+                        "vault_main": int(summary.get("main_vault_size", 0) or 0),
+                        "vault_sub": int(summary.get("sub_vault_size", 0) or 0),
+                        "entropy_mean": float(summary.get("entropy_mean", 0.0) or 0.0),
+                        "anchor_count": int(
+                            summary.get("main_vault_size", 0)
+                            or len(getattr(self, "vault_entries_cache", []) or [])
+                        ),
+                        "cpu_pct": 0.0,
+                        "mem_used_gb": 0.0,
+                        "shanway_last": str(getattr(self, "_last_shanway_output", "") or ""),
+                    }
+                    out_path.write_text(json.dumps(payload, ensure_ascii=True))
+                except Exception:
+                    pass
+                time.sleep(2.0)
+
+        t = threading.Thread(target=_write_loop, daemon=True)
+        t.start()
+
 
     def _toggle_shanway_ttd_push(self) -> None:
         enabled = bool(self.shanway_ttd_push_var.get())
@@ -733,6 +768,7 @@ class VeiraGUI:
         self.chat_semantic_var.set(
             f"Semantik: {assessment.classification} | Vault {structured.vault_abgleich} | Ende {structured.endbewertung}"
         )
+        self._last_shanway_output = structured.render()
         return structured
 
     def _ae_vault_notice_signature(self, summary: dict[str, object]) -> str:

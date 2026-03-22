@@ -302,9 +302,7 @@ impl BrowserInspector {
         let mut eval_hits = 0usize;
         let mut external_resources = 0usize;
         let mut suspicious_long_lines = 0usize;
-        let mut frontend_symmetry = 0.0f32;
-        let mut frontend_entropy = 0.0f32;
-        let mut preview_summary = "keine Miniatur".to_owned();
+        let (frontend_symmetry, frontend_entropy, preview_summary): (f32, f32, String);
         let mut missing_data = Vec::new();
         let mut risk_reasons = Vec::new();
 
