@@ -28,6 +28,7 @@ use iced::{
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
@@ -297,6 +298,16 @@ pub struct AetherIcedShell {
     // XOR bytestream compare (Leistenmodus strip)
     last_byte_hist: Vec<f32>,
     last_xor_delta: Vec<f32>,
+    // Persistent live render analytics mode
+    live_render_mode: bool,
+    live_render_last_frame: Vec<u8>,
+    live_render_last_running_services: Vec<String>,
+    live_render_last_os_processes: Vec<String>,
+    live_render_prev_xor_delta: Vec<f32>,
+    live_render_invariant_streak: u64,
+    live_render_saved_patterns: u64,
+    live_render_last_delta_ratio: f32,
+    live_render_last_pixeldynamics: f32,
 }
 
 impl AetherIcedShell {
@@ -415,6 +426,15 @@ impl AetherIcedShell {
             vscode_symbiont_active: false,
             vscode_symbiont_mode: String::new(),
             launcher_state: LauncherState::new(),
+            live_render_mode: false,
+            live_render_last_frame: Vec::new(),
+            live_render_last_running_services: Vec::new(),
+            live_render_last_os_processes: Vec::new(),
+            live_render_prev_xor_delta: Vec::new(),
+            live_render_invariant_streak: 0,
+            live_render_saved_patterns: 0,
+            live_render_last_delta_ratio: 0.0,
+            live_render_last_pixeldynamics: 0.0,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -3489,6 +3509,34 @@ impl AetherIcedShell {
                         border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
                         ..Default::default()
                     }),
+                container(
+                    text(if self.live_render_mode {
+                        format!(
+                            "LiveRender ON | d={:.3} | px={:.3} | p={}",
+                            self.live_render_last_delta_ratio,
+                            self.live_render_last_pixeldynamics,
+                            self.live_render_saved_patterns
+                        )
+                    } else {
+                        "LiveRender OFF".to_owned()
+                    })
+                    .size(12)
+                    .color(if self.live_render_mode {
+                        Color::from_rgb8(0x9F, 0xF2, 0xA8)
+                    } else {
+                        c(TEXT_M)
+                    }),
+                )
+                .padding([8, 12])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.19, 0.42, 0.24, 0.20))),
+                    border: Border {
+                        color: Color::from_rgb8(0x4C, 0xA8, 0x5A),
+                        width: 1.0,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                }),
                 button(text(self.ui_text("▼ Leistenmodus", "▼ Overlay Bar")).size(12).color(c(TEXT_H)))
                     .on_press(Message::ToggleMode)
                     .padding([8, 12])
@@ -3602,6 +3650,37 @@ impl AetherIcedShell {
             self.status_line = "Bitte zuerst eine Frage eingeben.".to_owned();
             return;
         }
+        if let Some(enable_live_render) = self.parse_live_render_mode_command(&prompt) {
+            self.apply_live_render_mode(enable_live_render);
+            let reply = if enable_live_render {
+                "\u{1F7E2} Live-Analyse AN\nLive-Render-Modus ist aktiv. Frame-Hooks, Delta-Analyse, Invarianten-Extraktion und Pixeldynamik laufen kontinuierlich, bis du den Modus deaktivierst."
+                    .to_owned()
+            } else {
+                "\u{1F534} Live-Analyse AUS\nLive-Render-Modus ist vollstaendig deaktiviert. Frame-Hooks, Delta-Analyse und Invarianten-Extraktion sind gestoppt. Passiver Normalmodus ist wieder aktiv."
+                    .to_owned()
+            };
+            if let Err(err) = self
+                .state_store
+                .add_private_message(&username, "Shanway", &username, &prompt)
+            {
+                self.status_line = err;
+                return;
+            }
+            if let Err(err) = self
+                .state_store
+                .add_private_message(&username, "Shanway", "Shanway", &reply)
+            {
+                self.status_line = err;
+                return;
+            }
+            self.shanway_message_draft.clear();
+            self.status_line = if enable_live_render {
+                "Live-Render-Modus aktiviert (permanent bis Deaktivierung).".to_owned()
+            } else {
+                "Live-Render-Modus deaktiviert. Passiver Normalmodus aktiv.".to_owned()
+            };
+            return;
+        }
         let reply = render_shanway_reply(self.current_shanway_input().as_ref(), &prompt);
         if let Err(err) = self
             .state_store
@@ -3619,6 +3698,269 @@ impl AetherIcedShell {
         }
         self.shanway_message_draft.clear();
         self.status_line = "Shanway hat lokal geantwortet.".to_owned();
+    }
+
+    fn normalize_live_command(text: &str) -> String {
+        let mut normalized = text.trim().to_lowercase();
+        for dash in ['‑', '–', '—'] {
+            normalized = normalized.replace(dash, "-");
+        }
+        normalized
+            .replace('ä', "ae")
+            .replace('ö', "oe")
+            .replace('ü', "ue")
+            .replace('ß', "ss")
+    }
+
+    fn parse_live_render_mode_command(&self, prompt: &str) -> Option<bool> {
+        let normalized = Self::normalize_live_command(prompt);
+        let mentions_live = normalized.contains("live")
+            && (normalized.contains("render")
+                || normalized.contains("analyse")
+                || normalized.contains("frame"));
+        if !mentions_live {
+            return None;
+        }
+        let activation_markers = [
+            "aktiviere",
+            "aktivieren",
+            "einschalten",
+            "live-analyse an",
+            "live analyse an",
+        ];
+        let deactivation_markers = [
+            "deaktiviere",
+            "deaktivieren",
+            "live-analyse aus",
+            "live analyse aus",
+            "passiven normalmodus",
+            "passiv",
+            "stoppe alle frame-hooks",
+            "stoppe alle frame hooks",
+        ];
+        let last_activation = activation_markers
+            .iter()
+            .filter_map(|marker| normalized.rfind(marker))
+            .max();
+        let last_deactivation = deactivation_markers
+            .iter()
+            .filter_map(|marker| normalized.rfind(marker))
+            .max();
+
+        match (last_activation, last_deactivation) {
+            (Some(a), Some(d)) => Some(a > d),
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (None, None) => None,
+        }
+    }
+
+    fn apply_live_render_mode(&mut self, enabled: bool) {
+        self.live_render_mode = enabled;
+        if !enabled {
+            self.live_render_last_frame.clear();
+            self.live_render_last_running_services.clear();
+            self.live_render_last_os_processes.clear();
+            self.live_render_prev_xor_delta.clear();
+            self.live_render_invariant_streak = 0;
+            self.live_render_last_delta_ratio = 0.0;
+            self.live_render_last_pixeldynamics = 0.0;
+        }
+    }
+
+    fn compute_byte_delta_ratio(previous: &[u8], current: &[u8]) -> f32 {
+        if previous.is_empty() {
+            return 1.0;
+        }
+        let max_len = previous.len().max(current.len());
+        if max_len == 0 {
+            return 0.0;
+        }
+        let mut changed = 0usize;
+        for idx in 0..max_len {
+            let a = previous.get(idx).copied().unwrap_or_default();
+            let b = current.get(idx).copied().unwrap_or_default();
+            if a != b {
+                changed += 1;
+            }
+        }
+        changed as f32 / max_len as f32
+    }
+
+    fn compute_pixeldynamics(previous: &[f32], current: &[f32]) -> f32 {
+        if previous.is_empty() || current.is_empty() {
+            return 0.0;
+        }
+        let len = previous.len().min(current.len());
+        if len == 0 {
+            return 0.0;
+        }
+        let sum: f32 = previous
+            .iter()
+            .zip(current.iter())
+            .take(len)
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        (sum / len as f32).clamp(0.0, 1.0)
+    }
+
+    fn sample_os_processes() -> Vec<String> {
+        #[cfg(target_os = "windows")]
+        {
+            let output = std::process::Command::new("tasklist")
+                .args(["/FO", "CSV", "/NH"])
+                .output();
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let mut names: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .filter_map(|line| {
+                            let first = line.split(',').next()?.trim().trim_matches('"');
+                            if first.is_empty() {
+                                None
+                            } else {
+                                Some(first.to_owned())
+                            }
+                        })
+                        .collect();
+                    names.sort();
+                    names.dedup();
+                    return names;
+                }
+            }
+            Vec::new()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let output = std::process::Command::new("ps")
+                .args(["-eo", "comm="])
+                .output();
+            if let Ok(output) = output {
+                if output.status.success() {
+                    let mut names: Vec<String> = String::from_utf8_lossy(&output.stdout)
+                        .lines()
+                        .map(str::trim)
+                        .filter(|name| !name.is_empty())
+                        .map(|name| name.to_owned())
+                        .collect();
+                    names.sort();
+                    names.dedup();
+                    return names;
+                }
+            }
+            Vec::new()
+        }
+    }
+
+    fn capture_live_render_frame(&mut self) {
+        let os_processes = Self::sample_os_processes();
+        let mut running_services: Vec<String> = self
+            .launcher_state
+            .services
+            .values()
+            .filter(|service| {
+                matches!(
+                    service.status,
+                    ServiceStatus::Running | ServiceStatus::Starting
+                )
+            })
+            .map(|service| service.id.clone())
+            .collect();
+        running_services.sort();
+
+        let mut process_rows: Vec<serde_json::Value> = self
+            .launcher_state
+            .services
+            .values()
+            .map(|service| {
+                serde_json::json!({
+                    "id": service.id,
+                    "status": service.status.label(),
+                    "pid": service.process_id,
+                    "uptime_secs": service.uptime_secs,
+                })
+            })
+            .collect();
+        process_rows.sort_by(|a, b| {
+            a.get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .cmp(b.get("id").and_then(|v| v.as_str()).unwrap_or_default())
+        });
+
+        let frame_payload = serde_json::json!({
+            "tick": self.tick_counter,
+            "app_mode": format!("{:?}", self.app_mode),
+            "active_tab": format!("{:?}", self.active_tab),
+            "runtime_profile": self.runtime_profile_label(),
+            "services": process_rows,
+            "backend": {
+                "cpu_pct": self.backend_cpu_pct,
+                "mem_gb": self.backend_mem_used_gb,
+                "anchor_count": self.backend_anchor_count,
+                "entropy_mean": self.backend_entropy_mean,
+            },
+            "os_processes": {
+                "count": os_processes.len(),
+                "sample": os_processes.iter().take(120).cloned().collect::<Vec<String>>(),
+            },
+            "xor_delta": self.last_xor_delta.clone(),
+        });
+
+        let frame_bytes = serde_json::to_vec(&frame_payload).unwrap_or_default();
+        let delta_ratio = Self::compute_byte_delta_ratio(&self.live_render_last_frame, &frame_bytes);
+        let pixeldynamics =
+            Self::compute_pixeldynamics(&self.live_render_prev_xor_delta, &self.last_xor_delta);
+
+        let stable_services = running_services
+            .iter()
+            .filter(|id| self.live_render_last_running_services.contains(id))
+            .count();
+        let stable_os_processes = os_processes
+            .iter()
+            .filter(|name| self.live_render_last_os_processes.contains(name))
+            .count();
+        if !running_services.is_empty()
+            && stable_services == running_services.len()
+            && !os_processes.is_empty()
+            && stable_os_processes >= (os_processes.len() / 2)
+        {
+            self.live_render_invariant_streak = self.live_render_invariant_streak.saturating_add(1);
+        } else {
+            self.live_render_invariant_streak = 0;
+        }
+
+        let structural_pattern = serde_json::json!({
+            "tick": self.tick_counter,
+            "frame_bytes": frame_bytes.len(),
+            "delta_ratio": delta_ratio,
+            "pixeldynamics": pixeldynamics,
+            "invariants": {
+                "stable_running_services": stable_services,
+                "stable_os_processes": stable_os_processes,
+                "invariant_streak": self.live_render_invariant_streak,
+            },
+            "running_services": running_services,
+            "os_process_count": os_processes.len(),
+        });
+
+        let _ = fs::create_dir_all("logs");
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("logs/live_render_patterns.jsonl")
+        {
+            if writeln!(file, "{}", structural_pattern).is_ok() {
+                self.live_render_saved_patterns = self.live_render_saved_patterns.saturating_add(1);
+            }
+        }
+
+        self.live_render_last_frame = frame_bytes;
+        self.live_render_last_running_services = running_services;
+        self.live_render_last_os_processes = os_processes;
+        self.live_render_prev_xor_delta = self.last_xor_delta.clone();
+        self.live_render_last_delta_ratio = delta_ratio;
+        self.live_render_last_pixeldynamics = pixeldynamics;
     }
 
     fn theme_definition(&self) -> Theme {
@@ -4424,6 +4766,9 @@ impl AetherIcedShell {
             Message::Tick => {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
                 self.launcher_state.poll_processes();
+                if self.live_render_mode {
+                    self.capture_live_render_frame();
+                }
                 if self.tick_counter % 60 == 0 {
                     self.poll_hybrid_state();
                 }

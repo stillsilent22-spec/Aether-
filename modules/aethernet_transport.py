@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import base64
 import json
 import threading
 import urllib.error
 import urllib.parse
 import urllib.request
 import socket
+import time
+import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -17,6 +21,8 @@ class AethernetTransport:
     """Koordiniert LAN-First Anchor-Transport mit Git-Fallback fuer AetherNet."""
 
     UDP_BEACON_PORT: int = 7386
+    SIGNATURE_MAX_SKEW_SECONDS: int = 300
+    NONCE_TTL_SECONDS: int = 900
 
     def __init__(
         self,
@@ -24,17 +30,177 @@ class AethernetTransport:
         anchor_dir: str = "data/anchors",
         nodes_dir: str = "data/swarm/nodes",
         lan_port: int = 7385,
+        local_private_key_path: str = "keys/node_private.key",
+        require_signed_messages: bool = True,
     ) -> None:
         self.node_id = str(node_id)
         self.anchor_dir = Path(anchor_dir)
         self.nodes_dir = Path(nodes_dir)
         self.lan_port = int(lan_port)
+        self.local_private_key_path = Path(local_private_key_path)
+        self.require_signed_messages = bool(require_signed_messages)
         self._receiver_started = False
         self._server: Optional[ThreadingHTTPServer] = None
         self._udp_started = False
+        self._seen_nonces: Dict[str, float] = {}
         self.anchor_dir.mkdir(parents=True, exist_ok=True)
         self.nodes_dir.mkdir(parents=True, exist_ok=True)
         self._local_ip: str = self._detect_local_ip()
+
+    @staticmethod
+    def _utc_now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _canonical_signed_payload(payload: Dict[str, Any]) -> bytes:
+        body = dict(payload)
+        body.pop("_sig_b64", None)
+        body.pop("_sig_node_id", None)
+        body.pop("_sig_ts", None)
+        body.pop("_sig_nonce", None)
+        return json.dumps(body, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+    def _known_public_key(self, signer_node_id: str) -> str:
+        try:
+            node_path = self.nodes_dir / f"{signer_node_id}.json"
+            if not node_path.is_file():
+                return ""
+            payload = json.loads(node_path.read_text(encoding="utf-8"))
+            return str(payload.get("public_key_pem", "") or "").strip()
+        except Exception:
+            return ""
+
+    def _sign_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        envelope = dict(payload)
+        envelope["_sig_node_id"] = self.node_id
+        envelope["_sig_ts"] = self._utc_now_iso()
+        envelope["_sig_nonce"] = uuid.uuid4().hex
+        try:
+            if not self.local_private_key_path.is_file():
+                if self.require_signed_messages:
+                    print("[AETHERNET] signature required but private key missing")
+                return envelope
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+            private_key = load_pem_private_key(self.local_private_key_path.read_bytes(), password=None)
+            signature = private_key.sign(self._canonical_signed_payload(envelope))
+            envelope["_sig_b64"] = base64.b64encode(signature).decode("ascii")
+            return envelope
+        except Exception as err:
+            print(f"[AETHERNET] payload signing failed: {err}")
+            return envelope
+
+    def _prune_seen_nonces(self, now_ts: float) -> None:
+        stale = [
+            nonce
+            for nonce, ts in self._seen_nonces.items()
+            if (now_ts - float(ts)) > float(self.NONCE_TTL_SECONDS)
+        ]
+        for nonce in stale:
+            self._seen_nonces.pop(nonce, None)
+
+    def _verify_signed_payload(self, payload: Dict[str, Any]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        sig_b64 = str(payload.get("_sig_b64", "") or "").strip()
+        signer = str(payload.get("_sig_node_id", "") or "").strip()
+        sig_ts = str(payload.get("_sig_ts", "") or "").strip()
+        nonce = str(payload.get("_sig_nonce", "") or "").strip()
+
+        if not sig_b64:
+            return not self.require_signed_messages
+        if not signer or not sig_ts or not nonce:
+            return False
+        if signer == self.node_id:
+            return False
+
+        try:
+            parsed_ts = datetime.fromisoformat(sig_ts)
+            if parsed_ts.tzinfo is None:
+                parsed_ts = parsed_ts.replace(tzinfo=timezone.utc)
+            skew = abs((datetime.now(timezone.utc) - parsed_ts).total_seconds())
+            if skew > float(self.SIGNATURE_MAX_SKEW_SECONDS):
+                return False
+        except Exception:
+            return False
+
+        now_ts = time.time()
+        self._prune_seen_nonces(now_ts)
+        if nonce in self._seen_nonces:
+            return False
+
+        public_key_pem = self._known_public_key(signer)
+        if not public_key_pem:
+            return False
+
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+            public_key = load_pem_public_key(public_key_pem.encode("utf-8"))
+            if not isinstance(public_key, Ed25519PublicKey):
+                return False
+            public_key.verify(base64.b64decode(sig_b64), self._canonical_signed_payload(payload))
+            self._seen_nonces[nonce] = now_ts
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _extract_base_url(node_payload: Dict[str, Any]) -> str:
+        return str(node_payload.get("lan_url", "") or "").strip()
+
+    def _probe_peer_url(self, base_url: str, timeout: float = 1.5) -> bool:
+        try:
+            with urllib.request.urlopen(base_url.rstrip("/") + "/ping", timeout=timeout) as response:
+                return 200 <= int(response.status) < 300
+        except Exception:
+            return False
+
+    def _update_peer_probe_state(self, peer_path: Path, payload: Dict[str, Any], reachable: bool) -> None:
+        try:
+            now_iso = self._utc_now_iso()
+            current = dict(payload)
+            failures = int(current.get("consecutive_failures", 0) or 0)
+            if reachable:
+                current["consecutive_failures"] = 0
+                current["state"] = "active"
+                current["last_seen_utc"] = now_iso
+            else:
+                current["consecutive_failures"] = failures + 1
+                current["state"] = "stalled"
+            current["last_probe_utc"] = now_iso
+            peer_path.write_text(
+                json.dumps(current, ensure_ascii=True, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception:
+            return
+
+    def refresh_peer_states(self) -> Dict[str, int]:
+        """Aktualisiert Reachability und Failure-Streaks, damit Peers sauber rejoinen koennen."""
+        total = 0
+        reachable = 0
+        stalled = 0
+        for peer_path in self.nodes_dir.glob("*.json"):
+            try:
+                payload = json.loads(peer_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            peer_id = str(payload.get("node_id", "") or "").strip()
+            if not peer_id or peer_id == self.node_id:
+                continue
+            base_url = self._extract_base_url(payload)
+            if not base_url:
+                continue
+            total += 1
+            is_reachable = self._probe_peer_url(base_url)
+            if is_reachable:
+                reachable += 1
+            else:
+                stalled += 1
+            self._update_peer_probe_state(peer_path, payload, is_reachable)
+        return {"total": int(total), "reachable": int(reachable), "stalled": int(stalled)}
 
     def _anchor_path(self, pack_id: str) -> Path:
         """Leitet den lokalen Dateipfad fuer ein Anchor-Pack ab."""
@@ -67,11 +233,12 @@ class AethernetTransport:
         """Versucht einen Anchor-Push zuerst ueber LAN und faellt danach auf Git zurueck."""
         try:
             if self._store_pack(pack):
+                signed_pack = self._sign_payload(pack)
                 for base_url in self.discover_lan_nodes():
                     try:
                         request = urllib.request.Request(
                             urllib.parse.urljoin(base_url.rstrip("/") + "/", "anchor"),
-                            data=json.dumps(pack, ensure_ascii=True, sort_keys=True).encode("utf-8"),
+                            data=json.dumps(signed_pack, ensure_ascii=True, sort_keys=True).encode("utf-8"),
                             headers={"Content-Type": "application/json"},
                             method="POST",
                         )
@@ -171,16 +338,25 @@ class AethernetTransport:
                         return
 
                     if self.path == "/anchor":
+                        if not transport._verify_signed_payload(payload):
+                            self._send_json(401, {"ok": False, "error": "invalid_signature"})
+                            return
                         ok = transport._store_pack(payload)
                         self._send_json(200 if ok else 400, {"ok": ok})
                         return
 
                     if self.path == "/peer":
+                        if not transport._verify_signed_payload(payload):
+                            self._send_json(401, {"ok": False, "error": "invalid_signature"})
+                            return
                         transport._store_peer_from_beacon(payload)
                         self._send_json(200, {"ok": True})
                         return
 
                     if self.path == "/consensus/candidate":
+                        if not transport._verify_signed_payload(payload):
+                            self._send_json(401, {"ok": False, "error": "invalid_signature"})
+                            return
                         try:
                             from modules.consensus_engine import submit_candidate
 
@@ -256,6 +432,7 @@ class AethernetTransport:
     def discover_lan_nodes(self) -> List[str]:
         """Liest bekannte LAN-URLs aus den Node-JSON-Dateien des Schwarms."""
         try:
+            self.refresh_peer_states()
             urls: List[str] = []
             for path in self.nodes_dir.glob("*.json"):
                 try:
@@ -264,6 +441,8 @@ class AethernetTransport:
                         continue
                     lan_url = str(payload.get("lan_url", "")).strip()
                     if lan_url:
+                        if str(payload.get("state", "active")).strip().lower() == "stalled":
+                            continue
                         urls.append(lan_url)
                 except Exception:
                     continue
@@ -292,11 +471,14 @@ class AethernetTransport:
             "lan_url": f"http://{self._local_ip}:{self.lan_port}",
             "version": "aether-beacon-v1",
         }
-        return json.dumps(info, ensure_ascii=True, sort_keys=True).encode("utf-8")
+        signed_info = self._sign_payload(info)
+        return json.dumps(signed_info, ensure_ascii=True, sort_keys=True).encode("utf-8")
 
     def _store_peer_from_beacon(self, info: Dict[str, Any]) -> None:
         """Persists a peer discovered via UDP beacon or relay into nodes_dir."""
         try:
+            if not self._verify_signed_payload(info):
+                return
             peer_id = str(info.get("node_id", "")).strip()
             if not peer_id or peer_id == self.node_id:
                 return
@@ -312,6 +494,9 @@ class AethernetTransport:
                     "node_id": peer_id,
                     "lan_url": str(info.get("lan_url", "")).strip(),
                     "discovered_via": str(info.get("version", "udp_broadcast")),
+                    "last_seen_utc": self._utc_now_iso(),
+                    "state": "active",
+                    "consecutive_failures": 0,
                 }
             )
             peer_path.write_text(
@@ -377,6 +562,7 @@ class AethernetTransport:
                 "lan_url": f"http://{self._local_ip}:{self.lan_port}",
                 "version": "aether-relay-v1",
             }
+            payload = self._sign_payload(payload)
             req = urllib.request.Request(
                 relay_url.rstrip("/") + "/register",
                 data=json.dumps(payload, ensure_ascii=True).encode("utf-8"),
@@ -427,13 +613,15 @@ class AethernetTransport:
             for anchor in local_anchors:
                 try:
                     body = json.dumps(
+                        self._sign_payload(
                         {
                             "ttd_hash": str(anchor.get("ttd_hash", "")),
                             "anchor_type": str(anchor.get("anchor_type", "consensus")),
                             "node_id": self.node_id,
                             "software_context": str(anchor.get("software_context", "aether")),
                             "metrics": dict(anchor.get("metrics", {})),
-                        },
+                        }
+                        ),
                         ensure_ascii=True,
                     ).encode("utf-8")
                     req = urllib.request.Request(

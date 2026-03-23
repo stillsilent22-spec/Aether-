@@ -36,8 +36,10 @@ DEFAULT_HYBRID: Dict[str, Any] = {
     "aethernet": {
         "enabled": True,
         "receiver_enabled": True,
+        "require_signed_messages": True,
         "auto_pull": True,
         "pull_interval_seconds": 30.0,
+        "peer_rejoin_interval_seconds": 45.0,
         "invites_enabled": True,
         "invite_auto_accept": True,
         "invite_emit_local": True,
@@ -91,8 +93,10 @@ def _merge_hybrid(settings_raw: Dict[str, Any]) -> Dict[str, Any]:
                 for k in (
                     "enabled",
                     "receiver_enabled",
+                    "require_signed_messages",
                     "auto_pull",
                     "pull_interval_seconds",
+                    "peer_rejoin_interval_seconds",
                     "invites_enabled",
                     "invite_auto_accept",
                     "invite_emit_local",
@@ -301,6 +305,7 @@ def main() -> int:
     sym_proc: Optional[subprocess.Popen[Any]] = None
     aether_transport: Optional[AethernetTransport] = None
     last_aether_pull_at = 0.0
+    last_peer_rejoin_at = 0.0
     last_invite_emit_at = 0.0
     last_error = ""
 
@@ -319,9 +324,12 @@ def main() -> int:
             aether_cfg = hybrid.get("aethernet") if isinstance(hybrid.get("aethernet"), dict) else {}
             aether_enabled = bool((aether_cfg or {}).get("enabled", True))
             receiver_enabled = bool((aether_cfg or {}).get("receiver_enabled", True))
+            require_signed_messages = bool((aether_cfg or {}).get("require_signed_messages", True))
             auto_pull = bool((aether_cfg or {}).get("auto_pull", True))
             pull_interval = float((aether_cfg or {}).get("pull_interval_seconds", 30.0) or 30.0)
             pull_interval = max(5.0, min(600.0, pull_interval))
+            peer_rejoin_interval = float((aether_cfg or {}).get("peer_rejoin_interval_seconds", 45.0) or 45.0)
+            peer_rejoin_interval = max(10.0, min(600.0, peer_rejoin_interval))
             invites_enabled = bool((aether_cfg or {}).get("invites_enabled", True))
             invite_auto_accept = bool((aether_cfg or {}).get("invite_auto_accept", True))
             invite_emit_local = bool((aether_cfg or {}).get("invite_emit_local", True))
@@ -361,12 +369,18 @@ def main() -> int:
                         anchor_dir=str(anchor_dir),
                         nodes_dir=str(nodes_dir),
                         lan_port=aether_port,
+                        local_private_key_path=str(ROOT / "keys" / "node_private.key"),
+                        require_signed_messages=require_signed_messages,
                     )
                 if receiver_enabled:
                     aether_transport.start_lan_receiver()
                 aether_transport.start_udp_discovery()
+                now_ts = time.time()
+                peer_probe = {"total": 0, "reachable": 0, "stalled": 0}
+                if (now_ts - float(last_peer_rejoin_at)) >= peer_rejoin_interval:
+                    peer_probe = aether_transport.refresh_peer_states()
+                    last_peer_rejoin_at = now_ts
                 if auto_pull:
-                    now_ts = time.time()
                     if (now_ts - float(last_aether_pull_at)) >= pull_interval:
                         if relay_url:
                             aether_transport.relay_push(relay_url)
@@ -381,6 +395,8 @@ def main() -> int:
                             anchor_dir=str(anchor_dir),
                             consensus_db=str(ROOT / "data" / "consensus.db"),
                         )
+                else:
+                    peer_probe = aether_transport.refresh_peer_states()
                 invite_status = {
                     "invite_emitted": False,
                     "invite_generated_path": "",
@@ -410,6 +426,7 @@ def main() -> int:
                     "invite_rejected": 0,
                     "invite_last_error": "",
                 }
+                peer_probe = {"total": 0, "reachable": 0, "stalled": 0}
 
             existing_backend = _safe_read_json(BACKEND_STATE_PATH)
             merged_backend = _merge_backend_heartbeat(existing_backend)
@@ -435,6 +452,12 @@ def main() -> int:
                     "swarm_quorum_reachable": bool(swarm_status.get("quorum_reachable", False)),
                     "swarm_estimated_saving_percent": float(swarm_status.get("estimated_saving_percent", 0.0) or 0.0),
                     "swarm_summary": str(swarm_status.get("summary", "") or ""),
+                    "swarm_alert_level": str(swarm_status.get("alert_level", "ok") or "ok"),
+                    "swarm_alert_count": int(len(list(swarm_status.get("alerts", []) or []))),
+                    "swarm_health_score": float(swarm_status.get("health_score", 0.0) or 0.0),
+                    "swarm_peer_probe_total": int(peer_probe.get("total", 0) or 0),
+                    "swarm_peer_probe_reachable": int(peer_probe.get("reachable", 0) or 0),
+                    "swarm_peer_probe_stalled": int(peer_probe.get("stalled", 0) or 0),
                     "swarm_invite_received": int(invite_status.get("invite_received", 0) or 0),
                     "swarm_invite_accepted": int(invite_status.get("invite_accepted", 0) or 0),
                     "swarm_invite_rejected": int(invite_status.get("invite_rejected", 0) or 0),
@@ -458,6 +481,12 @@ def main() -> int:
                 "swarm_consensus_count": int(swarm_status.get("consensus_count", 0) or 0),
                 "swarm_candidate_count": int(swarm_status.get("candidate_count", 0) or 0),
                 "swarm_summary": str(swarm_status.get("summary", "") or ""),
+                "swarm_alert_level": str(swarm_status.get("alert_level", "ok") or "ok"),
+                "swarm_alert_count": int(len(list(swarm_status.get("alerts", []) or []))),
+                "swarm_health_score": float(swarm_status.get("health_score", 0.0) or 0.0),
+                "swarm_peer_probe_total": int(peer_probe.get("total", 0) or 0),
+                "swarm_peer_probe_reachable": int(peer_probe.get("reachable", 0) or 0),
+                "swarm_peer_probe_stalled": int(peer_probe.get("stalled", 0) or 0),
                 "swarm_invite_received": int(invite_status.get("invite_received", 0) or 0),
                 "swarm_invite_accepted": int(invite_status.get("invite_accepted", 0) or 0),
                 "swarm_invite_rejected": int(invite_status.get("invite_rejected", 0) or 0),

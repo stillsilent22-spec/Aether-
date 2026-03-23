@@ -11,6 +11,43 @@ from modules.consensus_engine import get_candidate_count, get_consensus_anchors
 from modules.invariant_observer import get_last_estimated_saving
 
 
+def _derive_alerts(*, node_count: int, reachable_count: int, genesis_key_ok: bool, candidate_count: int, consensus_count: int) -> tuple[str, list[dict[str, Any]], float]:
+    alerts: list[dict[str, Any]] = []
+    score = 1.0
+
+    if not genesis_key_ok:
+        alerts.append({"severity": "critical", "code": "GENESIS_KEY_MISSING", "message": "Genesis key missing or invalid."})
+        score -= 0.35
+
+    if node_count < 3:
+        alerts.append({"severity": "warning", "code": "NODE_COUNT_LOW", "message": "Swarm has fewer than 3 nodes."})
+        score -= 0.20
+
+    if node_count > 0:
+        reach_ratio = float(reachable_count) / float(max(1, node_count))
+        if reach_ratio < 0.5:
+            alerts.append({"severity": "critical", "code": "REACHABILITY_LOW", "message": "Less than 50% of nodes are reachable."})
+            score -= 0.30
+        elif reach_ratio < 0.75:
+            alerts.append({"severity": "warning", "code": "REACHABILITY_DEGRADED", "message": "Reachability below 75%."})
+            score -= 0.12
+
+    if candidate_count > max(12, int(consensus_count * 2) + 4):
+        alerts.append({"severity": "warning", "code": "CANDIDATE_BACKLOG", "message": "Consensus candidate backlog is growing."})
+        score -= 0.14
+
+    if not alerts:
+        level = "ok"
+    elif any(item.get("severity") == "critical" for item in alerts):
+        level = "critical"
+    elif any(item.get("severity") == "warning" for item in alerts):
+        level = "warning"
+    else:
+        level = "info"
+
+    return level, alerts, max(0.0, min(1.0, score))
+
+
 def get_swarm_status(
     nodes_dir: str = "data/swarm/nodes",
     anchor_dir: str = "data/anchors",
@@ -51,11 +88,17 @@ def get_swarm_status(
         candidate_count = get_candidate_count(db_path=consensus_db)
         consensus_count = len(get_consensus_anchors(db_path=consensus_db))
         estimated_saving_percent = round(get_last_estimated_saving() * 100.0, 2)
-        quorum_reachable = len(node_files) >= 3
         quorum_reachable = reachable_count >= 3
+        alert_level, alerts, health_score = _derive_alerts(
+            node_count=int(len(node_files)),
+            reachable_count=int(reachable_count),
+            genesis_key_ok=bool(genesis_key_ok),
+            candidate_count=int(candidate_count),
+            consensus_count=int(consensus_count),
+        )
         summary = (
             f"nodes={len(node_files)} (online={reachable_count}) | packs={len(anchor_files)} | consensus={consensus_count} | "
-            f"quorum={'yes' if quorum_reachable else 'no'}"
+            f"quorum={'yes' if quorum_reachable else 'no'} | health={alert_level}"
         )
 
         return {
@@ -67,6 +110,9 @@ def get_swarm_status(
             "consensus_count": int(consensus_count),
             "quorum_reachable": bool(quorum_reachable),
             "estimated_saving_percent": float(estimated_saving_percent),
+            "alert_level": str(alert_level),
+            "alerts": list(alerts),
+            "health_score": float(health_score),
             "summary": summary,
         }
     except Exception as err:
@@ -79,6 +125,9 @@ def get_swarm_status(
             "consensus_count": 0,
             "quorum_reachable": False,
             "estimated_saving_percent": 0.0,
+            "alert_level": "critical",
+            "alerts": [{"severity": "critical", "code": "STATUS_UNAVAILABLE", "message": "Swarm status unavailable."}],
+            "health_score": 0.0,
             "summary": "swarm status unavailable",
         }
 
@@ -95,6 +144,8 @@ def print_swarm_status() -> None:
             "consensus_count",
             "quorum_reachable",
             "estimated_saving_percent",
+            "alert_level",
+            "health_score",
             "summary",
         ):
             print(f"{key}: {status.get(key)}")
