@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SymbiontLanguageClient } from './lsp_client';
+import { readHybridStatus, readSharedSymbiontSettings } from './shared_runtime';
 
 /**
  * WebView panel showing the Meta-Ockham dashboard.
@@ -16,6 +17,7 @@ export class SymbiontPanel {
     private constructor(
         panel: vscode.WebviewPanel,
         client: SymbiontLanguageClient,
+        private readonly _repoRoot: string,
     ) {
         this._panel = panel;
         this._client = client;
@@ -40,7 +42,7 @@ export class SymbiontPanel {
         );
     }
 
-    public static createOrShow(extensionUri: vscode.Uri, client: SymbiontLanguageClient): void {
+    public static createOrShow(extensionUri: vscode.Uri, client: SymbiontLanguageClient, repoRoot: string): void {
         const column = vscode.window.activeTextEditor
             ? vscode.ViewColumn.Beside
             : vscode.ViewColumn.One;
@@ -60,7 +62,7 @@ export class SymbiontPanel {
             },
         );
 
-        SymbiontPanel.currentPanel = new SymbiontPanel(panel, client);
+        SymbiontPanel.currentPanel = new SymbiontPanel(panel, client, repoRoot);
         // Auto-load server status
         SymbiontPanel.currentPanel._handleStatus().catch(() => {});
     }
@@ -85,12 +87,19 @@ export class SymbiontPanel {
     private async _handleStatus(): Promise<void> {
         try {
             const result = await this._client.sendRequest('aether/status', {}) as any;
+                        const hybrid = readHybridStatus(this._repoRoot);
+                        const shared = readSharedSymbiontSettings(this._repoRoot);
             const html = this._buildHtml(`
                 <h2>Server Status</h2>
                 <ul>
                   <li>Uptime: ${result.uptime_s}s</li>
                   <li>Requests: ${result.req_count}</li>
                   <li>Vault: ${result.vault_path}</li>
+                                    <li>Hybrid Bridge: ${hybrid?.bridge_running ? 'online' : 'offline'}</li>
+                                    <li>Hybrid Symbiont: ${hybrid?.symbiont_running ? 'online' : 'offline'}</li>
+                                    <li>Shared Socket: ${hybrid?.symbiont_host ?? shared.host}:${hybrid?.symbiont_port ?? shared.port}</li>
+                                    <li>Shared Python: ${shared.pythonPath}</li>
+                                    <li>Shared Server: ${shared.serverPath}</li>
                 </ul>
                 <hr/>
                 <p>Öffne eine Datei und nutze die Kontextmenü-Befehle

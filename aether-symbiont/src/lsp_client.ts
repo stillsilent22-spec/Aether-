@@ -1,12 +1,13 @@
 import * as cp from 'child_process';
-import * as readline from 'readline';
+import * as net from 'net';
 
 /**
- * Minimal JSON-RPC 2.0 client that communicates with symbiont_server.py
- * via stdin/stdout (Content-Length framing — same as LSP).
+ * Minimal JSON-RPC 2.0 client that communicates with symbiont_server.py.
+ * It can either spawn a local stdio server or attach to the shared hybrid TCP socket.
  */
 export class SymbiontLanguageClient {
     private _process: cp.ChildProcess | null = null;
+    private _socket: net.Socket | null = null;
     private _nextId = 1;
     private _pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
     private _buffer = '';
@@ -14,16 +15,42 @@ export class SymbiontLanguageClient {
     constructor(
         private readonly serverPath: string,
         private readonly pythonPath: string,
+        private readonly sharedHost?: string,
+        private readonly sharedPort?: number,
     ) {}
 
     async start(): Promise<void> {
+        if (this.sharedHost && this.sharedPort) {
+            const host = this.sharedHost;
+            const port = this.sharedPort;
+            await new Promise<void>((resolve, reject) => {
+                const socket = net.createConnection(
+                    { host, port },
+                    () => resolve(),
+                );
+                socket.on('data', (chunk: Buffer) => {
+                    this._buffer += chunk.toString('utf-8');
+                    this._processBuffer();
+                });
+                socket.on('error', reject);
+                socket.on('close', () => {
+                    for (const { reject } of this._pending.values()) {
+                        reject(new Error('Shared Symbiont socket closed'));
+                    }
+                    this._pending.clear();
+                });
+                this._socket = socket;
+            });
+            return;
+        }
+
         this._process = cp.spawn(this.pythonPath, [this.serverPath], {
             stdio: ['pipe', 'pipe', 'pipe'],
             env: process.env,
         });
 
-        this._process.stderr?.on('data', (data: Buffer) => {
-            // Server logs go to stderr — forward to VS Code output channel (silent)
+        this._process.stderr?.on('data', (_data: Buffer) => {
+            // Server logs go to stderr — forwarded silently for now.
         });
 
         this._process.stdout?.on('data', (chunk: Buffer) => {
@@ -32,7 +59,6 @@ export class SymbiontLanguageClient {
         });
 
         this._process.on('exit', (code) => {
-            // Reject all pending requests on exit
             for (const { reject } of this._pending.values()) {
                 reject(new Error(`Server exited with code ${code}`));
             }
@@ -41,6 +67,9 @@ export class SymbiontLanguageClient {
     }
 
     async stop(): Promise<void> {
+        this._socket?.end();
+        this._socket?.destroy();
+        this._socket = null;
         this._process?.kill();
         this._process = null;
     }
@@ -51,9 +80,12 @@ export class SymbiontLanguageClient {
             this._pending.set(id, { resolve, reject });
             const msg = JSON.stringify({ jsonrpc: '2.0', id, method, params });
             const header = `Content-Length: ${Buffer.byteLength(msg, 'utf-8')}\r\n\r\n`;
-            this._process?.stdin?.write(header + msg, 'utf-8');
+            if (this._socket !== null) {
+                this._socket.write(header + msg, 'utf-8');
+            } else {
+                this._process?.stdin?.write(header + msg, 'utf-8');
+            }
 
-            // Timeout after 15s
             setTimeout(() => {
                 if (this._pending.has(id)) {
                     this._pending.delete(id);
@@ -69,7 +101,10 @@ export class SymbiontLanguageClient {
             if (headerEnd === -1) break;
             const headerPart = this._buffer.slice(0, headerEnd);
             const match = /Content-Length:\s*(\d+)/i.exec(headerPart);
-            if (!match) { this._buffer = this._buffer.slice(headerEnd + 4); continue; }
+            if (!match) {
+                this._buffer = this._buffer.slice(headerEnd + 4);
+                continue;
+            }
             const length = parseInt(match[1], 10);
             const bodyStart = headerEnd + 4;
             if (this._buffer.length < bodyStart + length) break;
@@ -87,7 +122,7 @@ export class SymbiontLanguageClient {
                     }
                 }
             } catch {
-                // Malformed JSON — ignore
+                // Ignore malformed JSON frames.
             }
         }
     }

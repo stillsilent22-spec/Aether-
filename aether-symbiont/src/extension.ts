@@ -3,28 +3,67 @@ import * as vscode from 'vscode';
 import { SymbiontLanguageClient } from './lsp_client';
 import { SymbiontPanel } from './symbiont_panel';
 import { DeltaStatusBar } from './delta_status';
+import {
+    readHybridStatus,
+    readSharedSymbiontSettings,
+    repoRootFromExtension,
+    writeVscodeRuntimeStatus,
+} from './shared_runtime';
 
 let client: SymbiontLanguageClient | undefined;
 let statusBar: DeltaStatusBar | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     const config = vscode.workspace.getConfiguration('aether');
+    const repoRoot = repoRootFromExtension(context.extensionPath);
+    const shared = readSharedSymbiontSettings(repoRoot);
 
     // ── Server-Pfad auflösen ──────────────────────────────────────────────
     let serverPath = config.get<string>('serverPath', '');
     if (!serverPath) {
-        serverPath = context.asAbsolutePath(
-            path.join('server', 'symbiont_server.py')
-        );
+        serverPath = path.join(repoRoot, shared.serverPath);
     }
-    const pythonPath = config.get<string>('pythonPath', 'python');
+    const pythonPath = config.get<string>('pythonPath', '') || shared.pythonPath;
 
     // ── LSP-Client starten ────────────────────────────────────────────────
-    client = new SymbiontLanguageClient(serverPath, pythonPath);
-    await client.start();
+    const hybridAtStart = readHybridStatus(repoRoot);
+    const useSharedSocket = Boolean(hybridAtStart?.symbiont_running && hybridAtStart?.symbiont_host && hybridAtStart?.symbiont_port);
+    client = new SymbiontLanguageClient(
+        serverPath,
+        pythonPath,
+        useSharedSocket ? hybridAtStart?.symbiont_host : undefined,
+        useSharedSocket ? hybridAtStart?.symbiont_port : undefined,
+    );
+    let lastError = '';
+    try {
+        await client.start();
+    } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err);
+        writeVscodeRuntimeStatus(repoRoot, {
+            active: false,
+            pythonPath,
+            serverPath,
+            reqMode: 'spawn',
+            sharedSettings: true,
+            lastError,
+            updatedAt: new Date().toISOString(),
+        });
+        throw err;
+    }
+
+    const hybrid = readHybridStatus(repoRoot);
+    writeVscodeRuntimeStatus(repoRoot, {
+        active: true,
+        pythonPath,
+        serverPath,
+        reqMode: useSharedSocket ? 'shared-socket' : 'spawn',
+        sharedSettings: true,
+        lastError,
+        updatedAt: new Date().toISOString(),
+    });
 
     // ── Status-Bar ────────────────────────────────────────────────────────
-    statusBar = new DeltaStatusBar(client);
+    statusBar = new DeltaStatusBar(client, repoRoot);
     context.subscriptions.push(statusBar);
 
     // ── Befehle registrieren ──────────────────────────────────────────────
@@ -86,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
 
         vscode.commands.registerCommand('aether.showPanel', () => {
-            SymbiontPanel.createOrShow(context.extensionUri, client!);
+            SymbiontPanel.createOrShow(context.extensionUri, client!, repoRoot);
         }),
     );
 
@@ -95,5 +134,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export async function deactivate(): Promise<void> {
+    const extensionPath = vscode.extensions.getExtension('aether.aether-symbiont')?.extensionPath;
+    if (extensionPath) {
+        writeVscodeRuntimeStatus(repoRootFromExtension(extensionPath), {
+            active: false,
+            pythonPath: '',
+            serverPath: '',
+            reqMode: 'stopped',
+            sharedSettings: true,
+            lastError: '',
+            updatedAt: new Date().toISOString(),
+        });
+    }
     await client?.stop();
 }

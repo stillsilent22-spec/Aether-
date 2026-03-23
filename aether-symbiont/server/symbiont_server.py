@@ -13,7 +13,9 @@ VS Code Language Server Protocol). Implementiert 7 Methoden:
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
+import collections
 import json
 import logging
 import os
@@ -47,6 +49,22 @@ _filter    = SymbiontCompletionFilter()
 _start_ts  = time.time()
 _req_count = 0
 
+# ── Live-Event-Log ────────────────────────────────────────────────────────────
+_events: collections.deque = collections.deque(maxlen=500)
+_event_idx: int = 0
+
+
+def _log_event(kind: str, detail: str = "") -> None:
+    """Haengt einen Eintrag an den globalen Live-Event-Ring an."""
+    global _event_idx
+    _event_idx += 1
+    _events.append({
+        "idx":    _event_idx,
+        "ts":     round(time.time(), 3),
+        "kind":   kind,
+        "detail": detail,
+    })
+
 
 # ── JSON-RPC Dispatcher ───────────────────────────────────────────────────────
 
@@ -73,7 +91,9 @@ async def handle_profile(params: dict) -> dict:
     else:
         signal = str(raw)
     profile = _symbiont.profile(signal)
-    return profile.to_dict()
+    result = profile.to_dict()
+    _log_event("profile", f"signal_len={len(signal)} entropy={result.get('entropy_mean', '?')}")
+    return result
 
 
 @register("aether/razor")
@@ -85,7 +105,9 @@ async def handle_razor(params: dict) -> dict:
     if not signals:
         return {"error": "no_signals"}
     report = _ockham.apply_razor(signals)
-    return report.to_dict()
+    result = report.to_dict()
+    _log_event("razor", f"n={len(signals)} kept={result.get('kept_count', '?')}")
+    return result
 
 
 @register("aether/snapshot")
@@ -97,7 +119,9 @@ async def handle_snapshot(params: dict) -> dict:
     signal = str(raw)
     profile = _symbiont.profile(signal)
     handle = _vault.store_snapshot(profile)
-    return handle.to_dict()
+    result = handle.to_dict()
+    _log_event("snapshot", f"id={result.get('snapshot_id', '?')}")
+    return result
 
 
 @register("aether/diff")
@@ -145,9 +169,24 @@ async def handle_status(params: dict) -> dict:
         "status":      "running",
         "uptime_s":    round(time.time() - _start_ts, 1),
         "req_count":   _req_count,
+        "event_count": _event_idx,
         "vault_path":  _vault._db_path,
         "timestamp":   time.time(),
     }
+
+
+@register("aether/events")
+async def handle_events(params: dict) -> dict:
+    """
+    params: { "since_idx": int, "limit": int }
+    Returns events with idx > since_idx, newest last.
+    """
+    since_idx = int(params.get("since_idx", 0))
+    limit = max(1, min(int(params.get("limit", 50)), 200))
+    evts = [e for e in _events if e["idx"] > since_idx]
+    if len(evts) > limit:
+        evts = evts[-limit:]
+    return {"events": evts, "last_idx": _event_idx}
 
 
 # ── JSON-RPC Transport (stdin/stdout) ─────────────────────────────────────────
@@ -218,7 +257,22 @@ async def _handle_request(writer: asyncio.StreamWriter, msg: dict) -> None:
             })
 
 
-async def main() -> None:
+async def _serve_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    peer = writer.get_extra_info("peername", ("?", 0))
+    _log_event("connect", f"{peer[0]}:{peer[1]}")
+    try:
+        while True:
+            msg = await _read_message(reader)
+            if msg is None:
+                break
+            await _handle_request(writer, msg)
+    finally:
+        _log_event("disconnect", f"{peer[0]}:{peer[1]}")
+        writer.close()
+        await writer.wait_closed()
+
+
+async def _stdio_main() -> None:
     loop = asyncio.get_event_loop()
     reader = asyncio.StreamReader()
     protocol = asyncio.StreamReaderProtocol(reader)
@@ -236,7 +290,30 @@ async def main() -> None:
             break
         asyncio.ensure_future(_handle_request(writer, msg))
 
-    _vault.close()
+
+async def _tcp_main(host: str, port: int) -> None:
+    server = await asyncio.start_server(_serve_connection, host=host, port=port)
+    sockets = server.sockets or []
+    bound = sockets[0].getsockname() if sockets else (host, port)
+    log.warning("Symbiont LSP server running (tcp %s:%s JSON-RPC).", bound[0], bound[1])
+    _log_event("server_start", f"tcp {bound[0]}:{bound[1]}")
+    async with server:
+        await server.serve_forever()
+
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description="Aether Symbiont JSON-RPC server")
+    parser.add_argument("--tcp-host", default="")
+    parser.add_argument("--tcp-port", type=int, default=0)
+    args = parser.parse_args()
+
+    try:
+        if int(args.tcp_port or 0) > 0:
+            await _tcp_main(str(args.tcp_host or "127.0.0.1"), int(args.tcp_port))
+        else:
+            await _stdio_main()
+    finally:
+        _vault.close()
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { SymbiontLanguageClient } from './lsp_client';
+import { readHybridStatus } from './shared_runtime';
 
 /**
  * Status bar integration — shows live Ockham score in the VS Code status bar.
@@ -8,8 +9,10 @@ import { SymbiontLanguageClient } from './lsp_client';
 export class DeltaStatusBar implements vscode.Disposable {
     private readonly _item: vscode.StatusBarItem;
     private _timer: ReturnType<typeof setInterval> | null = null;
+    private readonly _repoRoot: string;
 
-    constructor(private readonly _client: SymbiontLanguageClient) {
+    constructor(private readonly _client: SymbiontLanguageClient, repoRoot: string) {
+        this._repoRoot = repoRoot;
         this._item = vscode.window.createStatusBarItem(
             vscode.StatusBarAlignment.Right,
             200,
@@ -32,7 +35,9 @@ export class DeltaStatusBar implements vscode.Disposable {
         try {
             const result = await this._client.sendRequest('aether/status', {}) as any;
             const uptime = Math.round(result.uptime_s ?? 0);
-            this._item.text = `$(symbol-misc) Aether [${uptime}s]`;
+            const hybrid = readHybridStatus(this._repoRoot);
+            const hybridBadge = hybrid?.symbiont_running ? 'hybrid' : 'local';
+            this._item.text = `$(symbol-misc) Aether ${hybridBadge} [${uptime}s]`;
         } catch {
             this._item.text = '$(circle-slash) Aether offline';
         }

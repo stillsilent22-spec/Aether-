@@ -7,6 +7,7 @@ import json
 import math
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -29,6 +30,9 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
     pyautogui = None
 
 from .analysis_engine import AetherFingerprint
+from .aethernet_transport import AethernetTransport
+from .consensus_engine import get_candidate_count, get_consensus_anchors
+from .invariant_observer import InvariantObserver, SoftwareFrame
 from .security_engine import decrypt_device_scoped_payload, encrypt_device_scoped_payload
 
 
@@ -100,12 +104,227 @@ class ObserverEngine:
         self._previous_entropy: float | None = None
         self._previous_anchors: list[AnchorPoint] = []
         self.learning_store_dir = Path("data") / "observer_learning"
+        self._invariant_observer: InvariantObserver | None = None
+        self._aether_transport: AethernetTransport | None = None
+        self._aether_runtime_node_id = ""
+        self._aether_runtime_signature = ""
+        self._aether_pushed_anchor_hashes: set[str] = set()
 
     def reset(self) -> None:
         """Setzt den Beobachterzustand fuer eine neue Kamerasession zurueck."""
         self._initial_entropy = None
         self._previous_entropy = None
         self._previous_anchors = []
+        self._invariant_observer = None
+        self._aether_transport = None
+        self._aether_runtime_node_id = ""
+        self._aether_runtime_signature = ""
+        self._aether_pushed_anchor_hashes = set()
+
+    @staticmethod
+    def _resolve_local_node_id(nodes_dir: Path) -> str:
+        """Liest die lokale Node-ID aus dem Node-Verzeichnis fail-closed."""
+        try:
+            for node_path in sorted(nodes_dir.glob("*.json")):
+                try:
+                    payload = json.loads(node_path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                node_id = str(payload.get("node_id", "")).strip()
+                if node_id:
+                    return node_id
+        except Exception:
+            return "local-node"
+        return "local-node"
+
+    @staticmethod
+    def _load_aether_runtime_config() -> dict[str, object]:
+        """Laedt Aethernet-Laufzeitoptionen aus data/settings.json mit sicheren Defaults."""
+        defaults: dict[str, object] = {
+            "enabled": True,
+            "receiver_enabled": True,
+            "node_id": "",
+            "lan_port": 7385,
+            "anchor_dir": "data/anchors",
+            "nodes_dir": "data/swarm/nodes",
+        }
+        settings_path = Path("data") / "settings.json"
+        try:
+            if not settings_path.is_file():
+                return dict(defaults)
+            payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            hybrid = payload.get("hybrid") if isinstance(payload, dict) else None
+            aether = hybrid.get("aethernet") if isinstance(hybrid, dict) else None
+            if isinstance(aether, dict):
+                merged = dict(defaults)
+                merged.update({
+                    key: aether.get(key)
+                    for key in ("enabled", "receiver_enabled", "node_id", "lan_port", "anchor_dir", "nodes_dir")
+                    if key in aether
+                })
+                return merged
+        except Exception:
+            return dict(defaults)
+        return dict(defaults)
+
+    @staticmethod
+    def _region_hashes_from_frame(frame_rgb: np.ndarray, grid: int = 4) -> list[str]:
+        """Teilt den Frame in ein fixes Raster und hasht jede Region deterministisch."""
+        hashes: list[str] = []
+        if frame_rgb.size == 0:
+            return hashes
+        height = int(frame_rgb.shape[0])
+        width = int(frame_rgb.shape[1])
+        grid_size = max(2, int(grid))
+        for y_index in range(grid_size):
+            y0 = int(y_index * height / grid_size)
+            y1 = int((y_index + 1) * height / grid_size)
+            for x_index in range(grid_size):
+                x0 = int(x_index * width / grid_size)
+                x1 = int((x_index + 1) * width / grid_size)
+                region = np.asarray(frame_rgb[y0:y1, x0:x1], dtype=np.uint8)
+                hashes.append(hashlib.sha256(region.tobytes()).hexdigest())
+        return hashes
+
+    def _observe_invariant_runtime(
+        self,
+        *,
+        frame_rgb: np.ndarray,
+        visual_hash: str,
+        visual_entropy: float,
+        file_path: str,
+        process_state: dict[str, object],
+    ) -> dict[str, object]:
+        """Fuehrt InvariantObserver + Consensus + Aethernet-Share im Produktionspfad aus."""
+        runtime = self._load_aether_runtime_config()
+        if not bool(runtime.get("enabled", True)):
+            return {
+                "enabled": False,
+                "receiver_enabled": bool(runtime.get("receiver_enabled", True)),
+                "shareable_count": 0,
+                "new_anchor_count": 0,
+                "changed_region_count": 0,
+                "pushed_count": 0,
+                "push_mode": "disabled",
+                "candidate_count": int(get_candidate_count()),
+                "consensus_count": int(len(get_consensus_anchors())),
+            }
+
+        anchor_dir = Path(str(runtime.get("anchor_dir", "data/anchors") or "data/anchors"))
+        nodes_dir = Path(str(runtime.get("nodes_dir", "data/swarm/nodes") or "data/swarm/nodes"))
+        configured_node = str(runtime.get("node_id", "") or "").strip()
+        node_id = configured_node or self._resolve_local_node_id(nodes_dir)
+        port = int(runtime.get("lan_port", 7385) or 7385)
+        receiver_enabled = bool(runtime.get("receiver_enabled", True))
+
+        signature = "|".join([
+            node_id,
+            str(anchor_dir),
+            str(nodes_dir),
+            str(port),
+            "1" if receiver_enabled else "0",
+        ])
+        if self._invariant_observer is None or self._aether_runtime_signature != signature:
+            self._invariant_observer = InvariantObserver(
+                node_id=node_id,
+                consensus_db=str(Path("data") / "consensus.db"),
+            )
+            self._aether_transport = AethernetTransport(
+                node_id=node_id,
+                anchor_dir=str(anchor_dir),
+                nodes_dir=str(nodes_dir),
+                lan_port=port,
+            )
+            self._aether_runtime_node_id = node_id
+            self._aether_runtime_signature = signature
+            self._aether_pushed_anchor_hashes = set()
+
+        transport = self._aether_transport
+        observer = self._invariant_observer
+        if transport is None or observer is None:
+            return {
+                "enabled": False,
+                "receiver_enabled": receiver_enabled,
+                "shareable_count": 0,
+                "new_anchor_count": 0,
+                "changed_region_count": 0,
+                "pushed_count": 0,
+                "push_mode": "failed",
+                "candidate_count": int(get_candidate_count()),
+                "consensus_count": int(len(get_consensus_anchors())),
+            }
+
+        if receiver_enabled:
+            transport.start_lan_receiver()
+
+        region_hashes = self._region_hashes_from_frame(frame_rgb)
+        source_name = str(process_state.get("name", "") or "").strip() or Path(file_path).name
+        frame = SoftwareFrame(
+            timestamp_ms=int(time.time() * 1000),
+            source_process=source_name,
+            raw_hash=str(visual_hash),
+            region_hashes=region_hashes,
+            entropy=float(visual_entropy),
+            symmetry=float(max(0.0, min(1.0, 1.0 - visual_entropy / 8.0))),
+        )
+        new_anchors, delta = observer.observe_frame(frame)
+        shareable = observer.get_shareable_anchors()
+
+        pushed_count = 0
+        push_mode = "none"
+        for anchor in shareable:
+            ttd_hash = str(getattr(anchor, "ttd_hash", "") or "").strip()
+            if not ttd_hash or ttd_hash in self._aether_pushed_anchor_hashes:
+                continue
+            pack_payload = {
+                "schema": "aether.anchor.pack.v1",
+                "node_id": self._aether_runtime_node_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "anchors": [
+                    {
+                        "anchor_type": "invariant_region",
+                        "region_id": str(getattr(anchor, "region_id", "") or ""),
+                        "ttd_hash": ttd_hash,
+                        "software_context": str(getattr(anchor, "software_context", "") or ""),
+                        "stability_count": int(getattr(anchor, "stability_count", 0) or 0),
+                        "last_seen_ms": int(getattr(anchor, "last_seen_ms", 0) or 0),
+                    }
+                ],
+                "metadata": {
+                    "source": "observer_runtime",
+                    "frame_hash": str(visual_hash),
+                    "source_process": source_name,
+                },
+            }
+            canonical = json.dumps(pack_payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+            pack_payload["pack_id"] = hashlib.sha256(canonical).hexdigest()
+            mode = transport.push_pack(pack_payload)
+            if mode != "failed":
+                self._aether_pushed_anchor_hashes.add(ttd_hash)
+                pushed_count += 1
+                if mode == "lan":
+                    push_mode = "lan"
+                elif mode == "git" and push_mode != "lan":
+                    push_mode = "git"
+            elif push_mode == "none":
+                push_mode = "failed"
+
+        changed_regions = list(getattr(delta, "changed_regions", []) or []) if delta is not None else []
+        return {
+            "enabled": True,
+            "node_id": self._aether_runtime_node_id,
+            "receiver_enabled": receiver_enabled,
+            "receiver_port": int(port),
+            "source_process": source_name,
+            "region_count": int(len(region_hashes)),
+            "new_anchor_count": int(len(new_anchors)),
+            "shareable_count": int(len(shareable)),
+            "changed_region_count": int(len(changed_regions)),
+            "pushed_count": int(pushed_count),
+            "push_mode": str(push_mode),
+            "candidate_count": int(get_candidate_count()),
+            "consensus_count": int(len(get_consensus_anchors())),
+        }
 
     @staticmethod
     def _learning_state_identity(session_context) -> tuple[str, str]:
@@ -1239,6 +1458,13 @@ class ObserverEngine:
             "mss_available": bool(mss is not None),
         }
         process_after = self._process_snapshot()
+        invariant_runtime = self._observe_invariant_runtime(
+            frame_rgb=np.asarray(frame_rgb, dtype=np.uint8),
+            visual_hash=str(visual_hash),
+            visual_entropy=float(visual_entropy),
+            file_path=str(file_path),
+            process_state=dict(process_after or {}),
+        )
         process_residuum = {
             "before": process_before,
             "after": process_after,
@@ -1257,12 +1483,15 @@ class ObserverEngine:
             "process_state": process_after,
             "visual_residual": visual_residual,
             "process_residuum": process_residuum,
+            "aethernet_observer": dict(invariant_runtime),
             "visual_residual_hash": str(visual_hash),
             "process_residuum_hash": str(process_hash),
             "O_t": {
                 "visual_entropy": round(float(visual_entropy), 12),
                 "cpu_percent": float(dict(process_after or {}).get("cpu_percent", 0.0) or 0.0),
                 "threads": int(dict(process_after or {}).get("threads", 0) or 0),
+                "invariant_shareable": int(dict(invariant_runtime).get("shareable_count", 0) or 0),
+                "invariant_consensus": int(dict(invariant_runtime).get("consensus_count", 0) or 0),
             },
             "M_t": {
                 "file_category": str(dict(getattr(fingerprint, "file_profile", {}) or {}).get("category", "binary")),

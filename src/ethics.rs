@@ -122,13 +122,34 @@ pub struct EthicsScore {
     pub benford: f64,
     pub fraktal: f64,
     pub noether: f64,
+    pub heisenberg: f64,
+}
+
+// ── Heisenberg-Score (strukturelle Stabilität trotz lokaler Unsicherheit) ───
+
+/// Misst strukturelle Stabilität über gleitende 8-Token-Fenster.
+/// Hoher Score = Struktur ist stabil trotz lokaler Entropieschwankungen.
+pub fn heisenberg_score(tokens: &[&str], entropy_mean: f64) -> f64 {
+    if tokens.len() < 8 { return 0.7; }
+    let window_size = 8usize;
+    let window_entropies: Vec<f64> = tokens
+        .windows(window_size)
+        .map(|w| shannon_entropy_tokens(w))
+        .collect();
+    if window_entropies.is_empty() { return 0.7; }
+    let mean = window_entropies.iter().sum::<f64>() / window_entropies.len() as f64;
+    let variance = window_entropies.iter()
+        .map(|e| (e - mean).powi(2))
+        .sum::<f64>() / window_entropies.len() as f64;
+    let observer_limit = entropy_mean * 0.15;
+    clamp01(1.0 - (variance / (observer_limit + 1e-9)).min(1.0))
 }
 
 /// Hauptfunktion: misst strukturelle Textintegrität ohne Semantik.
 /// entropy_mean: optionaler Entropie-Wert aus dem AEF-Fingerprint.
 pub fn structural_text_integrity(text: &str, entropy_mean: Option<f64>) -> EthicsScore {
     if text.trim().is_empty() {
-        return EthicsScore { score: 1.0, zipf: 1.0, benford: 0.5, fraktal: 1.0, noether: 1.0 };
+        return EthicsScore { score: 1.0, zipf: 1.0, benford: 0.5, fraktal: 1.0, noether: 1.0, heisenberg: 1.0 };
     }
     let words: Vec<&str> = text.split_whitespace().collect();
     let sentences: Vec<&str> = text.split(|c| c == '.' || c == '!' || c == '?')
@@ -138,11 +159,13 @@ pub fn structural_text_integrity(text: &str, entropy_mean: Option<f64>) -> Ethic
     let b = benford_score(text);
     let f = fraktal_score(&sentences);
     let n = noether_score(&words);
+    let h = heisenberg_score(&words, entropy_mean.unwrap_or(4.0));
 
+    // Weights: Heisenberg added at 0.10; existing weights scaled by 0.90.
     let mut total = if (b - 0.5).abs() < 0.01 {
-        z * 0.30 + f * 0.25 + n * 0.25 + 0.20
+        z * 0.27 + f * 0.225 + n * 0.225 + h * 0.10 + 0.18
     } else {
-        z * 0.25 + b * 0.15 + f * 0.20 + n * 0.20 + 0.20
+        z * 0.225 + b * 0.135 + f * 0.18 + n * 0.18 + h * 0.10 + 0.18
     };
 
     if let Some(e) = entropy_mean {
@@ -156,6 +179,7 @@ pub fn structural_text_integrity(text: &str, entropy_mean: Option<f64>) -> Ethic
         benford: b,
         fraktal: f,
         noether: n,
+        heisenberg: h,
     }
 }
 

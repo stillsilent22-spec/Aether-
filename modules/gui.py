@@ -540,6 +540,8 @@ class VeiraGUI:
         """Schreibt alle 2 Sekunden den Backend-State als JSON nach data/interbus/backend_state.json."""
         import pathlib
 
+        from .swarm_health import get_swarm_status
+
         def _write_loop() -> None:
             out_path = pathlib.Path("data/interbus/backend_state.json")
             out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -548,6 +550,7 @@ class VeiraGUI:
                     summary: dict[str, Any] = {}
                     if hasattr(self, "vault_summary") and self.vault_summary:
                         summary = self.vault_summary
+                    swarm_status = get_swarm_status()
                     payload = {
                         "vault_main": int(summary.get("main_vault_size", 0) or 0),
                         "vault_sub": int(summary.get("sub_vault_size", 0) or 0),
@@ -559,6 +562,14 @@ class VeiraGUI:
                         "cpu_pct": 0.0,
                         "mem_used_gb": 0.0,
                         "shanway_last": str(getattr(self, "_last_shanway_output", "") or ""),
+                        "swarm_node_count": int(swarm_status.get("node_count", 0) or 0),
+                        "swarm_pack_count": int(swarm_status.get("pack_count", 0) or 0),
+                        "swarm_candidate_count": int(swarm_status.get("candidate_count", 0) or 0),
+                        "swarm_consensus_count": int(swarm_status.get("consensus_count", 0) or 0),
+                        "swarm_genesis_key_ok": bool(swarm_status.get("genesis_key_ok", False)),
+                        "swarm_quorum_reachable": bool(swarm_status.get("quorum_reachable", False)),
+                        "swarm_estimated_saving_percent": float(swarm_status.get("estimated_saving_percent", 0.0) or 0.0),
+                        "swarm_summary": str(swarm_status.get("summary", "") or ""),
                     }
                     out_path.write_text(json.dumps(payload, ensure_ascii=True))
                 except Exception:

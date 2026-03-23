@@ -1,4 +1,6 @@
 aether_repo/
+aether-symbiont/node_modules/
+aether-symbiont/out/
 build/
 build_repack/
 build_repack2/
@@ -72,3 +74,18 @@ gcm-diagnose.log
 !data/aelab_vault/legacy_imports/.gitkeep
 data/publisher_keys/*.pem
 !data/publisher_keys/.gitkeep
+
+-r
+build_errors.txt
+build_output.log
+cargo_check_err.txt
+cargo_check_out.txt
+cargo_live_check.txt
+check_async_logs.txt
+check_output.txt
+launcher_check.log
+status_check.txt
+logs/boundary_audit.jsonl
+data/interbus/
+data/rust_shell/
+data/swarm/invites/

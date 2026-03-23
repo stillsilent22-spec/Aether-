@@ -9,8 +9,24 @@ ANCHOR_DIR = Path("data/anchors")
 NODES_DIR = Path("data/swarm/nodes")
 
 
+def _has_origin_remote() -> bool:
+    try:
+        result = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0 and bool((result.stdout or "").strip())
+    except Exception:
+        return False
+
+
 def pull_anchors() -> list[str]:
     known_before = {path.stem for path in ANCHOR_DIR.glob("*.pack")}
+    if not _has_origin_remote():
+        print("[SWARM] Pull uebersprungen: kein Git-Remote 'origin' konfiguriert")
+        return []
     try:
         subprocess.run(["git", "pull", "origin", "main"], check=True, capture_output=True)
     except subprocess.CalledProcessError as err:
@@ -23,6 +39,9 @@ def push_anchor_pack(pack: dict) -> bool:
     ANCHOR_DIR.mkdir(parents=True, exist_ok=True)
     path = ANCHOR_DIR / f"{pack['pack_id']}.pack"
     path.write_text(json.dumps(pack, sort_keys=True, ensure_ascii=True), encoding="utf-8")
+    if not _has_origin_remote():
+        print("[SWARM] Push uebersprungen: kein Git-Remote 'origin' konfiguriert")
+        return False
     try:
         subprocess.run(["git", "add", str(path)], check=True)
         subprocess.run(["git", "commit", "-m", f"anchor: {pack['pack_id'][:12]}"], check=True)

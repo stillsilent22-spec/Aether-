@@ -8,16 +8,22 @@ use crate::browser_embed::{BrowserHostRect, EmbeddedBrowser};
 use crate::ethics::{code_suspicion_score, structural_text_integrity};
 use crate::key_vault::DataKey;
 use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
+use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus};
 use crate::policy_executor::{default_analysis_rules, RuleEngine};
+use crate::py_bridge::{
+    load_hybrid_settings, read_hybrid_status, set_symbiont_enabled, set_symbiont_endpoint,
+    PythonBridgeManager,
+};
 use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
 use crate::shanway::{render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput};
 use crate::state::{ChatMessage, GroupRoom, PrivateThread, RegisterEntry, StateStore};
 use crate::swarm_bootstrap::{probe_swarm_startup, SwarmStartupStatus};
+use crate::symbiont_rpc;
 use iced::theme::Palette;
 use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
 use iced::{
     application, event, mouse, time, window, Alignment, Background, Border, Color, Element,
-    Length, Point, Rectangle, Settings, Subscription, Task, Theme,
+    Length, Point, Rectangle, Settings, Size, Subscription, Task, Theme,
 };
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
@@ -66,6 +72,7 @@ enum Tab {
     StructureMap,
     ADE,
     Rekonstruktion,
+    Launcher,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -139,8 +146,28 @@ enum Message {
     FlowSphereSnapshotSelected(usize),
     FlowSphereExportPressed,
     OpenFullTab(Tab),
+    SymbiontInputChanged(String),
+    SymbiontProfilePressed,
+    SymbiontRazorPressed,
+    SymbiontSnapshotPressed,
+    SymbiontStatusPressed,
+    SymbiontRpcCompleted(Result<String, String>),
+    SymbiontEventsReceived(Result<(Vec<String>, u64), String>),
+    SymbiontEventsClearPressed,
+    HybridBridgeStartPressed,
+    HybridBridgeStopPressed,
+    HybridBridgeRestartPressed,
+    HybridSymbiontEnabled(bool),
+    HybridSymbiontEndpointPreset(String, u16),
     ToggleMode,
     WindowResized(f32, f32),
+    // Launcher Dashboard
+    LauncherModeSelected(crate::launcher_dashboard::LauncherMode),
+    LauncherServiceStartPressed(String),
+    LauncherServiceStopPressed(String),
+    LauncherBuildTaskPressed(String),
+    LauncherBuildTaskCompleted(String, Result<crate::launcher_dashboard::BuildTaskResult, String>),
+    LauncherLogsClearPressed,
     Tick,
 }
 
@@ -168,6 +195,8 @@ struct AnalysisSnapshot {
 struct FileAnalysisResult {
     entry: RegisterEntry,
     snapshot: AnalysisSnapshot,
+    byte_hist: Vec<f32>,   // 64-bucket normalized originalbytehistogram
+    xor_delta: Vec<f32>,   // 64-bucket |orig−delta| divergence for XOR-compare
 }
 
 pub struct AetherIcedShell {
@@ -236,12 +265,50 @@ pub struct AetherIcedShell {
     backend_cpu_pct: f32,
     backend_mem_used_gb: f32,
     backend_shanway_last: String,
+    backend_swarm_node_count: u64,
+    backend_swarm_reachable_node_count: u64,
+    backend_swarm_pack_count: u64,
+    backend_swarm_candidate_count: u64,
+    backend_swarm_consensus_count: u64,
+    backend_swarm_genesis_key_ok: bool,
+    backend_swarm_quorum_reachable: bool,
+    backend_swarm_estimated_saving_percent: f32,
+    backend_swarm_summary: String,
     backend_state_loaded: bool,
+    hybrid_bridge: PythonBridgeManager,
+    hybrid_symbiont_enabled: bool,
+    hybrid_bridge_running: bool,
+    hybrid_bridge_error: String,
+    hybrid_symbiont_running: bool,
+    hybrid_aethernet_running: bool,
+    hybrid_aethernet_receiver_port: u16,
+    symbiont_host: String,
+    symbiont_port: u16,
+    symbiont_input: String,
+    symbiont_result: String,
+    symbiont_busy: bool,
+    symbiont_events: Vec<String>,
+    symbiont_events_polling: bool,
+    symbiont_last_event_idx: u64,
+    vscode_symbiont_active: bool,
+    vscode_symbiont_mode: String,
+    // Launcher Dashboard
+    launcher_state: LauncherState,
+    // XOR bytestream compare (Leistenmodus strip)
+    last_byte_hist: Vec<f32>,
+    last_xor_delta: Vec<f32>,
 }
 
 impl AetherIcedShell {
     fn bootstrap() -> Self {
         let swarm_startup = probe_swarm_startup();
+        let hybrid_settings = load_hybrid_settings();
+        let mut hybrid_bridge = PythonBridgeManager::new();
+        let hybrid_start_error = if hybrid_settings.enabled {
+            hybrid_bridge.start().err().unwrap_or_default()
+        } else {
+            String::new()
+        };
         let mut shell = Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -284,6 +351,8 @@ impl AetherIcedShell {
             hovered_file_label: "Datei in das Fenster ziehen, um die Analyse zu starten."
                 .to_owned(),
             last_analysis: None,
+            last_byte_hist: Vec::new(),
+            last_xor_delta: Vec::new(),
             window_width: 1560.0,
             window_height: 900.0,
             tick_counter: 0,
@@ -318,12 +387,40 @@ impl AetherIcedShell {
             backend_cpu_pct: 0.0,
             backend_mem_used_gb: 0.0,
             backend_shanway_last: String::new(),
+            backend_swarm_node_count: 0,
+            backend_swarm_reachable_node_count: 0,
+            backend_swarm_pack_count: 0,
+            backend_swarm_candidate_count: 0,
+            backend_swarm_consensus_count: 0,
+            backend_swarm_genesis_key_ok: false,
+            backend_swarm_quorum_reachable: false,
+            backend_swarm_estimated_saving_percent: 0.0,
+            backend_swarm_summary: String::new(),
             backend_state_loaded: false,
+            hybrid_bridge,
+            hybrid_symbiont_enabled: hybrid_settings.symbiont.enabled,
+            hybrid_bridge_running: false,
+            hybrid_bridge_error: hybrid_start_error,
+            hybrid_symbiont_running: false,
+            hybrid_aethernet_running: false,
+            hybrid_aethernet_receiver_port: 7385,
+            symbiont_host: hybrid_settings.symbiont.host.clone(),
+            symbiont_port: hybrid_settings.symbiont.port,
+            symbiont_input: String::new(),
+            symbiont_result: "Noch keine Symbiont-RPC-Ausfuehrung.".to_owned(),
+            symbiont_busy: false,
+            symbiont_events: Vec::new(),
+            symbiont_events_polling: false,
+            symbiont_last_event_idx: 0,
+            vscode_symbiont_active: false,
+            vscode_symbiont_mode: String::new(),
+            launcher_state: LauncherState::new(),
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
             shell.analysis_status = shell.swarm_startup.summary.clone();
         }
+        shell.poll_hybrid_state();
         shell.refresh_security_snapshot(false, "startup");
         shell
     }
@@ -358,7 +455,66 @@ impl AetherIcedShell {
             .as_str()
             .unwrap_or(&self.backend_shanway_last.clone())
             .to_owned();
+        self.backend_swarm_node_count = val["swarm_node_count"]
+            .as_u64()
+            .unwrap_or(self.backend_swarm_node_count);
+        self.backend_swarm_reachable_node_count = val["swarm_reachable_node_count"]
+            .as_u64()
+            .unwrap_or(self.backend_swarm_reachable_node_count);
+        self.backend_swarm_pack_count = val["swarm_pack_count"]
+            .as_u64()
+            .unwrap_or(self.backend_swarm_pack_count);
+        self.backend_swarm_candidate_count = val["swarm_candidate_count"]
+            .as_u64()
+            .unwrap_or(self.backend_swarm_candidate_count);
+        self.backend_swarm_consensus_count = val["swarm_consensus_count"]
+            .as_u64()
+            .unwrap_or(self.backend_swarm_consensus_count);
+        self.backend_swarm_genesis_key_ok = val["swarm_genesis_key_ok"]
+            .as_bool()
+            .unwrap_or(self.backend_swarm_genesis_key_ok);
+        self.backend_swarm_quorum_reachable = val["swarm_quorum_reachable"]
+            .as_bool()
+            .unwrap_or(self.backend_swarm_quorum_reachable);
+        self.backend_swarm_estimated_saving_percent = val["swarm_estimated_saving_percent"]
+            .as_f64()
+            .unwrap_or(self.backend_swarm_estimated_saving_percent as f64) as f32;
+        self.backend_swarm_summary = val["swarm_summary"]
+            .as_str()
+            .unwrap_or(&self.backend_swarm_summary.clone())
+            .to_owned();
         self.backend_state_loaded = true;
+    }
+
+    fn poll_hybrid_state(&mut self) {
+        self.hybrid_bridge_running = self.hybrid_bridge.is_running();
+        let shared = load_hybrid_settings();
+        self.symbiont_host = shared.symbiont.host;
+        self.symbiont_port = shared.symbiont.port;
+        if let Some(status) = read_hybrid_status() {
+            self.hybrid_bridge_running = status.bridge_running;
+            self.hybrid_symbiont_running = status.symbiont_running;
+            self.hybrid_aethernet_running = status.aethernet_running;
+            if status.aethernet_receiver_port > 0 {
+                self.hybrid_aethernet_receiver_port = status.aethernet_receiver_port;
+            }
+            if !status.symbiont_host.trim().is_empty() {
+                self.symbiont_host = status.symbiont_host;
+            }
+            if status.symbiont_port > 0 {
+                self.symbiont_port = status.symbiont_port;
+            }
+            if !status.last_error.trim().is_empty() {
+                self.hybrid_bridge_error = status.last_error;
+            }
+        }
+        let vscode_path = std::path::Path::new("data/interbus/vscode_symbiont_status.json");
+        if let Ok(raw) = std::fs::read_to_string(vscode_path) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                self.vscode_symbiont_active = val["active"].as_bool().unwrap_or(false);
+                self.vscode_symbiont_mode = val["reqMode"].as_str().unwrap_or("").to_owned();
+            }
+        }
     }
 
     fn refresh_security_snapshot(&mut self, persist_audit: bool, reason: &str) {
@@ -1019,6 +1175,7 @@ impl AetherIcedShell {
             self.tab_button(Tab::ADE,            "\u{25cd}", "ADE"),
             self.tab_button(Tab::Imprint,        "\u{2139}", "Info"),
             self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"),
+            self.tab_button(Tab::Launcher,       "\u{25f6}", "Launch"),
         ]
         .spacing(0);
 
@@ -2144,6 +2301,77 @@ impl AetherIcedShell {
                             self.profile_browser_poll_batch()
                         ),
                     ),
+                    text("Hybrid Runtime (Rust + Python + Symbiont)").size(20),
+                    row![
+                        button(text(if self.hybrid_symbiont_enabled {
+                            "Symbiont Link [aktiv]"
+                        } else {
+                            "Symbiont Link"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::HybridSymbiontEnabled(true))
+                        .style(if self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style }),
+                        button(text(if !self.hybrid_symbiont_enabled {
+                            "Symbiont Link [aus]"
+                        } else {
+                            "Symbiont Link aus"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::HybridSymbiontEnabled(false))
+                        .style(if !self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style }),
+                    ]
+                    .spacing(8),
+                    row![
+                        button(text(if self.symbiont_port == 38571 {
+                            "Socket 38571 [aktiv]"
+                        } else {
+                            "Socket 38571"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 38571))
+                        .style(if self.symbiont_port == 38571 { primary_button_style } else { secondary_button_style }),
+                        button(text(if self.symbiont_port == 39571 {
+                            "Socket 39571 [aktiv]"
+                        } else {
+                            "Socket 39571"
+                        }))
+                        .padding([10, 16])
+                        .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 39571))
+                        .style(if self.symbiont_port == 39571 { primary_button_style } else { secondary_button_style }),
+                    ]
+                    .spacing(8),
+                    info_card(
+                        "Hybrid Status",
+                        &format!(
+                            "Bridge: {}\nSymbiont Runtime: {}\nEndpoint: {}:{}\nFehler: {}",
+                            if self.hybrid_bridge_running { "online" } else { "offline" },
+                            if self.hybrid_symbiont_running { "online" } else { "offline" },
+                            self.symbiont_host,
+                            self.symbiont_port,
+                            if self.hybrid_bridge_error.trim().is_empty() {
+                                "-"
+                            } else {
+                                &self.hybrid_bridge_error
+                            }
+                        ),
+                    ),
+                    text("Hilfe, Begriffe, Zielbild").size(20),
+                    info_card(
+                        "Warum Aether?",
+                        "Aether ist ein lokales Analyse-Oekosystem: Dateien werden strukturell analysiert, in AEF-Deltas abgelegt und mit Ankern nachvollziehbar gemacht. Ziel: transparente, reproduzierbare Sicherheitsanalyse ohne Cloud-Zwang.",
+                    ),
+                    info_card(
+                        "Begriffe kurz erklaert",
+                        "AEF: lokales Delta-Format statt Rohdatenkopie.\nAnker: stabile Strukturpunkte fuer Wiedererkennbarkeit.\nResidual/Delta: veraenderliche Restanteile zwischen Struktur und Rohsignal.\nADE/Threat Graph: visuelle Risiko- und Konvergenzsicht.",
+                    ),
+                    info_card(
+                        "Malware & Obfuskation lesen",
+                        "Obf ist der Obfuskationsscore (hoeher = verdaechtiger). Policy-Hits zeigen ausgeloeste Regeln (allow/warn/block). Cascade kombiniert Ethics + Obf + Signaturtreffer. Bei Warnung immer in Threat Analysis und Logs wechseln.",
+                    ),
+                    info_card(
+                        "Schnell-Workflow",
+                        "1) Datei droppen.\n2) Preview/Cascade in Files pruefen.\n3) Bei Warnung zu Threat Analysis + Logs wechseln.\n4) Mit Leistenmodus jederzeit in die obere Schnellleiste zurueckschalten.",
+                    ),
                 ]
                 .spacing(16),
             )
@@ -3111,6 +3339,7 @@ impl AetherIcedShell {
             Tab::ADE => self.view_ade(),
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
+            Tab::Launcher => self.view_launcher(),
         };
 
         let nav_item = |label: &'static str, tab: Tab, active_tab: Tab| {
@@ -3158,6 +3387,7 @@ impl AetherIcedShell {
                 nav_item("15. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D)),
                 nav_item("16. Runtime", Tab::Settings, self.active_tab),
+                nav_item("17. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -3189,6 +3419,7 @@ impl AetherIcedShell {
                         Tab::ADE => "Threat Analysis",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
+                        Tab::Launcher => "Launcher",
                     }).size(24).color(c(TEXT_H)),
                     text(match self.active_tab {
                         Tab::Home => "Start here: your current health, alerts, and quick state.",
@@ -3207,6 +3438,7 @@ impl AetherIcedShell {
                         Tab::ADE => "Run threat analysis and inspect signal confidence.",
                         Tab::Imprint => "Read version, policy, and legal metadata.",
                         Tab::Rekonstruktion => "Generate or inspect reconstruction outputs from traces.",
+                        Tab::Launcher => "Manage services, build tasks, and monitor unified logs.",
                     }).size(12).color(c(TEXT_M)),
                 ]
                 .spacing(3),
@@ -3219,12 +3451,50 @@ impl AetherIcedShell {
                 )
                 .padding([0, 8]),
                 iced::widget::Space::new(Length::Fill, Length::Shrink),
+                container(
+                    text(if self.backend_state_loaded && self.backend_cpu_pct > 0.0 {
+                        format!("CPU {:.1}%", self.backend_cpu_pct)
+                    } else {
+                        "CPU n/a".to_owned()
+                    })
+                    .size(12)
+                    .color(c(TEXT_M)),
+                )
+                .padding([8, 12])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.24, 0.70, 0.76, 0.12))),
+                    border: Border { color: Color::from_rgb8(0x3F, 0xBA, 0xC2), width: 1.0, radius: 10.0.into() },
+                    ..Default::default()
+                }),
+                container(
+                    text(if self.backend_state_loaded && self.backend_mem_used_gb > 0.0 {
+                        format!("RAM {:.2} GB", self.backend_mem_used_gb)
+                    } else {
+                        "RAM n/a".to_owned()
+                    })
+                    .size(12)
+                    .color(c(TEXT_M)),
+                )
+                .padding([8, 12])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.24, 0.70, 0.76, 0.12))),
+                    border: Border { color: Color::from_rgb8(0x3F, 0xBA, 0xC2), width: 1.0, radius: 10.0.into() },
+                    ..Default::default()
+                }),
                 button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
                     .on_press(Message::TabSelected(Tab::Settings))
                     .padding([8, 12])
                     .style(|_: &Theme, _| button::Style {
                         background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
                         border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+                button(text(self.ui_text("▼ Leistenmodus", "▼ Overlay Bar")).size(12).color(c(TEXT_H)))
+                    .on_press(Message::ToggleMode)
+                    .padding([8, 12])
+                    .style(|_: &Theme, _| button::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.22, 0.33, 0.60, 0.25))),
+                        border: Border { color: Color::from_rgb8(0x5A, 0x8C, 0xE8), width: 1.1, radius: 10.0.into() },
                         ..Default::default()
                     }),
             ]
@@ -3784,11 +4054,26 @@ impl AetherIcedShell {
                     Ok(result) => match self.state_store.add_register_entry(result.entry.clone()) {
                         Ok(_) => {
                             self.last_analysis = Some(result.snapshot.clone());
+                            self.last_byte_hist = result.byte_hist.clone();
+                            self.last_xor_delta = result.xor_delta.clone();
                             self.analysis_progress = 1.0;
+                            let preview_upper = result.snapshot.preview_note.to_ascii_uppercase();
+                            let malware_flag = preview_upper.contains("MALWARE")
+                                || preview_upper.contains("QUARANTINE")
+                                || preview_upper.contains("CRITICAL")
+                                || preview_upper.contains("BLOCK")
+                                || preview_upper.contains("DENY");
+                            let obf_flag = preview_upper.contains("OBF");
+                            let danger_hint = if malware_flag || obf_flag {
+                                " | Warnsignal Malware/Obfuskation erkannt"
+                            } else {
+                                ""
+                            };
                             self.analysis_status = format!(
-                                "AEF erstellt: {} | {:.1}% Gewinn | {}",
+                                "AEF erstellt: {} | {:.1}% Gewinn{} | {}",
                                 result.snapshot.file_name,
                                 result.snapshot.compression_gain_percent,
+                                danger_hint,
                                 result.snapshot.preview_note
                             );
                             self.status_line = self.analysis_status.clone();
@@ -3927,6 +4212,198 @@ impl AetherIcedShell {
                     }
                 });
             }
+            Message::SymbiontInputChanged(value) => {
+                self.symbiont_input = value;
+            }
+            Message::SymbiontProfilePressed => {
+                let host = self.symbiont_host.clone();
+                let port = self.symbiont_port;
+                let signal = self.symbiont_input.clone();
+                self.symbiont_busy = true;
+                self.symbiont_result = "Symbiont profile wird berechnet...".to_owned();
+                return Task::perform(
+                    async move {
+                        let result = symbiont_rpc::request_json(
+                            &host,
+                            port,
+                            "aether/profile",
+                            serde_json::json!({ "signal": signal }),
+                        )?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
+                    },
+                    Message::SymbiontRpcCompleted,
+                );
+            }
+            Message::SymbiontRazorPressed => {
+                let host = self.symbiont_host.clone();
+                let port = self.symbiont_port;
+                let signals: Vec<String> = self
+                    .symbiont_input
+                    .lines()
+                    .map(|line| line.trim().to_owned())
+                    .filter(|line| !line.is_empty())
+                    .collect();
+                self.symbiont_busy = true;
+                self.symbiont_result = "Symbiont razor wird berechnet...".to_owned();
+                return Task::perform(
+                    async move {
+                        let result = symbiont_rpc::request_json(
+                            &host,
+                            port,
+                            "aether/razor",
+                            serde_json::json!({ "signals": signals }),
+                        )?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
+                    },
+                    Message::SymbiontRpcCompleted,
+                );
+            }
+            Message::SymbiontSnapshotPressed => {
+                let host = self.symbiont_host.clone();
+                let port = self.symbiont_port;
+                let signal = self.symbiont_input.clone();
+                self.symbiont_busy = true;
+                self.symbiont_result = "Symbiont snapshot wird gespeichert...".to_owned();
+                return Task::perform(
+                    async move {
+                        let result = symbiont_rpc::request_json(
+                            &host,
+                            port,
+                            "aether/snapshot",
+                            serde_json::json!({ "signal": signal }),
+                        )?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
+                    },
+                    Message::SymbiontRpcCompleted,
+                );
+            }
+            Message::SymbiontStatusPressed => {
+                let host = self.symbiont_host.clone();
+                let port = self.symbiont_port;
+                self.symbiont_busy = true;
+                self.symbiont_result = "Symbiont status wird geladen...".to_owned();
+                return Task::perform(
+                    async move {
+                        let result = symbiont_rpc::request_json(
+                            &host,
+                            port,
+                            "aether/status",
+                            serde_json::json!({}),
+                        )?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
+                    },
+                    Message::SymbiontRpcCompleted,
+                );
+            }
+            Message::SymbiontRpcCompleted(result) => {
+                self.symbiont_busy = false;
+                match result {
+                    Ok(pretty) => {
+                        self.symbiont_result = pretty;
+                        self.status_line = "Symbiont-RPC abgeschlossen.".to_owned();
+                    }
+                    Err(err) => {
+                        self.symbiont_result = format!("Fehler: {err}");
+                        self.status_line = format!("Symbiont-RPC fehlgeschlagen: {err}");
+                    }
+                }
+            }
+            Message::SymbiontEventsReceived(result) => {
+                self.symbiont_events_polling = false;
+                if let Ok((new_events, last_idx)) = result {
+                    self.symbiont_last_event_idx = last_idx;
+                    for entry in new_events {
+                        self.symbiont_events.push(entry);
+                    }
+                    // Keep ring buffer bounded at 200 entries
+                    if self.symbiont_events.len() > 200 {
+                        let drain_count = self.symbiont_events.len() - 200;
+                        self.symbiont_events.drain(0..drain_count);
+                    }
+                }
+            }
+            Message::SymbiontEventsClearPressed => {
+                self.symbiont_events.clear();
+                self.symbiont_last_event_idx = 0;
+            }
+            Message::HybridBridgeStartPressed => {
+                match self.hybrid_bridge.start() {
+                    Ok(()) => {
+                        self.hybrid_bridge_error.clear();
+                        self.status_line = "Hybrid-Bridge gestartet.".to_owned();
+                    }
+                    Err(err) => {
+                        self.hybrid_bridge_error = err.clone();
+                        self.status_line = format!("Hybrid-Bridge Start fehlgeschlagen: {err}");
+                    }
+                }
+                self.poll_hybrid_state();
+            }
+            Message::HybridBridgeStopPressed => {
+                match self.hybrid_bridge.stop() {
+                    Ok(()) => {
+                        self.status_line = "Hybrid-Bridge gestoppt.".to_owned();
+                    }
+                    Err(err) => {
+                        self.hybrid_bridge_error = err.clone();
+                        self.status_line = format!("Hybrid-Bridge Stop fehlgeschlagen: {err}");
+                    }
+                }
+                self.poll_hybrid_state();
+            }
+            Message::HybridBridgeRestartPressed => {
+                match self.hybrid_bridge.restart() {
+                    Ok(()) => {
+                        self.hybrid_bridge_error.clear();
+                        self.status_line = "Hybrid-Bridge neu gestartet.".to_owned();
+                    }
+                    Err(err) => {
+                        self.hybrid_bridge_error = err.clone();
+                        self.status_line = format!("Hybrid-Bridge Restart fehlgeschlagen: {err}");
+                    }
+                }
+                self.poll_hybrid_state();
+            }
+            Message::HybridSymbiontEnabled(enabled) => {
+                match set_symbiont_enabled(enabled) {
+                    Ok(()) => {
+                        self.hybrid_symbiont_enabled = enabled;
+                        self.status_line = if enabled {
+                            "Symbiont-Link im Hybrid-Setup aktiviert.".to_owned()
+                        } else {
+                            "Symbiont-Link im Hybrid-Setup deaktiviert.".to_owned()
+                        };
+                        let _ = self.hybrid_bridge.restart();
+                    }
+                    Err(err) => {
+                        self.hybrid_bridge_error = err.clone();
+                        self.status_line = format!("Symbiont-Setting konnte nicht gespeichert werden: {err}");
+                    }
+                }
+                self.poll_hybrid_state();
+            }
+            Message::HybridSymbiontEndpointPreset(host, port) => {
+                match set_symbiont_endpoint(host.clone(), port) {
+                    Ok(()) => {
+                        self.symbiont_host = host;
+                        self.symbiont_port = port;
+                        self.status_line = format!(
+                            "Symbiont-Endpoint auf {}:{} gesetzt.",
+                            self.symbiont_host, self.symbiont_port
+                        );
+                        let _ = self.hybrid_bridge.restart();
+                    }
+                    Err(err) => {
+                        self.hybrid_bridge_error = err.clone();
+                        self.status_line = format!("Symbiont-Endpoint konnte nicht gespeichert werden: {err}");
+                    }
+                }
+                self.poll_hybrid_state();
+            }
             Message::ToggleMode => {
                 self.app_mode = match self.app_mode {
                     AppMode::Overlay => AppMode::Full,
@@ -3934,7 +4411,7 @@ impl AetherIcedShell {
                 };
                 let (new_w, new_h) = match self.app_mode {
                     AppMode::Full => (1560.0f32, 900.0f32),
-                    AppMode::Overlay => (480.0f32, 36.0f32),
+                    AppMode::Overlay => (960.0f32, 72.0f32),
                 };
                 return window::get_latest().then(move |id_opt| {
                     if let Some(id) = id_opt {
@@ -3946,8 +4423,58 @@ impl AetherIcedShell {
             }
             Message::Tick => {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
+                self.launcher_state.poll_processes();
+                if self.tick_counter % 60 == 0 {
+                    self.poll_hybrid_state();
+                }
                 if self.tick_counter % 120 == 0 {
                     self.poll_backend_state();
+                }
+                // Poll Symbiont live events every ~8 ticks while the server is running
+                if self.tick_counter % 8 == 3
+                    && self.hybrid_symbiont_running
+                    && !self.symbiont_events_polling
+                {
+                    self.symbiont_events_polling = true;
+                    let host = self.symbiont_host.clone();
+                    let port = self.symbiont_port;
+                    let since = self.symbiont_last_event_idx;
+                    return Task::perform(
+                        async move {
+                            let result = symbiont_rpc::request_json(
+                                &host,
+                                port,
+                                "aether/events",
+                                serde_json::json!({ "since_idx": since, "limit": 30 }),
+                            )?;
+                            let last_idx = result
+                                .get("last_idx")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(since);
+                            let entries: Vec<String> = result
+                                .get("events")
+                                .and_then(|v| v.as_array())
+                                .map(|arr| {
+                                    arr.iter()
+                                        .filter_map(|e| {
+                                            let idx = e.get("idx")?.as_u64()?;
+                                            let ts = e.get("ts")?.as_f64()?;
+                                            let kind = e.get("kind")?.as_str()?;
+                                            let detail = e
+                                                .get("detail")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("");
+                                            Some(format!(
+                                                "[{idx}] {ts:.3}  {kind}  {detail}"
+                                            ))
+                                        })
+                                        .collect()
+                                })
+                                .unwrap_or_default();
+                            Ok((entries, last_idx))
+                        },
+                        Message::SymbiontEventsReceived,
+                    );
                 }
                 if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE {
                     self.step_structure_map();
@@ -4005,6 +4532,77 @@ impl AetherIcedShell {
                 self.show_tutorial = false;
                 self.status_line = "Shanway-Tutorial ausgeblendet.".to_owned();
             }
+            // ── Launcher Dashboard Messages ────────────────────────────────────────
+            Message::LauncherModeSelected(mode) => {
+                self.launcher_state.mode = mode;
+                self.launcher_state.log(format!("[LAUNCHER] Mode switched to: {:?}", mode));
+                self.status_line = format!("Launcher Mode: {}", mode.label());
+            }
+            Message::LauncherServiceStartPressed(service_id) => {
+                match self.launcher_state.start_service(&service_id) {
+                    Ok(()) => {
+                        self.status_line = format!("Service {} started", service_id);
+                    }
+                    Err(err) => {
+                        self.launcher_state.log(format!("[ERROR] Failed to start {}: {}", service_id, err));
+                        self.status_line = format!("Error: {}", err);
+                    }
+                }
+            }
+            Message::LauncherServiceStopPressed(service_id) => {
+                match self.launcher_state.stop_service(&service_id) {
+                    Ok(()) => {
+                        self.status_line = format!("Service {} stopped", service_id);
+                    }
+                    Err(err) => {
+                        self.launcher_state.log(format!("[ERROR] Failed to stop {}: {}", service_id, err));
+                        self.status_line = format!("Error: {}", err);
+                    }
+                }
+            }
+            Message::LauncherBuildTaskPressed(task_id) => {
+                match self.launcher_state.mark_build_task_running(&task_id) {
+                    Ok(task_name) => {
+                        self.status_line = format!("Build task {} started", task_name);
+                        if let Some(task) = self.launcher_state.build_task(&task_id) {
+                            return Task::perform(
+                                async move { crate::launcher_dashboard::run_build_task(task) },
+                                move |result| Message::LauncherBuildTaskCompleted(task_id.clone(), result),
+                            );
+                        }
+                        self.launcher_state.fail_build_task(&task_id, "task disappeared after scheduling");
+                        self.status_line = format!("Error: task {} unavailable", task_id);
+                    }
+                    Err(err) => {
+                        self.launcher_state.log(format!("[ERROR] Failed to execute {}: {}", task_id, err));
+                        self.status_line = format!("Error: {}", err);
+                    }
+                }
+            }
+            Message::LauncherBuildTaskCompleted(task_id, result) => {
+                match result {
+                    Ok(build_result) => {
+                        let exit_code = build_result.exit_code;
+                        let task_name = build_result.task_name.clone();
+                        self.launcher_state.finish_build_task(&build_result);
+                        if exit_code == 0 {
+                            self.status_line = format!("Build task {} completed", task_name);
+                        } else {
+                            self.status_line = format!("Build task {} failed with exit {}", task_name, exit_code);
+                        }
+                    }
+                    Err(err) => {
+                        self.launcher_state.fail_build_task(&task_id, &err);
+                        self.status_line = format!("Error: {}", err);
+                    }
+                }
+            }
+            Message::LauncherLogsClearPressed => {
+                self.launcher_state.unified_log.clear();
+                self.launcher_state.log("Logs cleared".to_string());
+                self.status_line = "Launcher logs cleared".to_owned();
+            }
+            // ─────────────────────────────────────────────────────────────────────
             Message::AnchorGroupSelected(index) => self.selected_anchor_group = index,
         }
         Task::none()
@@ -4027,7 +4625,7 @@ impl AetherIcedShell {
             "CPU --".to_owned()
         };
 
-        let quick_button = |label: &str, tab: Tab| {
+        let quick_button = |label: String, tab: Tab| {
             button(text(label).size(11))
                 .on_press(Message::OpenFullTab(tab))
                 .style(|_: &Theme, _| button::Style {
@@ -4048,13 +4646,13 @@ impl AetherIcedShell {
             text(entropy_str).size(12).color(c(TEXT_M)),
             text(vault_str).size(12).color(c(TEXT_M)),
             text(cpu_str).size(12).color(c(TEXT_M)),
-            quick_button(self.ui_text("Kontrolle", "Control"), Tab::Control),
-            quick_button(self.ui_text("Symbiont", "Symbiont"), Tab::Symbiont),
-            quick_button(self.ui_text("Swarm Ops", "Swarm Ops"), Tab::SwarmOps),
-            quick_button(self.ui_text("Privatsphaere", "Privacy"), Tab::Privacy),
-            quick_button(self.ui_text("Dateien", "Files"), Tab::Data),
-            quick_button(self.ui_text("Verlauf", "Logs"), Tab::Logs),
-            quick_button(self.ui_text("Chat", "Chat"), Tab::Chat),
+            quick_button(self.ui_text("Kontrolle", "Control").to_owned(), Tab::Control),
+            quick_button(self.ui_text("Symbiont", "Symbiont").to_owned(), Tab::Symbiont),
+            quick_button(self.ui_text("Swarm Ops", "Swarm Ops").to_owned(), Tab::SwarmOps),
+            quick_button(self.ui_text("Privatsphaere", "Privacy").to_owned(), Tab::Privacy),
+            quick_button(self.ui_text("Dateien", "Files").to_owned(), Tab::Data),
+            quick_button(self.ui_text("Verlauf", "Logs").to_owned(), Tab::Logs),
+            quick_button(self.ui_text("Chat", "Chat").to_owned(), Tab::Chat),
             button(text(self.ui_text("▲ Oeffnen", "▲ Open")).size(12))
                 .on_press(Message::OpenFullTab(self.active_tab))
                 .style(|_: &Theme, _| button::Style {
@@ -4069,9 +4667,30 @@ impl AetherIcedShell {
         .align_y(iced::Alignment::Center)
         .padding([0, 16]);
 
-        container(bar)
+        // XOR / Bytestream Compare strip (36px below the main bar)
+        let bytestream_strip = canvas::Canvas::new(BytestreamBarScene {
+            hist: self.last_byte_hist.clone(),
+            delta: self.last_xor_delta.clone(),
+            has_data: !self.last_byte_hist.is_empty(),
+        })
+        .width(Length::Fill)
+        .height(Length::Fixed(36.0));
+
+        let overlay_col = column![
+            container(bar)
+                .width(Length::Fill)
+                .height(Length::Fixed(36.0))
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(c(BG_BASE))),
+                    border: Border { color: c(BORDER), width: 1.0, radius: 0.0.into() },
+                    ..Default::default()
+                }),
+            bytestream_strip,
+        ];
+
+        container(overlay_col)
             .width(Length::Fill)
-            .height(Length::Fixed(36.0))
+            .height(Length::Fixed(72.0))
             .style(|_: &Theme| container::Style {
                 background: Some(Background::Color(c(BG_BASE))),
                 border: Border { color: c(BORDER), width: 1.0, radius: 0.0.into() },
@@ -4081,6 +4700,16 @@ impl AetherIcedShell {
     }
 
     fn view_symbiont(&self) -> Element<'_, Message> {
+        let bridge_state = if self.hybrid_bridge_running {
+            "online"
+        } else {
+            "offline"
+        };
+        let sym_state = if self.hybrid_symbiont_running {
+            "online"
+        } else {
+            "offline"
+        };
         let status = if self.backend_state_loaded {
             format!(
                 "Backend aktiv | Entropy {:.2} | Vault {} | Last: {}",
@@ -4144,6 +4773,142 @@ impl AetherIcedShell {
                         .style(primary_button_style),
                 ]
                 .spacing(10),
+                container(
+                    column![
+                        text(format!("Hybrid Bridge: {bridge_state} | Symbiont: {sym_state}"))
+                            .size(12)
+                            .color(c(TEXT_D)),
+                        text(format!(
+                            "VS Code Symbiont: {}{}",
+                            if self.vscode_symbiont_active { "online" } else { "offline" },
+                            if self.vscode_symbiont_mode.trim().is_empty() {
+                                "".to_owned()
+                            } else {
+                                format!(" | {}", self.vscode_symbiont_mode)
+                            }
+                        ))
+                            .size(12)
+                            .color(c(TEXT_D)),
+                        row![
+                            button(text("Bridge Start").size(12).color(c(TEXT_H)))
+                                .on_press(Message::HybridBridgeStartPressed)
+                                .padding([8, 12])
+                                .style(primary_button_style),
+                            button(text("Bridge Restart").size(12).color(c(TEXT_H)))
+                                .on_press(Message::HybridBridgeRestartPressed)
+                                .padding([8, 12])
+                                .style(primary_button_style),
+                            button(text("Bridge Stop").size(12).color(c(TEXT_H)))
+                                .on_press(Message::HybridBridgeStopPressed)
+                                .padding([8, 12])
+                                .style(secondary_button_style),
+                        ]
+                        .spacing(10),
+                    ]
+                    .spacing(8),
+                )
+                .padding(10)
+                .style(panel_frame_style),
+                container(
+                    column![
+                        text(format!("RPC Endpoint: {}:{}", self.symbiont_host, self.symbiont_port))
+                            .size(12)
+                            .color(c(TEXT_D)),
+                        text_input(
+                            "Signal eingeben (mehrere Zeilen = Razor-Signale)",
+                            &self.symbiont_input,
+                        )
+                        .on_input(Message::SymbiontInputChanged)
+                        .padding(8),
+                        row![
+                            button(text(if self.symbiont_busy { "Profil ..." } else { "Profil" }).size(12).color(c(TEXT_H)))
+                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontProfilePressed))
+                                .padding([8, 12])
+                                .style(primary_button_style),
+                            button(text(if self.symbiont_busy { "Razor ..." } else { "Razor" }).size(12).color(c(TEXT_H)))
+                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontRazorPressed))
+                                .padding([8, 12])
+                                .style(primary_button_style),
+                            button(text(if self.symbiont_busy { "Snapshot ..." } else { "Snapshot" }).size(12).color(c(TEXT_H)))
+                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontSnapshotPressed))
+                                .padding([8, 12])
+                                .style(primary_button_style),
+                            button(text(if self.symbiont_busy { "Status ..." } else { "Status" }).size(12).color(c(TEXT_H)))
+                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontStatusPressed))
+                                .padding([8, 12])
+                                .style(secondary_button_style),
+                        ]
+                        .spacing(10),
+                        container(scrollable(text(self.symbiont_result.clone()).size(11).color(c(TEXT_M))).height(Length::Fixed(160.0)))
+                            .padding(8)
+                            .style(panel_frame_style),
+                    ]
+                    .spacing(8),
+                )
+                .padding(10)
+                .style(panel_frame_style),
+                // ── Live-Event-Stream ────────────────────────────────────────
+                container(
+                    column![
+                        row![
+                            text(format!(
+                                "\u{25cf} Live Events{}",
+                                if self.symbiont_events_polling { " \u{21bb}" } else { "" }
+                            ))
+                            .size(13)
+                            .color(if self.hybrid_symbiont_running {
+                                Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                            } else {
+                                c(TEXT_D)
+                            }),
+                            text(format!("({} Eintraege)", self.symbiont_events.len()))
+                                .size(11)
+                                .color(c(TEXT_D)),
+                            iced::widget::Space::new(Length::Fill, Length::Shrink),
+                            button(text("Leeren").size(11).color(c(TEXT_M)))
+                                .on_press(Message::SymbiontEventsClearPressed)
+                                .padding([4, 10])
+                                .style(secondary_button_style),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                        container(
+                            scrollable(
+                                column(
+                                    if self.symbiont_events.is_empty() {
+                                        vec![text(if self.hybrid_symbiont_running {
+                                            "Warte auf Symbiont-Ereignisse ..."
+                                        } else {
+                                            "Symbiont offline \u{2014} Bridge starten, um Events zu empfangen."
+                                        })
+                                        .size(11)
+                                        .color(c(TEXT_D))
+                                        .into()]
+                                    } else {
+                                        self.symbiont_events
+                                            .iter()
+                                            .rev()
+                                            .take(80)
+                                            .map(|line| {
+                                                text(line.clone())
+                                                    .size(11)
+                                                    .color(c(TEXT_M))
+                                                    .into()
+                                            })
+                                            .collect::<Vec<Element<'_, Message>>>()
+                                    }
+                                )
+                                .spacing(2),
+                            )
+                            .height(Length::Fixed(200.0)),
+                        )
+                        .padding(8)
+                        .style(panel_frame_style),
+                    ]
+                    .spacing(6),
+                )
+                .padding(10)
+                .style(panel_frame_style),
                 info_card(
                     "Hinweis",
                     "aether-symbiont (VSCode) und symbiont_core.py sind separate Ebenen. Dieser Tab ist die zentrale Steuerflaeche im Hauptprogramm.",
@@ -4543,6 +5308,352 @@ impl AetherIcedShell {
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+
+    fn view_launcher(&self) -> Element<'_, Message> {
+        let header = row![
+            text("Unified Launcher Dashboard").size(24).color(c(TEXT_H)),
+            text(" | Manage all services & build tasks").size(14).color(c(TEXT_M)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
+        // Mode selector
+        let mode_buttons = row![
+            self.mode_button(LauncherMode::Services, "🔧 Services"),
+            self.mode_button(LauncherMode::BuildTasks, "🔨 Build"),
+            self.mode_button(LauncherMode::Logs, "📝 Logs"),
+            self.mode_button(LauncherMode::Configuration, "⚙️ Config"),
+        ]
+        .spacing(8)
+        .padding([8, 0]);
+
+        // Content based on selected mode
+        let content: Element<'_, Message> = match self.launcher_state.mode {
+            LauncherMode::Services => self.view_launcher_services(),
+            LauncherMode::BuildTasks => self.view_launcher_build_tasks(),
+            LauncherMode::Logs => self.view_launcher_logs(),
+            LauncherMode::Configuration => self.view_launcher_configuration(),
+        };
+
+        container(
+            column![
+                header,
+                mode_buttons,
+                container(iced::widget::Space::new(Length::Fill, Length::Fixed(1.0)))
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(c(BORDER))),
+                        ..Default::default()
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0)),
+                container(content)
+                    .width(Length::Fill)
+                    .height(Length::Fill),
+            ]
+            .spacing(12)
+            .padding(16)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn mode_button<'a>(&self, mode: LauncherMode, label: &'a str) -> Element<'a, Message> {
+        let is_active = self.launcher_state.mode == mode;
+        button(text(label).size(13).color(if is_active { c(ACCENT) } else { c(TEXT_M) }))
+            .on_press(Message::LauncherModeSelected(mode))
+            .padding([8, 16])
+            .style(move |_: &Theme, _| button::Style {
+                background: Some(Background::Color(if is_active {
+                    Color::from_rgba(0.55, 0.25, 0.95, 0.4)
+                } else {
+                    Color::TRANSPARENT
+                })),
+                border: Border {
+                    color: if is_active { c(ACCENT) } else { c(BORDER) },
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                text_color: if is_active { c(ACCENT) } else { c(TEXT_M) },
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_launcher_services(&self) -> Element<'_, Message> {
+        let services: Vec<_> = self.launcher_state.all_services().iter().map(|s| *s).collect();
+        
+        let service_cards: Vec<_> = services
+            .iter()
+            .map(|service| {
+                let status_color = service.status.color_rgb();
+                let status_label = service.status.label();
+                let status_badge = text(format!("● {}", status_label))
+                    .size(12)
+                    .color(Color::from_rgb(status_color.0, status_color.1, status_color.2));
+                let (start_btn, stop_btn): (Option<Element<'_, Message>>, Option<Element<'_, Message>>) = match service.status {
+                    ServiceStatus::Running => (
+                        None,
+                        Some(
+                            button(text("Stop").size(12).color(c(TEXT_H)))
+                                .on_press(Message::LauncherServiceStopPressed(service.id.clone()))
+                                .padding([6, 12])
+                                .style(secondary_button_style)
+                                .into()
+                        ),
+                    ),
+                    ServiceStatus::Idle => (
+                        Some(
+                            button(text("Start").size(12).color(c(TEXT_H)))
+                                .on_press(Message::LauncherServiceStartPressed(service.id.clone()))
+                                .padding([6, 12])
+                                .style(primary_button_style)
+                                .into()
+                        ),
+                        None,
+                    ),
+                    _ => (None, None),
+                };
+
+                let mut button_row = row![];
+                if let Some(btn) = start_btn {
+                    button_row = button_row.push(btn);
+                }
+                if let Some(btn) = stop_btn {
+                    button_row = button_row.push(btn);
+                }
+                button_row = button_row.spacing(8);
+
+                container(
+                    column![
+                        row![
+                            text(service.name.clone()).size(14).color(c(TEXT_H)),
+                            status_badge
+                        ]
+                        .width(Length::Fill)
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .width(Length::Fill),
+                        text(service.description.clone()).size(11).color(c(TEXT_M)),
+                        text(format!(
+                            "PID: {} | Uptime: {}s{}",
+                            service
+                                .process_id
+                                .map(|pid| pid.to_string())
+                                .unwrap_or_else(|| "-".to_owned()),
+                            service.uptime_secs,
+                            if service.log_fresh { " | new log lines" } else { "" }
+                        ))
+                        .size(10)
+                        .color(if service.log_fresh { Color::from_rgb8(0x6C, 0xD4, 0x8F) } else { c(TEXT_D) }),
+                        if let Some(port) = service.port {
+                            text(format!("Port: {}", port)).size(10).color(c(TEXT_D))
+                        } else {
+                            text("").size(10)
+                        },
+                        button_row.width(Length::Fill),
+                    ]
+                    .spacing(6)
+                    .width(Length::Fill),
+                )
+                .padding(12)
+                .style(panel_frame_style)
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+
+        scrollable(column(service_cards).spacing(8))
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn view_launcher_build_tasks(&self) -> Element<'_, Message> {
+        let tasks = self.launcher_state.build_tasks.clone();
+        
+        let task_cards: Vec<_> = tasks
+            .iter()
+            .map(|task| {
+                let status_text = if task.running {
+                    "● Running...".to_owned()
+                } else if let Some(code) = task.last_exit_code {
+                    format!("● Exit: {}", code)
+                } else {
+                    "● Ready".to_owned()
+                };
+                let status_color = if task.running {
+                    Color::from_rgb8(0xF0, 0xA0, 0x00)
+                } else if task.last_exit_code == Some(0) {
+                    Color::from_rgb8(0x00, 0xD0, 0x00)
+                } else if task.last_exit_code.is_none() {
+                    c(TEXT_D)
+                } else {
+                    Color::from_rgb8(0xD0, 0x00, 0x00)
+                };
+
+                container(
+                    column![
+                        row![
+                            text(task.name.clone()).size(14).color(c(TEXT_H)),
+                            text(status_text).size(12).color(status_color)
+                        ]
+                        .width(Length::Fill)
+                        .spacing(8),
+                        text(task.description.clone()).size(11).color(c(TEXT_M)),
+                        row![
+                            button(text(if task.running { "Running..." } else { "Execute" }).size(12).color(c(TEXT_H)))
+                                .on_press_maybe((!task.running).then_some(Message::LauncherBuildTaskPressed(task.id.clone())))
+                                .padding([6, 12])
+                                .style(primary_button_style)
+                        ]
+                        .width(Length::Fill)
+                    ]
+                    .spacing(6)
+                    .width(Length::Fill),
+                )
+                .padding(12)
+                .style(panel_frame_style)
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+
+        scrollable(column(task_cards).spacing(8))
+            .height(Length::Fill)
+            .into()
+    }
+
+    fn view_launcher_logs(&self) -> Element<'_, Message> {
+        let logs = self.launcher_state.recent_logs(50);
+
+        let log_lines: Vec<_> = logs
+            .iter()
+            .rev()
+            .map(|(_, line)| {
+                text(line.clone())
+                    .size(11)
+                    .color(c(TEXT_M))
+                    .into()
+            })
+            .collect();
+
+        let service_sections: Vec<Element<'_, Message>> = self
+            .launcher_state
+            .all_services()
+            .into_iter()
+            .map(|service| {
+                let lines: Vec<Element<'_, Message>> = if service.log_lines.is_empty() {
+                    vec![text("No service output yet.").size(11).color(c(TEXT_D)).into()]
+                } else {
+                    service
+                        .log_lines
+                        .iter()
+                        .map(|line| text(line.clone()).size(10).color(c(TEXT_M)).into())
+                        .collect()
+                };
+
+                container(
+                    column![
+                        text(format!("{} Log Tail", service.name)).size(13).color(c(TEXT_H)),
+                        container(scrollable(column(lines).spacing(2)).height(Length::Fixed(110.0)))
+                            .padding(8)
+                            .style(panel_frame_style),
+                    ]
+                    .spacing(6)
+                    .width(Length::Fill),
+                )
+                .style(panel_frame_style)
+                .padding(10)
+                .width(Length::Fill)
+                .into()
+            })
+            .collect();
+
+        container(
+            column![
+                row![
+                    text("Recent Logs").size(14).color(c(TEXT_H)),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    button(text("Clear").size(12).color(c(TEXT_H)))
+                        .on_press(Message::LauncherLogsClearPressed)
+                        .padding([4, 12])
+                        .style(secondary_button_style),
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Fill),
+                container(scrollable(column(log_lines).spacing(2)).height(Length::Fixed(220.0)))
+                    .padding(8)
+                    .style(panel_frame_style),
+                scrollable(column(service_sections).spacing(8))
+                    .height(Length::Fill),
+            ]
+            .spacing(8)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .padding(12)
+        .style(panel_frame_style)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
+
+    fn view_launcher_configuration(&self) -> Element<'_, Message> {
+        container(
+            column![
+                text("Launcher Configuration").size(16).color(c(TEXT_H)),
+                text("Platform Information").size(13).color(c(TEXT_M)),
+                text(self.launcher_state.platform_info.clone()).size(11).color(c(TEXT_D)),
+                container(iced::widget::Space::new(Length::Fixed(1.0), Length::Fixed(12.0))),
+                text("Service Endpoints").size(13).color(c(TEXT_M)),
+                text("Symbiont Server: 127.0.0.1:38571").size(11).color(c(TEXT_D)),
+                text("AetherDropper: Local GUI").size(11).color(c(TEXT_D)),
+                text("Iced Shell: Currently Running").size(11).color(c(TEXT_D)),
+                container(iced::widget::Space::new(Length::Fixed(1.0), Length::Fixed(12.0))),
+                text("Aethernet & Swarm").size(13).color(c(TEXT_M)),
+                text(format!(
+                    "Aethernet: {} | Receiver Port: {}",
+                    if self.hybrid_aethernet_running { "online" } else { "offline" },
+                    self.hybrid_aethernet_receiver_port,
+                ))
+                .size(11)
+                .color(c(TEXT_D)),
+                text(format!(
+                    "Nodes: {} (reachable: {}) | Packs: {} | Consensus: {} | Candidates: {}",
+                    self.backend_swarm_node_count,
+                    self.backend_swarm_reachable_node_count,
+                    self.backend_swarm_pack_count,
+                    self.backend_swarm_consensus_count,
+                    self.backend_swarm_candidate_count,
+                ))
+                .size(11)
+                .color(c(TEXT_D)),
+                text(format!(
+                    "Genesis Key: {} | Quorum: {} | Saving: {:.2}%",
+                    if self.backend_swarm_genesis_key_ok { "ok" } else { "missing" },
+                    if self.backend_swarm_quorum_reachable { "reachable" } else { "not reachable" },
+                    self.backend_swarm_estimated_saving_percent,
+                ))
+                .size(11)
+                .color(c(TEXT_D)),
+                text(if self.backend_swarm_summary.is_empty() {
+                    "Summary: unavailable".to_owned()
+                } else {
+                    format!("Summary: {}", self.backend_swarm_summary)
+                })
+                .size(11)
+                .color(c(TEXT_D)),
+            ]
+            .spacing(8)
+            .width(Length::Fill),
+        )
+        .padding(16)
+        .style(panel_frame_style)
+        .width(Length::Fill)
+        .into()
     }
 
     fn root_view(&self) -> Element<'_, Message> {
@@ -5472,6 +6583,83 @@ impl canvas::Program<Message> for OrchestrationScene {
 
 // ── DotScene (status indicator dot) ─────────────────────────────────────────
 
+// ── XOR Bytestream Compare Strip (Leistenmodus) ──────────────────────────
+struct BytestreamBarScene {
+    hist: Vec<f32>,    // 64-bucket original byte frequency
+    delta: Vec<f32>,   // 64-bucket |orig−aef| XOR divergence
+    has_data: bool,
+}
+
+impl canvas::Program<Message> for BytestreamBarScene {
+    type State = ();
+    fn draw(
+        &self,
+        _s: &(),
+        renderer: &iced::Renderer,
+        _t: &Theme,
+        bounds: Rectangle,
+        _c: mouse::Cursor,
+    ) -> Vec<canvas::Geometry<iced::Renderer>> {
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        // Background
+        frame.fill_rectangle(
+            Point::new(0.0, 0.0),
+            bounds.size(),
+            Color::from_rgb8(0x08, 0x0C, 0x14),
+        );
+        if !self.has_data || self.hist.is_empty() {
+            // Placeholder message when no file has been analyzed yet
+            let label = canvas::Text {
+                content: "  XOR / Bytestream-Vergleich · Datei droppen zum Starten".to_owned(),
+                position: Point::new(8.0, bounds.height * 0.35),
+                color: Color::from_rgba(0.35, 0.65, 0.70, 0.60),
+                size: iced::Pixels(10.5),
+                ..canvas::Text::default()
+            };
+            frame.fill_text(label);
+            return vec![frame.into_geometry()];
+        }
+        let n = self.hist.len() as f32;
+        let cell_w = (bounds.width / n).max(1.0);
+        let h = bounds.height;
+        let max_orig = self.hist.iter().cloned().fold(0.0f32, f32::max).max(0.0001);
+        let max_delta = self.delta.iter().cloned().fold(0.0f32, f32::max).max(0.0001);
+        for (i, (&orig, &diff)) in self.hist.iter().zip(self.delta.iter()).enumerate() {
+            let x = i as f32 * cell_w;
+            // Cyan bar = original byte frequency
+            let norm_orig = orig / max_orig;
+            let bar_h = (norm_orig * h).clamp(1.0, h);
+            let alpha_orig = 0.15 + 0.75 * norm_orig;
+            frame.fill_rectangle(
+                Point::new(x, h - bar_h),
+                Size::new((cell_w - 0.8).max(0.5), bar_h),
+                Color::from_rgba(0.10, 0.82, 0.78, alpha_orig),
+            );
+            // Orange/red overlay = XOR divergence (how much the AEF delta differs)
+            if diff > 0.002 {
+                let norm_d = (diff / max_delta).min(1.0);
+                let d_h = (norm_d * h * 0.8).clamp(1.0, h);
+                let alpha_d = 0.25 + 0.65 * norm_d;
+                frame.fill_rectangle(
+                    Point::new(x, h - d_h),
+                    Size::new((cell_w - 0.8).max(0.5), d_h),
+                    Color::from_rgba(1.0, 0.50, 0.08, alpha_d),
+                );
+            }
+        }
+        // Top label
+        let label = canvas::Text {
+            content: "  Byte-Hist ■ | XOR-Delta ■".to_owned(),
+            position: Point::new(4.0, 1.0),
+            color: Color::from_rgba(0.55, 0.75, 0.75, 0.75),
+            size: iced::Pixels(9.0),
+            ..canvas::Text::default()
+        };
+        frame.fill_text(label);
+        vec![frame.into_geometry()]
+    }
+}
+
 struct DotScene { color: Color }
 impl canvas::Program<Message> for DotScene {
     type State = ();
@@ -5953,6 +7141,9 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
     let preview_upper = entry.preview_note.to_ascii_uppercase();
     let suspicious = preview_upper.contains("EICAR")
         || preview_upper.contains("OBF")
+        || preview_upper.contains("MALWARE")
+        || preview_upper.contains("BLOCK")
+        || preview_upper.contains("DENY")
         || preview_upper.contains("QUARANTINE")
         || preview_upper.contains("CRITICAL");
     container(
@@ -6006,6 +7197,16 @@ async fn analyze_file_for_register(
     let original_bytes = fs::read(&path)
         .map_err(|e| format!("Datei konnte nicht gelesen werden: {e}"))?;
 
+    // Build 64-bucket byte histogram from original bytes (used for XOR strip visualization)
+    let byte_hist: Vec<f32> = {
+        let mut buckets = [0u32; 64];
+        for &b in &original_bytes {
+            buckets[(b >> 2) as usize] += 1;
+        }
+        let total = original_bytes.len().max(1) as f32;
+        buckets.iter().map(|&c| c as f32 / total).collect()
+    };
+
     // Create AEF output directory
     let aef_dir = PathBuf::from("data")
         .join("rust_shell")
@@ -6058,6 +7259,13 @@ async fn analyze_file_for_register(
         0.0
     } else {
         code_suspicion_score(&original_text)
+    };
+    let obf_level = if obfuscation >= 0.80 {
+        "HIGH"
+    } else if obfuscation >= 0.55 {
+        "MED"
+    } else {
+        "LOW"
     };
     let eicar_hit = original_text
         .to_ascii_uppercase()
@@ -6145,10 +7353,16 @@ async fn analyze_file_for_register(
             .join(" | ");
         format!("Policy: {labels}")
     };
+    let malware_policy_hit = policy_hits.iter().any(|entry| {
+        let action = entry.action.to_ascii_lowercase();
+        action.contains("block") || action.contains("deny") || action.contains("quarantine")
+    });
     let cascade_summary = format!(
-        "Cascade: Ethics {:.2} | Obf {:.2} | EICAR {}",
+        "Cascade: Ethics {:.2} | Obf {:.2} ({}) | MalwarePolicy {} | EICAR {}",
         ethics.score,
         obfuscation,
+        obf_level,
+        if malware_policy_hit { "HIT" } else { "no" },
         if eicar_hit { "HIT" } else { "no" }
     );
     let preview_note = format!(
@@ -6171,7 +7385,28 @@ async fn analyze_file_for_register(
         original_size, delta_size, encode_result.e_lambda, policy_summary, cascade_summary
     );
 
+    // XOR delta: read encoded AEF delta, build its 64-bucket histogram, diff against original
+    let xor_delta: Vec<f32> = {
+        match fs::read(&aef_path) {
+            Ok(aef_bytes) => {
+                let mut delta_buckets = [0u32; 64];
+                for &b in &aef_bytes {
+                    delta_buckets[(b >> 2) as usize] += 1;
+                }
+                let dtotal = aef_bytes.len().max(1) as f32;
+                byte_hist
+                    .iter()
+                    .zip(delta_buckets.iter())
+                    .map(|(&orig_freq, &dc)| (orig_freq - dc as f32 / dtotal).abs())
+                    .collect()
+            }
+            Err(_) => byte_hist.iter().map(|&v| v * 0.5).collect(),
+        }
+    };
+
     Ok(FileAnalysisResult {
+        byte_hist,
+        xor_delta,
         entry: RegisterEntry {
             id: 0,
             owner_username: username,

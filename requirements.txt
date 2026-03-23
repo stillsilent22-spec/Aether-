@@ -8,17 +8,24 @@ pyinstaller
 tkinterdnd2
 opencv-python
 pillow
-pywebview
 cryptography
 fonttools
 mss
-python-magic
 pydub
 moviepy
 PyMuPDF
 psutil
-llama-cpp-python
 speechrecognition
+
+# Optional: Browser-Einbettung via pywebview.
+# Auf Windows mit Python 3.14 kann die Installation aktuell an pythonnet scheitern.
+# Bei Bedarf separat installieren: pip install pywebview
+# Optional: Dateisignatur-Erkennung via python-magic.
+# Faellt ohne Paket auf Signatur- und Suffix-Erkennung zurueck.
+# Bei Bedarf separat installieren: pip install python-magic
+# Optional: Lokales GGUF-LLM via llama-cpp-python.
+# Shanway faellt ohne Paket auf deterministischen Template-Modus zurueck.
+# Bei Bedarf separat installieren: pip install llama-cpp-python
 
 # ── Windows-spezifisch (nur auf Windows installieren) ──────────────────────
 # pip install winshell pywin32  (Windows only)

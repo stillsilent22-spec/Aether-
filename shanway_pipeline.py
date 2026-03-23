@@ -36,8 +36,16 @@ E_ANCHOR     = 2.71828182845904
 ANCHORS      = [PI_ANCHOR, PHI_ANCHOR, SQRT2_ANCHOR, E_ANCHOR]
 ANCHOR_NAMES = ["pi", "phi", "sqrt2", "e"]
 
-# Observer-Wissen Basisrate (wächst mit Vault-Größe, hier konservativ)
-OBSERVER_KNOWLEDGE_RATIO = 0.15
+# Observer-Wissen Basisrate — dynamisch nach Vault-Größe skaliert
+def _dynamic_knowledge_ratio(vault_size: int) -> float:
+    """Returns the observer knowledge ratio scaled to the known vault size."""
+    if vault_size < 10:
+        return 0.05
+    if vault_size < 100:
+        return 0.15
+    if vault_size < 1000:
+        return 0.25
+    return 0.35
 
 # ── Schwellwerte ──────────────────────────────────────────────────────────────
 TRUST_THRESHOLD       = 0.45
@@ -156,8 +164,8 @@ def _entropy(data: bytes) -> float:
 # H_lambda(X,t) = max(0, H(X) - observer_mutual_info)
 # observer_mutual_info ~= entropy_mean * observer_knowledge_ratio
 
-def _h_lambda(entropy_mean: float,
-              knowledge_ratio: float = OBSERVER_KNOWLEDGE_RATIO) -> tuple[float, float]:
+def _h_lambda(entropy_mean: float, vault_size: int = 0) -> tuple[float, float]:
+    knowledge_ratio = _dynamic_knowledge_ratio(vault_size)
     mutual_info = entropy_mean * knowledge_ratio
     h_lam = max(0.0, entropy_mean - mutual_info)
     return round(h_lam, 4), round(mutual_info, 4)
@@ -280,7 +288,8 @@ def _trust(coverage: float, entropy_mean: float, n_anchors: int,
 # ── Vollständige Source-Profilerstellung ──────────────────────────────────────
 
 def _profile_source(url: str, title: Optional[str],
-                    raw: bytes, session_seed: int = 0xA37E) -> SourceProfile:
+                    raw: bytes, session_seed: int = 0xA37E,
+                    vault_size: int = 0) -> SourceProfile:
     """Alle 10 Schichten der Aether-Pipeline auf eine Quelle anwenden."""
 
     # [0] Security — deny by default
@@ -306,7 +315,7 @@ def _profile_source(url: str, title: Optional[str],
     entropy_mean = sum(entropy_values) / len(entropy_values)
 
     # [2] H_lambda
-    h_lam, mutual_info = _h_lambda(entropy_mean)
+    h_lam, mutual_info = _h_lambda(entropy_mean, vault_size=vault_size)
 
     # [3] Anchor
     anchors_found: dict[str, int] = {}
@@ -361,7 +370,8 @@ def measure_consensus(query: str, sources: list,
     """Vollständige Aether-Pipeline über alle Quellen → ConsensusResult."""
 
     profiles = [
-        _profile_source(src.url, src.title, src.raw_bytes, session_seed)
+        _profile_source(src.url, src.title, src.raw_bytes, session_seed,
+                        vault_size=len(sources))
         for src in sources
     ]
 
