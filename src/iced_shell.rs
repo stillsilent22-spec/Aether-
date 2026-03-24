@@ -7481,6 +7481,45 @@ fn analysis_card<'a>(
     .into()
 }
 
+/// Erzeugt eine menschenlesbare Erklaerungszeile aus den Analyse-Metriken.
+fn plain_note_from_metrics(
+    trust_score: f32,
+    anchor_count: u32,
+    compression_gain: f32,
+    suspicious: bool,
+    eicar_hit: bool,
+    lossless: bool,
+) -> String {
+    if eicar_hit {
+        return "Bekanntes Testmuster fuer Schadsoftware gefunden \u{2014} Datei wurde blockiert.".to_owned();
+    }
+    if suspicious && trust_score < 0.35 {
+        return "Diese Datei verhaelt sich anders als erwartet und wurde zur Pruefung zurueckgestellt.".to_owned();
+    }
+    if suspicious {
+        return "Diese Datei enthaelt ungewoehnliche Muster \u{2014} sie wird beobachtet aber nicht blockiert.".to_owned();
+    }
+    if trust_score >= 0.80 && lossless {
+        return format!(
+            "Gut verstandene Datei \u{2014} {} strukturelle Muster erkannt, verlustfrei rekonstruierbar.",
+            anchor_count
+        );
+    }
+    if trust_score >= 0.60 {
+        return format!(
+            "Datei weitgehend verstanden \u{2014} {} Muster gefunden, {:.0}% kompakter als das Original.",
+            anchor_count, compression_gain
+        );
+    }
+    if anchor_count == 0 {
+        return "Keine bekannten Strukturmuster gefunden \u{2014} Datei ist fuer das System neu.".to_owned();
+    }
+    format!(
+        "Datei teilweise analysiert \u{2014} {} Muster gefunden, wird mit der Zeit besser verstanden.",
+        anchor_count
+    )
+}
+
 fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
     let gain_fill = entry.compression_gain_percent / 100.0;
     let preview_upper = entry.preview_note.to_ascii_uppercase();
@@ -7510,6 +7549,13 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
                     Color::from_rgb8(0xFF, 0xAE, 0x42)
                 } else {
                     c(TEXT_M)
+                }),
+            text(entry.plain_note.clone())
+                .size(14)
+                .color(if suspicious {
+                    Color::from_rgb8(0xFF, 0xD0, 0x80)
+                } else {
+                    Color::from_rgb8(0xC8, 0xE6, 0xC9)
                 }),
         ]
         .spacing(5),
@@ -7764,6 +7810,14 @@ async fn analyze_file_for_register(
             anchor_summary: anchor_summary.clone(),
             process_summary: process_summary.clone(),
             preview_note: preview_note.clone(),
+            plain_note: plain_note_from_metrics(
+                encode_result.trust_score,
+                encode_result.anchor_count as u32,
+                compression_gain_percent,
+                malware_policy_hit,
+                eicar_hit,
+                encode_result.lossless_confirmed,
+            ),
         },
         snapshot: AnalysisSnapshot {
             file_name,

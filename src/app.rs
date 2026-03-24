@@ -1879,6 +1879,7 @@ impl AetherRustShell {
             anchor_summary: anchor_summary.clone(),
             process_summary: process_summary.clone(),
             preview_note: preview_note.clone(),
+            plain_note: String::new(),
         };
         let entry_id = self.state_store.add_register_entry(entry)?;
         self.selected_register_id = Some(entry_id);

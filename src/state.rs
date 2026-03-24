@@ -15,6 +15,8 @@ pub struct RegisterEntry {
     pub anchor_summary: String,
     pub process_summary: String,
     pub preview_note: String,
+    #[serde(default)]
+    pub plain_note: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

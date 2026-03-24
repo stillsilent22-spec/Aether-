@@ -1,4 +1,49 @@
 from typing import Any as _tc_Any
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class TelemetryVerdict:
+    """Ergebnis einer Telemetrie-Klassifikation."""
+    score: float = 0.0
+    label: str = "unknown"
+    reasons: list = field(default_factory=list)
+    raw_signal: dict = field(default_factory=dict)
+
+
+class TelemetryClassifier:
+    """Bewertet Netzwerk-Telemetriesignale strukturell ohne Domainnamen."""
+
+    LABEL_THRESHOLDS = {
+        "beacon":  0.70,
+        "exfil":   0.55,
+        "suspect": 0.35,
+        "normal":  0.0,
+    }
+
+    def classify(self, signal: Any) -> TelemetryVerdict:
+        """Hauptmethode: gibt TelemetryVerdict fuer ein Signal zurueck."""
+        score = self._behavioral_domain_score(signal)
+        label = "normal"
+        for lbl, threshold in self.LABEL_THRESHOLDS.items():
+            if score >= threshold:
+                label = lbl
+                break
+        reasons = []
+        if score >= 0.30:
+            reasons.append(f"behavioral_score={score:.2f}")
+        return TelemetryVerdict(
+            score=score,
+            label=label,
+            reasons=reasons,
+            raw_signal=signal if isinstance(signal, dict) else {},
+        )
+
+    def is_suspicious(self, signal: Any, threshold: float = 0.35) -> bool:
+        """True wenn der behavioral score >= threshold."""
+        return self.classify(signal).score >= threshold
+
 
 def _behavioral_domain_score(self, signal: _tc_Any) -> float:
     """Bewertet Telemetrie-Verhalten strukturell — ohne Domainnamen."""
