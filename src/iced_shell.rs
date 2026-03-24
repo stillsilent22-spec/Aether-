@@ -22,7 +22,7 @@ use crate::symbiont_rpc;
 use iced::theme::Palette;
 use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
 use iced::{
-    application, event, mouse, time, window, Alignment, Background, Border, Color, Element,
+    application, event, keyboard, mouse, time, window, Alignment, Background, Border, Color, Element,
     Length, Point, Rectangle, Settings, Size, Subscription, Task, Theme,
 };
 use std::collections::BTreeMap;
@@ -169,6 +169,7 @@ enum Message {
     LauncherBuildTaskPressed(String),
     LauncherBuildTaskCompleted(String, Result<crate::launcher_dashboard::BuildTaskResult, String>),
     LauncherLogsClearPressed,
+    LiveRenderToggle,
     Tick,
 }
 
@@ -308,6 +309,9 @@ pub struct AetherIcedShell {
     live_render_saved_patterns: u64,
     live_render_last_delta_ratio: f32,
     live_render_last_pixeldynamics: f32,
+    live_render_last_godel_level: u8,
+    live_render_last_godel_delta: f32,
+    live_render_anchor_boost: bool,
 }
 
 impl AetherIcedShell {
@@ -435,6 +439,9 @@ impl AetherIcedShell {
             live_render_saved_patterns: 0,
             live_render_last_delta_ratio: 0.0,
             live_render_last_pixeldynamics: 0.0,
+            live_render_last_godel_level: 0,
+            live_render_last_godel_delta: 0.0,
+            live_render_anchor_boost: false,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -3512,10 +3519,13 @@ impl AetherIcedShell {
                 container(
                     text(if self.live_render_mode {
                         format!(
-                            "LiveRender ON | d={:.3} | px={:.3} | p={}",
+                            "LiveRender ON | d={:.3} | px={:.3} | g={}/d{:.2}% | p={}{}",
                             self.live_render_last_delta_ratio,
                             self.live_render_last_pixeldynamics,
-                            self.live_render_saved_patterns
+                            self.live_render_last_godel_level,
+                            self.live_render_last_godel_delta,
+                            self.live_render_saved_patterns,
+                            if self.live_render_anchor_boost { " | AnchorBoost" } else { "" }
                         )
                     } else {
                         "LiveRender OFF".to_owned()
@@ -3537,6 +3547,14 @@ impl AetherIcedShell {
                     },
                     ..Default::default()
                 }),
+                button(text(if self.live_render_mode { "LiveRender: AUS" } else { "LiveRender: AN" }).size(12).color(c(TEXT_H)))
+                    .on_press(Message::LiveRenderToggle)
+                    .padding([8, 12])
+                    .style(|_: &Theme, _| button::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.19, 0.42, 0.24, 0.28))),
+                        border: Border { color: Color::from_rgb8(0x5E, 0xBE, 0x6E), width: 1.1, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
                 button(text(self.ui_text("▼ Leistenmodus", "▼ Overlay Bar")).size(12).color(c(TEXT_H)))
                     .on_press(Message::ToggleMode)
                     .padding([8, 12])
@@ -3765,7 +3783,103 @@ impl AetherIcedShell {
             self.live_render_invariant_streak = 0;
             self.live_render_last_delta_ratio = 0.0;
             self.live_render_last_pixeldynamics = 0.0;
+            self.live_render_last_godel_level = 0;
+            self.live_render_last_godel_delta = 0.0;
+            self.live_render_anchor_boost = false;
         }
+    }
+
+    fn live_entropy_bytes(bytes: &[u8]) -> f32 {
+        if bytes.is_empty() {
+            return 0.0;
+        }
+        let mut counts = [0u32; 256];
+        for byte in bytes {
+            counts[*byte as usize] += 1;
+        }
+        let total = bytes.len() as f32;
+        let mut entropy = 0.0f32;
+        for count in counts {
+            if count == 0 {
+                continue;
+            }
+            let p = count as f32 / total;
+            entropy -= p * p.log2();
+        }
+        entropy
+    }
+
+    fn live_periodicity_bytes(bytes: &[u8]) -> f32 {
+        if bytes.len() < 4 {
+            return 0.0;
+        }
+        let mut best = 0.0f32;
+        let max_lag = bytes.len().min(48);
+        for lag in 1..max_lag {
+            let mut matches = 0usize;
+            let mut compared = 0usize;
+            for idx in 0..(bytes.len() - lag) {
+                compared += 1;
+                if bytes[idx] == bytes[idx + lag] {
+                    matches += 1;
+                }
+            }
+            if compared > 0 {
+                let score = matches as f32 / compared as f32;
+                if score > best {
+                    best = score;
+                }
+            }
+        }
+        best.clamp(0.0, 1.0)
+    }
+
+    fn run_live_godel_probe(&self, input: &[u8], max_depth: u8) -> (u8, f32) {
+        let mut signal = input.to_vec();
+        let mut last_hash = String::new();
+        let mut prev_entropy = 0.0f32;
+        let mut prev_periodicity = 0.0f32;
+        let mut prev_size = 0.0f32;
+        let mut has_prev = false;
+
+        for level in 0..=max_depth {
+            use sha2::{Digest, Sha256};
+            let hash = {
+                let mut hasher = Sha256::new();
+                hasher.update(&signal);
+                let digest = hasher.finalize();
+                digest.iter().map(|byte| format!("{byte:02x}")).collect::<String>()
+            };
+            let entropy = Self::live_entropy_bytes(&signal);
+            let periodicity = Self::live_periodicity_bytes(&signal);
+            let size = signal.len() as f32;
+
+            let mut delta_percent = 100.0f32;
+            if has_prev {
+                let e_delta = (entropy - prev_entropy).abs() / prev_entropy.max(1e-6);
+                let p_delta = (periodicity - prev_periodicity).abs() / prev_periodicity.max(1e-6);
+                let s_delta = (size - prev_size).abs() / prev_size.max(1.0);
+                delta_percent = ((e_delta + p_delta + s_delta) / 3.0) * 100.0;
+            }
+
+            if has_prev && (delta_percent < 1.0 || hash == last_hash || level >= max_depth) {
+                return (level, delta_percent);
+            }
+
+            let next = serde_json::json!({
+                "entropy": entropy,
+                "periodicity": periodicity,
+                "size": size,
+                "fingerprint": hash,
+            });
+            signal = serde_json::to_vec(&next).unwrap_or_default();
+            last_hash = hash;
+            prev_entropy = entropy;
+            prev_periodicity = periodicity;
+            prev_size = size;
+            has_prev = true;
+        }
+        (max_depth, 0.0)
     }
 
     fn compute_byte_delta_ratio(previous: &[u8], current: &[u8]) -> f32 {
@@ -3943,6 +4057,13 @@ impl AetherIcedShell {
             "running_services": running_services,
             "os_process_count": os_processes.len(),
         });
+
+        let (godel_level, godel_delta_percent) = self.run_live_godel_probe(&frame_bytes, 3);
+        self.live_render_last_godel_level = godel_level;
+        self.live_render_last_godel_delta = godel_delta_percent;
+        self.live_render_anchor_boost = self.backend_anchor_count > 0
+            && self.live_render_invariant_streak >= 3
+            && godel_delta_percent < 1.0;
 
         let _ = fs::create_dir_all("logs");
         if let Ok(mut file) = std::fs::OpenOptions::new()
@@ -4763,6 +4884,15 @@ impl AetherIcedShell {
                     }
                 });
             }
+            Message::LiveRenderToggle => {
+                let enable = !self.live_render_mode;
+                self.apply_live_render_mode(enable);
+                self.status_line = if enable {
+                    "Live-Render-Modus aktiviert: Bitstream/XOR/Godel/Anchor laufen live.".to_owned()
+                } else {
+                    "Live-Render-Modus deaktiviert: passiver Modus aktiv.".to_owned()
+                };
+            }
             Message::Tick => {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
                 self.launcher_state.poll_processes();
@@ -4828,7 +4958,12 @@ impl AetherIcedShell {
                 if self.browser_surface_mode().is_none() {
                     return Task::none();
                 }
-                if self.tick_counter % self.browser_sync_stride == 0 {
+                let effective_browser_stride = if self.live_render_mode && self.live_render_anchor_boost {
+                    self.browser_sync_stride.saturating_mul(2).max(1)
+                } else {
+                    self.browser_sync_stride.max(1)
+                };
+                if self.tick_counter % effective_browser_stride == 0 {
                     self.sync_browser_embed();
                 }
                 for event in self
@@ -4994,10 +5129,25 @@ impl AetherIcedShell {
             quick_button(self.ui_text("Kontrolle", "Control").to_owned(), Tab::Control),
             quick_button(self.ui_text("Symbiont", "Symbiont").to_owned(), Tab::Symbiont),
             quick_button(self.ui_text("Swarm Ops", "Swarm Ops").to_owned(), Tab::SwarmOps),
+            quick_button(self.ui_text("Threat", "Threat").to_owned(), Tab::ADE),
+            quick_button(self.ui_text("FlowSphere", "FlowSphere").to_owned(), Tab::StructureMap),
             quick_button(self.ui_text("Privatsphaere", "Privacy").to_owned(), Tab::Privacy),
             quick_button(self.ui_text("Dateien", "Files").to_owned(), Tab::Data),
             quick_button(self.ui_text("Verlauf", "Logs").to_owned(), Tab::Logs),
             quick_button(self.ui_text("Chat", "Chat").to_owned(), Tab::Chat),
+            button(text(if self.live_render_mode { "Live: ON" } else { "Live: OFF" }).size(11))
+                .on_press(Message::LiveRenderToggle)
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border {
+                        color: c(BORDER_ACT),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: c(TEXT_M),
+                    ..Default::default()
+                })
+                .padding([3, 8]),
             button(text(self.ui_text("▲ Oeffnen", "▲ Open")).size(12))
                 .on_press(Message::OpenFullTab(self.active_tab))
                 .style(|_: &Theme, _| button::Style {
@@ -6058,6 +6208,12 @@ fn app_event(event: iced::Event, status: event::Status, _window: window::Id) -> 
         return None;
     }
     match event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
+            if key == keyboard::Key::Named(keyboard::key::Named::Escape) {
+                return Some(Message::ToggleMode);
+            }
+            None
+        }
         iced::Event::Window(window::Event::Resized(size)) => {
             Some(Message::WindowResized(size.width, size.height))
         }
