@@ -24,6 +24,49 @@ Sondern weil Aether zeigt was strukturell real ist.
 
 ---
 
+## AETHER-META-PROMPT (Fourier, Noether, Fraktale, Interferenz, Restunschärfe)
+
+Behandle jedes eingehende Signal als strukturiertes Objekt mit mehreren Ebenen:
+- einer realen physikalischen Ebene (Fourier-Zerlegung, spektrale Entropie, Interferenzmuster),
+- einer fraktalen Skalenebene (Selbstähnlichkeit, Wiederkehr von Mustern),
+- einer beobachterrelativen Ebene (Restunschärfe, Perspektivabhängigkeit),
+- und einer Symmetrie-Ebene (Noether-Prinzip: erkennbare Symmetrie -> abgeleitete Erhaltungsgröße).
+
+Nutze Fourier sowohl als echten Operator (Frequenzanalyse, Rauschtrennung, Delta-FFT) als auch als Proxy-Label für strukturelle Kohärenz im Signalraum.
+Nutze Fraktale, um Skalen-Symmetrien zu erkennen.
+Nutze Interferenzen, um Kohärenz und Phasenbeziehungen zwischen Knoten sichtbar zu machen.
+Nutze beobachterrelative Restunschärfe, um invarianten Informationskern zu extrahieren.
+Nutze Noether, um aus jeder gefundenen Symmetrie eine Erhaltungsgröße abzuleiten, die das Netzwerk stabilisiert.
+
+Das System bewertet jede Transformation, jeden Knoten und jeden Kanal danach, wie gut Symmetrien erhalten oder gebrochen werden.
+Symmetriebruch = Informationsverlust, Instabilität oder Anomalie.
+Symmetrieerhaltung = Effizienz, Kohärenz und optimale Routing-Entscheidung.
+
+Erweitertes Operatormodell:
+- Behandle jedes eingehende Signal als strukturierten Informationsraum: Rohbytes -> XOR-Deltas -> Noise-Filter -> spektrale/fraktale/interferenzbasierte Merkmale -> beobachterrelative Projektionen -> Symmetrieanalyse.
+- Nutze Fourier doppelt: als echten Operator (Frequenzzerlegung, spektrale Entropie, Rauschtrennung, Delta-FFT) und als Proxy für strukturelle Kohärenz.
+- Erkenne fraktale Selbstähnlichkeit über Skalen, Interferenzmuster als Kohärenzindikatoren und beobachterrelative Restunschärfe als Invarianzfilter.
+
+Noether-Kern (Stabilitätsanker K):
+- Leite aus jeder stabilen Symmetrie eine Erhaltungsgröße K ab.
+- Beispielhafte Ableitung: K aus spektraler Ähnlichkeit, Entropiedifferenz und Delta-Varianz.
+- Tracke Delta-K über die Zeit und nutze K als Stabilitätsanker für Routing, Gewichtung, Vertrauen und Schwarmverhalten.
+- Interpretation: Symmetrieerhaltung bedeutet Stabilität, Symmetriebruch bedeutet Anomalie.
+
+Zielverhalten:
+- Das Gesamtsystem handelt emergent, verteilbar, minimal und physikalisch konsistent.
+
+### Konkrete Abbildung auf Aether
+
+- Fourier real: FFT/RFFT-basierte Frequenzanalyse und Spektralmerkmale.
+- Fourier als Proxy: Kohärenz-/Periodizitätsindikatoren in heuristischen Pfaden.
+- Noether: Symmetrie-Metriken und abgeleitete Invarianz- und Stabilitätswerte.
+- Fraktale: Skalenmuster und Selbstähnlichkeitsmaße (fraktale Dimension/Proxy).
+- Interferenz: Phasen- und Kohärenzbeziehungen zwischen Signalpfaden/Knoten.
+- Restunschärfe: observer-relative Residualgröße als Maß für verbleibende Unbestimmtheit.
+
+---
+
 ## PHILOSOPHISCHE BASIS
 
 **Semantik entsteht durch Struktur — nicht durch Sprache.**

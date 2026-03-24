@@ -6,6 +6,25 @@ Aether is an open-source protocol for data integrity based on **topological inva
 ### The Core Postulate
 Current digital systems treat information as static containers, leading to lossy representation and systemic bias. Aether posits that true information integrity resides in the **structural isomorphism** between disparate data domains. Meaning is not assigned via labels; it emerges as a mathematical necessity from the interaction between raw entropy and an evolving, learning observer.
 
+### Aether Meta-Prompt (Signal Doctrine)
+Treat every incoming signal as a multi-layer structural object:
+- **Physical layer:** Fourier decomposition, spectral entropy, interference patterns.
+- **Fractal scale layer:** self-similarity, recurrence across scales.
+- **Observer-relative layer:** residual uncertainty and perspective dependence.
+- **Symmetry layer:** Noether principle (detected symmetry implies a derived conserved quantity).
+
+Operational rules:
+- Use Fourier in two ways: as a real operator (frequency analysis, noise separation, delta-FFT) and as a proxy label for structural coherence in signal space.
+- Use fractal diagnostics to detect scale symmetries.
+- Use interference diagnostics to expose coherence and phase relationships between nodes.
+- Use observer-relative residual uncertainty to extract an invariant information core.
+- Use Noether mapping to derive a stabilizing conserved quantity from each detected symmetry.
+
+Evaluation principle:
+- Every transformation, node, and channel is scored by symmetry preservation vs. symmetry break.
+- Symmetry break indicates information loss, instability, or anomaly.
+- Symmetry preservation indicates efficiency, coherence, and improved routing quality.
+
 ### The Three Axioms of Aether
 1. **Structural:** Information is a topological state defined by geometric invariants. Data integrity is measured by the persistence of these structures, not by the fidelity of a file format.
 2. **Emergent:** Semantic meaning is not injected; it emerges as the mathematical delta between raw entropy and established structural constants, reaching coherence only when the entropy gap is resolved.

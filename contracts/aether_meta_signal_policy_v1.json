@@ -1,0 +1,127 @@
+{
+  "schema": "aether.meta_signal_policy.v1",
+  "title": "Aether Meta Signal Doctrine",
+  "principle": "Treat every incoming signal as a structured information space with physically consistent and observer-relative layers.",
+  "pipeline_layers": [
+    {
+      "id": 1,
+      "name": "raw_bytes",
+      "description": "Acquire raw bytes as immutable input state.",
+      "required": true
+    },
+    {
+      "id": 2,
+      "name": "xor_deltas",
+      "description": "Build session-relative XOR deltas for structure-preserving transforms.",
+      "required": true
+    },
+    {
+      "id": 3,
+      "name": "noise_filter",
+      "description": "Separate structural signal from transient noise.",
+      "required": true
+    },
+    {
+      "id": 4,
+      "name": "spectral_fractal_interference_features",
+      "description": "Extract spectral, fractal, and interference-based structure features.",
+      "required": true
+    },
+    {
+      "id": 5,
+      "name": "observer_relative_projections",
+      "description": "Project features into observer-relative space and retain residual uncertainty.",
+      "required": true
+    },
+    {
+      "id": 6,
+      "name": "symmetry_analysis",
+      "description": "Evaluate symmetry preservation versus symmetry break across nodes/channels/transforms.",
+      "required": true
+    }
+  ],
+  "operators": {
+    "fourier": {
+      "dual_mode": true,
+      "real_operator": [
+        "frequency_decomposition",
+        "spectral_entropy",
+        "noise_separation",
+        "delta_fft"
+      ],
+      "proxy_mode": [
+        "structural_coherence_label",
+        "periodicity_proxy"
+      ]
+    },
+    "fractal": {
+      "goals": [
+        "detect_scale_symmetry",
+        "measure_self_similarity",
+        "track_multiscale_recurrence"
+      ]
+    },
+    "interference": {
+      "goals": [
+        "detect_phase_relations",
+        "estimate_node_coherence",
+        "flag_destructive_interference"
+      ]
+    },
+    "observer_relative": {
+      "goals": [
+        "estimate_residual_uncertainty",
+        "extract_invariant_information_core",
+        "preserve_perspective_dependence"
+      ]
+    }
+  },
+  "noether_mapping": {
+    "rule": "Stable symmetry implies conserved quantity K.",
+    "k_components": [
+      "spectral_similarity",
+      "entropy_delta_inverse",
+      "delta_variance_inverse"
+    ],
+    "k_example": {
+      "formula": "K = w1 * spectral_similarity + w2 * (1 - entropy_delta_norm) + w3 * (1 - delta_variance_norm)",
+      "weights": {
+        "w1": 0.4,
+        "w2": 0.3,
+        "w3": 0.3
+      }
+    },
+    "tracking": {
+      "track_delta_k": true,
+      "window": "time_series",
+      "interpretation": {
+        "small_delta_k": "stable symmetry preservation",
+        "large_delta_k": "symmetry break and anomaly risk"
+      }
+    }
+  },
+  "decision_policy": {
+    "symmetry_preservation": {
+      "meaning": "stability",
+      "actions": [
+        "prefer_route",
+        "increase_trust",
+        "raise_weight"
+      ]
+    },
+    "symmetry_break": {
+      "meaning": "anomaly_or_instability",
+      "actions": [
+        "down_weight",
+        "reduce_trust",
+        "mark_for_review"
+      ]
+    }
+  },
+  "system_behavior": {
+    "emergent": true,
+    "distributable": true,
+    "minimal": true,
+    "physically_consistent": true
+  }
+}

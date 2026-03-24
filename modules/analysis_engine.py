@@ -340,6 +340,7 @@ class AnalysisEngine:
         self.ethics_engine = ethics_engine if ethics_engine is not None else EthicsEngine()
         self.rule_engine = rule_engine
         self.reconstruction_engine = LosslessReconstructionEngine(chunk_size=max(64, int(block_size)))
+        self._signal_k_state: dict[str, dict[str, Any]] = {}
 
     def set_registry(self, registry: AetherRegistry | None) -> None:
         """
@@ -1439,6 +1440,86 @@ class AnalysisEngine:
         }
         return str(scan_hash), payload
 
+    @staticmethod
+    def _normalized_fourier_magnitudes(fourier_peaks: list[dict[str, float]]) -> np.ndarray:
+        magnitudes = np.array(
+            [float(item.get("magnitude", 0.0) or 0.0) for item in list(fourier_peaks or [])[:5]],
+            dtype=np.float64,
+        )
+        if magnitudes.size < 5:
+            magnitudes = np.pad(magnitudes, (0, 5 - magnitudes.size), mode="constant")
+        norm = float(np.linalg.norm(magnitudes))
+        if norm <= 1e-12:
+            return np.zeros(5, dtype=np.float64)
+        return magnitudes / norm
+
+    @staticmethod
+    def _cosine_similarity(left: np.ndarray, right: np.ndarray) -> float:
+        if left.size == 0 or right.size == 0:
+            return 1.0
+        denom = float(np.linalg.norm(left) * np.linalg.norm(right))
+        if denom <= 1e-12:
+            return 1.0
+        value = float(np.dot(left, right) / denom)
+        return float(max(0.0, min(1.0, value)))
+
+    @staticmethod
+    def _delta_variance_norm(delta: bytes) -> float:
+        if not delta:
+            return 0.0
+        arr = np.frombuffer(delta, dtype=np.uint8).astype(np.float64)
+        variance = float(np.var(arr))
+        # Uniform random-like bytes are around ~5461 variance; clamp for deterministic normalization.
+        return float(max(0.0, min(1.0, variance / 8192.0)))
+
+    def _derive_noether_stability(
+        self,
+        *,
+        source_label: str,
+        source_type: str,
+        entropy_mean: float,
+        fourier_peaks: list[dict[str, float]],
+        delta: bytes,
+    ) -> dict[str, Any]:
+        source_key = f"{str(source_type or 'memory')}::{str(source_label or 'memory')}"
+        current_spectral = self._normalized_fourier_magnitudes(fourier_peaks)
+        previous = dict(self._signal_k_state.get(source_key, {}))
+
+        previous_spectral = np.array(previous.get("spectral", np.zeros(5, dtype=np.float64)), dtype=np.float64)
+        previous_entropy = float(previous.get("entropy_mean", float(entropy_mean)) or float(entropy_mean))
+        previous_k = float(previous.get("k", 1.0) or 1.0)
+
+        spectral_similarity = self._cosine_similarity(previous_spectral, current_spectral)
+        entropy_delta_norm = self._clamp(abs(float(entropy_mean) - previous_entropy) / 8.0)
+        delta_variance_norm = self._delta_variance_norm(delta)
+        k_value = self._clamp(
+            (0.40 * spectral_similarity)
+            + (0.30 * (1.0 - entropy_delta_norm))
+            + (0.30 * (1.0 - delta_variance_norm))
+        )
+        delta_k = float(k_value - previous_k)
+        symmetry_preserved = bool(abs(delta_k) <= 0.08)
+
+        self._signal_k_state[source_key] = {
+            "spectral": current_spectral.tolist(),
+            "entropy_mean": float(entropy_mean),
+            "k": float(k_value),
+        }
+
+        return {
+            "source_key": source_key,
+            "spectral_similarity": round(float(spectral_similarity), 12),
+            "entropy_delta_norm": round(float(entropy_delta_norm), 12),
+            "delta_variance_norm": round(float(delta_variance_norm), 12),
+            "noether_k": round(float(k_value), 12),
+            "delta_k": round(float(delta_k), 12),
+            "symmetry_preserved": bool(symmetry_preserved),
+            "stability_state": "SYMMETRY_PRESERVED" if symmetry_preserved else "SYMMETRY_BREAK",
+            "routing_weight_factor": 1.10 if symmetry_preserved else 0.85,
+            "trust_weight_factor": 1.08 if symmetry_preserved else 0.82,
+            "swarm_stability_bias": 1.06 if symmetry_preserved else 0.80,
+        }
+
     def _power_law_alpha(self, raw: bytes) -> float:
         """Schaetzt die 1/f-Steigung des Spektrums als additive Schoenheitsdimension."""
         if len(raw) < 64:
@@ -1865,6 +1946,28 @@ class AnalysisEngine:
             fourier_peaks=fourier_peaks,
         )
         scan_payload["delta_session_seed"] = int(delta_session_seed)
+        noether = self._derive_noether_stability(
+            source_label=source_label,
+            source_type=source_type,
+            entropy_mean=entropy_mean,
+            fourier_peaks=fourier_peaks,
+            delta=delta,
+        )
+        scan_payload["noether_k"] = float(noether["noether_k"])
+        scan_payload["delta_k"] = float(noether["delta_k"])
+        scan_payload["spectral_similarity"] = float(noether["spectral_similarity"])
+        scan_payload["entropy_delta_norm"] = float(noether["entropy_delta_norm"])
+        scan_payload["delta_variance_norm"] = float(noether["delta_variance_norm"])
+        scan_payload["symmetry_preserved"] = bool(noether["symmetry_preserved"])
+        scan_payload["stability_state"] = str(noether["stability_state"])
+
+        profile_payload = dict(file_profile or {})
+        profile_payload["noether_k"] = float(noether["noether_k"])
+        profile_payload["delta_k"] = float(noether["delta_k"])
+        profile_payload["stability_state"] = str(noether["stability_state"])
+        profile_payload["routing_weight_factor"] = float(noether["routing_weight_factor"])
+        profile_payload["trust_weight_factor"] = float(noether["trust_weight_factor"])
+        profile_payload["swarm_stability_bias"] = float(noether["swarm_stability_bias"])
 
         fingerprint = AetherFingerprint(
             session_id=self.session_context.session_id,
@@ -1899,7 +2002,7 @@ class AnalysisEngine:
             scene_points=scene_points,
             scan_hash=scan_hash,
             scan_payload=scan_payload,
-            file_profile=dict(file_profile or {}),
+            file_profile=profile_payload,
             delta_session_seed=int(delta_session_seed),
         )
         fingerprint = self._apply_file_profile(fingerprint, file_profile=file_profile)

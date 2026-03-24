@@ -18,6 +18,7 @@ Attraktor-Stabilität. Alle Berechnungen laufen lokal. Keine Rohdaten verlassen 
 - KPI Contract: [contracts/aether_kpi_contract_v1.json](contracts/aether_kpi_contract_v1.json)
 - Event/API Schema: [contracts/aether_event_schema_v1.json](contracts/aether_event_schema_v1.json)
 - E2E Reference Scenarios: [contracts/aether_e2e_reference_scenarios_v1.json](contracts/aether_e2e_reference_scenarios_v1.json)
+- Meta Signal Policy: [contracts/aether_meta_signal_policy_v1.json](contracts/aether_meta_signal_policy_v1.json)
 
 ## Why Aether matters
 
