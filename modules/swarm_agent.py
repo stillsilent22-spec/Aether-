@@ -251,6 +251,8 @@ class SwarmAgent:
             if self._stop_event.is_set():
                 break
             if self._controller is not None and not self._controller.enabled:
+                # Stop capture immediately to avoid waiting for the next poll cycle.
+                self._stop_capture()
                 break
             frame = self._capture.read_and_consume()
             if frame is None:
