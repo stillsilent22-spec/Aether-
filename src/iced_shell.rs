@@ -146,6 +146,12 @@ enum Message {
     ExportPressed(u64),
     FlowSphereSnapshotSelected(usize),
     FlowSphereExportPressed,
+    FlowSphereZoomIn,
+    FlowSphereZoomOut,
+    FlowSphereRotateLeft,
+    FlowSphereRotateRight,
+    FlowSphereResetView,
+    FlowSphereToggleViewMode,
     OpenFullTab(Tab),
     SymbiontInputChanged(String),
     SymbiontProfilePressed,
@@ -253,6 +259,9 @@ pub struct AetherIcedShell {
     structure_map_anchor_hist: Vec<f32>,
     structure_map_mutation_hist: Vec<u32>,
     flow_sphere_snapshot_idx: usize,
+    flow_sphere_zoom: f32,
+    flow_sphere_rotation_offset: f32,
+    flow_sphere_view_mode: bool, // true=Local (Attraktoren), false=Global (Swarm)
     // --- YouTube ---
     youtube_address: String,
     // --- Rekonstruktion ---
@@ -392,6 +401,9 @@ impl AetherIcedShell {
             structure_map_anchor_hist: Vec::new(),
             structure_map_mutation_hist: Vec::new(),
             flow_sphere_snapshot_idx: 0,
+            flow_sphere_zoom: 1.0,
+            flow_sphere_rotation_offset: 0.0,
+            flow_sphere_view_mode: true, // Default: Local mode (Attraktoren)
             youtube_address: "https://www.youtube.com/".to_owned(),
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
@@ -736,31 +748,76 @@ impl AetherIcedShell {
         if self.active_tab == Tab::Home
             && (self.dashboard_nav == "Browser" || self.dashboard_nav == "YouTube")
         {
+            let x = (self.window_width * 0.42)
+                .clamp(260.0, (self.window_width - 360.0).max(260.0));
+            let width = (self.window_width - x - 20.0).max(320.0);
             return BrowserHostRect {
-                x: (self.window_width * 0.44) as i32,
+                x: x as i32,
                 y: 178,
-                width: (self.window_width * 0.52) as i32,
-                height: (self.window_height - 210.0) as i32,
+                width: width as i32,
+                height: (self.window_height - 210.0).max(220.0) as i32,
             }
             .normalized();
         }
 
         let right_column_x = 18.0 + 180.0 + 18.0;
-        let main_width = (self.window_width - right_column_x - 18.0).max(900.0);
+        let main_width = (self.window_width - right_column_x - 18.0).max(360.0);
         let top_tabs_height = 58.0;
         let status_height = 30.0;
         let content_top = 18.0 + top_tabs_height + status_height + 12.0;
-        let browser_inner_padding = 12.0;
-        let control_column_width = 420.0;
-        let split_gap = 18.0;
+        let browser_inner_padding = 10.0;
+        let control_column_width = (main_width * 0.36).clamp(280.0, 420.0);
+        let split_gap = 12.0;
         BrowserHostRect {
             x: (right_column_x + browser_inner_padding + control_column_width + split_gap) as i32,
             y: (content_top + browser_inner_padding) as i32,
             width: (main_width - control_column_width - split_gap - browser_inner_padding * 2.0)
-                as i32,
-            height: (self.window_height - content_top - 24.0) as i32,
+                .max(320.0) as i32,
+            height: (self.window_height - content_top - 24.0).max(220.0) as i32,
         }
         .normalized()
+    }
+
+    fn dashboard_search_placeholder(&self) -> &'static str {
+        let scope = if self.active_tab == Tab::Home {
+            self.dashboard_nav.as_str()
+        } else {
+            match self.active_tab {
+                Tab::StructureMap => "Threat Graph",
+                Tab::ADE => "Threat Analysis",
+                Tab::Browser => "Browser",
+                Tab::YouTube => "YouTube",
+                Tab::Symbiont => "Symbiont",
+                Tab::SwarmOps => "Swarm Ops",
+                Tab::Data => "Files",
+                _ => "Overview",
+            }
+        };
+        match scope {
+            "Threat Graph" => "Threat Graph: anchor, delta, entropy, node, attractor",
+            "Threat Analysis" => "Threat Analysis: risk, residual, convergence, lossless",
+            "Browser" => "Browser: domain, URL, keyword oder Frage",
+            "YouTube" => "YouTube: Kanal, Video-ID, Thema oder URL",
+            "Symbiont" => "Symbiont: profile, razor, snapshot, status",
+            "Swarm Ops" => "Swarm: node, quorum, consensus, pack, genesis",
+            "Files" => "Files: Dateiname, Typ, Delta, Entropie",
+            _ => "Suche: threat, anchor, browser, youtube, symbiont, runtime",
+        }
+    }
+
+    fn dashboard_search_help(&self) -> &'static str {
+        let scope = if self.active_tab == Tab::Home {
+            self.dashboard_nav.as_str()
+        } else {
+            ""
+        };
+        match scope {
+            "Threat Graph" => "Hinweis: Suche filtert Begriffe in Threat/Device-Tabellen und Navigator. Beispiele: anchor, delta, node-aether.",
+            "Browser" => "Hinweis: Fuer Websuche Schlagwort oder Frage eingeben; fuer direkte Navigation volle URL verwenden.",
+            "YouTube" => "Hinweis: URL wie https://www.youtube.com/watch?v=... oder Suchbegriff im Browser-Tab verwenden.",
+            "Symbiont" => "Hinweis: Mehrzeilige Eingaben im Symbiont-Tab erzeugen Razor-Listen (eine Zeile = ein Signal).",
+            _ => "Hinweis: Suchfeld arbeitet kontextbezogen (Tab + Dashboard-Ansicht).",
+        }
     }
 
     fn sync_browser_embed(&mut self) {
@@ -1426,7 +1483,7 @@ impl AetherIcedShell {
             container(
                 row![
                     text("Search").size(12).color(c(TEXT_D)),
-                    text_input("Search Here", &self.dashboard_search)
+                    text_input(self.dashboard_search_placeholder(), &self.dashboard_search)
                         .on_input(Message::DashboardSearchChanged)
                         .padding([8, 12])
                         .size(13)
@@ -1693,6 +1750,8 @@ impl AetherIcedShell {
         let mid_layer = container(
             column![
                 topbar,
+                container(text(self.dashboard_search_help()).size(11).color(c(TEXT_D)))
+                    .padding([0, 4]),
                 dashboard_body,
                 info_overlay,
             ]
@@ -1935,7 +1994,10 @@ impl AetherIcedShell {
                                 .style(secondary_button_style),
                         ]
                         .spacing(10),
-                        text_input("Suchbegriff oder Frage", &self.browser_search_query)
+                        text("Eingabehilfe: URL-Feld fuer direkte Seiten, Suchfeld fuer Begriffe/Fragen (DuckDuckGo).")
+                            .size(11)
+                            .color(c(TEXT_D)),
+                        text_input("z.B. malware hash lookup, suspicious script pattern, channel name", &self.browser_search_query)
                             .on_input(Message::BrowserSearchQueryChanged)
                             .padding(10)
                             .size(14),
@@ -3000,6 +3062,19 @@ impl AetherIcedShell {
 
         let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
 
+        // Generate mock swarm nodes for Global mode (realistic Swarm visualization)
+        let swarm_nodes = if !self.flow_sphere_view_mode && self.backend_swarm_node_count > 0 {
+            (0..(self.backend_swarm_node_count.min(12) as usize))
+                .map(|i| {
+                    let angle = (i as f32) * 0.5 + (self.tick_counter as f32) * 0.001;
+                    let coherence = 0.4 + 0.6 * ((entropy * (i as f32)).sin().abs());
+                    (format!("Node-{}", i), angle.cos() * 0.6, angle, coherence)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         let delta_phases: [f32; 5] = {
             let m = &self.structure_map_mutation_hist;
             [
@@ -3134,7 +3209,6 @@ impl AetherIcedShell {
             ..Default::default()
         });
 
-        // Flow Sphere Canvas
         let sphere_scene = FlowSphereScene {
             tick: self.tick_counter,
             entropy,
@@ -3142,6 +3216,10 @@ impl AetherIcedShell {
             delta_phases,
             attractor_lons,
             info_growth,
+            zoom: self.flow_sphere_zoom,
+            manual_rotation_offset: self.flow_sphere_rotation_offset,
+            view_mode: self.flow_sphere_view_mode,
+            swarm_nodes,
         };
 
         let sphere_canvas = canvas::Canvas::new(sphere_scene)
@@ -3154,9 +3232,45 @@ impl AetherIcedShell {
             text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim),
         ].spacing(0);
 
+        let interaction_bar = row![
+            text("Interaktion:").size(11).color(dim),
+            button(text("Zoom +").size(11))
+                .on_press(Message::FlowSphereZoomIn)
+                .padding([5, 10])
+                .style(secondary_button_style),
+            button(text("Zoom -").size(11))
+                .on_press(Message::FlowSphereZoomOut)
+                .padding([5, 10])
+                .style(secondary_button_style),
+            button(text("Drehung links").size(11))
+                .on_press(Message::FlowSphereRotateLeft)
+                .padding([5, 10])
+                .style(secondary_button_style),
+            button(text("Drehung rechts").size(11))
+                .on_press(Message::FlowSphereRotateRight)
+                .padding([5, 10])
+                .style(secondary_button_style),
+            button(text("Reset").size(11))
+                .on_press(Message::FlowSphereResetView)
+                .padding([5, 10])
+                .style(primary_button_style),
+            button(text(if self.flow_sphere_view_mode { "📍 Lokal" } else { "🌐 Global" }).size(11))
+                .on_press(Message::FlowSphereToggleViewMode)
+                .padding([5, 10])
+                .style(secondary_button_style),
+            iced::widget::Space::new(Length::Fill, Length::Shrink),
+            text(format!("Zoom {:.0}%", self.flow_sphere_zoom * 100.0)).size(11).color(c(TEXT_M)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center);
+
         container(
             column![
                 header,
+                interaction_bar,
+                text("Nutzen: Visuelle Lage der Anker/Delta-Phasen. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
+                    .size(11)
+                    .color(dim),
                 row![
                     sphere_canvas,
                     ht_panel,
@@ -3472,7 +3586,7 @@ impl AetherIcedShell {
                 ]
                 .spacing(3),
                 container(
-                    text_input("Search Here", &self.dashboard_search)
+                    text_input(self.dashboard_search_placeholder(), &self.dashboard_search)
                         .on_input(Message::DashboardSearchChanged)
                         .padding([9, 14])
                         .size(13)
@@ -3521,11 +3635,10 @@ impl AetherIcedShell {
                 container(
                     text(if self.live_render_mode {
                         format!(
-                            "LiveRender ON | d={:.3} | px={:.3} | g={}/d{:.2}% | p={}{}",
+                            "Live ON | d={:.3} px={:.3} g={} p={}{}",
                             self.live_render_last_delta_ratio,
                             self.live_render_last_pixeldynamics,
                             self.live_render_last_godel_level,
-                            self.live_render_last_godel_delta,
                             self.live_render_saved_patterns,
                             if self.live_render_anchor_boost { " | AnchorBoost" } else { "" }
                         )
@@ -3600,6 +3713,74 @@ impl AetherIcedShell {
             ..Default::default()
         })
         .into()
+    }
+
+    fn view_global_control_bar(&self) -> Element<'_, Message> {
+        let quick_button = |label: &'static str, tab: Tab| {
+            button(text(label).size(11))
+                .on_press(Message::TabSelected(tab))
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border {
+                        color: c(BORDER),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: c(TEXT_M),
+                    ..Default::default()
+                })
+                .padding([3, 8])
+        };
+
+        let bar = row![
+            text("⬡ AETHER").size(12).color(c(ACCENT)),
+            quick_button("Control", Tab::Control),
+            quick_button("Symbiont", Tab::Symbiont),
+            quick_button("Threat Graph", Tab::StructureMap),
+            quick_button("Browser", Tab::Browser),
+            quick_button("YouTube", Tab::YouTube),
+            quick_button("Logs", Tab::Logs),
+            iced::widget::Space::new(Length::Fill, Length::Shrink),
+            button(text(if self.live_render_mode { "LiveRender: AUS" } else { "LiveRender: AN" }).size(11))
+                .on_press(Message::LiveRenderToggle)
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border {
+                        color: c(BORDER_ACT),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: c(TEXT_M),
+                    ..Default::default()
+                })
+                .padding([3, 8]),
+            button(text("▼ Overlay").size(11))
+                .on_press(Message::ToggleMode)
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(c(BG_CARD2))),
+                    border: Border {
+                        color: c(BORDER_ACT),
+                        width: 1.0,
+                        radius: 4.0.into(),
+                    },
+                    text_color: c(ACCENT),
+                    ..Default::default()
+                })
+                .padding([3, 8]),
+        ]
+        .spacing(12)
+        .align_y(iced::Alignment::Center)
+        .padding([0, 12]);
+
+        container(bar)
+            .width(Length::Fill)
+            .height(Length::Fixed(34.0))
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(c(BG_BASE))),
+                border: Border { color: c(BORDER), width: 1.0, radius: 0.0.into() },
+                ..Default::default()
+            })
+            .into()
     }
 
     fn send_private_message(&mut self) {
@@ -4685,6 +4866,25 @@ impl AetherIcedShell {
             Message::FlowSphereSnapshotSelected(idx) => {
                 self.flow_sphere_snapshot_idx = idx;
             }
+            Message::FlowSphereZoomIn => {
+                self.flow_sphere_zoom = (self.flow_sphere_zoom + 0.10).clamp(0.60, 2.20);
+            }
+            Message::FlowSphereZoomOut => {
+                self.flow_sphere_zoom = (self.flow_sphere_zoom - 0.10).clamp(0.60, 2.20);
+            }
+            Message::FlowSphereRotateLeft => {
+                self.flow_sphere_rotation_offset -= 0.25;
+            }
+            Message::FlowSphereRotateRight => {
+                self.flow_sphere_rotation_offset += 0.25;
+            }
+            Message::FlowSphereResetView => {
+                self.flow_sphere_zoom = 1.0;
+                self.flow_sphere_rotation_offset = 0.0;
+            }
+            Message::FlowSphereToggleViewMode => {
+                self.flow_sphere_view_mode = !self.flow_sphere_view_mode;
+            }
             Message::FlowSphereExportPressed => {
                 let snapshot = serde_json::json!({
                     "snapshot_idx": self.flow_sphere_snapshot_idx,
@@ -5375,6 +5575,9 @@ impl AetherIcedShell {
                         )
                         .on_input(Message::SymbiontInputChanged)
                         .padding(8),
+                        text("Info: Profil = ein Gesamtsignal. Razor = mehrere Zeilen (jede Zeile ein separates Signal). Snapshot speichert den aktuellen Zustand.")
+                            .size(11)
+                            .color(c(TEXT_D)),
                         row![
                             button(text(if self.symbiont_busy { "Profil ..." } else { "Profil" }).size(12).color(c(TEXT_H)))
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontProfilePressed))
@@ -6219,6 +6422,7 @@ impl AetherIcedShell {
                     self.view_auth()
                 } else {
                     let shell = self.view_shell();
+                    let global_bar = self.view_global_control_bar();
                     let minimize_bar = container(
                         row![
                             button(text("▼ Minimize").size(11))
@@ -6240,7 +6444,7 @@ impl AetherIcedShell {
                         ..Default::default()
                     });
 
-                    column![shell, minimize_bar].into()
+                    column![shell, global_bar, minimize_bar].into()
                 }
             }
         }
@@ -6330,6 +6534,10 @@ struct FlowSphereScene {
     delta_phases: [f32; 5],   // 5 delta arc event phases
     attractor_lons: [f32; 6], // 6 attractor longitude positions
     info_growth: f32,
+    zoom: f32,
+    manual_rotation_offset: f32,
+    view_mode: bool, // true=Local (Attraktoren), false=Global (Swarm nodes)
+    swarm_nodes: Vec<(String, f32, f32, f32)>, // (name, lat, lon, coherence_score)
 }
 
 impl canvas::Program<Message> for FlowSphereScene {
@@ -6357,10 +6565,10 @@ impl canvas::Program<Message> for FlowSphereScene {
         let cx = bounds.width * 0.5;
         let cy = bounds.height * 0.5;
         let base_r = cx.min(cy) * 0.70;
-        let r = base_r + (self.info_growth * 32.0).min(32.0);
+        let r = (base_r + (self.info_growth * 32.0).min(32.0)) * self.zoom.clamp(0.60, 2.20);
 
         let t = self.tick as f32;
-        let rot_y = t * 0.006;
+        let rot_y = t * 0.006 + self.manual_rotation_offset;
         let d = 3.2f32;
 
         let project = |lat: f32, lon: f32| -> (Point, f32) {
