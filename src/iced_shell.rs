@@ -312,6 +312,7 @@ pub struct AetherIcedShell {
     live_render_last_godel_level: u8,
     live_render_last_godel_delta: f32,
     live_render_anchor_boost: bool,
+    live_render_last_os_sample_tick: u64,
 }
 
 impl AetherIcedShell {
@@ -442,6 +443,7 @@ impl AetherIcedShell {
             live_render_last_godel_level: 0,
             live_render_last_godel_delta: 0.0,
             live_render_anchor_boost: false,
+            live_render_last_os_sample_tick: 0,
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -3786,6 +3788,7 @@ impl AetherIcedShell {
             self.live_render_last_godel_level = 0;
             self.live_render_last_godel_delta = 0.0;
             self.live_render_anchor_boost = false;
+            self.live_render_last_os_sample_tick = 0;
         }
     }
 
@@ -3967,7 +3970,16 @@ impl AetherIcedShell {
     }
 
     fn capture_live_render_frame(&mut self) {
-        let os_processes = Self::sample_os_processes();
+        // Sampling every tick can block UI on Windows (`tasklist`), so we throttle it.
+        let os_sample_interval = 10u64;
+        let should_sample_os = self.live_render_last_os_processes.is_empty()
+            || self.tick_counter.saturating_sub(self.live_render_last_os_sample_tick) >= os_sample_interval;
+        let os_processes = if should_sample_os {
+            self.live_render_last_os_sample_tick = self.tick_counter;
+            Self::sample_os_processes()
+        } else {
+            self.live_render_last_os_processes.clone()
+        };
         let mut running_services: Vec<String> = self
             .launcher_state
             .services
@@ -4036,8 +4048,9 @@ impl AetherIcedShell {
             .count();
         if !running_services.is_empty()
             && stable_services == running_services.len()
-            && !os_processes.is_empty()
-            && stable_os_processes >= (os_processes.len() / 2)
+            && (!should_sample_os
+                || (!os_processes.is_empty()
+                    && stable_os_processes >= (os_processes.len() / 2)))
         {
             self.live_render_invariant_streak = self.live_render_invariant_streak.saturating_add(1);
         } else {
@@ -4897,7 +4910,13 @@ impl AetherIcedShell {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
                 self.launcher_state.poll_processes();
                 if self.live_render_mode {
-                    self.capture_live_render_frame();
+                    let live_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        self.capture_live_render_frame();
+                    }));
+                    if live_result.is_err() {
+                        self.apply_live_render_mode(false);
+                        self.status_line = "Live-Render wurde nach einem Laufzeitfehler automatisch deaktiviert.".to_owned();
+                    }
                 }
                 if self.tick_counter % 60 == 0 {
                     self.poll_hybrid_state();
