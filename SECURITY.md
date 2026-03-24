@@ -21,6 +21,15 @@ Aether is a local desktop system. It is hardened for local use, audit, and contr
 - The relay/chat sync path is encrypted in transport/application terms, but it is not a full zero-trust messaging platform.
 - Windows-local secret protection is the primary target; cross-platform hardening is weaker.
 
+## Swarm mode guarantees
+
+- Consent-gated activation: swarm networking must be explicitly approved before enable.
+- Data minimization: raw frame bytes are never persisted to disk.
+- Persisted artifacts are limited to aggregated metrics, non-invertible SHA256 fingerprints, and audit entries.
+- P2P sharing is opt-in and disabled by default.
+- Audit events are signed (Ed25519) and written to append-only logs/SQLite tables.
+- Replay-resistant controls are enforced in the swarm transport and invite flows.
+
 ## Public repository checklist
 
 Before publishing:

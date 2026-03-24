@@ -366,4 +366,29 @@ python start.py
 
 ---
 
+## Swarm Mode (Controller + Agent)
+
+Der Swarm-Stack ist in diesem Repo lokal implementiert und standardmaessig sicher konfiguriert:
+
+- Consent vor Aktivierung: ohne Einwilligung kein Netzwerk-Sharing
+- Keine Rohframes auf Platte: gespeichert werden nur Metriken + SHA256-Fingerprints
+- Desktop-Capture als Default (`mss`), GPU/API-Hooks nur Lab-Stub
+- P2P-Fingerprint-Gossip ist opt-in und per Default deaktiviert
+
+### Lokale Steuerung
+
+```bash
+python -m modules.swarm_ui_adapter status
+python -m modules.swarm_ui_adapter consent
+python -m modules.swarm_ui_adapter enable_swarm
+python -m modules.swarm_ui_adapter disable_swarm
+```
+
+### Hintergrunddienst
+
+- Linux/systemd: `service/aether-swarm.service`
+- Windows/NSSM: `service/windows_service_instructions.md`
+
+---
+
 *Source-available. Stand: März 2026 — Autor: Kevin Hannemann*
