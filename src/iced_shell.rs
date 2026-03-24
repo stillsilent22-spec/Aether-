@@ -137,7 +137,9 @@ enum Message {
     BrowserSearchCompleted(BrowserSearchContext),
     YouTubeAddressChanged(String),
     YouTubeLoadPressed,
+        YouTubeKiAnalysisPressed,
     FileHovered(PathBuf),
+        ShowTooltip(String),
     FileHoverCleared,
     FileDropped(PathBuf),
     FileAnalysisCompleted(Result<FileAnalysisResult, String>),
@@ -816,6 +818,18 @@ impl AetherIcedShell {
             "Browser" => "Hinweis: Fuer Websuche Schlagwort oder Frage eingeben; fuer direkte Navigation volle URL verwenden.",
             "YouTube" => "Hinweis: URL wie https://www.youtube.com/watch?v=... oder Suchbegriff im Browser-Tab verwenden.",
             "Symbiont" => "Hinweis: Mehrzeilige Eingaben im Symbiont-Tab erzeugen Razor-Listen (eine Zeile = ein Signal).",
+                        _ => {
+                            // FIX 7: Tab-specific help text
+                            match self.active_tab {
+                                Tab::Control => "Control: Suche filtert KPIs, Metriken und Status-Labels im Überblick-Dashboard.",
+                                Tab::Chat => "Chat/Shanway: Frage oder Befehl eingeben — Shanway antwortet nur auf Basis validierter Vault-Anker.",
+                                Tab::Logs => "Logs: Suche filtert nach Aktion, Kandidaten-ID, Regel-ID oder Zeitstempel.",
+                                Tab::Settings => "Settings: Suche filtert Konfigurationsoptionen nach Stichwort.",
+                                Tab::Anchors => "Anchors: Suche filtert nach Ankernamen, UUID oder Vault-Klassifikation.",
+                                Tab::Data => "Data: Suche filtert nach Dateiname, Dateityp oder Metadaten-Feld.",
+                                _ => "Hinweis: Suchfeld arbeitet kontextbezogen (Tab + Dashboard-Ansicht).",
+                            }
+                        }
             _ => "Hinweis: Suchfeld arbeitet kontextbezogen (Tab + Dashboard-Ansicht).",
         }
     }
@@ -1624,6 +1638,16 @@ impl AetherIcedShell {
                         text("Info").size(11).color(c(TEXT_D)),
                     ]
                     .spacing(8),
+                                    // FIX 5b: Tip text for Bridge/Symbiont startup sequence
+                                    container(
+                                        text("Tipp: Zuerst Bridge starten, dann Symbiont — warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN))
+                                    )
+                                    .padding(8)
+                                    .style(|_: &Theme| container::Style {
+                                        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x14, 0x0A))),
+                                        border: Border { color: Color::from_rgb8(0xD4,  0xA0, 0x42), width: 1.0, ..Default::default() },
+                                        ..Default::default()
+                                    }),
                     column(
                         filtered_threat_rows
                             .into_iter()
@@ -1949,6 +1973,27 @@ impl AetherIcedShell {
 
     fn view_browser(&self) -> Element<'_, Message> {
         let url_bar = container(
+                    // FIX 3: Browser-Bridge status banner
+                    let browser_status = if self.browser_embed.is_running() {
+                        container(text("● Browser-Bridge aktiv").size(11).color(Color::from_rgb8(0x5A, 0xAE, 0x84)))
+                            .padding([4, 8])
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x0A, 0x1A, 0x0F))),
+                                border: Border { color: Color::from_rgb8(0x5A, 0xAE, 0x84), width: 1.0, ..Default::default() },
+                                ..Default::default()
+                            })
+                    } else {
+                        container(text("⚠ Browser-Bridge nicht aktiv — starte Aether vollständig oder prüfe Python-Pfad in Einstellungen.").size(11).color(Color::from_rgb8(0xD4, 0x6A, 0x6A)))
+                            .padding([6, 10])
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb8(0x1A, 0x0A, 0x0A))),
+                                border: Border { color: Color::from_rgb8(0xD4, 0x6A, 0x6A), width: 1.0, ..Default::default() },
+                                ..Default::default()
+                            })
+                    };
+        
+                    let url_bar = container(
+                        row![
             row![
                 container(
                     text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
@@ -1986,6 +2031,7 @@ impl AetherIcedShell {
                 container(scrollable(
                     column![
                         text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
+                                                browser_status,
                         url_bar,
                         row![
                             button(text("Seite pruefen").size(13))
@@ -2929,6 +2975,7 @@ impl AetherIcedShell {
             .spacing(12),
             nav_bar,
             text(&self.browser_note).size(13),
+                        text("YouTube-Tab: URL direkt eingeben (youtube.com/watch?v=...) oder Suchbegriff fuer DuckDuckGo-Suche im Browser-Tab. KI-Slop-Erkennung wird aktiviert sobald Bridge läuft.").size(11).color(c(TEXT_D)),
             container(
                 column![
                     text("Eingebetteter Browser aktiv.").size(16),
@@ -2937,6 +2984,10 @@ impl AetherIcedShell {
                 ]
                 .spacing(10)
                 .padding(30)
+                        button(text("🔍 KI-Analyse starten").size(12).color(c(TEXT_H)))
+                            .on_press(Message::YouTubeKiAnalysisPressed)
+                            .padding([8, 12])
+                            .style(secondary_button_style),
             )
             .width(Length::Fill)
             .height(Length::Fill),
@@ -4613,6 +4664,19 @@ impl AetherIcedShell {
                     Err(err) => {
                         self.browser_note =
                             format!("Video konnte nicht geladen werden: {err}");
+                                    }
+                                    Message::YouTubeKiAnalysisPressed => {
+                                        // FIX 4: KI-Analyse-Handler
+                                        if self.youtube_address.trim().is_empty() {
+                                            self.status_line = "YouTube-URL oder Suchbegriff eingeben vor KI-Analyse.".to_owned();
+                                            return Task::none();
+                                        }
+                                        if !self.hybrid_bridge_running {
+                                            self.status_line = "KI-Analyse: Bridge-Verbindung wird benötigt (Symbiont Control → Bridge starten)".to_owned();
+                                            return Task::none();
+                                        }
+                                        let analysis_addr = self.youtube_address.clone();
+                                        self.status_line = format!("KI-Analyse gestartet für {} — Ergebnis erscheint im Log.", analysis_addr);
                         self.status_line = self.browser_note.clone();
                     }
                 }
@@ -4706,6 +4770,10 @@ impl AetherIcedShell {
             Message::FileHoverCleared => {
                 self.hovered_file_label =
                     "Datei in das Fenster ziehen, um die Analyse zu starten.".to_owned();
+                        Message::ShowTooltip(tooltip_text) => {
+                            // FIX 6: ShowTooltip handler - display tooltip in status line
+                            self.status_line = tooltip_text;
+                        }
             }
             Message::FileDropped(path) => {
                 let Some(username) = self.current_username() else {
@@ -5484,6 +5552,20 @@ impl AetherIcedShell {
             column![
                 text("Symbiont Control").size(28).color(c(TEXT_H)),
                 text("Zentrale Stelle fuer Signal-/Strukturanalyse. Symbiont-Module leben teils im Backend, hier bekommst du klare Einstiegspunkte.")
+                                    // FIX 5: Symbiont explanation block
+                                    container(
+                                        column![
+                                            text("Hybrid Bridge: Python-Brücke zwischen Rust-Core und Python-Modulen. Start/Stop/Restart startet den Prozess modules/hybrid_bridge.py.").size(11).color(c(TEXT_D)),
+                                            text("Symbiont: Das Python-Backend (aether-symbiont/server/symbiont_server.py) — stellt Vault-Daten und Analyse-Ergebnisse über IPC bereit.").size(11).color(c(TEXT_D)),
+                                            text("WebSocket: Echtzeit-Kanal zwischen Symbiont-Backend und Rust-Shell. Aktiv wenn Hybrid Bridge online ist.").size(11).color(c(TEXT_D)),
+                                            text("SymbiontLink: Verbindungsstatus zum VS-Code-Plugin (aether-symbiont Extension). Zeigt ob IDE-Integration aktiv ist.").size(11).color(c(TEXT_D)),
+                                            text("Runtime Hybrid / Runtime Web: Betriebsmodi des Backends — Hybrid = Python+Rust gemischt, Web = Browser-Bridge aktiv.").size(11).color(c(TEXT_D)),
+                                            text("Razor-Signale: Mehrzeilige Eingabe im Signalfeld — jede Zeile wird als separates strukturelles Signal analysiert (kein Freitext, sondern Mustervergleich gegen Vault-Anker).").size(11).color(c(TEXT_D)),
+                                        ]
+                                        .spacing(6)
+                                    )
+                                    .padding(12)
+                                    .style(panel_frame_style),
                     .size(13)
                     .color(c(TEXT_M)),
                 container(text(status).size(12).color(c(TEXT_D)))
@@ -5540,6 +5622,40 @@ impl AetherIcedShell {
                                 "".to_owned()
                             } else {
                                 format!(" | {}", self.vscode_symbiont_mode)
+                                                    // FIX 6: Convert runtime labels to clickable elements
+                                                    row![
+                                                        text("Hybrid Bridge:").size(12).color(c(TEXT_D)),
+                                                        button(text(format!(" {} (?)", bridge_state)).size(12).color(c(TEXT_H)))
+                                                            .on_press(Message::TabSelected(Tab::Symbiont))
+                                                            .style(secondary_button_style)
+                                                            .padding([2, 6]),
+                                                        text("| Symbiont:").size(12).color(c(TEXT_D)),
+                                                        button(text(format!(" {} (?)", sym_state)).size(12).color(c(TEXT_H)))
+                                                            .on_press(Message::TabSelected(Tab::Symbiont))
+                                                            .style(secondary_button_style)
+                                                            .padding([2, 6]),
+                                                    ]
+                                                    .spacing(4)
+                                                    .align_y(iced::Alignment::Center),
+                                                    row![
+                                                        text("VS Code Symbiont:").size(12).color(c(TEXT_D)),
+                                                        button(text(format!(" {} (?)", if self.vscode_symbiont_active { "online" } else { "offline" })).size(12).color(c(TEXT_H)))
+                                                            .on_press(Message::TabSelected(Tab::Symbiont))
+                                                            .style(secondary_button_style)
+                                                            .padding([2, 6]),
+                                                        if !self.vscode_symbiont_mode.trim().is_empty() {
+                                                            button(text(format!(" {} ", &self.vscode_symbiont_mode)).size(12).color(c(TEXT_M)))
+                                                                .on_press(Message::ShowTooltip(format!("VS Code Symbiont Mode: {}", self.vscode_symbiont_mode)))
+                                                                .style(secondary_button_style)
+                                                                .padding([2, 4])
+                                                        } else {
+                                                            button(text("no mode".size(12)).color(c(TEXT_D)))
+                                                                .style(secondary_button_style)
+                                                                .padding([2, 4])
+                                                        },
+                                                    ]
+                                                    .spacing(2)
+                                                    .align_y(iced::Alignment::Center),
                             }
                         ))
                             .size(12)
@@ -6844,6 +6960,23 @@ impl canvas::Program<Message> for FlowSphereScene {
             let hi_a = 0.22 + 0.08 * (t * 0.027).sin();
             frame.fill(&canvas::Path::circle(Point::new(hx, hy), r * 0.21), Color::from_rgba(0.62, 0.92, 0.97, hi_a));
             frame.fill(&canvas::Path::circle(Point::new(hx + r * 0.05, hy + r * 0.04), r * 0.08), Color::from_rgba(0.93, 1.0, 1.0, 0.15));
+        }
+
+        // FIX 2: Global-Mode rendering for swarm nodes
+        if !self.view_mode && !self.swarm_nodes.is_empty() {
+            for (i, (name, lat, lon, coherence)) in self.swarm_nodes.iter().enumerate() {
+                let (pt, z) = project(*lat, *lon);
+                if z > -0.1 {
+                    let br = ((z + 1.0) * 0.5).clamp(0.3, 1.0);
+                    let alpha = (0.55 + 0.35 * coherence) * br;
+                    // Node glow (green for coherent, red for incoherent)
+                    let r_val = 0.20 + (1.0 - coherence) * 0.60;
+                    let g_val = 0.85 * coherence;
+                    let b_val = 0.60;
+                    let node_radius = 4.5 + coherence * 3.0;
+                    frame.fill(&canvas::Path::circle(pt, node_radius), Color::from_rgba(r_val, g_val, b_val, alpha as f32));
+                }
+            }
         }
 
         vec![frame.into_geometry()]

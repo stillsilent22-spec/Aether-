@@ -411,7 +411,8 @@ impl EnginePipeline {
         .clamp(0.0, 1.0);
         let h_lambda = entropy * (1.0 - symmetry).clamp(0.0, 1.0);
         let knowledge_ratio = (1.0 - delta_ratio.clamp(0.0, 1.0)).clamp(0.0, 1.0);
-        let coherence_index = (1.0 - (h_lambda / entropy.max(0.0001))).clamp(0.0, 1.0) as f64;
+        // FIX 1: Coherence = weighted combination of Benford + knowledge_ratio + Bayes (not redundant symmetry)
+        let coherence_index = ((benford * 0.35 + knowledge_ratio * 0.40 + bayes * 0.25) as f64).clamp(0.0, 1.0);
 
         let mut flags = 0u64;
         // [0] Security: immer gesetzt wenn Pipeline läuft (fail-closed Basis)

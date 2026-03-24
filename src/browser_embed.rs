@@ -94,6 +94,10 @@ impl EmbeddedBrowser {
 
     pub fn available(&self) -> bool {
         self.python_command.is_some() && self.script_path.is_some()
+        pub fn is_running(&self) -> bool {
+            self.child.is_some()
+        }
+
     }
 
     pub fn ensure_started(&mut self) -> Result<(), String> {
