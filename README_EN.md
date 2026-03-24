@@ -20,6 +20,12 @@ attractor stability. All computation runs locally. No raw data leaves the device
 - E2E Reference Scenarios: [contracts/aether_e2e_reference_scenarios_v1.json](contracts/aether_e2e_reference_scenarios_v1.json)
 - Meta Signal Policy: [contracts/aether_meta_signal_policy_v1.json](contracts/aether_meta_signal_policy_v1.json)
 
+## Module Organization
+
+- Canonical Python implementations live under `modules/`.
+- Root-level files are kept only as compatibility shims for legacy imports.
+- Prefer new imports in the form `from modules.<name> import ...`.
+
 ## Why Aether matters
 
 Aether is a local, deterministic analysis and reconstruction system.

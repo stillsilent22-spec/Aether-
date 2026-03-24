@@ -1,18 +1,8 @@
-def build_dna(state):
-    return {
-        ".dna": {
-            "O": state.get("O"),
-            "F": state.get("F"),
-            "Hλ": state.get("Hλ"),
-            "Δ": state.get("Δ"),
-            "B": state.get("B")
-        }
-    }
+"""Compatibility shim for legacy imports.
 
-def build_aef(state):
-    return {
-        ".aef": {
-            "A": state.get("A"),
-            "governance_trace": state.get("G")
-        }
-    }
+Canonical implementation lives in ``modules.persist``.
+"""
+
+from modules.persist import build_aef, build_dna
+
+__all__ = ["build_dna", "build_aef"]
