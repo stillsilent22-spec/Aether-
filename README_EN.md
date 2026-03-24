@@ -1,5 +1,9 @@
 # Aether
 
+> **We are burning the future to simulate intelligence. Aether is the alternative: a local, deterministic, mathematically grounded instrument for measuring structure, not generating guesses. No labels. No training. No cloud. No hallucinations. Only information theory, executed locally, with privacy as an architectural principle.**
+
+> **Wir verbrennen die Zukunft, um Intelligenz zu simulieren. Aether ist die Alternative: ein lokales, deterministisches, mathematisch fundiertes Instrument zur Messung von Struktur, nicht zur Erzeugung von Vermutungen. Keine Labels. Kein Training. Keine Cloud. Keine Halluzinationen. Nur Informationstheorie, lokal ausgeführt, mit Privatsphäre als Architekturprinzip.**
+
 **Symbiotic proto-meta-layer OS for structural data analysis — no labels, no cloud, no hallucinations.**
 
 Aether computes measurable structural properties of arbitrary data and makes them comparable:
@@ -7,6 +11,13 @@ Shannon entropy, Zipf compliance, Fourier periodicity, Benford score, fractal di
 attractor stability. All computation runs locally. No raw data leaves the device.
 
 → [Deutsche Version: README.md](README.md)
+
+## Execution Artifacts (30/60/90)
+
+- Operating Modes Contract: [contracts/aether_operating_modes_v1.json](contracts/aether_operating_modes_v1.json)
+- KPI Contract: [contracts/aether_kpi_contract_v1.json](contracts/aether_kpi_contract_v1.json)
+- Event/API Schema: [contracts/aether_event_schema_v1.json](contracts/aether_event_schema_v1.json)
+- E2E Reference Scenarios: [contracts/aether_e2e_reference_scenarios_v1.json](contracts/aether_e2e_reference_scenarios_v1.json)
 
 ## Why Aether matters
 

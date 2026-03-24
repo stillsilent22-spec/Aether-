@@ -1,5 +1,64 @@
 # Aether Roadmap
 
+## 30/60/90 Execution Track (Operationalized)
+
+Die folgenden vier Hebel sind ab sofort als verbindlicher Umsetzungs-Track definiert.
+
+### Track 1: Productized Operating Modes (Analyze, Guard, Sync, Evolve)
+
+- Ziel: Kern-Workflows als klar erkennbare Betriebsmodi mit stabilen Ein-/Ausgaben.
+- 30 Tage:
+  - Modus-Vertrag in Konfiguration fixieren (Input, Gate, Output, Failure Rules).
+  - UI- und CLI-Benennung auf dieselben vier Modi normalisieren.
+- 60 Tage:
+  - Jeder Modus liefert standardisierte Run-Summaries (status, reason, metrics, next_action).
+  - Deterministische Mode-Transitions mit Audit-Eintrag je Wechsel.
+- 90 Tage:
+  - Mode-Chaining fuer End-to-End-Laeufe ohne manuelle Glue-Logik.
+  - Regression-Suite je Modus plus Integrationssuite fuer Chaining.
+
+### Track 2: Hard SLO/KPI Contract per Cycle
+
+- Ziel: Messbare Betriebsqualitaet statt impliziter "funktioniert"-Aussagen.
+- 30 Tage:
+  - KPI-Set fixieren: Determinism Rate, Safety Coverage, Consensus Latency, False-Positive Budget, Throughput.
+  - Baseline-Messung auf Referenzdaten erfassen und versionieren.
+- 60 Tage:
+  - Warn- und Fehler-Schwellen in Runtime und Reports ausgeben.
+  - KPI-Drift zwischen Releases automatisch vergleichen.
+- 90 Tage:
+  - SLO-Gates fuer Release-Freigabe etablieren (No-Gate, Soft-Gate, Hard-Gate).
+  - KPI-Historie als reproduzierbares Audit-Artifact publizieren.
+
+### Track 3: Standardized Interfaces (CLI/API/Event Schema)
+
+- Ziel: Aether als integrierbare Plattform statt isolierter Toolchain.
+- 30 Tage:
+  - Einheitliches Event-Schema v1 fuer alle relevanten Modus-Ausgaben definieren.
+  - CLI-Entry-Points auf ein konsistentes Command-Muster bringen.
+- 60 Tage:
+  - API-konforme Response-Objekte angleichen (status/data/errors/metrics).
+  - Kompatibilitaetsmatrix fuer Versionen (v1 guarantees) dokumentieren.
+- 90 Tage:
+  - Stabiler Integrationsleitfaden fuer externe Orchestratoren und Agenten.
+  - Contract-Tests fuer Event-Schema und API-Antworten in CI.
+
+### Track 4: End-to-End Reference Scenarios
+
+- Ziel: Real nutzbare, nachstellbare Praxispfade statt isolierter Einzelmodule.
+- 30 Tage:
+  - Vier Referenzpfade definieren:
+    - Input -> Analyze -> Guard -> Decision
+    - Input -> Analyze -> Sync -> Consensus
+    - Input -> Analyze -> Evolve -> Re-check
+    - Input -> Full Chain -> Audit Export
+- 60 Tage:
+  - Jede Pipeline mit Gold-Output und erwarteten KPI-Korridoren hinterlegen.
+  - Automatisierte Smoke-Runs fuer alle Referenzpfade.
+- 90 Tage:
+  - Oeffentliche Reproduzierbarkeits-Reports je Szenario.
+  - Standardisierte Incident-Playbooks pro Szenario.
+
 Stand: März 2026 | Author: Kevin Hannemann
 Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 

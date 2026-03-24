@@ -1,0 +1,45 @@
+{
+  "schema": "aether.e2e_reference_scenarios.v1",
+  "scenarios": [
+    {
+      "id": "analyze_guard_decision",
+      "title": "Input -> Analyze -> Guard -> Decision",
+      "steps": ["load_input", "run_analyze", "run_guard", "emit_decision"],
+      "expected_outputs": ["metrics", "verdict", "decision_record"],
+      "kpi_corridor": {
+        "determinism_rate_min": 0.99,
+        "safety_coverage_min": 0.98
+      }
+    },
+    {
+      "id": "analyze_sync_consensus",
+      "title": "Input -> Analyze -> Sync -> Consensus",
+      "steps": ["load_input", "run_analyze", "build_anchor_pack", "run_sync", "verify_consensus"],
+      "expected_outputs": ["structural_fingerprint", "sync_status", "consensus_record"],
+      "kpi_corridor": {
+        "consensus_latency_seconds_p95_max": 90.0,
+        "false_positive_budget_max": 0.05
+      }
+    },
+    {
+      "id": "analyze_evolve_recheck",
+      "title": "Input -> Analyze -> Evolve -> Re-check",
+      "steps": ["load_input", "run_analyze", "run_evolve_cycle", "run_analyze_recheck"],
+      "expected_outputs": ["cycle_summary", "promoted_candidates", "recheck_delta"],
+      "kpi_corridor": {
+        "throughput_cycles_per_minute_min": 10.0,
+        "determinism_rate_min": 0.98
+      }
+    },
+    {
+      "id": "full_chain_audit_export",
+      "title": "Input -> Full Chain -> Audit Export",
+      "steps": ["load_input", "run_analyze", "run_guard", "run_sync", "run_evolve", "export_audit"],
+      "expected_outputs": ["event_stream", "audit_bundle", "trace_manifest"],
+      "kpi_corridor": {
+        "safety_coverage_min": 0.99,
+        "false_positive_budget_max": 0.05
+      }
+    }
+  ]
+}
