@@ -58,6 +58,8 @@ data/public_anchor_library/mirror_*.json
 data/public_anchor_library/trust_log.json
 data/shanway_corpus/de/*
 data/shanway_corpus/en/*
+data/aelab_vault/*.dna
+data/aelab_vault/vault_analysis.json
 gcm-diagnose.log
 
 !data/shanway_corpus/
@@ -68,8 +70,6 @@ gcm-diagnose.log
 !data/swarm/
 !data/swarm/nodes/
 !data/anchors/
-!data/aelab_vault/
-!data/aelab_vault/*.dna
 !data/aelab_vault/legacy_imports/
 !data/aelab_vault/legacy_imports/.gitkeep
 data/publisher_keys/*.pem

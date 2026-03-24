@@ -47,6 +47,11 @@ zeroize = "1.8"
 md5 = "0.7"
 anyhow = "1.0"
 thiserror = "1.0"
+
+# pyo3 und maturin wurden vollständig entfernt.
+# egui_extras wurde entfernt (nicht in aether_iced verwendet).
+
+[target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_System_LibraryLoader",
@@ -58,9 +63,6 @@ windows-sys = { version = "0.59", features = [
     "Win32_System_SystemInformation",
     "Win32_System_Registry",
 ] }
-
-# pyo3 und maturin wurden vollständig entfernt.
-# egui_extras wurde entfernt (nicht in aether_iced verwendet).
 
 [profile.release]
 opt-level = 3

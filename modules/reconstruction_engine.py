@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import json
+import math
+import re
+import hmac
+import sqlite3
 import hashlib
 import time
-from cryptography.fernet import Fernet
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Sequence
+from collections import Counter
 import numpy as np
+try:
+    from numpy.fft import rfft
+except Exception:
+    rfft = None  # type: ignore[assignment]
 try:
     import networkx as nx
     _NX_AVAILABLE = True
@@ -24,108 +36,6 @@ try:
     from .process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot
 except ImportError:
     from modules.process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot  # type: ignore
-
-class GovernanceContext:
-    def __init__(self, key=None):
-        self.key = key or Fernet.generate_key()
-        self.fernet = Fernet(self.key)
-
-class Snapshot:
-    def __init__(self, data: bytes, modality: str, features: dict, fingerprint: str, timestamp: float):
-        self.data = data
-        self.modality = modality
-        self.features = features
-        self.fingerprint = fingerprint
-        self.timestamp = timestamp
-
-class Residual:
-    def __init__(self, delta: dict):
-        self.delta = delta
-
-class Attractor:
-    def __init__(self, node, stability):
-        self.node = node
-        self.stability = stability
-
-class ReconstructionEngine:
-    def __init__(self, governance_context: GovernanceContext):
-        self.ctx = governance_context
-
-    def create_snapshot(self, data: bytes, modality: str) -> Snapshot:
-        entropy = self.shannon_entropy(data)
-        symmetry = self.compute_symmetry(data)
-        resonance = self.compute_resonance(data)
-        fingerprint = hashlib.sha256(data).hexdigest()
-        timestamp = time.time()
-        features = {
-            "entropy": entropy,
-            "symmetry": symmetry,
-            "resonance": resonance
-        }
-        return Snapshot(data, modality, features, fingerprint, timestamp)
-
-    def create_residual(self, start: Snapshot, end: Snapshot) -> Residual:
-        delta = {k: end.features[k] - start.features.get(k, 0) for k in end.features}
-        return Residual(delta)
-
-    def reconstruct(self, start: Snapshot, residual: Residual) -> Snapshot:
-        features = {k: start.features.get(k, 0) + residual.delta.get(k, 0) for k in start.features}
-        data = start.data
-        fingerprint = hashlib.sha256(data).hexdigest()
-        return Snapshot(data, start.modality, features, fingerprint, time.time())
-
-    def validate_reconstruction(self, reconstructed: Snapshot, expected: Snapshot) -> dict:
-        valid = reconstructed.fingerprint == expected.fingerprint
-        reason = "" if valid else "hash_mismatch"
-        return {"valid": valid, "reason": reason}
-
-    def detect_attractor(self, snapshots: list) -> Attractor:
-        if not _NX_AVAILABLE:
-            raise RuntimeError(
-                "networkx ist nicht installiert. "
-                "'pip install networkx' ausfuehren oder detect_attractor() nicht verwenden."
-            )
-        G = nx.Graph()
-        for i, snap in enumerate(snapshots):
-            G.add_node(i, entropy=snap.features["entropy"])
-            if i > 0:
-                G.add_edge(i-1, i, weight=abs(snap.features["entropy"] - snapshots[i-1].features["entropy"]))
-        attractor = max(G.nodes, key=lambda n: G.degree[n])
-        stability = self.compute_attractor_stability(attractor, snapshots)
-        return Attractor(attractor, stability)
-
-    def compute_attractor_stability(self, attractor, snapshots: list) -> dict:
-        values = [snap.features["entropy"] for snap in snapshots]
-        drift_variance = sum((v - values[0])**2 for v in values) / len(values)
-        resonance_score = sum(values) / len(values)
-        return {"drift_variance": drift_variance, "resonance_score": resonance_score}
-
-    def validate_modality_operation(self, modality: str, operation: str, snapshot: Snapshot) -> bool:
-        allowed = ["camera", "audio", "file"]
-        if modality not in allowed:
-            raise ValueError("Invalid modality")
-        return True
-
-    def shannon_entropy(self, data: bytes) -> float:
-        from collections import Counter
-        import math
-        if not data:
-            return 0.0
-        counts = Counter(data)
-        total = float(len(data))
-        return -sum((c/total) * math.log2(c/total) for c in counts.values())
-
-    def compute_symmetry(self, data: bytes) -> float:
-        return float(len(set(data))) / max(1, len(data))
-
-    def compute_resonance(self, data: bytes) -> float:
-        return sum(data) % 1.0
-
-    def encrypt(self, data: bytes) -> bytes:
-        return self.ctx.fernet.encrypt(data)
-
-    def decrypt(self, token: bytes) -> bytes:
-        return self.ctx.fernet.decrypt(token)
 
 
 from dataclasses import dataclass as _dc, field as _dcfield, dataclass, field
@@ -1373,7 +1283,6 @@ class ReconstructionEngine:
             "render": UniversalAdapter(),  # Reuse for ETW/DXGI data
             "process": FileAdapter(),  # Process vectors as bytes
         }
-        self.process_engine = ProcessEngine()
 
     def governance_from_session(self, session: SessionContext | None = None) -> GovernanceContext:
         """Erzeugt einen lokalen Governance-Kontext aus einer Session oder Defaultwerten."""
@@ -1642,11 +1551,7 @@ class ReconstructionEngine:
     ) -> ReconstructionResidual:
         """Erzeugt ein signiertes, referenzierbares und unveraenderliches Residuum."""
         feature_delta_payload = self._feature_delta(source, target)
-        modality_delta_payload = self.modality_delta(
-            self.project_to_feature_space([source.modality_features["camera"]]) if "camera" in source.modality_features else None,
-            self.project_to_feature_space([source.modality_features["audio"]]) if "audio" in source.modality_features else None,
-            self.project_to_feature_space([source.modality_features["file"]]) if "file" in source.modality_features else None,
-        )
+        modality_delta_payload = self.domain_delta(source.features, target.features)
         time_delta_payload = self._time_delta(source, target)
         governance_delta_payload = self._governance_delta(source.governance, target.governance)
         meta_delta_payload = self._meta_delta(
@@ -1749,6 +1654,7 @@ class ReconstructionEngine:
                 governance=target.governance,
                 observer=dict(target.observer),
                 timestamp=str(target.timestamp),
+                include_processes=False,
             )
             if candidate.data_hashes != target.data_hashes:
                 candidate.reconstruction["validity"] = {"valid": False, "reason": "reconstruction_hash_mismatch"}

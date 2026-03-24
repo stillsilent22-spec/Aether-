@@ -1,15 +1,9 @@
 """
-Aether – Rust-Kern-Modul Wrapper.
+Aether - optionaler Rust-Kern-Wrapper.
 
-Versucht zunächst, das kompilierte PyO3-Modul `aether_core_rs` zu laden.
-Falls nicht verfügbar (Rust nicht installiert / noch nicht gebaut),
-fällt es auf die reine Python-Implementierung in ethics_engine.py zurück.
-
-Build-Anleitung (einmalig):
-  pip install maturin
-  maturin develop --release
-
-Nach dem Build wird aether_core_rs automatisch gefunden.
+Das Repository baut derzeit standardmaessig keine PyO3-Extension mehr.
+Wenn lokal bereits ein kompatibles Modul `aether_core_rs` installiert ist,
+wird es verwendet; ansonsten bleibt der Python-Pfad der kanonische Standard.
 """
 
 from __future__ import annotations
@@ -18,7 +12,7 @@ import math as _math
 from collections import Counter as _Counter
 from typing import Sequence
 
-# Versuche Rust-Extension zu laden
+# Optionale historische Rust-Extension laden, falls lokal vorhanden.
 try:
     import aether_core_rs as _rs  # type: ignore
     _RUST_OK = True

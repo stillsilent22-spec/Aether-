@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import pytest
-from modules.reconstruction_engine import ReconstructionEngine, GovernanceContext, Snapshot
+from modules.reconstruction_engine import ReconstructionEngine, GovernanceContext
 
 
 def _governance() -> GovernanceContext:
@@ -11,17 +11,28 @@ def _governance() -> GovernanceContext:
 
 @pytest.fixture
 def engine() -> ReconstructionEngine:
-    return ReconstructionEngine(_governance())
+    return ReconstructionEngine()
 
 
 def test_phase3_snapshot_projection_and_modality_governance() -> None:
     """Prueft Snapshot-Erstellung und Governance-Basis."""
     engine = ReconstructionEngine()
-    s1 = engine.create_snapshot(b"abcabc", "file")
-    s2 = engine.create_snapshot(b"abcdabcd", "file")
+    governance = _governance()
+    s1 = engine.create_snapshot(
+        data={"file": b"abcabc" * 12},
+        governance=governance,
+        include_processes=False,
+        timestamp="2026-03-15T00:00:00+00:00",
+    )
+    s2 = engine.create_snapshot(
+        data={"file": b"abcdabcd" * 12},
+        governance=governance,
+        include_processes=False,
+        timestamp="2026-03-15T00:00:01+00:00",
+    )
     residual = engine.create_residual(s1, s2)
-    s3 = engine.reconstruct(s1, residual)
-    assert isinstance(s3, Snapshot)
+    s3 = engine.reconstruct(s1, [residual.residual_id])
+    assert s3.data_hashes == s2.data_hashes
 
 
 def test_phase3_residual_reconstruction_and_validation() -> None:
