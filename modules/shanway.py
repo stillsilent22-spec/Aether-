@@ -9,7 +9,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 REFERENCE_ALIGNMENT_TOLERANCE = 0.0001
 TEMPLATE_PROMPT = """
@@ -478,13 +478,44 @@ class ShanwayEngine:
         "ln10":  math.log(10.0),
     }
 
-    def __init__(self, state_path: str | None = None) -> None:
+    def __init__(self, state_path: str | None = None, enable_godel_loop: bool = False) -> None:
         self.state_path = Path(state_path or (Path("data") / "shanway_lexicon.json"))
         self.learned_tokens: dict[str, dict[str, int]] = {"de": {}, "en": {}}
         self._vault_analysis_cache_path = ""
         self._vault_analysis_cache_mtime = 0.0
         self._vault_analysis_cache_payload: dict[str, Any] = {}
+        self.enable_godel_loop = bool(enable_godel_loop)
+        self._godel_renderer: Any = None
         self._load_state()
+
+    def _get_godel_renderer(self) -> Any:
+        if self._godel_renderer is not None:
+            return self._godel_renderer
+        try:
+            from .godel_loop_renderer import GoedelLoopRenderer
+        except Exception:
+            try:
+                from modules.godel_loop_renderer import GoedelLoopRenderer  # type: ignore
+            except Exception:
+                return None
+        self._godel_renderer = GoedelLoopRenderer()
+        return self._godel_renderer
+
+    def render_with_self_reference(self, input_path: Any, max_depth: int = 3) -> dict[str, Any]:
+        """Runs the deterministic Goedel self-reference loop for the given signal."""
+        renderer = self._get_godel_renderer()
+        if renderer is None:
+            return {
+                "levels": [],
+                "stop_reached": True,
+                "stop_reason": "renderer_unavailable",
+                "stop_level": 0,
+                "complexity_delta_percent": 0.0,
+                "status": "Goedel Loop deaktiviert - Renderer nicht verfuegbar",
+                "stop_message": "Goedel-Stop erreicht - Renderer nicht verfuegbar.",
+                "deterministic": True,
+            }
+        return dict(renderer.render_with_self_reference(input_path, max_depth=max_depth) or {})
 
     def _load_state(self) -> None:
         """Laedt zuvor gelernte Sprachhaeufigkeiten."""
@@ -1294,6 +1325,8 @@ class ShanwayEngine:
         miniature_payload: dict[str, Any] | None = None,
         raster_payload: dict[str, Any] | None = None,
         self_reflection_payload: dict[str, Any] | None = None,
+        enable_godel_loop: Optional[bool] = None,
+        max_godel_depth: int = 3,
     ) -> ShanwayAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
@@ -1432,6 +1465,34 @@ class ShanwayEngine:
             if isinstance(item, dict)
         ][:12]
         learned_insight = self._learning_fields(self_reflection_payload, observer_payload)
+
+        godel_loop_enabled = self.enable_godel_loop if enable_godel_loop is None else bool(enable_godel_loop)
+        if godel_loop_enabled:
+            godel_result = self.render_with_self_reference(raw_text, max_depth=max_godel_depth)
+            godel_levels = [
+                dict(item)
+                for item in list(godel_result.get("levels", []) or [])
+                if isinstance(item, dict)
+            ]
+            for level_item in godel_levels:
+                metrics = dict(level_item.get("metrics", {}) or {})
+                recursive_reflections.append(
+                    {
+                        "level": int(level_item.get("level", 0) or 0),
+                        "mt_shift": float(level_item.get("complexity_delta_percent", 0.0) or 0.0),
+                        "entropy": float(metrics.get("entropy", 0.0) or 0.0),
+                        "fractal_dimension": float(metrics.get("fractal_dimension", 0.0) or 0.0),
+                        "periodicity": float(metrics.get("periodicity", 0.0) or 0.0),
+                        "fingerprint": str(level_item.get("fingerprint", "") or ""),
+                    }
+                )
+            recursive_reflections = recursive_reflections[:7]
+            godel_status = str(godel_result.get("status", "") or "").strip()
+            godel_stop = str(godel_result.get("stop_message", "") or "").strip()
+            if godel_status or godel_stop:
+                parts = [part for part in [learned_insight, godel_status, godel_stop] if str(part).strip()]
+                learned_insight = " | ".join(parts)
+
         next_action = self.suggest_next_action(
             {
                 "missing_dependencies": missing_dependencies,
