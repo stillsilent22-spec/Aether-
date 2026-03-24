@@ -190,3 +190,25 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
         "quorum_validated_count": int(quorum_validated_count),
         "admin_trusted_count": int(admin_trusted_count),
     }
+
+
+class P2PAnchorPool:
+    """Thin wrapper around public TTD anchor pool functions for object-oriented access."""
+
+    def build_record(self, payload: dict, *, signature_included: bool = False) -> dict:
+        return build_public_ttd_anchor_record(payload, signature_included=signature_included)
+
+    def validator_present(self, record: dict, pseudonym: str) -> bool:
+        return public_ttd_validator_present(record, pseudonym)
+
+    def merge_record(self, *args, **kwargs) -> dict:
+        return merge_public_ttd_anchor_record(*args, **kwargs)
+
+    def anchor_view(self, record: dict) -> dict:
+        return public_ttd_anchor_view(record)
+
+    def summarize(self, records: list) -> dict:
+        return summarize_public_ttd_anchor_records(records)
+
+    def normalize_role(self, role: str) -> str:
+        return normalize_public_role(role)

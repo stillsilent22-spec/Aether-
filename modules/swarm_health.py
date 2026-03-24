@@ -151,3 +151,19 @@ def print_swarm_status() -> None:
             print(f"{key}: {status.get(key)}")
     except Exception as err:
         print(f"[AETHERNET] print_swarm_status failed: {err}")
+
+
+class SwarmHealthMonitor:
+    """Thin wrapper around swarm health functions for object-oriented access."""
+
+    def get_status(self) -> dict:
+        return get_swarm_status()
+
+    def print_status(self) -> None:
+        print_swarm_status()
+
+    def get_candidate_count(self) -> int:
+        return get_candidate_count()
+
+    def get_consensus_anchors(self) -> list:
+        return get_consensus_anchors()

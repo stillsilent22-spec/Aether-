@@ -289,3 +289,20 @@ def orchestrate_cycle(
         state.update("vault_pool_size", len(subvault))
 
     return summary
+
+
+class VaultOrchestrator:
+    """Thin wrapper around vault orchestration functions for object-oriented access."""
+
+    def __init__(self, max_size: int = MAX_POOL_SIZE) -> None:
+        self._subvault = Subvault(max_size=max_size)
+
+    def orchestrate_cycle(self, *args, **kwargs):
+        return orchestrate_cycle(*args, **kwargs)
+
+    @property
+    def subvault(self) -> Subvault:
+        return self._subvault
+
+    def store(self, candidate: "Candidate") -> None:
+        self._subvault.store(candidate)

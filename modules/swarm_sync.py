@@ -81,3 +81,22 @@ def verify_pack_basic(pack: dict, node_id: str) -> bool:
     if not (NODES_DIR / f"{node_id}.json").exists():
         return False
     return all(len(str(anchor.get("sig", ""))) == 64 for anchor in pack.get("anchors", []))
+
+
+class SwarmSync:
+    """Thin wrapper around swarm sync functions for object-oriented access."""
+
+    def pull_anchors(self) -> list[str]:
+        return pull_anchors()
+
+    def push_anchor_pack(self, pack: dict) -> bool:
+        return push_anchor_pack(pack)
+
+    def discover_nodes(self) -> dict[str, str]:
+        return discover_nodes()
+
+    def build_kpi_report(self, node_id: str, kpis: dict) -> dict:
+        return build_kpi_report(node_id, kpis)
+
+    def verify_pack_basic(self, pack: dict, node_id: str) -> bool:
+        return verify_pack_basic(pack, node_id)

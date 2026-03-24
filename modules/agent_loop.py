@@ -252,3 +252,7 @@ class AgentLoopEngine:
         vector = np.array(list(current_embedding)[:3], dtype=np.float64)
         distance = float(np.linalg.norm(vector - self._target_vector))
         return bool(distance <= 0.18)
+
+
+# Backwards-compatible alias
+AgentLoop = AgentLoopEngine

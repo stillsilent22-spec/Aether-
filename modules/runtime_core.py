@@ -1,5 +1,5 @@
-from state_machine import state_init, state_step
-from meta_engine import meta_hash_state
+from modules.state_machine import state_init, state_step
+from modules.meta_engine import meta_hash_state
 
 def init_runtime() -> dict:
     return {"state": state_init(), "history": [], "running": False, "tick": 0}
