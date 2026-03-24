@@ -51,7 +51,7 @@ def safety_mod():
 # ===========================================================================
 
 class TestMedicalFilter:
-    """Shanway schweigt bei JEDER medizinischen Anfrage — keine Ausnahme."""
+    """Shanway schweigt bei JEDER medizinischer Anfrage — keine Ausnahme."""
 
     @pytest.mark.parametrize("text", [
         # Deutsch

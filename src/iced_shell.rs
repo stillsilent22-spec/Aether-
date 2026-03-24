@@ -3732,25 +3732,48 @@ impl AetherIcedShell {
             .replace('ß', "ss")
     }
 
+    fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
+        if let Some(message) = payload.downcast_ref::<String>() {
+            return message.clone();
+        }
+        if let Some(message) = payload.downcast_ref::<&str>() {
+            return (*message).to_owned();
+        }
+        "unbekannter Panic-Payload".to_owned()
+    }
+
     fn parse_live_render_mode_command(&self, prompt: &str) -> Option<bool> {
         let normalized = Self::normalize_live_command(prompt);
         let mentions_live = normalized.contains("live")
-            && (normalized.contains("render")
-                || normalized.contains("analyse")
-                || normalized.contains("frame"));
-        if !mentions_live {
+            || normalized.contains("liverender")
+            || normalized.contains("liverenderer")
+            || normalized.contains("laufrenderer")
+            || normalized.contains("laufrenderer");
+        let mentions_render = normalized.contains("render")
+            || normalized.contains("renderer")
+            || normalized.contains("analyse")
+            || normalized.contains("frame");
+        let mentions_live_render = (mentions_live && mentions_render)
+            || normalized.contains("liverender")
+            || normalized.contains("liverenderer")
+            || normalized.contains("laufrenderer")
+            || normalized.contains("laufrenderer");
+        if !mentions_live_render {
             return None;
         }
         let activation_markers = [
             "aktiviere",
             "aktivieren",
             "einschalten",
+            "an",
+            "ein",
             "live-analyse an",
             "live analyse an",
         ];
         let deactivation_markers = [
             "deaktiviere",
             "deaktivieren",
+            "aus",
             "live-analyse aus",
             "live analyse aus",
             "passiven normalmodus",
@@ -4910,12 +4933,30 @@ impl AetherIcedShell {
                 self.tick_counter = self.tick_counter.wrapping_add(1);
                 self.launcher_state.poll_processes();
                 if self.live_render_mode {
-                    let live_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         self.capture_live_render_frame();
-                    }));
-                    if live_result.is_err() {
-                        self.apply_live_render_mode(false);
-                        self.status_line = "Live-Render wurde nach einem Laufzeitfehler automatisch deaktiviert.".to_owned();
+                    })) {
+                        Ok(()) => {}
+                        Err(payload) => {
+                            let panic_message = Self::panic_payload_to_string(payload.as_ref());
+                            self.apply_live_render_mode(false);
+                            self.status_line = format!(
+                                "Live-Render wurde nach einem Laufzeitfehler deaktiviert: {panic_message}"
+                            );
+                            let _ = fs::create_dir_all("logs");
+                            if let Ok(mut file) = std::fs::OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("logs/live_render_errors.log")
+                            {
+                                let _ = writeln!(
+                                    file,
+                                    "tick={} panic={}",
+                                    self.tick_counter,
+                                    panic_message
+                                );
+                            }
+                        }
                     }
                 }
                 if self.tick_counter % 60 == 0 {

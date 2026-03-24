@@ -101,6 +101,11 @@ class DeltaConvergenceTracker:
         self.history_path = Path(history_path)
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
         self._series: dict[str, ConvergenceSeries] = {}
+        # Fix 1: Idle-Guard — gecachte letzte Messung
+        self._last_measurement: DeltaMeasurement | None = None
+        # Fix 2: Anchor-Pool-Cache
+        self._anchor_cache: list[float] = []
+        self._anchor_cache_mtime: float = -1.0
         self._load_history()
 
     def measure(
@@ -109,6 +114,11 @@ class DeltaConvergenceTracker:
         series_id: str = "default",
         node_count: int = 1,
     ) -> DeltaMeasurement:
+        # Fix 1: Idle-Guard — leeres Signal löst keinen neuen Pass aus
+        if not signal:
+            if self._last_measurement is not None:
+                return self._last_measurement
+            signal = b"\x00"  # Fallback für allerersten Aufruf
         anchor_pool = self._load_anchor_pool()
         pool_size = len(anchor_pool)
         h_signal = self._shannon_entropy(signal)
@@ -131,6 +141,7 @@ class DeltaConvergenceTracker:
             node_count=node_count,
             anchor_hit_rate=hit_rate,
         )
+        self._last_measurement = m  # Fix 1: Cache für Idle-Guard
         self._append(series_id, m)
         return m
 
@@ -252,9 +263,20 @@ class DeltaConvergenceTracker:
         return max(0.02, min(1.0, base * correction))
 
     def _load_anchor_pool(self) -> list[float]:
+        # Fix 2: Nur bei Dateiänderung neu laden (mtime-Cache)
+        try:
+            dna_files = list(self.vault_path.glob("*.dna"))
+            current_mtime = max(
+                (f.stat().st_mtime for f in dna_files), default=0.0
+            )
+        except Exception:
+            current_mtime = 0.0
+            dna_files = []
+        if current_mtime != 0.0 and current_mtime == self._anchor_cache_mtime:
+            return self._anchor_cache
         anchors: list[float] = []
         try:
-            for f in self.vault_path.glob("*.dna"):
+            for f in dna_files:
                 for line in f.read_text(encoding="utf-8", errors="ignore").splitlines():
                     for part in line.strip().split():
                         try:
@@ -263,7 +285,9 @@ class DeltaConvergenceTracker:
                             continue
         except Exception:
             pass
-        return anchors[:1000]
+        self._anchor_cache = anchors[:1000]
+        self._anchor_cache_mtime = current_mtime
+        return self._anchor_cache
 
     def _load_history(self) -> None:
         try:
