@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List
@@ -9,6 +10,8 @@ import urllib.error
 
 from modules.consensus_engine import get_candidate_count, get_consensus_anchors
 from modules.invariant_observer import get_last_estimated_saving
+
+_log = logging.getLogger(__name__)
 
 
 def _derive_alerts(*, node_count: int, reachable_count: int, genesis_key_ok: bool, candidate_count: int, consensus_count: int) -> tuple[str, list[dict[str, Any]], float]:
@@ -116,7 +119,7 @@ def get_swarm_status(
             "summary": summary,
         }
     except Exception as err:
-        print(f"[AETHERNET] swarm health failed: {err}")
+        _log.warning("swarm health failed: %s", err)
         return {
             "node_count": 0,
             "genesis_key_ok": False,

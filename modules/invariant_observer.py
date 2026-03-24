@@ -1,24 +1,18 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 from modules.consensus_engine import get_invariance_score, submit_candidate
 
-
-_LAST_ESTIMATED_SAVING = 0.0
-
-
-def _set_last_estimated_saving(value: float) -> None:
-    """Aktualisiert den letzten global beobachteten Einsparungswert."""
-    global _LAST_ESTIMATED_SAVING
-    _LAST_ESTIMATED_SAVING = float(max(0.0, min(1.0, value)))
+_log = logging.getLogger(__name__)
 
 
 def get_last_estimated_saving() -> float:
-    """Liefert den zuletzt beobachteten Einsparungswert des InvariantObserver."""
-    return float(_LAST_ESTIMATED_SAVING)
+    """Stub fuer API-Kompatibilitaet. Nutze InvariantObserver._last_estimated_saving fuer Instanzwerte."""
+    return 0.0
 
 
 @dataclass
@@ -69,7 +63,7 @@ def hash_region(data: bytes, x: int, y: int, w: int, h: int) -> str:
         ])
         return hashlib.sha256(payload).hexdigest()
     except Exception as err:
-        print(f"[AETHERNET] hash_region failed: {err}")
+        _log.warning("hash_region failed: %s", err)
         return hashlib.sha256(b"").hexdigest()
 
 
@@ -94,6 +88,7 @@ class InvariantObserver:
         self._emitted_region_versions: Dict[str, str] = {}
         self._stable_region_total = 0
         self._observed_region_total = 0
+        self._last_estimated_saving: float = 0.0
 
     def _region_id(self, process_name: str, index: int) -> str:
         """Leitet aus Prozessname und Region-Index eine stabile Region-ID ab."""
@@ -116,7 +111,7 @@ class InvariantObserver:
             if self._last_frame is None:
                 self._last_frame = frame
                 self._observed_region_total += len(frame.region_hashes)
-                _set_last_estimated_saving(self.estimate_transmission_saving())
+                self._last_estimated_saving = self.estimate_transmission_saving()
                 return [], None
 
             previous = self._last_frame
@@ -193,10 +188,10 @@ class InvariantObserver:
                 timestamp_ms=int(frame.timestamp_ms),
             )
             self._last_frame = frame
-            _set_last_estimated_saving(self.estimate_transmission_saving())
+            self._last_estimated_saving = self.estimate_transmission_saving()
             return new_anchors, delta
         except Exception as err:
-            print(f"[AETHERNET] observe_frame failed: {err}")
+            _log.warning("observe_frame failed: %s", err)
             self._last_frame = frame
             return [], None
 
@@ -212,7 +207,7 @@ class InvariantObserver:
                     shareable.append(anchor)
             return shareable
         except Exception as err:
-            print(f"[AETHERNET] get_shareable_anchors failed: {err}")
+            _log.warning("get_shareable_anchors failed: %s", err)
             return []
 
     def reconstruct_from_anchors(
@@ -233,7 +228,7 @@ class InvariantObserver:
                     reconstructed[region_id] = "unknown"
             return reconstructed
         except Exception as err:
-            print(f"[AETHERNET] reconstruct_from_anchors failed: {err}")
+            _log.warning("reconstruct_from_anchors failed: %s", err)
             return {}
 
     def estimate_transmission_saving(self) -> float:
@@ -243,5 +238,5 @@ class InvariantObserver:
                 return 0.0
             return float(max(0.0, min(1.0, float(self._stable_region_total) / float(self._observed_region_total))))
         except Exception as err:
-            print(f"[AETHERNET] estimate_transmission_saving failed: {err}")
+            _log.warning("estimate_transmission_saving failed: %s", err)
             return 0.0
