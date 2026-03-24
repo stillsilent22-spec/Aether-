@@ -1,6 +1,6 @@
 # Aether
 
-**Local framework for structural data analysis — no labels, no cloud, no hallucinations.**
+**Symbiotic proto-meta-layer OS for structural data analysis — no labels, no cloud, no hallucinations.**
 
 Aether computes measurable structural properties of arbitrary data and makes them comparable:
 Shannon entropy, Zipf compliance, Fourier periodicity, Benford score, fractal dimension (Katz),
@@ -51,7 +51,7 @@ classifier, without training data, without content interpretation.
 
 **Aether is:**
 - A local anomaly detection tool based on measurable structural metrics
-- A privacy-preserving analysis framework with cryptographically non-invertible fingerprints
+- A symbiotic operating system layer with integrated privacy guarantees and cryptographically non-invertible fingerprints
 - A deterministic output filter (Shanway) for pipeline-verified structural findings
 - A system optimization tool based on process structural profiles
 

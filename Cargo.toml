@@ -3,7 +3,7 @@
 name = "aether_rust_shell"
 version = "0.1.0"
 edition = "2021"
-description = "Rust shell migration for Aether with Python module integration and IPC bridge."
+description = "Aether symbiotic proto-meta-layer OS: local structural data analysis, privacy-preserving with Python module integration and IPC bridge."
 license = "LicenseRef-Aether-Source-Available"
 default-run = "aether_iced"
 include = [

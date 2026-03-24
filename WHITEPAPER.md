@@ -10,7 +10,7 @@ Status: Technisches Whitepaper zur source-available Veröffentlichung
 
 ## 1. Einleitung
 
-Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether — einem lokalen Framework für strukturelle Datenanalyse mit integriertem Datenschutz.
+Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether — einem symbiotischen Proto-Meta-Layer-OS für strukturelle Datenanalyse mit integriertem Datenschutz.
 
 Aether ist kein Klassifikator, kein KI-Modell und kein Interpreter. Es ist ein Messinstrument: Es berechnet strukturelle Merkmale beliebiger Daten und macht diese vergleichbar — ohne Labels, ohne Training, ohne sensitive Inhalte preiszugeben.
 
