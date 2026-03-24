@@ -1,0 +1,45 @@
+name: Swarm Test Suite
+
+on:
+  push:
+    paths:
+      - "modules/swarm_*.py"
+      - "modules/capture_adapter.py"
+      - "tests/test_swarm_*.py"
+      - "requirements.txt"
+      - ".github/workflows/swarm_tests.yml"
+  pull_request:
+    paths:
+      - "modules/swarm_*.py"
+      - "modules/capture_adapter.py"
+      - "tests/test_swarm_*.py"
+      - "requirements.txt"
+      - ".github/workflows/swarm_tests.yml"
+  workflow_dispatch:
+
+jobs:
+  swarm-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run swarm tests
+        run: |
+          python -m pytest \
+            tests/test_swarm_controller.py \
+            tests/test_swarm_agent.py \
+            tests/test_swarm_integration.py \
+            -q --tb=short
