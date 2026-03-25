@@ -10,6 +10,7 @@ VS Code Language Server Protocol). Implementiert 7 Methoden:
   aether/twins      → Twin-Cluster in Signalmenge finden
   aether/complete   → Completions filtern + ranken
   aether/status     → Server-Status
+    /bootstrap/status → Bootstrap-Status aus lokalen Dateien
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ import collections
 import json
 import logging
 import os
+from pathlib import Path
 import sys
 import time
 from typing import Any, Callable, Dict, Optional
@@ -52,6 +54,60 @@ _req_count = 0
 # ── Live-Event-Log ────────────────────────────────────────────────────────────
 _events: collections.deque = collections.deque(maxlen=500)
 _event_idx: int = 0
+
+
+def _bootstrap_status_payload() -> dict:
+    settings_path = Path(_ROOT) / "data" / "settings.json"
+    anchors_dir = Path(_ROOT) / "data" / "anchors"
+    consent_path = Path(_ROOT) / "data" / "swarm_consent.json"
+    private_key_path = Path(_ROOT) / "keys" / "node_private.key"
+
+    solo_genesis_mode = False
+    needs_bootstrap = True
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            solo_genesis_mode = bool(settings.get("solo_genesis_mode", False))
+            needs_bootstrap = not solo_genesis_mode
+        except Exception:
+            needs_bootstrap = True
+
+    pack_count = 0
+    total_anchors = 0
+    if anchors_dir.is_dir():
+        for pack_path in anchors_dir.glob("*.pack"):
+            pack_count += 1
+            try:
+                raw = json.loads(pack_path.read_text(encoding="utf-8"))
+                anchors = raw.get("anchors", []) if isinstance(raw, dict) else []
+                if isinstance(anchors, list):
+                    total_anchors += len(anchors)
+            except Exception:
+                continue
+
+    consent_ok = False
+    if consent_path.is_file():
+        try:
+            consent_data = json.loads(consent_path.read_text(encoding="utf-8"))
+            consent_ok = bool(
+                consent_data.get("consent_ok")
+                or consent_data.get("consent")
+                or consent_data.get("approved")
+                or consent_data.get("allow_swarm")
+            )
+        except Exception:
+            consent_ok = False
+
+    keypair_ok = private_key_path.is_file() and private_key_path.stat().st_size > 0
+
+    return {
+        "needs_bootstrap": bool(needs_bootstrap),
+        "solo_genesis_mode": bool(solo_genesis_mode),
+        "pack_count": int(pack_count),
+        "total_anchors": int(total_anchors),
+        "consent_ok": bool(consent_ok),
+        "keypair_ok": bool(keypair_ok),
+    }
 
 
 def _log_event(kind: str, detail: str = "") -> None:
@@ -173,6 +229,16 @@ async def handle_status(params: dict) -> dict:
         "vault_path":  _vault._db_path,
         "timestamp":   time.time(),
     }
+
+
+@register("/bootstrap/status")
+async def handle_bootstrap_status(params: dict) -> dict:
+    return _bootstrap_status_payload()
+
+
+@register("aether/bootstrap_status")
+async def handle_bootstrap_status_rpc(params: dict) -> dict:
+    return _bootstrap_status_payload()
 
 
 @register("aether/events")

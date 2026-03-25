@@ -14,6 +14,14 @@ from modules.invariant_observer import get_last_estimated_saving
 _log = logging.getLogger(__name__)
 
 
+def _is_solo_genesis_mode() -> bool:
+    try:
+        s = json.loads(Path("data/settings.json").read_text(encoding="utf-8"))
+        return bool(s.get("solo_genesis_mode", False))
+    except Exception:
+        return False
+
+
 def _derive_alerts(*, node_count: int, reachable_count: int, genesis_key_ok: bool, candidate_count: int, consensus_count: int) -> tuple[str, list[dict[str, Any]], float]:
     alerts: list[dict[str, Any]] = []
     score = 1.0
@@ -22,7 +30,7 @@ def _derive_alerts(*, node_count: int, reachable_count: int, genesis_key_ok: boo
         alerts.append({"severity": "critical", "code": "GENESIS_KEY_MISSING", "message": "Genesis key missing or invalid."})
         score -= 0.35
 
-    if node_count < 3:
+    if node_count < 3 and not _is_solo_genesis_mode():
         alerts.append({"severity": "warning", "code": "NODE_COUNT_LOW", "message": "Swarm has fewer than 3 nodes."})
         score -= 0.20
 

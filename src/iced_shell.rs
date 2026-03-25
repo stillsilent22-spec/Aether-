@@ -156,6 +156,7 @@ enum Message {
     FlowSphereRotateRight,
     FlowSphereResetView,
     FlowSphereToggleViewMode,
+    FlowSphereNodeClicked(usize),
     OpenFullTab(Tab),
     SymbiontInputChanged(String),
     SymbiontProfilePressed,
@@ -764,7 +765,11 @@ impl AetherIcedShell {
             .normalized();
         }
 
-        let right_column_x = 18.0 + 180.0 + 18.0;
+        // Responsive Navigator width: 140px—200px depending on window size
+        let nav_width = ((self.window_width * 0.15).clamp(140.0, 200.0)).floor();
+        let left_margin = 18.0;
+        let nav_gap = 12.0;
+        let right_column_x = left_margin + nav_width + nav_gap;
         let main_width = (self.window_width - right_column_x - 18.0).max(360.0);
         let top_tabs_height = 58.0;
         let status_height = 30.0;
@@ -4895,6 +4900,13 @@ impl AetherIcedShell {
             Message::FlowSphereToggleViewMode => {
                 self.flow_sphere_view_mode = !self.flow_sphere_view_mode;
             }
+            Message::FlowSphereNodeClicked(idx) => {
+                if self.flow_sphere_view_mode {
+                    self.status_line = format!("Attractor {} selected", idx);
+                } else {
+                    self.status_line = format!("Swarm Node {} clicked", idx);
+                }
+            }
             Message::FlowSphereExportPressed => {
                 let snapshot = serde_json::json!({
                     "snapshot_idx": self.flow_sphere_snapshot_idx,
@@ -5228,13 +5240,18 @@ impl AetherIcedShell {
                 if self.browser_surface_mode().is_none() {
                     return Task::none();
                 }
-                let effective_browser_stride = if self.live_render_mode && self.live_render_anchor_boost {
-                    self.browser_sync_stride.saturating_mul(2).max(1)
+                let (effective_browser_stride, boost_activity) = if self.live_render_mode && self.live_render_anchor_boost {
+                    // Real boost: reduce stride (faster sync) + enable high-load delta compression
+                    (self.browser_sync_stride.saturating_div(2).max(1), true)
                 } else {
-                    self.browser_sync_stride.max(1)
+                    (self.browser_sync_stride.max(1), false)
                 };
                 if self.tick_counter % effective_browser_stride == 0 {
                     self.sync_browser_embed();
+                    // When boost is active, prioritize delta updates over full redraws
+                    if boost_activity {
+                        self.structure_map_compression = (self.structure_map_compression + 0.5).min(100.0);
+                    }
                 }
                 for event in self
                     .browser_embed
@@ -6881,6 +6898,64 @@ impl canvas::Program<Message> for FlowSphereScene {
         }
 
         vec![frame.into_geometry()]
+    }
+
+    fn interact(
+        &self,
+        _state: &mut Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> (Status, Option<Message>) {
+        use std::f32::consts::TAU;
+
+        if let Some(pos) = cursor.position_in(&bounds) {
+            let cx = bounds.width * 0.5;
+            let cy = bounds.height * 0.5;
+            let base_r = cx.min(cy) * 0.70;
+            let r = (base_r + (self.info_growth * 32.0).min(32.0)) * self.zoom.clamp(0.60, 2.20);
+            let t = self.tick as f32;
+            let rot_y = t * 0.006 + self.manual_rotation_offset;
+            let d = 3.2f32;
+
+            let project = |lat: f32, lon: f32| -> (f32, f32, f32) {
+                let x3 = lat.cos() * lon.cos();
+                let y3 = lat.sin();
+                let z3 = lat.cos() * lon.sin();
+                let xr = x3 * rot_y.cos() + z3 * rot_y.sin();
+                let yr = y3;
+                let zr = -x3 * rot_y.sin() + z3 * rot_y.cos();
+                let scale = d / (d - zr * 0.28);
+                (cx + xr * r * scale, cy - yr * r * scale, zr)
+            };
+
+            // Check swarm nodes (global mode)
+            if !self.view_mode && !self.swarm_nodes.is_empty() {
+                for (idx, (_name, lat, lon, _coherence)) in self.swarm_nodes.iter().enumerate() {
+                    let (node_x, node_y, z) = project(*lat, *lon);
+                    if z > -0.1 {
+                        let dist = ((pos.x - node_x).powi(2) + (pos.y - node_y).powi(2)).sqrt();
+                        if dist < 9.0 {
+                            return (Status::Captured, Some(Message::FlowSphereNodeClicked(idx)));
+                        }
+                    }
+                }
+            }
+
+            // Check attractor nodes (local mode)
+            if self.view_mode {
+                for (idx, &lon) in self.attractor_lons.iter().enumerate() {
+                    let lat = match idx % 3 { 0 => 0.30f32, 1 => -0.22f32, _ => 0.0f32 };
+                    let (att_x, att_y, z) = project(lat, (lon + rot_y).rem_euclid(TAU));
+                    if z > -0.20 {
+                        let dist = ((pos.x - att_x).powi(2) + (pos.y - att_y).powi(2)).sqrt();
+                        if dist < 11.0 {
+                            return (Status::Captured, Some(Message::FlowSphereNodeClicked(idx)));
+                        }
+                    }
+                }
+            }
+        }
+        (Status::Ignored, None)
     }
 }
 

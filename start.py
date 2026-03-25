@@ -1,9 +1,27 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
+
+
+def _needs_bootstrap() -> bool:
+	settings = Path("data/settings.json")
+	if not settings.is_file():
+		return True
+	try:
+		s = json.loads(settings.read_text(encoding="utf-8"))
+		return not s.get("solo_genesis_mode", False)
+	except Exception:
+		return True
+
+
+if _needs_bootstrap():
+	import solo_bootstrap
+
+	solo_bootstrap.run_bootstrap()
 
 
 ROOT = Path(__file__).resolve().parent

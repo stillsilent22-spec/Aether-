@@ -121,6 +121,31 @@ class SwarmAgent:
         self._last_metrics: Dict[str, Any] = {}
         self._started_at: Optional[str] = None
         self._cpu_usage: float = 0.0
+        self._last_health_check: float = 0.0  # Adaptive FPS: track last health sync
+@@        self._last_invariant_check: float = 0.0  # Invariant analysis every 30s
+@@        self._frame_change_sequence: list = []  # Track delta changes for Fourier
+@@    def _compute_and_persist_invariants(self) -> None:
+@@        """Compute mathematical invariants from swarm delta patterns (every ~30 sec)."""
+@@        try:
+@@            from modules.invariant_detector import compute_invariant_score
+@@            from modules.invariant_consensus_bridge import digest_invariants_to_consensus, persist_invariant_directives
+@@
+@@            # Build invariant input from accumulated metrics
+@@            change_seq = self._frame_change_sequence[-256:] if self._frame_change_sequence else []
+@@            if not change_seq:
+@@                return
+@@
+@@            invariants = compute_invariant_score(
+@@                change_sequence=change_seq,
+@@                anchor_frequencies=self._anchor_frequency_log,
+@@                file_sizes=[],
+@@            )
+@@
+@@            directives = digest_invariants_to_consensus(invariants)
+@@            persist_invariant_directives(directives)
+@@
+@@        except Exception as err:
+@@            print(f"[SWARM-AGENT] invariant analysis err: {err}")
 
     # ---- Lifecycle ---------------------------------------------------------
 
@@ -187,6 +212,12 @@ class SwarmAgent:
                 if self._capture_active and self._capture is not None:
                     self._process_frames()
                     self._adapt_cpu()
+
+                # Adaptive FPS: check swarm health every 5 seconds
+                now = time.monotonic()
+                if now - self._last_health_check > 5.0:
+                    self._adjust_fps_from_health()
+                    self._last_health_check = now
 
             except Exception as err:
                 self._error_count += 1
@@ -301,6 +332,31 @@ class SwarmAgent:
             except Exception:
                 pass
         return 0.0
+
+    def _adjust_fps_from_health(self) -> None:
+        """Adaptive FPS based on swarm health_score: high health → higher FPS."""
+        try:
+            from modules.swarm_health import get_swarm_status
+            status = get_swarm_status()
+            health_score = status.get("health_score", 0.5)
+            quorum_reachable = status.get("quorum_reachable", False)
+            
+            if self._capture is None:
+                return
+            
+            # health_score [0.0, 1.0] maps to fps [0.5, max_fps]
+            target_fps = 0.5 + health_score * (self._max_fps - 0.5)
+            
+            # If quorum not reachable, reduce to conservative baseline
+            if not quorum_reachable:
+                target_fps = min(target_fps, 1.0)
+            
+            with self._lock:
+                self._capture.set_adaptive_fps(target_fps)
+                if health_score < 0.3:
+                    print(f"[SWARM-AGENT] Health degraded: {health_score:.2f}, throttling FPS to {target_fps:.2f}")
+        except Exception as err:
+            print(f"[SWARM-AGENT] health check failed: {err}")
 
 
 # --------------------------------------------------------------------------- #

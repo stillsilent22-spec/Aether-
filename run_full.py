@@ -6,6 +6,26 @@ run_full.py — Einzel-Script fuer:
 
 Aufruf:  python run_full.py
 """
+from pathlib import Path
+import json
+
+
+def _needs_bootstrap() -> bool:
+    settings = Path("data/settings.json")
+    if not settings.is_file():
+        return True
+    try:
+        s = json.loads(settings.read_text(encoding="utf-8"))
+        return not s.get("solo_genesis_mode", False)
+    except Exception:
+        return True
+
+
+if _needs_bootstrap():
+    import solo_bootstrap
+
+    solo_bootstrap.run_bootstrap()
+
 import subprocess, sys, os
 
 BASE = os.path.dirname(os.path.abspath(__file__))

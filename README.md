@@ -1,5 +1,14 @@
 # Aether
 
+## Quick Start
+
+```bash
+python solo_bootstrap.py # first-time setup (genesis node, keypair, anchor pack)
+python start.py # launch Aether
+```
+
+Solo genesis mode is supported — no second node required to start.
+
 > **We are burning the future to simulate intelligence. Aether is the alternative: a local, deterministic, mathematically grounded instrument for measuring structure, not generating guesses. No labels. No training. No cloud. No hallucinations. Only information theory, executed locally, with privacy as an architectural principle.**
 
 > **Wir verbrennen die Zukunft, um Intelligenz zu simulieren. Aether ist die Alternative: ein lokales, deterministisches, mathematisch fundiertes Instrument zur Messung von Struktur, nicht zur Erzeugung von Vermutungen. Keine Labels. Kein Training. Keine Cloud. Keine Halluzinationen. Nur Informationstheorie, lokal ausgeführt, mit Privatsphäre als Architekturprinzip.**

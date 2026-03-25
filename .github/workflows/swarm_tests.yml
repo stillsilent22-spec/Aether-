@@ -44,3 +44,7 @@ jobs:
             tests/test_swarm_agent.py \
             tests/test_swarm_integration.py \
             -q --tb=short
+
+      - name: Solo bootstrap smoke test
+        run: |
+          python solo_bootstrap.py --dry-run
