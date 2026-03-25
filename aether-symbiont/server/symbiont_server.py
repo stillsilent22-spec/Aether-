@@ -1,3 +1,54 @@
+
+# Batch-Profilvergleich: mehrere Dateien analysieren, Profile erzeugen, Outlier/Cluster erkennen
+@register("aether/batch_profile_compare")
+async def handle_batch_profile_compare(params: dict) -> dict:
+    """
+    params: { "signals": list[str|list[int]] }
+    returns: { "profiles": list[dict], "outliers": list[int], "clusters": list[list[int]] }
+    """
+    signals = params.get("signals", [])
+    profiles = []
+    for raw in signals:
+        if isinstance(raw, list):
+            signal = bytes(raw)
+        else:
+            signal = str(raw)
+        profile = _symbiont.profile(signal)
+        profiles.append(profile.to_dict())
+
+    # Outlier-Detection: einfache Z-Score auf Entropie, Fourier, Zipf, etc.
+    import numpy as np
+    if not profiles:
+        return {"profiles": [], "outliers": [], "clusters": []}
+    arr = np.array([
+        [
+            p["entropy"],
+            p["fourier_energy"],
+            p["zipf_exponent"],
+            p["benford_deviation"],
+            p["mandelbrot_score"],
+        ] for p in profiles
+    ])
+    means = np.mean(arr, axis=0)
+    stds = np.std(arr, axis=0) + 1e-9
+    zscores = np.abs((arr - means) / stds)
+    outliers = [i for i, z in enumerate(zscores.max(axis=1)) if z > 2.5]
+
+    # Clustering (sehr einfach: KMeans mit 2-4 Clustern)
+    from sklearn.cluster import KMeans
+    n_clusters = min(4, len(profiles)) if len(profiles) >= 2 else 1
+    clusters = []
+    if n_clusters > 1:
+        kmeans = KMeans(n_clusters=n_clusters, n_init=5, random_state=42)
+        labels = kmeans.fit_predict(arr)
+        for c in range(n_clusters):
+            clusters.append([i for i, l in enumerate(labels) if l == c])
+
+    return {
+        "profiles": profiles,
+        "outliers": outliers,
+        "clusters": clusters,
+    }
 """symbiont_server.py — Aether Symbiont LSP/JSON-RPC Server.
 
 Startet einen asynchronen JSON-RPC-Server auf stdin/stdout (kompatibel mit
@@ -233,6 +284,7 @@ async def handle_status(params: dict) -> dict:
 
 @register("/bootstrap/status")
 async def handle_bootstrap_status(params: dict) -> dict:
+    """Returns bootstrap status for the VS Code panel."""
     return _bootstrap_status_payload()
 
 

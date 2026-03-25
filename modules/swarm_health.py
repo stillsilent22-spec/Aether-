@@ -16,6 +16,8 @@ _log = logging.getLogger(__name__)
 
 def _is_solo_genesis_mode() -> bool:
     try:
+        import json
+        from pathlib import Path
         s = json.loads(Path("data/settings.json").read_text(encoding="utf-8"))
         return bool(s.get("solo_genesis_mode", False))
     except Exception:

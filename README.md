@@ -3,8 +3,8 @@
 ## Quick Start
 
 ```bash
-python solo_bootstrap.py # first-time setup (genesis node, keypair, anchor pack)
-python start.py # launch Aether
+python solo_bootstrap.py   # first-time setup (genesis node, keypair, anchor pack)
+python start.py            # launch Aether
 ```
 
 Solo genesis mode is supported — no second node required to start.

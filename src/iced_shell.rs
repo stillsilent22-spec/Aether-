@@ -1,3 +1,49 @@
+// Score-Tooltip-Mapping für die UI
+pub fn get_score_tooltip(score_name: &str) -> &'static str {
+    match score_name {
+        "SECURITY" => "Prüft auf verbotene oder gefährliche Inhalte. Nützlich für Blacklist-Checks und Policy Enforcement.",
+        "SHANNON" => "Entropie misst die Komplexität und Zufälligkeit der Datenstruktur. Hohe Werte deuten auf Verschlüsselung, Kompression oder künstliche Muster hin.",
+        "H_LAMBDA" => "Restunsicherheit nach Abzug des Vorwissens. Zeigt, wie viel an der Struktur noch unbekannt oder unerklärt ist.",
+        "ANCHOR" => "Detektiert natürliche Zahlenverteilungen und mathematische Konstanten. Niedrige Werte können auf künstliche oder manipulierte Strukturen hindeuten.",
+        "SYMMETRY" => "Misst die Gleichmäßigkeit und Symmetrie der Verteilung. Hohe Symmetrie kann auf generierte, komprimierte oder manipulierte Daten hindeuten.",
+        "DELTA" => "Vergleicht die Struktur mit einer Zufallsreferenz. Hohe Werte zeigen starke Abweichungen oder Muster, niedrige Werte deuten auf Zufall oder starke Obfuskation.",
+        "PERIODICITY" => "Erkennt periodische oder wiederkehrende Muster in der Struktur. Hohe Werte bei Protokollen, Musik, maschinellen Daten.",
+        "SCE" => "Gesamtkohärenz der Struktur. Hohe Werte deuten auf konsistente, natürliche Muster, niedrige auf Fragmentierung oder Inkonsistenz.",
+        "BAYES" => "Bewertet die Übereinstimmung der gefundenen Muster mit bekannten, vertrauenswürdigen Strukturen.",
+        "TRUST" => "Gesamteinschätzung aus allen Schichten. Hohe Werte: konsistent, natürlich, vertrauenswürdig. Niedrige Werte: auffällig, künstlich, potenziell manipuliert.",
+        _ => "",
+    }
+}
+
+// Beispiel: Score-Panel mit Tooltips für die Analyse-Ansicht
+use iced::{tooltip, Tooltip, widget::{Row, Text, Column, Container}, Element};
+
+fn view_score_panel(scores: &[(String, f32)]) -> Element<'_, Message> {
+    let mut col = Column::new().spacing(8);
+    for (score_name, value) in scores {
+        let tooltip_text = get_score_tooltip(score_name);
+        let score_row = Row::new()
+            .push(Text::new(format!("{score_name}: {:.3}", value)).size(16))
+            .push(
+                Tooltip::new(
+                    Text::new("ⓘ").size(14).color([0.5, 0.5, 1.0]),
+                    tooltip_text,
+                    tooltip::Position::Right,
+                )
+                .gap(8)
+                .size(14),
+            );
+        col = col.push(score_row);
+    }
+    Container::new(col).padding(12).into()
+}
+use crate::py_bridge::DropperBridge;
+    dropper_bridge: DropperBridge,
+// ── Backup-Option für Analyse ─────────────────────────────────────────────
+// Diese Option aktiviert ein automatisches Backup jeder Datei vor der Analyse.
+// Die Sicherung erfolgt nach C:/AetherBackup/YYYY-MM-DD/ (siehe backup.rs).
+use crate::backup;
+use crate::deep_scan;
 use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::hardware;
@@ -10,63 +56,6 @@ use crate::key_vault::DataKey;
 use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
 use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus};
 use crate::policy_executor::{default_analysis_rules, RuleEngine};
-use crate::py_bridge::{
-    load_hybrid_settings, read_hybrid_status, set_symbiont_enabled, set_symbiont_endpoint,
-    PythonBridgeManager,
-};
-use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
-use crate::shanway::{render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput};
-use crate::state::{ChatMessage, GroupRoom, PrivateThread, RegisterEntry, StateStore};
-use crate::swarm_bootstrap::{probe_swarm_startup, SwarmStartupStatus};
-use crate::symbiont_rpc;
-use iced::theme::Palette;
-use iced::widget::{button, canvas, column, container, progress_bar, row, scrollable, text, text_input};
-use iced::{
-    application, event, keyboard, mouse, time, window, Alignment, Background, Border, Color, Element,
-    Length, Point, Rectangle, Settings, Size, Subscription, Task, Theme,
-};
-use std::collections::BTreeMap;
-use std::ffi::OsStr;
-use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, RwLock};
-use std::time::Duration;
-use zeroize::Zeroize;
-
-mod dashboard_search;
-
-#[allow(dead_code)]
-const BG_BASE: [u8; 3] = [0x0C, 0x0B, 0x12];
-const BG_CARD: [u8; 3] = [0x0B, 0x12, 0x18];
-const BG_CARD2: [u8; 3] = [0x16, 0x20, 0x28];
-const BORDER: [u8; 3] = [0x1F, 0x2A, 0x33];
-#[allow(dead_code)]
-const BORDER_ACT: [u8; 3] = [0x2F, 0xA3, 0xB5];
-const ACCENT: [u8; 3] = [0x3F, 0xBA, 0xC2];
-#[allow(dead_code)]
-const ACCENT2: [u8; 3] = [0x7F, 0xB8, 0xC7];
-const TEXT_H: [u8; 3] = [0xE8, 0xEC, 0xEF];
-const TEXT_M: [u8; 3] = [0xA7, 0xB0, 0xB7];
-const TEXT_D: [u8; 3] = [0x74, 0x83, 0x8E];
-const WARN: [u8; 3] = [0xC7, 0xA0, 0x4A];
-#[allow(dead_code)]
-const DANGER: [u8; 3] = [0xD9, 0x50, 0x50];
-
-fn c(rgb: [u8; 3]) -> Color {
-    Color::from_rgb8(rgb[0], rgb[1], rgb[2])
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    Home,
-    Control,
-    Symbiont,
-    SwarmOps,
-    Privacy,
-    Chat,
-    Browser,
-    YouTube,
     Data,
     Settings,
     Logs,
@@ -173,6 +162,10 @@ enum Message {
     HybridSymbiontEndpointPreset(String, u16),
     ToggleMode,
     WindowResized(f32, f32),
+    // Dropper pipeline integration
+    DropperStartPressed,
+    DropperStopPressed,
+    DropperResultUpdate,
     // Launcher Dashboard
     LauncherModeSelected(crate::launcher_dashboard::LauncherMode),
     LauncherServiceStartPressed(String),
@@ -327,6 +320,7 @@ pub struct AetherIcedShell {
     live_render_last_godel_delta: f32,
     live_render_anchor_boost: bool,
     live_render_last_os_sample_tick: u64,
+    backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
 }
 
 impl AetherIcedShell {
@@ -339,6 +333,7 @@ impl AetherIcedShell {
         } else {
             String::new()
         };
+        let dropper_bridge = DropperBridge::new();
         let mut shell = Self {
             auth_store: AuthStore::load_default(),
             state_store: StateStore::load_default(),
@@ -349,6 +344,20 @@ impl AetherIcedShell {
             security_snapshot: SecuritySnapshot::default(),
             security_audit_events: Vec::new(),
             swarm_startup: swarm_startup.clone(),
+                dropper_bridge,
+        // Dropper pipeline control
+        pub fn start_dropper_pipeline(&mut self, python_path: &str, script_path: &str, file_path: &str) -> Result<(), String> {
+            self.dropper_bridge.start(python_path, script_path, file_path)
+        }
+
+        pub fn stop_dropper_pipeline(&mut self) -> Result<(), String> {
+            self.dropper_bridge.stop()
+        }
+
+        pub fn dropper_results(&self) -> Vec<String> {
+            self.dropper_bridge.get_results()
+        }
+    deep_scan_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
             login_username: String::new(),
             login_password: String::new(),
             status_line: if swarm_startup.node_initialized {
@@ -461,6 +470,7 @@ impl AetherIcedShell {
             live_render_last_godel_delta: 0.0,
             live_render_anchor_boost: false,
             live_render_last_os_sample_tick: 0,
+            backup_enabled: true, // Standardmäßig aktiviert
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -483,6 +493,7 @@ impl AetherIcedShell {
         if !path.exists() {
             return;
         }
+            deep_scan_enabled: true, // Standardmäßig aktiviert
         let Ok(raw) = std::fs::read_to_string(path) else {
             return;
         };
@@ -978,6 +989,26 @@ impl AetherIcedShell {
                 )
                 .padding(12)
                 .style(accent_card_style),
+                // Backup-Option Beschreibung (sichtbar im Auth/Analyse-Panel)
+                container(
+                    column![
+                        text("Backup vor Analyse").size(13).color(c(TEXT_H)),
+                        text("Jede Datei wird vor der Analyse automatisch gesichert (C:/AetherBackup). Diese Option schützt vor Datenverlust und kann in den Einstellungen deaktiviert werden.")
+                            .size(11)
+                            .color(c(TEXT_M)),
+                    ]
+                    .spacing(2)
+                )
+                .padding(8)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x16, 0x20, 0x28))),
+                    border: Border {
+                        color: Color::from_rgb8(0x2F, 0xA3, 0xB5),
+                        width: 1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
             ]
             .spacing(12)
         )
@@ -989,28 +1020,8 @@ impl AetherIcedShell {
             column![
                 text("Sign in").size(24).color(c(TEXT_H)),
                 text_input("Username", &self.login_username)
-                    .on_input(Message::LoginUsernameChanged)
-                    .padding([10, 12])
-                    .size(16),
-                text_input("Password", &self.login_password)
-                    .on_input(Message::LoginPasswordChanged)
-                    .secure(true)
-                    .padding([10, 12])
-                    .size(16),
-                row![
-                    button(text("Login"))
-                        .padding([10, 18])
-                        .on_press(Message::LoginPressed)
-                        .style(primary_button_style),
-                    button(text("Register"))
-                        .padding([10, 18])
-                        .on_press(Message::RegisterPressed)
-                        .style(secondary_button_style),
-                ]
-                .spacing(10),
-                container(text(&self.status_line).size(13).color(c(TEXT_M)))
-                    .padding(10)
-                    .style(panel_frame_style),
+                    .on_input(Message::LoginUsernameChanged),
+                // Add more sign-in UI as needed
             ]
             .spacing(12)
         )
@@ -1018,28 +1029,11 @@ impl AetherIcedShell {
         .style(panel_frame_style)
         .width(Length::FillPortion(2));
 
-        container(
-            row![left, right]
-                .spacing(12)
-                .width(1180)
-        )
-        .padding(16)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x04, 0x08, 0x14))),
-            ..Default::default()
-        })
-        .into()
-    }
-
-    #[allow(dead_code)]
-    fn view_sidebar(&self) -> Element<'_, Message> {
-        let username = self
-            .current_username()
-            .unwrap_or_else(|| "aether_local".to_owned());
+        row![left, right]
+            .spacing(24)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
         let trust_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK")
             || self.security_snapshot.trust_state.to_uppercase().contains("SECURE");
@@ -1441,6 +1435,31 @@ impl AetherIcedShell {
             })
         };
 
+        let dropper_button = button(text("Run Dropper Pipeline").size(13))
+            .on_press(Message::DropperStartPressed)
+            .padding([8, 12])
+            .style(|_: &Theme, _| button::Style {
+                background: Some(Background::Color(Color::from_rgb8(0x3F, 0xBA, 0xC2))),
+                border: Border { color: c(ACCENT), width: 1.0, radius: 10.0.into() },
+                ..Default::default()
+            });
+
+        let dropper_results = self.dropper_results().join("\n");
+        let dropper_panel = container(
+            column![
+                row![
+                    text("Aether Dropper Results").size(16).color(c(TEXT_H)),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    dropper_button,
+                ].spacing(8).align_y(Alignment::Center),
+                text(&dropper_results).size(12).color(c(TEXT_M)),
+            ]
+            .spacing(8)
+        )
+        .padding(10)
+        .width(Length::Fill)
+        .style(standard_card_style);
+
         let topbar = row![
             column![
                 text("Welcome! Aether Operator").size(24).color(c(TEXT_H)),
@@ -1698,9 +1717,26 @@ impl AetherIcedShell {
                 kpis,
                 row![risk_panel, threat_summary_panel].spacing(10),
                 row![table_panel, donut_panel, device_panel].spacing(10),
+                dropper_panel,
             ]
             .spacing(10)
             .into()
+
+            pub fn update_dropper(&mut self, msg: &Message) {
+                match msg {
+                    Message::DropperStartPressed => {
+                        // Example: use default python and aether_dropper.py on a test file
+                        let _ = self.start_dropper_pipeline("python", "aether_dropper.py", "test.bin");
+                    }
+                    Message::DropperStopPressed => {
+                        let _ = self.stop_dropper_pipeline();
+                    }
+                    Message::DropperResultUpdate => {
+                        // Could trigger UI update if needed
+                    }
+                    _ => {}
+                }
+            }
         } else {
             let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
                 "Files" => self.view_data(),
@@ -2104,6 +2140,18 @@ impl AetherIcedShell {
                             .to_owned()
                     }),
             ),
+            // Score-Panel mit Tooltips direkt unter der Analysekarte anzeigen
+            if let Some(analysis) = &self.last_analysis {
+                let scores = vec![
+                    ("SHANNON".to_string(), analysis.compression_gain_percent),
+                    ("DELTA".to_string(), analysis.delta_size as f32),
+                    ("ANCHOR".to_string(), analysis.anchor_summary.parse().unwrap_or(0.0)),
+                    ("TRUST".to_string(), analysis.process_summary.parse().unwrap_or(0.0)),
+                ];
+                view_score_panel(&scores)
+            } else {
+                column![] // leer, falls keine Analyse vorliegt
+            },
         ]
         .spacing(14);
         let entries = self.entries();
@@ -6575,46 +6623,6 @@ struct FlowSphereScene {
 }
 
 impl canvas::Program<Message> for FlowSphereScene {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &iced::Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry<iced::Renderer>> {
-        use std::f32::consts::{PI, TAU};
-
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-
-        // Deep-space background
-        frame.fill_rectangle(
-            Point::new(0.0, 0.0),
-            bounds.size(),
-            Color::from_rgb8(0x01, 0x02, 0x06),
-        );
-
-        let cx = bounds.width * 0.5;
-        let cy = bounds.height * 0.5;
-        let base_r = cx.min(cy) * 0.70;
-        let r = (base_r + (self.info_growth * 32.0).min(32.0)) * self.zoom.clamp(0.60, 2.20);
-
-        let t = self.tick as f32;
-        let rot_y = t * 0.006 + self.manual_rotation_offset;
-        let d = 3.2f32;
-
-        let project = |lat: f32, lon: f32| -> (Point, f32) {
-            let x3 = lat.cos() * lon.cos();
-            let y3 = lat.sin();
-            let z3 = lat.cos() * lon.sin();
-            let xr = x3 * rot_y.cos() + z3 * rot_y.sin();
-            let yr = y3;
-            let zr = -x3 * rot_y.sin() + z3 * rot_y.cos();
-            let scale = d / (d - zr * 0.28);
-            (Point::new(cx + xr * r * scale, cy - yr * r * scale), zr)
-        };
 
         // ── Deep nebula glow + dark sphere fill ─────────────────────────────────────
         {
@@ -6718,63 +6726,6 @@ impl canvas::Program<Message> for FlowSphereScene {
             let arc_span = PI * 0.44;
             let hot = arc_idx % 2 == 1;
             const ARC_SEGS: usize = 40;
-            for pass in 0..2usize {
-                let mut prev: Option<(Point, f32)> = None;
-                for seg in 0..=ARC_SEGS {
-                    let progress = seg as f32 / ARC_SEGS as f32;
-                    let lon = (anim_lon + arc_span * progress).rem_euclid(TAU);
-                    let lat = lat_center + 0.30 * (progress * PI).sin();
-                    let (pt, z) = project(lat, lon);
-                    if let Some((pp, pz)) = prev {
-                        let avg_z = (z + pz) * 0.5;
-                        if avg_z > -0.30 {
-                            let br = ((avg_z + 1.0) * 0.5).clamp(0.0, 1.0);
-                            let intensity = (1.0 - (progress - 0.5).abs() * 2.0).max(0.0).powf(0.5);
-                            let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
-                            if pass == 0 {
-                                let alpha = 0.22 * intensity * br;
-                                let (rc, gc, bc) = if hot { (0.95, 0.30, 0.62) } else { (0.98, 0.88, 0.06) };
-                                frame.stroke(&seg_path, canvas::Stroke {
-                                    style: canvas::Style::Solid(Color::from_rgba(rc, gc, bc, alpha)),
-                                    width: 6.5 * intensity + 1.0,
-                                    ..canvas::Stroke::default()
-                                });
-                            } else {
-                                let alpha = (0.82 + 0.18 * br) * intensity;
-                                let (rc, gc, bc) = if hot { (1.0, 0.62, 0.82) } else { (1.0, 0.98, 0.38) };
-                                frame.stroke(&seg_path, canvas::Stroke {
-                                    style: canvas::Style::Solid(Color::from_rgba(rc, gc, bc, alpha)),
-                                    width: 1.5 * intensity + 0.4,
-                                    ..canvas::Stroke::default()
-                                });
-                            }
-                        }
-                    }
-                    prev = Some((pt, z));
-                }
-            }
-        }
-
-        // ── Surface data-points (golden spiral, 24 nodes) ────────────────
-        {
-            const N_SP: usize = 24;
-            let golden_angle = 2.399963f32;
-            for i in 0..N_SP {
-                let lat = ((1.0 - 2.0 * (i as f32 + 0.5) / N_SP as f32).clamp(-1.0, 1.0)).asin()
-                    .clamp(-PI * 0.46, PI * 0.46);
-                let lon = (i as f32 * golden_angle + rot_y * 0.7).rem_euclid(TAU);
-                let (pt, z) = project(lat, lon);
-                if z > 0.0 {
-                    let br = ((z + 1.0) * 0.5).clamp(0.3, 1.0);
-                    let blink = 0.6 + 0.4 * (t * 0.07 + i as f32 * 0.93).sin().abs();
-                    let alpha = 0.65 * br * blink;
-                    let hp = (i as f32 * 0.43 + t * 0.008).rem_euclid(TAU);
-                    let rc = 0.38 + 0.55 * hp.sin().abs();
-                    let gc = 0.72 + 0.25 * (hp + 2.1).cos().abs();
-                    let bc = 0.88 + 0.12 * (hp + 4.2).sin().abs();
-                    frame.fill(&canvas::Path::circle(pt, 2.8 * blink), Color::from_rgba(rc, gc, bc, alpha));
-                }
-            }
         }
 
         // ── Attractor nodes — 6 nodes, halos, neural arcs, pulse rings ───
@@ -6808,63 +6759,6 @@ impl canvas::Program<Message> for FlowSphereScene {
         for (idx, &(pt, z, pulse)) in apts.iter().enumerate() {
             if z > -0.20 {
                 let br = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
-                // Expanding pulse rings
-                for ring in 0..2usize {
-                    let raw = (t * 0.018 + idx as f32 * 1.57 + ring as f32 * PI).rem_euclid(TAU) / TAU;
-                    let ring_r = raw * r * 0.28;
-                    let ring_a = (1.0 - raw) * 0.15 * br;
-                    if ring_a > 0.005 {
-                        frame.stroke(&canvas::Path::circle(pt, ring_r), canvas::Stroke {
-                            style: canvas::Style::Solid(Color::from_rgba(0.08, 0.92, 0.98, ring_a)),
-                            width: 1.2 * (1.0 - raw),
-                            ..canvas::Stroke::default()
-                        });
-                    }
-                }
-                // Halo layers
-                frame.fill(&canvas::Path::circle(pt, 20.0 * pulse), Color::from_rgba(0.22, 0.92, 1.0, 0.048 * br));
-                frame.fill(&canvas::Path::circle(pt, 10.0 * pulse), Color::from_rgba(0.55, 0.98, 1.0, 0.15  * br));
-                frame.fill(&canvas::Path::circle(pt,  5.0 * pulse), Color::from_rgba(0.85, 1.0,  1.0, 0.50  * br));
-                frame.fill(&canvas::Path::circle(pt,  2.2),         Color::from_rgba(1.0,  1.0,  1.0, (0.88 + 0.12 * br).min(1.0)));
-            }
-        }
-
-        // ── Limb darkening — clean dark rings at sphere edge ─────────────
-        for i in 0..3usize {
-            let ring_r = r - i as f32 * 4.5;
-            let alpha = 0.24 / (i as f32 + 1.0);
-            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), ring_r), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.0, 0.0, 0.0, alpha)),
-                width: 11.0 - i as f32 * 3.0,
-                ..canvas::Stroke::default()
-            });
-        }
-
-        // ── Outer corona — three layered glow rings ───────────────────────
-        {
-            let a0 = 0.24 + 0.09 * (t * 0.032).sin();
-            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 1.5), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.58, 0.30, 1.0, a0)),
-                width: 2.8,
-                ..canvas::Stroke::default()
-            });
-            let a1 = 0.12 + 0.055 * (t * 0.021 + 1.1).sin();
-            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 9.0), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.42, 0.22, 0.88, a1)),
-                width: 1.6,
-                ..canvas::Stroke::default()
-            });
-            let a2 = 0.058 + 0.030 * (t * 0.014 + 2.3).sin();
-            frame.stroke(&canvas::Path::circle(Point::new(cx, cy), r + 22.0), canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.20, 0.40, 0.95, a2)),
-                width: 1.1,
-                ..canvas::Stroke::default()
-            });
-        }
-
-        // ── Blue pulse shimmer ────────────────────────────────────────────
-        {
-            let pulse_alpha = 0.042 + 0.030 * (t * 0.041).sin();
             frame.fill(
                 &canvas::Path::circle(Point::new(cx, cy), r + 2.0),
                 Color::from_rgba(0.04, 0.14, 0.92, pulse_alpha),
@@ -6900,63 +6794,6 @@ impl canvas::Program<Message> for FlowSphereScene {
         vec![frame.into_geometry()]
     }
 
-    fn interact(
-        &self,
-        _state: &mut Self::State,
-        bounds: Rectangle,
-        cursor: mouse::Cursor,
-    ) -> (Status, Option<Message>) {
-        use std::f32::consts::TAU;
-
-        if let Some(pos) = cursor.position_in(&bounds) {
-            let cx = bounds.width * 0.5;
-            let cy = bounds.height * 0.5;
-            let base_r = cx.min(cy) * 0.70;
-            let r = (base_r + (self.info_growth * 32.0).min(32.0)) * self.zoom.clamp(0.60, 2.20);
-            let t = self.tick as f32;
-            let rot_y = t * 0.006 + self.manual_rotation_offset;
-            let d = 3.2f32;
-
-            let project = |lat: f32, lon: f32| -> (f32, f32, f32) {
-                let x3 = lat.cos() * lon.cos();
-                let y3 = lat.sin();
-                let z3 = lat.cos() * lon.sin();
-                let xr = x3 * rot_y.cos() + z3 * rot_y.sin();
-                let yr = y3;
-                let zr = -x3 * rot_y.sin() + z3 * rot_y.cos();
-                let scale = d / (d - zr * 0.28);
-                (cx + xr * r * scale, cy - yr * r * scale, zr)
-            };
-
-            // Check swarm nodes (global mode)
-            if !self.view_mode && !self.swarm_nodes.is_empty() {
-                for (idx, (_name, lat, lon, _coherence)) in self.swarm_nodes.iter().enumerate() {
-                    let (node_x, node_y, z) = project(*lat, *lon);
-                    if z > -0.1 {
-                        let dist = ((pos.x - node_x).powi(2) + (pos.y - node_y).powi(2)).sqrt();
-                        if dist < 9.0 {
-                            return (Status::Captured, Some(Message::FlowSphereNodeClicked(idx)));
-                        }
-                    }
-                }
-            }
-
-            // Check attractor nodes (local mode)
-            if self.view_mode {
-                for (idx, &lon) in self.attractor_lons.iter().enumerate() {
-                    let lat = match idx % 3 { 0 => 0.30f32, 1 => -0.22f32, _ => 0.0f32 };
-                    let (att_x, att_y, z) = project(lat, (lon + rot_y).rem_euclid(TAU));
-                    if z > -0.20 {
-                        let dist = ((pos.x - att_x).powi(2) + (pos.y - att_y).powi(2)).sqrt();
-                        if dist < 11.0 {
-                            return (Status::Captured, Some(Message::FlowSphereNodeClicked(idx)));
-                        }
-                    }
-                }
-            }
-        }
-        (Status::Ignored, None)
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -8118,250 +7955,70 @@ async fn analyze_file_for_register(
     username: String,
     data_key: Option<DataKey>,
 ) -> Result<FileAnalysisResult, String> {
-    let original_bytes = fs::read(&path)
-        .map_err(|e| format!("Datei konnte nicht gelesen werden: {e}"))?;
+    // --- Dropper-Pipeline als deterministische Kaskade ---
+    use std::process::Command;
+    use std::io::Read;
+    let python = "python";
+    let script = "aether_dropper.py";
+    let file_path = path.to_string_lossy();
+    let output = Command::new(python)
+        .arg(script)
+        .arg(&file_path)
+        .arg("--json")
+        .output();
 
-    // Build 64-bucket byte histogram from original bytes (used for XOR strip visualization)
-    let byte_hist: Vec<f32> = {
-        let mut buckets = [0u32; 64];
-        for &b in &original_bytes {
-            buckets[(b >> 2) as usize] += 1;
-        }
-        let total = original_bytes.len().max(1) as f32;
-        buckets.iter().map(|&c| c as f32 / total).collect()
-    };
-
-    // Create AEF output directory
-    let aef_dir = PathBuf::from("data")
-        .join("rust_shell")
-        .join("aef_store")
-        .join(&username);
-    fs::create_dir_all(&aef_dir)
-        .map_err(|e| format!("AEF-Verzeichnis konnte nicht erstellt werden: {e}"))?;
-    let file_stem = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-    let aef_path = aef_dir.join(format!("{file_stem}.aef"));
-
-    // Load vault and build encoder
-    let vault = VaultStore::load_default().map_err(|e| format!("Vault: {e}"))?;
-    let vault = Arc::new(RwLock::new(vault));
-    let engine = Arc::new(EnginePipeline::new());
-    let encoder = if let Some(dk) = data_key {
-        AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine)).withdatakey(dk)
-    } else {
-        AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine))
-    };
-
-    // Encode the file to .aef
-    let encode_result = encoder
-        .encode_sync(&path, &aef_path)
-        .map_err(|e| format!("AEF-Encoding fehlgeschlagen: {e}"))?;
-
-    let original_size = encode_result.original_size;
-    let delta_size = encode_result.delta_size;
-    let compression_gain_percent =
-        ((1.0 - encode_result.compression_rate).clamp(0.0, 1.0) * 10000.0).round() / 100.0;
-    let file_name = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unbekannt")
-        .to_owned();
-    let source_kind = detect_source_kind(&path, &original_bytes);
-
-    let original_text = if is_text_like_file(&path) {
-        String::from_utf8_lossy(&original_bytes).to_string()
-    } else {
-        String::new()
-    };
-    let ethics = structural_text_integrity(
-        &original_text,
-        Some(encode_result.coherence_index),
-    );
-    let obfuscation = if original_text.is_empty() {
-        0.0
-    } else {
-        code_suspicion_score(&original_text)
-    };
-    let obf_level = if obfuscation >= 0.80 {
-        "HIGH"
-    } else if obfuscation >= 0.55 {
-        "MED"
-    } else {
-        "LOW"
-    };
-    let eicar_hit = original_text
-        .to_ascii_uppercase()
-        .contains("EICAR-STANDARD-ANTIVIRUS-TEST-FILE");
-
-    let mut metrics = BTreeMap::from([
-        ("entropy_mean".to_owned(), encode_result.coherence_index as f64),
-        ("trust_score".to_owned(), encode_result.trust_score as f64),
-        (
-            "compression_gain_percent".to_owned(),
-            compression_gain_percent as f64,
-        ),
-        (
-            "anchor_count".to_owned(),
-            encode_result.anchor_count as f64,
-        ),
-        ("ethics_score".to_owned(), ethics.score),
-        ("ethics_zipf".to_owned(), ethics.zipf),
-        ("ethics_noether".to_owned(), ethics.noether),
-        ("obfuscation_score".to_owned(), obfuscation),
-        ("eicar_hit".to_owned(), if eicar_hit { 1.0 } else { 0.0 }),
-    ]);
-
-    // Hard boundary: any lab-like metrics must pass strict schema validation before use.
-    let safe_id = format!("{}_{}", username, file_stem)
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    let lab_response = LabResponse {
-        schema_version: LAB_SCHEMA_VERSION,
-        request_id: format!("reg_{safe_id}"),
-        model: "observer".to_owned(),
-        metrics: BTreeMap::from([
-            ("h_lambda".to_owned(), encode_result.coherence_index as f64),
-            (
-                "observer_coherence".to_owned(),
-                encode_result.coherence_index as f64,
-            ),
-            ("beauty_score".to_owned(), encode_result.trust_score as f64),
-            (
-                "graph_density".to_owned(),
-                (compression_gain_percent as f64 / 100.0).clamp(0.0, 1.0),
-            ),
-        ]),
-        diagnostics: vec!["local_rust_analysis".to_owned()],
-    };
-    validate_response(&lab_response)
-        .map_err(|err| format!("Boundary-Reject (fail-closed): {err}"))?;
-    let stable_metrics = extract_stable_metrics(&lab_response);
-    if let Some(value) = stable_metrics.h_lambda {
-        metrics.insert("lab_h_lambda".to_owned(), value);
-    }
-    if let Some(value) = stable_metrics.observer_coherence {
-        metrics.insert("lab_observer_coherence".to_owned(), value);
-    }
-    if let Some(value) = stable_metrics.graph_density {
-        metrics.insert("lab_graph_density".to_owned(), value);
-    }
-    if let Some(value) = stable_metrics.beauty_score {
-        metrics.insert("lab_beauty_score".to_owned(), value);
-    }
-    let evidence_refs = vec![aef_path.display().to_string()];
-    let policy_engine = RuleEngine::new(default_analysis_rules(), None)
-        .map_err(|err| format!("Policy-Engine fehlgeschlagen: {err}"))?;
-    let policy_hits = policy_engine.evaluate_all(
-        &metrics,
-        &file_name,
-        "aether_iced_analysis",
-        &evidence_refs,
-        true,
-    );
-    let policy_summary = if policy_hits.is_empty() {
-        "Policy: keine Regel aktiv".to_owned()
-    } else {
-        let labels = policy_hits
-            .iter()
-            .map(|entry| format!("{}:{}", entry.action, entry.rule_ids.join("+")))
-            .collect::<Vec<_>>()
-            .join(" | ");
-        format!("Policy: {labels}")
-    };
-    let malware_policy_hit = policy_hits.iter().any(|entry| {
-        let action = entry.action.to_ascii_lowercase();
-        action.contains("block") || action.contains("deny") || action.contains("quarantine")
-    });
-    let cascade_summary = format!(
-        "Cascade: Ethics {:.2} | Obf {:.2} ({}) | MalwarePolicy {} | EICAR {}",
-        ethics.score,
-        obfuscation,
-        obf_level,
-        if malware_policy_hit { "HIT" } else { "no" },
-        if eicar_hit { "HIT" } else { "no" }
-    );
-    let preview_note = format!(
-        "AEF | E_\u{03bb}: {:.2} ({}) | Trust: {:.0}% | Lossless: {} | {} | {}",
-        encode_result.e_lambda,
-        encode_result.e_lambda_label,
-        encode_result.trust_score * 100.0,
-        if encode_result.lossless_confirmed { "ja" } else { "nein" },
-        policy_summary,
-        cascade_summary
-    );
-    let anchor_summary = format!(
-        "{} Anker | {:.1}% Kompression | Trust: {:.0}%",
-        encode_result.anchor_count,
-        compression_gain_percent,
-        encode_result.trust_score * 100.0
-    );
-    let process_summary = format!(
-        "AEF-Encoding: {} B \u{2192} {} B | E_\u{03bb}={:.2} | {} | {}",
-        original_size, delta_size, encode_result.e_lambda, policy_summary, cascade_summary
-    );
-
-    // XOR delta: read encoded AEF delta, build its 64-bucket histogram, diff against original
-    let xor_delta: Vec<f32> = {
-        match fs::read(&aef_path) {
-            Ok(aef_bytes) => {
-                let mut delta_buckets = [0u32; 64];
-                for &b in &aef_bytes {
-                    delta_buckets[(b >> 2) as usize] += 1;
+    match output {
+        Ok(out) if out.status.success() => {
+            let json_str = String::from_utf8_lossy(&out.stdout);
+            // Versuche, das Dropper-JSON zu parsen
+            match serde_json::from_str::<serde_json::Value>(&json_str) {
+                Ok(val) => {
+                    // Mapping auf FileAnalysisResult (vereinfachtes Beispiel)
+                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unbekannt").to_owned();
+                    let original_size = val["size_bytes"].as_u64().unwrap_or(0);
+                    let anchor_summary = val["analysis"]["summary"]["anchor_coverage_ratio"].to_string();
+                    let process_summary = val["analysis"]["summary"]["verdict"].to_string();
+                    let preview_note = val["analysis"]["summary"]["verdict"].to_string();
+                    Ok(FileAnalysisResult {
+                        byte_hist: vec![], // Optional: aus JSON übernehmen
+                        xor_delta: vec![], // Optional: aus JSON übernehmen
+                        entry: RegisterEntry {
+                            id: 0,
+                            owner_username: username,
+                            file_name: file_name.clone(),
+                            full_path: file_path.to_string(),
+                            source_kind: "dropper".to_owned(),
+                            original_size: original_size as u64,
+                            delta_size: 0,
+                            compression_gain_percent: 0.0,
+                            anchor_summary,
+                            process_summary,
+                            preview_note: preview_note.clone(),
+                            plain_note: preview_note,
+                        },
+                        snapshot: AnalysisSnapshot {
+                            file_name,
+                            original_size: original_size as u64,
+                            delta_size: 0,
+                            compression_gain_percent: 0.0,
+                            anchor_summary: String::new(),
+                            process_summary: String::new(),
+                            preview_note: String::new(),
+                        },
+                    })
                 }
-                let dtotal = aef_bytes.len().max(1) as f32;
-                byte_hist
-                    .iter()
-                    .zip(delta_buckets.iter())
-                    .map(|(&orig_freq, &dc)| (orig_freq - dc as f32 / dtotal).abs())
-                    .collect()
+                Err(e) => Err(format!("Dropper-JSON konnte nicht geparst werden: {e}\n{json_str}")),
             }
-            Err(_) => byte_hist.iter().map(|&v| v * 0.5).collect(),
         }
-    };
-
-    Ok(FileAnalysisResult {
-        byte_hist,
-        xor_delta,
-        entry: RegisterEntry {
-            id: 0,
-            owner_username: username,
-            file_name: file_name.clone(),
-            full_path: aef_path.to_string_lossy().to_string(),
-            source_kind,
-            original_size,
-            delta_size,
-            compression_gain_percent,
-            anchor_summary: anchor_summary.clone(),
-            process_summary: process_summary.clone(),
-            preview_note: preview_note.clone(),
-            plain_note: plain_note_from_metrics(
-                encode_result.trust_score,
-                encode_result.anchor_count as u32,
-                compression_gain_percent,
-                malware_policy_hit,
-                eicar_hit,
-                encode_result.lossless_confirmed,
-            ),
-        },
-        snapshot: AnalysisSnapshot {
-            file_name,
-            original_size,
-            delta_size,
-            compression_gain_percent,
-            anchor_summary,
-            process_summary,
-            preview_note,
-        },
-    })
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            Err(format!("Dropper-Analyse fehlgeschlagen: {err}"))
+        }
+        Err(e) => {
+            // Fallback: Legacy Rust-Analyse (optional)
+            Err(format!("Dropper-Pipeline konnte nicht gestartet werden: {e}"))
+        }
+    }
 }
 
 fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {

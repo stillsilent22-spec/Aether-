@@ -532,17 +532,21 @@ impl LauncherState {
     }
 
     pub fn mark_build_task_running(&mut self, task_id: &str) -> Result<String, String> {
-        let task = self
-            .build_tasks
-            .iter_mut()
-            .find(|task| task.id == task_id)
-            .ok_or_else(|| format!("Task {} not found", task_id))?;
-        if task.running {
-            return Err(format!("Task {} already running", task.name));
+        // Limit the mutable borrow scope to avoid double mutable borrow
+        let task_name;
+        {
+            let task = self
+                .build_tasks
+                .iter_mut()
+                .find(|task| task.id == task_id)
+                .ok_or_else(|| format!("Task {} not found", task_id))?;
+            if task.running {
+                return Err(format!("Task {} already running", task.name));
+            }
+            task_name = task.name.clone();
+            task.running = true;
+            task.last_exit_code = None;
         }
-        let task_name = task.name.clone();
-        task.running = true;
-        task.last_exit_code = None;
         self.log(format!("[BUILD] Starting: {}", task_name));
         Ok(task_name)
     }

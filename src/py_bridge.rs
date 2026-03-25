@@ -1,3 +1,78 @@
+// ── DropperBridge: Rust ↔ Python Dropper Pipeline ─────────────────────────────
+use std::io::{BufRead, BufReader, Write};
+use std::process::{ChildStdin, ChildStdout};
+use std::sync::{Arc, Mutex};
+use std::thread;
+
+pub struct DropperBridge {
+    child: Option<std::process::Child>,
+    stdin: Option<ChildStdin>,
+    stdout: Option<BufReader<ChildStdout>>,
+    results: Arc<Mutex<Vec<String>>>,
+}
+
+impl DropperBridge {
+    pub fn new() -> Self {
+        Self {
+            child: None,
+            stdin: None,
+            stdout: None,
+            results: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    pub fn start(&mut self, python_path: &str, script_path: &str, file_path: &str) -> Result<(), String> {
+        if self.child.is_some() {
+            return Err("Dropper pipeline already running".to_owned());
+        }
+        let mut cmd = Command::new(python_path);
+        cmd.arg(script_path)
+            .arg(file_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd.spawn().map_err(|e| format!("Failed to start dropper: {e}"))?;
+        let stdin = child.stdin.take().ok_or("Failed to open stdin for dropper")?;
+        let stdout = child.stdout.take().ok_or("Failed to open stdout for dropper")?;
+        let reader = BufReader::new(stdout);
+        let results = self.results.clone();
+        // Spawn a thread to read output lines and push to results
+        thread::spawn(move || {
+            for line in reader.lines() {
+                if let Ok(l) = line {
+                    results.lock().unwrap().push(l);
+                }
+            }
+        });
+        self.stdin = Some(stdin);
+        self.stdout = None; // Output is handled by thread
+        self.child = Some(child);
+        Ok(())
+    }
+
+    pub fn is_running(&mut self) -> bool {
+        if let Some(child) = &mut self.child {
+            match child.try_wait() {
+                Ok(None) => return true,
+                Ok(Some(_)) | Err(_) => {
+                    self.child = None;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn get_results(&self) -> Vec<String> {
+        self.results.lock().unwrap().clone()
+    }
+
+    pub fn stop(&mut self) -> Result<(), String> {
+        if let Some(mut child) = self.child.take() {
+            child.kill().map_err(|e| format!("Failed to kill dropper: {e}"))?;
+        }
+        Ok(())
+    }
+}
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs;

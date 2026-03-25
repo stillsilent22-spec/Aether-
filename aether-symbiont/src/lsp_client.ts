@@ -11,6 +11,14 @@ export class SymbiontLanguageClient {
     private _nextId = 1;
     private _pending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
     private _buffer = '';
+        private _auditLog: Array<{
+            timestamp: string;
+            method: string;
+            params: object;
+            result?: unknown;
+            error?: string;
+            direction: 'request' | 'response';
+        }> = [];
 
     constructor(
         private readonly serverPath: string,
@@ -80,6 +88,13 @@ export class SymbiontLanguageClient {
             this._pending.set(id, { resolve, reject });
             const msg = JSON.stringify({ jsonrpc: '2.0', id, method, params });
             const header = `Content-Length: ${Buffer.byteLength(msg, 'utf-8')}\r\n\r\n`;
+            // Audit: Logge Request
+            this._auditLog.push({
+                timestamp: new Date().toISOString(),
+                method,
+                params,
+                direction: 'request',
+            });
             if (this._socket !== null) {
                 this._socket.write(header + msg, 'utf-8');
             } else {
@@ -115,6 +130,16 @@ export class SymbiontLanguageClient {
                 if (msg.id !== undefined && this._pending.has(msg.id)) {
                     const { resolve, reject } = this._pending.get(msg.id)!;
                     this._pending.delete(msg.id);
+                    // Audit: Logge Response
+                    const lastRequest = this._auditLog.slice().reverse().find(e => e.method === msg.method && e.direction === 'request');
+                    this._auditLog.push({
+                        timestamp: new Date().toISOString(),
+                        method: msg.method || (lastRequest ? lastRequest.method : 'unknown'),
+                        params: lastRequest ? lastRequest.params : {},
+                        result: msg.result,
+                        error: msg.error?.message,
+                        direction: 'response',
+                    });
                     if (msg.error) {
                         reject(new Error(msg.error.message ?? 'Unknown error'));
                     } else {
@@ -125,5 +150,9 @@ export class SymbiontLanguageClient {
                 // Ignore malformed JSON frames.
             }
         }
+    }
+    // Exportiert das Audit-Log als JSON-String
+    public exportAuditLog(): string {
+        return JSON.stringify(this._auditLog, null, 2);
     }
 }

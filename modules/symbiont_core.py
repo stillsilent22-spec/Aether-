@@ -34,6 +34,7 @@ class StructuralProfile:
     """
     Invariante strukturelle Merkmale eines Signals.
     Alle Werte sind dimensionslos und signaltyp-unabhängig.
+    Enthält Fourier-, Benford-, Zipf-, Mandelbrot-Features und Noether-Invarianten.
     """
     signal_id: str                  # SHA-256[:16] des Signals
     timestamp: float
@@ -45,6 +46,13 @@ class StructuralProfile:
     structural_depth: int           # Schachtelungstiefe (für dicts)
     symmetry: float                 # Palindrom-ähnliche Achsensymmetrie [0, 1]
     signal_type: str                # "text" | "bytes" | "dict"
+    fourier_energy: float           # Energie im Frequenzraum
+    benford_deviation: float        # Abweichung von Benfords Gesetz
+    zipf_exponent: float            # Zipf-Exponent (Wortverteilung)
+    mandelbrot_score: float         # Mandelbrot-ähnliche Fraktalität
+    katz_dimension: float           # Katz-Fraktalitätsmaß
+    attractor_stability: float      # Attraktor-Stabilität (Lyapunov-ähnlich)
+    noether_invariants: dict        # Extrahierte Noether-Invarianten
 
     def to_dict(self) -> dict:
         return {
@@ -58,6 +66,13 @@ class StructuralProfile:
             "structural_depth":   self.structural_depth,
             "symmetry":           round(self.symmetry, 4),
             "signal_type":        self.signal_type,
+            "fourier_energy":     round(self.fourier_energy, 5),
+            "benford_deviation":  round(self.benford_deviation, 5),
+            "zipf_exponent":      round(self.zipf_exponent, 5),
+            "mandelbrot_score":   round(self.mandelbrot_score, 5),
+            "katz_dimension":     round(self.katz_dimension, 5),
+            "attractor_stability":round(self.attractor_stability, 5),
+            "noether_invariants": self.noether_invariants,
         }
 
 
@@ -210,6 +225,116 @@ class AetherSymbiont:
         depth = _dict_depth(signal) if isinstance(signal, dict) else 0
         symmetry = _symmetry(raw)
 
+        # Fourier-Feature (Energie im Frequenzraum)
+        try:
+            import numpy as np
+            arr = np.frombuffer(raw, dtype=np.uint8)
+            fft = np.fft.fft(arr)
+            fourier_energy = float(np.sum(np.abs(fft)**2)) / max(1, len(arr))
+        except Exception:
+            fourier_energy = 0.0
+
+        # Benford-Feature (Abweichung von Benfords Gesetz)
+        def benford_deviation(arr):
+            from math import log10
+            counts = [0]*9
+            for b in arr:
+                s = str(b)
+                if s and s[0] in '123456789':
+                    counts[int(s[0])-1] += 1
+            total = sum(counts)
+            if total == 0:
+                return 0.0
+            expected = [log10(1+1/d) for d in range(1,10)]
+            observed = [c/total for c in counts]
+            return float(sum(abs(o-e) for o,e in zip(observed,expected)))
+        try:
+            benford = benford_deviation(list(raw))
+        except Exception:
+            benford = 0.0
+
+        # Zipf-Feature (Exponent der Wortverteilung)
+        def zipf_exponent(tokens):
+            from collections import Counter
+            import numpy as np
+            if not tokens or len(tokens) < 10:
+                return 0.0
+            counts = Counter(tokens)
+            freqs = np.array(sorted(counts.values(), reverse=True))
+            ranks = np.arange(1, len(freqs)+1)
+            try:
+                coeffs = np.polyfit(np.log(ranks), np.log(freqs), 1)
+                return -coeffs[0]
+            except Exception:
+                return 0.0
+        try:
+            if isinstance(signal, str):
+                zipf = zipf_exponent(signal.split())
+            else:
+                zipf = zipf_exponent(list(raw))
+        except Exception:
+            zipf = 0.0
+
+        # Mandelbrot-Feature (Fraktalität, grob als Varianz der Differenzen)
+        def mandelbrot_score(arr):
+            import numpy as np
+            if len(arr) < 2:
+                return 0.0
+            diffs = np.diff(arr)
+            return float(np.var(diffs))
+        try:
+            mandelbrot = mandelbrot_score(np.frombuffer(raw, dtype=np.uint8))
+        except Exception:
+            mandelbrot = 0.0
+
+        # Katz-Dimension (Fraktalitätsmaß)
+        def katz_dimension(arr):
+            import numpy as np
+            if len(arr) < 2:
+                return 0.0
+            arr = np.asarray(arr, dtype=np.float64)
+            dists = np.abs(np.diff(arr))
+            L = np.sum(dists)
+            d = np.max(dists) if len(dists) > 0 else 1.0
+            n = len(arr)
+            if L == 0 or d == 0:
+                return 0.0
+            return np.log10(n) / (np.log10(n) + np.log10(d / L))
+
+        # Attraktor-Stabilität (Lyapunov-ähnlich, grobe Approximation)
+        def attractor_stability(arr):
+            import numpy as np
+            if len(arr) < 3:
+                return 0.0
+            arr = np.asarray(arr, dtype=np.float64)
+            diffs = np.diff(arr)
+            # Lyapunov-ähnlich: mittlere log. Divergenz der Differenzen
+            eps = 1e-9
+            lyap = np.mean(np.log(np.abs(diffs) + eps))
+            return float(lyap)
+
+        # Noether-Invarianten (hier als dict, z.B. Extremwerte, Mittelwert, Median)
+        def noether_invariants(arr):
+            import numpy as np
+            if len(arr) == 0:
+                return {}
+            return {
+                "min": int(np.min(arr)),
+                "max": int(np.max(arr)),
+                "mean": float(np.mean(arr)),
+                "median": float(np.median(arr)),
+                "std": float(np.std(arr)),
+            }
+        try:
+            arr_np = np.frombuffer(raw, dtype=np.uint8)
+            noether = noether_invariants(arr_np)
+            katz = katz_dimension(arr_np)
+            attractor = attractor_stability(arr_np)
+        except Exception:
+            noether = {}
+            katz = 0.0
+            attractor = 0.0
+
         return StructuralProfile(
             signal_id          = sig_id,
             timestamp          = time.time(),
@@ -221,6 +346,13 @@ class AetherSymbiont:
             structural_depth   = depth,
             symmetry           = symmetry,
             signal_type        = sig_type,
+            fourier_energy     = fourier_energy,
+            benford_deviation  = benford,
+            zipf_exponent      = zipf,
+            mandelbrot_score   = mandelbrot,
+            katz_dimension     = katz,
+            attractor_stability= attractor,
+            noether_invariants = noether,
         )
 
     @staticmethod
