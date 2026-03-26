@@ -1,3 +1,56 @@
+use iced::widget::canvas;
+// ── Farbkonstanten und Hilfsfunktion ─────────────────────────────
+use iced::Color;
+
+const TEXT_H: Color = Color::from_rgb8(0xE4, 0xEE, 0xF2); // Headline/Primary Text
+const TEXT_M: Color = Color::from_rgb8(0xA8, 0xC4, 0xD8); // Medium/Secondary Text
+const TEXT_D: Color = Color::from_rgb8(0x70, 0x90, 0xA8); // Disabled/Dimmed Text
+const ACCENT: Color = Color::from_rgb8(0x66, 0x40, 0xCD); // Main Accent
+const ACCENT2: Color = Color::from_rgb8(0x4C, 0xD9, 0x6E); // Secondary Accent
+const BG_CARD: Color = Color::from_rgb8(0x1E, 0x1A, 0x2A); // Card Background
+const BG_CARD2: Color = Color::from_rgb8(0x24, 0x20, 0x36); // Card Background 2
+const BG_BASE: Color = Color::from_rgb8(0x12, 0x11, 0x1E); // Main Background
+const BORDER: Color = Color::from_rgb8(0x2A, 0x28, 0x3C); // Standard Border
+const BORDER_ACT: Color = Color::from_rgb8(0x66, 0x40, 0xCD); // Active Border
+const DANGER: Color = Color::from_rgb8(0xC6, 0x6A, 0x6A); // Danger/Alert
+const WARN: Color = Color::from_rgb8(0xD4, 0xA0, 0x42); // Warning/Notice
+
+/// Helper to allow c(NAME) for color constants (for compatibility with codebase usage)
+fn c(color: Color) -> Color { color }
+#[derive(Debug, Clone, Default)]
+pub struct CascadeMetrics {
+    pub entropy: f64,
+    pub zipf_alpha: f64,
+    pub benford_score: f64,
+    pub fourier_period: f64,
+    pub katz_dimension: f64,
+    pub attractor_stability: f64,
+    pub delta_convergence: f64,
+    pub noether_consistency: f64,
+    pub trust_score: f64,
+    pub anomaly_flags: Vec<String>,
+}
+
+impl CascadeMetrics {
+    /// Parse from the JSON dict that aether_dropper writes into report["cascade"].
+    pub fn from_json(v: &serde_json::Value) -> Self {
+        Self {
+            entropy: v.get("entropy").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            zipf_alpha: v.get("zipf_alpha").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            benford_score: v.get("benford_score").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            fourier_period: v.get("fourier_period").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            katz_dimension: v.get("katz_dimension").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            attractor_stability: v.get("attractor_stability").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            delta_convergence: v.get("delta_convergence").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            noether_consistency: v.get("noether_consistency").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            trust_score: v.get("trust_score").and_then(|x| x.as_f64()).unwrap_or(0.0),
+            anomaly_flags: v.get("anomaly_flags")
+                .and_then(|x| x.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_else(Vec::new),
+        };
+    }
+}
 // Score-Tooltip-Mapping für die UI
 pub fn get_score_tooltip(score_name: &str) -> &'static str {
     match score_name {
@@ -17,6 +70,7 @@ pub fn get_score_tooltip(score_name: &str) -> &'static str {
 
 // Beispiel: Score-Panel mit Tooltips für die Analyse-Ansicht
 use iced::widget::{Row, Text, Column, Container, Tooltip, tooltip};
+use iced::widget::{row, column, text, button, container, scrollable, text_input};
 use iced::Element;
 
 fn view_score_panel(scores: &[(String, f32)]) -> Element<'_, Message> {
@@ -54,7 +108,7 @@ use crate::key_vault::DataKey;
 use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
 use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus};
 use crate::policy_executor::{default_analysis_rules, RuleEngine};
-// ...existing code...
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatContext {
@@ -1180,33 +1234,14 @@ impl AetherIcedShell {
         .height(Length::Fill)
         .into()
     }
+// ---------------------------------------------------------------------------
+// Aether.FlowSphere – deterministic 3D sphere projection (iced Canvas)
+// Replaces the old 10-ring StructureMap as the modern structural visualizer.
+// All animation parameters are derived from tick + entropy, no random values.
+// ---------------------------------------------------------------------------
 
-    #[allow(dead_code)]
-    fn view_tabs(&self) -> Element<'_, Message> {
-        let mut logo = Row::new();
-        logo = logo.push(canvas::Canvas::new(AetherLogoScene)
-            .width(Length::Fixed(32.0))
-            .height(Length::Fixed(32.0)));
-        logo = logo.push(text("AETHER")
-            .size(14)
-            .color(c(ACCENT)));
-        logo = logo.spacing(8);
-        logo = logo.align_y(Alignment::Center);
 
-        let mut tabs = Row::new().spacing(0);
-        tabs = tabs.push(self.tab_button(Tab::Home,           "\u{25c9}", "Overview"));
-        tabs = tabs.push(self.tab_button(Tab::Chat,           "\u{25c8}", "Chat"));
-        tabs = tabs.push(self.tab_button(Tab::Browser,        "\u{2295}", "Browser"));
-        tabs = tabs.push(self.tab_button(Tab::YouTube,        "\u{25b6}", "YouTube"));
-        tabs = tabs.push(self.tab_button(Tab::Data,           "\u{25a4}", "Data"));
-        tabs = tabs.push(self.tab_button(Tab::Settings,       "\u{2699}", "Config"));
-        tabs = tabs.push(self.tab_button(Tab::Logs,           "\u{25a3}", "Logs"));
-        tabs = tabs.push(self.tab_button(Tab::Anchors,        "\u{25c6}", "Cluster"));
-        tabs = tabs.push(self.tab_button(Tab::StructureMap,   "\u{25ce}", "FlowSphere"));
-        tabs = tabs.push(self.tab_button(Tab::ADE,            "\u{25cd}", "ADE"));
-        tabs = tabs.push(self.tab_button(Tab::Imprint,        "\u{2139}", "Info"));
-        tabs = tabs.push(self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"));
-        tabs = tabs.push(self.tab_button(Tab::Launcher,       "\u{25f6}", "Launch"));
+// struct FlowSphereScene wurde auf Modulebene verschoben (siehe oben)
 
         let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK");
@@ -1307,7 +1342,7 @@ impl AetherIcedShell {
         })
         .padding([0, 16])
         .height(Length::Fixed(52.0))
-        .into()
+	.into()
     }
 
     fn view_home(&self) -> Element<'_, Message> {
@@ -1382,7 +1417,7 @@ impl AetherIcedShell {
                     })
             };
 
-            container({
+            {
                 let mut col = Column::new();
                 col = col.push(text("AetherGuard").size(24).color(c(ACCENT)));
                 col = col.push(text("Quick Start").size(12).color(c(TEXT_D)));
@@ -1406,36 +1441,31 @@ impl AetherIcedShell {
                 col = col.push(nav_item("15. Info", "Info", self.dashboard_nav == "Info"));
                 col = col.push(text("System").size(12).color(c(TEXT_D)));
                 col = col.push(nav_item("16. Runtime", "Runtime", self.dashboard_nav == "Runtime"));
-                col.spacing(8)
-            })
-            .padding(14)
-            .width(Length::FillPortion(2))
-            .style(standard_card_style)
+                col = col.spacing(8);
+                container(col)
+                    .padding(14)
+                    .width(Length::FillPortion(2))
+                    .style(standard_card_style)
+            };
+        let pane_graph = {
+            let mut col = Column::new();
+            let mut row = Row::new();
+            row = row.push(text("Aether Pane-Graph").size(16).color(c(TEXT_H)));
+            row = row.push(info_icon_button("pane_graph"));
+            row = row.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+            row = row.push(text("Background · Mid · Overlay").size(11).color(c(TEXT_D)));
+            col = col.push(row.spacing(8).align_y(Alignment::Center));
+            col = col.push(
+                canvas::Canvas::new(CyberPaneGraphScene {
+                    tick: self.tick_counter,
+                    pulse: node_pulse,
+                    slide: pane_slide,
+                })
+                .height(Length::Fixed(130.0))
+                .width(Length::Fill)
+            );
+            col.spacing(8)
         };
-
-        let pane_graph = container(
-            {
-                let mut col = Column::new();
-                let mut row = Row::new();
-                row = row.push(text("Aether Pane-Graph").size(16).color(c(TEXT_H)));
-                row = row.push(info_icon_button("pane_graph"));
-                row = row.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
-                row = row.push(text("Background · Mid · Overlay").size(11).color(c(TEXT_D)));
-                col = col.push(row.spacing(8).align_y(Alignment::Center));
-                col = col.push(
-                    canvas::Canvas::new(CyberPaneGraphScene {
-                        tick: self.tick_counter,
-                        pulse: node_pulse,
-                        slide: pane_slide,
-                    })
-                    .height(Length::Fixed(130.0))
-                    .width(Length::Fill)
-                );
-                col.spacing(8)
-            }
-        )
-        .padding(12)
-        .style(standard_card_style);
 
         let table_panel = {
             container({
@@ -1641,8 +1671,7 @@ impl AetherIcedShell {
             .width(Length::FillPortion(2))
             .style(standard_card_style)
         };
-    // removed stray closing brace
-
+    }
     fn view_dashboard_performance(&self) -> Element<'_, Message> {
         let profile = self.runtime_profile;
         let browser_mode = match self.browser_surface_mode() {
@@ -1749,23 +1778,25 @@ impl AetherIcedShell {
                 })
                 .padding(8);
 
-                row![avatar, self.view_shanway_chat()]
+                Row::new()
+                    .push(avatar)
+                    .push(self.view_shanway_chat())
                     .spacing(12)
                     .into()
             }
         };
         container(
-            column![
-                row![
-                    self.context_button(ChatContext::Private, "Privat"),
-                    self.context_button(ChatContext::Group, "Gruppen"),
-                    self.context_button(ChatContext::Shanway, "Shanway"),
-                    tutorial_button,
-                ]
-                .spacing(10),
-                panel,
-            ]
-            .spacing(16),
+            Column::new()
+                .push(
+                    Row::new()
+                        .push(self.context_button(ChatContext::Private, "Privat"))
+                        .push(self.context_button(ChatContext::Group, "Gruppen"))
+                        .push(self.context_button(ChatContext::Shanway, "Shanway"))
+                        .push(tutorial_button)
+                        .spacing(10)
+                )
+                .push(panel)
+                .spacing(16),
         )
         .padding(12)
         .into()
@@ -1791,17 +1822,17 @@ impl AetherIcedShell {
         };
 
         let url_bar = container(
-            row![
-                container(
+            Row::new()
+                .push(container(
                     text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
-                ).padding([0, 8]),
-                text_input("https://duckduckgo.com", &self.browser_address)
+                ).padding([0, 8]))
+                .push(text_input("https://duckduckgo.com", &self.browser_address)
                     .on_input(Message::BrowserAddressChanged)
                     .on_submit(Message::BrowserLoadPressed)
                     .size(13)
                     .padding([8, 12])
-                    .width(Length::Fill),
-                button(
+                    .width(Length::Fill))
+                .push(button(
                     text("\u{2192}").size(14).color(Color::from_rgb8(0xF6, 0xED, 0xFF))
                 )
                 .padding([8, 14])
@@ -1811,10 +1842,9 @@ impl AetherIcedShell {
                     text_color: Color::from_rgb8(0xF6, 0xED, 0xFF),
                     border: Border { radius: 6.0.into(), ..Default::default() },
                     ..Default::default()
-                }),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
+                }))
+                .spacing(4)
+                .align_y(Alignment::Center),
         )
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(Color::from_rgb8(0x17, 0x16, 0x24))),
@@ -1824,147 +1854,165 @@ impl AetherIcedShell {
         .padding([4, 4]);
 
         container(
-            row![
-                container(scrollable(
-                    column![
-                        text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
-                        browser_status,
-                        url_bar,
-                        row![
-                            button(text("Seite pruefen").size(13))
-                                .padding([8, 14])
-                                .on_press(Message::BrowserInspectPressed)
-                                .style(secondary_button_style),
-                        ]
-                        .spacing(10),
-                        text("Eingabehilfe: URL-Feld fuer direkte Seiten, Suchfeld fuer Begriffe/Fragen (DuckDuckGo).")
-                            .size(11)
-                            .color(c(TEXT_D)),
-                        text_input("z.B. malware hash lookup, suspicious script pattern, channel name", &self.browser_search_query)
-                            .on_input(Message::BrowserSearchQueryChanged)
-                            .padding(10)
-                            .size(14),
-                        button(text("DuckDuckGo suchen"))
-                            .padding([10, 16])
-                            .on_press(Message::BrowserSearchPressed)
-                            .style(primary_button_style),
-                        info_card("Browser-Status", &self.browser_note),
-                        if let Some(probe) = &self.browser_probe {
-                            info_card(
-                                "Seitenanalyse",
-                                &format!(
-                                    "URL: {}\nStatus: {} | Risiko: {} ({:.0}%)\nTyp: {}\n{}\n{}",
-                                    probe.final_url,
-                                    probe.status_code,
-                                    probe.risk_label,
-                                    probe.risk_score * 100.0,
-                                    probe.content_type,
-                                    probe.frontend_summary,
-                                    probe.summary
-                                ),
-                            )
-                        } else {
-                            info_card(
-                                "Seitenanalyse",
-                                "Noch keine Seitenanalyse vorhanden. Aether prueft nur strukturell und fuehrt nichts aus.",
-                            )
-                        },
-                        if let Some(context) = &self.browser_search_context {
-                            info_card(
-                                "Suchkontext",
-                                &format!(
-                                    "Provider: {}\nQuelle: {}\n{}",
-                                    context.provider,
-                                    context.search_url,
-                                    context.summary
-                                ),
-                            )
-                        } else {
-                            info_card(
-                                "Suchkontext",
-                                "Noch kein Suchkontext geladen. DuckDuckGo bleibt explizit und fail-closed.",
-                            )
-                        },
-                    ]
-                    .spacing(14)
-                )
-                .width(Length::Fixed(420.0))
+            Row::new()
+                .push(
+                    container(scrollable(
+                        {
+                            let mut col = Column::new().spacing(14);
+                            col = col.push(text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)));
+                            col = col.push(browser_status);
+                            col = col.push(url_bar);
+                            col = col.push(
+                                Row::new()
+                                    .push(
+                                        button(text("Seite pruefen").size(13))
+                                            .padding([8, 14])
+                                            .on_press(Message::BrowserInspectPressed)
+                                            .style(secondary_button_style)
+                                    )
+                                    .spacing(10)
+                            );
+                            col = col.push(text("Eingabehilfe: URL-Feld fuer direkte Seiten, Suchfeld fuer Begriffe/Fragen (DuckDuckGo).")
+                                .size(11)
+                                .color(c(TEXT_D)));
+                            col = col.push(text_input("z.B. malware hash lookup, suspicious script pattern, channel name", &self.browser_search_query)
+                                .on_input(Message::BrowserSearchQueryChanged)
+                                .padding(10)
+                                .size(14));
+                            col = col.push(button(text("DuckDuckGo suchen"))
+                                .padding([10, 16])
+                                .on_press(Message::BrowserSearchPressed)
+                                .style(primary_button_style));
+                            col = col.push(info_card("Browser-Status", &self.browser_note));
+                            col = col.push(
+                                if let Some(probe) = &self.browser_probe {
+                                    info_card(
+                                        "Seitenanalyse",
+                                        &format!(
+                                            "URL: {}\nStatus: {} | Risiko: {} ({:.0}%)\nTyp: {}\n{}\n{}",
+                                            probe.final_url,
+                                            probe.status_code,
+                                            probe.risk_label,
+                                            probe.risk_score * 100.0,
+                                            probe.content_type,
+                                            probe.frontend_summary,
+                                            probe.summary
+                                        ),
+                                    )
+                                } else {
+                                    info_card(
+                                        "Seitenanalyse",
+                                        "Noch keine Seitenanalyse vorhanden. Aether prueft nur strukturell und fuehrt nichts aus.",
+                                    )
+                                }
+                            );
+                            col = col.push(
+                                if let Some(context) = &self.browser_search_context {
+                                    info_card(
+                                        "Suchkontext",
+                                        &format!(
+                                            "Provider: {}\nQuelle: {}\n{}",
+                                            context.provider,
+                                            context.search_url,
+                                            context.summary
+                                        ),
+                                    )
+                                } else {
+                                    info_card(
+                                        "Suchkontext",
+                                        "Noch kein Suchkontext geladen. DuckDuckGo bleibt explizit und fail-closed.",
+                                    )
+                                }
+                            );
+                            col
+                        }
                     )
-                .style(panel_frame_style)
-                .padding(14),
-                container(
-                    column![
-                        text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
-                        text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
-                            .size(13).color(Color::from_rgb8(0x90, 0x88, 0xBC)),
-                        container(text(" "))
-                            .height(Length::Fill)
-                            .width(Length::Fill),
-                    ]
-                    .spacing(10)
+                    .width(Length::Fixed(420.0))
                 )
-                .padding(16)
                 .style(panel_frame_style)
-                .width(Length::Fill)
-                .height(Length::Fill),
-            ]
-            .spacing(18)
-            .height(Length::Fill),
+                .padding(14)
+            )
+                .push(
+                    container(
+                        {
+                            let mut col = Column::new().spacing(10);
+                            col = col.push(text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)));
+                            col = col.push(text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
+                                .size(13).color(Color::from_rgb8(0x90, 0x88, 0xBC)));
+                            col = col.push(container(text(" "))
+                                .height(Length::Fill)
+                                .width(Length::Fill));
+                            col
+                        }
+                    )
+                    .padding(16)
+                    .style(panel_frame_style)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                )
+                .spacing(18)
+                .height(Length::Fill)
         )
         .padding(12)
         .into()
     }
 
     fn view_data(&self) -> Element<'_, Message> {
-        let mut items = column![
-            text("Data").size(24),
-            text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.")
-                .size(16),
-            column![
-                row![
-                    row![text("Entropie").size(12).color(c(TEXT_M)), info_badge("Entropie beschreibt die Restunsicherheit eines Artefakts.")].spacing(6),
-                    row![text("Symmetrie").size(12).color(c(TEXT_M)), info_badge("Symmetrie markiert wiederkehrende Struktur und Invarianz.")].spacing(6),
-                    row![text("Drift").size(12).color(c(TEXT_M)), info_badge("Drift misst lokale Byte-Aenderung zwischen benachbarten Bereichen.")].spacing(6),
-                ]
-                .spacing(12),
-                row![
-                    row![text("Gain").size(12).color(c(TEXT_M)), info_badge("Gain beschreibt den Kompressionsgewinn gegen das Original.")].spacing(6),
-                    row![text("E-Lambda").size(12).color(c(TEXT_M)), info_badge("E-Lambda ist der interne Kohaerenzindikator der AEF-Pipeline.")].spacing(6),
-                    row![text("Trust").size(12).color(c(TEXT_M)), info_badge("Trust kombiniert Filter, Kohaerenz und Lossless-Bestaetigung.")].spacing(6),
-                ]
-                .spacing(12),
-            ]
-            .spacing(8),
-            analysis_card(
-                self.analysis_progress,
-                &self.analysis_status,
-                &self.hovered_file_label,
-                &self
-                    .last_analysis
-                    .as_ref()
-                    .map(|analysis| format!(
-                        "{}\n{}\n{}",
-                        analysis.preview_note, analysis.anchor_summary, analysis.process_summary
-                    ))
-                    .unwrap_or_else(|| {
-                        "Kompressionsgewinn, Delta und Anker erscheinen nach dem ersten Drop."
-                            .to_owned()
-                    }),
-            ),
-            // Score-Panel mit Tooltips direkt unter der Analysekarte anzeigen
-            if let Some(analysis) = &self.last_analysis {
-                let scores = vec![
-                    ("SHANNON".to_string(), analysis.compression_gain_percent),
-                    ("DELTA".to_string(), analysis.delta_size as f32),
-                    ("ANCHOR".to_string(), analysis.anchor_summary.parse().unwrap_or(0.0)),
-                    ("TRUST".to_string(), analysis.process_summary.parse().unwrap_or(0.0)),
-                ];
-                view_score_panel(&scores)
-            } else {
-                column![] // leer, falls keine Analyse vorliegt
-            },
-        ]
-        .spacing(14);
+        let mut items = Column::new()
+            .push(text("Data").size(24))
+            .push(text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.").size(16))
+            .push(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .push(Row::new().push(text("Entropie").size(12).color(c(TEXT_M))).push(info_badge("Entropie beschreibt die Restunsicherheit eines Artefakts.")).spacing(6))
+                            .push(Row::new().push(text("Symmetrie").size(12).color(c(TEXT_M))).push(info_badge("Symmetrie markiert wiederkehrende Struktur und Invarianz.")).spacing(6))
+                            .push(Row::new().push(text("Drift").size(12).color(c(TEXT_M))).push(info_badge("Drift misst lokale Byte-Aenderung zwischen benachbarten Bereichen.")).spacing(6))
+                            .spacing(12)
+                    )
+                    .push(
+                        Row::new()
+                            .push(Row::new().push(text("Gain").size(12).color(c(TEXT_M))).push(info_badge("Gain beschreibt den Kompressionsgewinn gegen das Original.")).spacing(6))
+                            .push(Row::new().push(text("E-Lambda").size(12).color(c(TEXT_M))).push(info_badge("E-Lambda ist der interne Kohaerenzindikator der AEF-Pipeline.")).spacing(6))
+                            .push(Row::new().push(text("Trust").size(12).color(c(TEXT_M))).push(info_badge("Trust kombiniert Filter, Kohaerenz und Lossless-Bestaetigung.")).spacing(6))
+                            .spacing(12)
+                    )
+                    .spacing(8)
+            )
+            .push(
+                analysis_card(
+                    self.analysis_progress,
+                    &self.analysis_status,
+                    &self.hovered_file_label,
+                    &self
+                        .last_analysis
+                        .as_ref()
+                        .map(|analysis| format!(
+                            "{}\n{}\n{}",
+                            analysis.preview_note, analysis.anchor_summary, analysis.process_summary
+                        ))
+                        .unwrap_or_else(|| {
+                            "Kompressionsgewinn, Delta und Anker erscheinen nach dem ersten Drop."
+                                .to_owned()
+                        }),
+                )
+            )
+            .push(
+                {
+                    if let Some(analysis) = &self.last_analysis {
+                        let scores = vec![
+                            ("SHANNON".to_string(), analysis.compression_gain_percent),
+                            ("DELTA".to_string(), analysis.delta_size as f32),
+                            ("ANCHOR".to_string(), analysis.anchor_summary.parse().unwrap_or(0.0)),
+                            ("TRUST".to_string(), analysis.process_summary.parse().unwrap_or(0.0)),
+                        ];
+                        view_score_panel(&scores)
+                    } else {
+                        Column::new() // leer, falls keine Analyse vorliegt
+                    }
+                }
+            );
+        let mut items = Column::new();
         let entries = self.entries();
         if entries.is_empty() {
             items = items.push(info_card(
@@ -1983,11 +2031,14 @@ impl AetherIcedShell {
 
     fn view_private_chat(&self) -> Element<'_, Message> {
         let selected_partner = self.active_private_partner();
-        let mut partners = column![text_input("Nutzer suchen", &self.chat_user_search)
-            .on_input(Message::ChatUserSearchChanged)
-            .padding(10)
-            .size(16)]
-        .spacing(10);
+        let mut partners = Column::new();
+        partners = partners.push(
+            text_input("Nutzer suchen", &self.chat_user_search)
+                .on_input(Message::ChatUserSearchChanged)
+                .padding(10)
+                .size(16)
+        );
+        partners = partners.spacing(10);
 
         for username in self.other_usernames().into_iter().take(12) {
             let active = selected_partner.as_deref() == Some(username.as_str());
@@ -2005,12 +2056,10 @@ impl AetherIcedShell {
 
         let messages = self.active_private_messages();
         let conversation = if let Some(partner) = &selected_partner {
-            let mut content = column![
-                text(format!("Privater Kanal | {partner}")).size(20),
-                text("Suche nach Nutzernamen oeffnet lokale Threads. Inhalte bleiben im privaten Bereich.")
-                    .size(15),
-            ]
-            .spacing(10);
+            let mut content = Column::new();
+            content = content.push(text(format!("Privater Kanal | {partner}")).size(20));
+            content = content.push(text("Suche nach Nutzernamen oeffnet lokale Threads. Inhalte bleiben im privaten Bereich.").size(15));
+            content = content.spacing(10);
             if messages.is_empty() {
                 content = content.push(info_card(
                     "Leerer Thread",
@@ -2044,28 +2093,28 @@ impl AetherIcedShell {
             )
         };
 
-        container(
-            row![
-                container(scrollable(partners).height(Length::Fill))
-                    .padding(16)
-                    .style(panel_frame_style)
-                    .width(Length::FillPortion(1)),
-                container(conversation).style(panel_frame_style).width(Length::FillPortion(2)),
-            ]
-            .spacing(14),
-        )
-        .height(Length::Fill)
-        .into()
+        let mut row = Row::new();
+        row = row.push(
+            container(scrollable(partners).height(Length::Fill))
+                .padding(16)
+                .style(panel_frame_style)
+                .width(Length::FillPortion(1)),
+        );
+        row = row.push(
+            container(conversation).style(panel_frame_style).width(Length::FillPortion(2)),
+        );
+        row = row.spacing(14);
+        container(row)
+            .height(Length::Fill)
+            .into()
     }
 
     fn view_group_chat(&self) -> Element<'_, Message> {
         let rooms = self.group_rooms();
-        let mut content = column![
-            text("Gruppen").size(20),
-            text("Gruppen bleiben lokal organisiert. Der Standardraum dient als gemeinsamer lokaler Arbeitskontext.")
-                .size(15),
-        ]
-        .spacing(12);
+        let mut content = Column::new()
+            .push(text("Gruppen").size(20))
+            .push(text("Gruppen bleiben lokal organisiert. Der Standardraum dient als gemeinsamer lokaler Arbeitskontext.").size(15))
+            .spacing(12);
 
         if rooms.is_empty() {
             content = content.push(info_card(
@@ -2466,28 +2515,31 @@ impl AetherIcedShell {
             (selected.total_bytes.min(10_000_000) as f32) / 10_000_000.0
         };
         container(
-            row![
-                container(scrollable(list).height(Length::Fill))
-                    .padding(12)
-                    .style(panel_frame_style)
-                    .width(Length::FillPortion(1)),
-                container(
-                    Column::new()
-                        .push(text(format!("\u{25c6} {}", selected.title)).size(22))
-                        .push(text(selected.descriptor.clone()).size(15))
-                        .push(text(format!("Artefakte: {}", selected.item_count)).size(14))
-                        .push(progress_bar(0.0..=1.0, detail_fill))
-                        .push(text(make_sparkline(detail_fill)).size(13))
-                        .push(text(format!("Groesse: {} B", selected.total_bytes)).size(14))
-                        .push(text(selected.sample_note.clone()).size(13))
-                        .push(button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style))
-                        .spacing(10),
+            Row::new()
+                .push(
+                    container(scrollable(list).height(Length::Fill))
+                        .padding(12)
+                        .style(panel_frame_style)
+                        .width(Length::FillPortion(1))
                 )
-                .style(accent_card_style)
-                .padding(22)
-                .width(Length::FillPortion(2)),
-            ]
-            .spacing(14),
+                .push(
+                    container(
+                        Column::new()
+                            .push(text(format!("\u{25c6} {}", selected.title)).size(22))
+                            .push(text(selected.descriptor.clone()).size(15))
+                            .push(text(format!("Artefakte: {}", selected.item_count)).size(14))
+                            .push(progress_bar(0.0..=1.0, detail_fill))
+                            .push(text(make_sparkline(detail_fill)).size(13))
+                            .push(text(format!("Groesse: {} B", selected.total_bytes)).size(14))
+                            .push(text(selected.sample_note.clone()).size(13))
+                            .push(button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style))
+                            .spacing(10)
+                    )
+                    .style(accent_card_style)
+                    .padding(22)
+                    .width(Length::FillPortion(2))
+                )
+                .spacing(14),
         )
         .padding(12)
         .style(panel_frame_style)
@@ -2525,13 +2577,12 @@ impl AetherIcedShell {
     fn view_rekonstruktion(&self) -> Element<'_, Message> {
         let entries = self.entries();
 
-        let header = row![
-            text("Rekonstruktion").size(22).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
-            text(" \u{2014} lokale AEF-Artefakte wiederherstellen").size(14)
-                .color(Color::from_rgb8(0x60, 0x88, 0xA8)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let header = Row::new()
+            .push(text("Rekonstruktion").size(22).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)))
+            .push(text(" \u{2014} lokale AEF-Artefakte wiederherstellen").size(14)
+                .color(Color::from_rgb8(0x60, 0x88, 0xA8)))
+            .spacing(8)
+            .align_y(Alignment::Center);
 
         // File list
         let list: Element<'_, Message> = if entries.is_empty() {
@@ -2570,22 +2621,22 @@ impl AetherIcedShell {
                     let gain = entry.compression_gain_percent;
                     container(
                         button(
-                            row![
-                                text("\u{25a4}").size(14).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
-                                column![
-                                    text(entry.file_name).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
-                                    text(format!(
-                                        "{} KB  \u{2192}  {:.1}% Gewinn",
-                                        size_kb,
-                                        gain
-                                    ))
-                                    .size(12)
-                                    .color(gain_color),
-                                ]
-                                .spacing(2),
-                            ]
-                            .spacing(10)
-                            .align_y(Alignment::Center),
+                            Row::new()
+                                .push(text("\u{25a4}").size(14).color(Color::from_rgb8(0x80, 0xBC, 0xE8)))
+                                .push(
+                                    Column::new()
+                                        .push(text(entry.file_name).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)))
+                                        .push(text(format!(
+                                            "{} KB  \u{2192}  {:.1}% Gewinn",
+                                            size_kb,
+                                            gain
+                                        ))
+                                        .size(12)
+                                        .color(gain_color))
+                                        .spacing(2)
+                                )
+                                .spacing(10)
+                                .align_y(Alignment::Center),
                         )
                         .on_press(Message::ReconstructPressed(entry_id))
                         .style(secondary_button_style)
@@ -2597,7 +2648,7 @@ impl AetherIcedShell {
                     .into()
                 })
                 .collect();
-            scrollable(column(rows).spacing(4))
+            scrollable(Column::new().push(rows).spacing(4))
                 .height(Length::Fixed(320.0))
                 .into()
         };
@@ -2605,13 +2656,12 @@ impl AetherIcedShell {
         // Status / result panel
         let status_panel: Element<'_, Message> = if self.rekonstruktion_running {
             container(
-                row![
-                    text("\u{21ba}").size(18).color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
-                    text("Rekonstruktion laeuft …").size(14)
-                        .color(Color::from_rgb8(0x80, 0xBC, 0xE8)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+                Row::new()
+                    .push(text("\u{21ba}").size(18).color(Color::from_rgb8(0x80, 0xBC, 0xE8)))
+                    .push(text("Rekonstruktion laeuft …").size(14)
+                        .color(Color::from_rgb8(0x80, 0xBC, 0xE8)))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
             )
             .padding(16)
             .style(panel_frame_style)
@@ -2646,23 +2696,24 @@ impl AetherIcedShell {
                         iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
                     };
                     container(
-                        column![
-                            text(format!("Datei: {file_name}")).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)),
-                            row![
-                                text(hash_icon).size(14).color(hash_color),
-                                text("Hash verifiziert").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
-                            ].spacing(6),
-                            row![
-                                text(complete_icon).size(14).color(complete_color),
-                                text("Rekonstruktion vollstaendig").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)),
-                            ].spacing(6),
-                            text(format!("Kohaerenz: {:.3}", aef_result.coherence_index)).size(13)
-                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
-                            text(format!("Fehlende Vault-Refs: {}", aef_result.missing_vault_refs.len())).size(13)
-                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)),
-                            export_btn,
-                        ]
-                        .spacing(6),
+                        Column::new()
+                            .push(text(format!("Datei: {file_name}")).size(14).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)))
+                            .push(Row::new()
+                                .push(text(hash_icon).size(14).color(hash_color))
+                                .push(text("Hash verifiziert").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)))
+                                .spacing(6)
+                            )
+                            .push(Row::new()
+                                .push(text(complete_icon).size(14).color(complete_color))
+                                .push(text("Rekonstruktion vollstaendig").size(13).color(Color::from_rgb8(0x90, 0xB8, 0xD8)))
+                                .spacing(6)
+                            )
+                            .push(text(format!("Kohaerenz: {:.3}", aef_result.coherence_index)).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)))
+                            .push(text(format!("Fehlende Vault-Refs: {}", aef_result.missing_vault_refs.len())).size(13)
+                                .color(Color::from_rgb8(0x80, 0xA8, 0xC8)))
+                            .push(export_btn)
+                            .spacing(6),
                     )
                     .padding(16)
                     .style(panel_frame_style)
@@ -3048,12 +3099,11 @@ impl AetherIcedShell {
             .collect();
 
         let timeline_row = container(
-            column![
-                text("TEMPORAL LAYER  \u{2500}  Session-Verlauf").size(10).color(dim),
-                row(timeline).spacing(2),
-            ]
-            .spacing(4)
-            .padding([6, 10]),
+            Column::new()
+                .push(text("TEMPORAL LAYER  \u{2500}  Session-Verlauf").size(10).color(dim))
+                .push(Row::new().push(timeline).spacing(2))
+                .spacing(4)
+                .padding([6, 10]),
         )
         .width(Length::Fill)
         .style(move |_: &Theme| container::Style {
@@ -3080,60 +3130,57 @@ impl AetherIcedShell {
             .height(Length::Fill);
 
         // Main layout
-        let header = row![
-            text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan),
-            text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim),
-        ].spacing(0);
+        let header = Row::new()
+            .push(text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan))
+            .push(text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim))
+            .spacing(0);
 
-        let interaction_bar = row![
-            text("Interaktion:").size(11).color(dim),
-            button(text("Zoom +").size(11))
+        let interaction_bar = Row::new()
+            .push(text("Interaktion:").size(11).color(dim))
+            .push(button(text("Zoom +").size(11))
                 .on_press(Message::FlowSphereZoomIn)
                 .padding([5, 10])
-                .style(secondary_button_style),
-            button(text("Zoom -").size(11))
+                .style(secondary_button_style))
+            .push(button(text("Zoom -").size(11))
                 .on_press(Message::FlowSphereZoomOut)
                 .padding([5, 10])
-                .style(secondary_button_style),
-            button(text("Drehung links").size(11))
+                .style(secondary_button_style))
+            .push(button(text("Drehung links").size(11))
                 .on_press(Message::FlowSphereRotateLeft)
                 .padding([5, 10])
-                .style(secondary_button_style),
-            button(text("Drehung rechts").size(11))
+                .style(secondary_button_style))
+            .push(button(text("Drehung rechts").size(11))
                 .on_press(Message::FlowSphereRotateRight)
                 .padding([5, 10])
-                .style(secondary_button_style),
-            button(text("Reset").size(11))
+                .style(secondary_button_style))
+            .push(button(text("Reset").size(11))
                 .on_press(Message::FlowSphereResetView)
                 .padding([5, 10])
-                .style(primary_button_style),
-            button(text(if self.flow_sphere_view_mode { "📍 Lokal" } else { "🌐 Global" }).size(11))
+                .style(primary_button_style))
+            .push(button(text(if self.flow_sphere_view_mode { "📍 Lokal" } else { "🌐 Global" }).size(11))
                 .on_press(Message::FlowSphereToggleViewMode)
                 .padding([5, 10])
-                .style(secondary_button_style),
-            iced::widget::Space::new(Length::Fill, Length::Shrink),
-            text(format!("Zoom {:.0}%", self.flow_sphere_zoom * 100.0)).size(11).color(c(TEXT_M)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+                .style(secondary_button_style))
+            .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+            .push(text(format!("Zoom {:.0}%", self.flow_sphere_zoom * 100.0)).size(11).color(c(TEXT_M)))
+            .spacing(8)
+            .align_y(Alignment::Center);
 
         container(
-            column![
-                header,
-                interaction_bar,
-                text("Nutzen: Visuelle Lage der Anker/Delta-Phasen. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
+            Column::new()
+                .push(header)
+                .push(interaction_bar)
+                .push(text("Nutzen: Visuelle Lage der Anker/Delta-Phasen. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
                     .size(11)
-                    .color(dim),
-                row![
-                    sphere_canvas,
-                    ht_panel,
-                ]
-                .spacing(0)
+                    .color(dim))
+                .push(Row::new()
+                    .push(sphere_canvas)
+                    .push(ht_panel)
+                    .spacing(0)
+                    .height(Length::Fill))
+                .push(timeline_row)
+                .spacing(8)
                 .height(Length::Fill),
-                timeline_row,
-            ]
-            .spacing(8)
-            .height(Length::Fill),
         )
         .padding(10)
         .width(Length::Fill)
@@ -5246,9 +5293,11 @@ impl AetherIcedShell {
                 row2 = row2.push(device_panel);
                 col = col.push(row2.spacing(10));
                 col = col.push(dropper_panel);
-                col.spacing(10)
-            };
-            .spacing(2)
+                col = col.spacing(10);
+            }
+
+            let col = col.spacing(2);
+            col
         };
 
         container(
@@ -5668,12 +5717,11 @@ impl AetherIcedShell {
 
             let status_chip = |title: &str, value: &str, color: Color| {
                 container(
-                    row![
-                        text("●").size(14).color(color),
-                        text(format!("{}: {}", title, value)).size(12).color(c(TEXT_M)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
+                    Row::new()
+                        .push(text("●").size(14).color(color))
+                        .push(text(format!("{}: {}", title, value)).size(12).color(c(TEXT_M)))
+                        .spacing(8)
+                        .align_y(Alignment::Center),
                 )
                 .padding([6, 10])
                 .style(|_: &Theme| container::Style {
@@ -5683,76 +5731,72 @@ impl AetherIcedShell {
                 })
             };
 
-            let traffic_row = row![
-                status_chip(self.ui_text("Backend", "Backend"), backend_label, backend_color),
-                status_chip(self.ui_text("Startnode", "Start node"), swarm_label, swarm_color),
-                status_chip(self.ui_text("Trust", "Trust"), trust_label, trust_color),
-            ]
-            .spacing(10);
+            let traffic_row = Row::new()
+                .push(status_chip(self.ui_text("Backend", "Backend"), backend_label, backend_color))
+                .push(status_chip(self.ui_text("Startnode", "Start node"), swarm_label, swarm_color))
+                .push(status_chip(self.ui_text("Trust", "Trust"), trust_label, trust_color))
+                .spacing(10);
 
-            let top_summary = row![
-                cyber_kpi_card(
+            let top_summary = Row::new()
+                .push(cyber_kpi_card(
                     "Backend Vault",
                     format!("{}", self.backend_vault_main),
                     "IPC file bridge",
                     Color::from_rgb8(0x3F, 0xBA, 0xC2),
                     "backend_vault"
-                ),
-                cyber_kpi_card(
+                ))
+                .push(cyber_kpi_card(
                     "Swarm Nodes",
                     format!("{}", self.swarm_startup.node_count),
                     "Bootstrap discovery",
                     Color::from_rgb8(0x5A, 0xAE, 0x84),
                     "swarm_nodes"
-                ),
-                cyber_kpi_card(
+                ))
+                .push(cyber_kpi_card(
                     "Users / Symbiont",
                     format!("{}", self.auth_store.user_count()),
                     "Rust shell knows local user scope",
                     Color::from_rgb8(0xC7, 0xA0, 0x4A),
                     "symbiont_scope"
-                ),
-            ]
-            .spacing(10);
+                ))
+                .spacing(10);
 
-            let core_row = row![
-                module_card(
+            let core_row = Row::new()
+                .push(module_card(
                     "Core Workspace",
                     "Overview, Chat, Browser, Files, Reconstruction und Runtime sind die Hauptfunktionen fuer den Alltag.",
                     "aktiv".to_owned(),
                     "Open Files",
                     Tab::Data,
-                ),
-                module_card(
+                ))
+                .push(module_card(
                     "Threat & Analysis",
                     "Threat Graph, ADE, Logs und Anchors decken die Hauptanalyse im Rust-Frontend bereits ab.",
                     "aktiv".to_owned(),
                     "Open Threat Analysis",
                     Tab::ADE,
-                ),
-            ]
-            .spacing(10);
+                ))
+                .spacing(10);
 
-            let advanced_row = row![
-                module_card(
+            let advanced_row = Row::new()
+                .push(module_card(
                     "Symbiont",
                     "Symbiont-Core und aether-symbiont sind hier als eigener Bedienbereich gebuendelt und verlinken direkt zu Analysepfaden.",
                     "aktiv".to_owned(),
                     "Open Symbiont",
                     Tab::Symbiont,
-                ),
-                module_card(
+                ))
+                .push(module_card(
                     "Privacy & Process Monitor",
                     "Privacy Observer, Process Engine und Sicherheitschecks sind als eigener Tab verfuegbar und direkt bedienbar.",
                     "aktiv".to_owned(),
                     "Open Privacy",
                     Tab::Privacy,
-                ),
-            ]
-            .spacing(10);
+                ))
+                .spacing(10);
 
-            let infra_row = row![
-                module_card(
+            let infra_row = Row::new()
+                .push(module_card(
                     "Swarm / P2P / Anchors",
                     "Swarm-Sync, P2P-Anchor-Pool und Public-TTD-Transport sind im Bereich Swarm Ops zusammengefuehrt.",
                     format!(
@@ -5762,40 +5806,48 @@ impl AetherIcedShell {
                     ),
                     "Open Swarm Ops",
                     Tab::SwarmOps,
-                ),
-                module_card(
+                ))
+                .push(module_card(
                     "Policies / Vault / Trust",
                     "Rule Engine, Vault Chain und Governance existieren, aber nicht als eigener Bedienbereich. Relevante Kontrolle liegt derzeit in Runtime und Files.",
                     "teilweise exponiert".to_owned(),
                     "Open Runtime",
                     Tab::Settings,
-                ),
-            ]
-            .spacing(10);
+                ))
+                .spacing(10);
 
-            let quick_start_row = row![
-                button(text(self.ui_text("1) Uebersicht", "1) Overview")).size(12).color(c(TEXT_H)))
-                    .on_press(Message::TabSelected(Tab::Home))
-                    .padding([8, 12])
-                    .style(primary_button_style),
-                button(text(self.ui_text("2) Security-Pruefung", "2) Security Recheck")).size(12).color(c(TEXT_H)))
-                    .on_press(Message::SecurityRecheck)
-                    .padding([8, 12])
-                    .style(primary_button_style),
-                button(text(self.ui_text("3) Kontrollzentrum", "3) Control Center")).size(12).color(c(TEXT_H)))
-                    .on_press(Message::TabSelected(Tab::Control))
-                    .padding([8, 12])
-                    .style(primary_button_style),
-                button(text("4) Swarm Ops").size(12).color(c(TEXT_H)))
-                    .on_press(Message::TabSelected(Tab::SwarmOps))
-                    .padding([8, 12])
-                    .style(primary_button_style),
-                button(text("5) Runtime").size(12).color(c(TEXT_H)))
-                    .on_press(Message::TabSelected(Tab::Settings))
-                    .padding([8, 12])
-                    .style(primary_button_style),
-            ]
-            .spacing(10);
+            let quick_start_row = Row::new()
+                .push(
+                    button(text(self.ui_text("1) Uebersicht", "1) Overview")).size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Home))
+                        .padding([8, 12])
+                        .style(primary_button_style)
+                )
+                .push(
+                    button(text(self.ui_text("2) Security-Pruefung", "2) Security Recheck")).size(12).color(c(TEXT_H)))
+                        .on_press(Message::SecurityRecheck)
+                        .padding([8, 12])
+                        .style(primary_button_style)
+                )
+                .push(
+                    button(text(self.ui_text("3) Kontrollzentrum", "3) Control Center")).size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Control))
+                        .padding([8, 12])
+                        .style(primary_button_style)
+                )
+                .push(
+                    button(text("4) Swarm Ops").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::SwarmOps))
+                        .padding([8, 12])
+                        .style(primary_button_style)
+                )
+                .push(
+                    button(text("5) Runtime").size(12).color(c(TEXT_H)))
+                        .on_press(Message::TabSelected(Tab::Settings))
+                        .padding([8, 12])
+                        .style(primary_button_style)
+                )
+                .spacing(10);
 
             container(
                 scrollable(
@@ -6215,7 +6267,7 @@ impl AetherIcedShell {
             }
         }
     }
-}
+// removed stray closing brace
 
 fn app_title(_state: &AetherIcedShell) -> String {
     "Aether".to_owned()
@@ -6244,6 +6296,7 @@ fn app_event(event: iced::Event, status: event::Status, _window: window::Id) -> 
             }
             None
         }
+        _ => None,
         iced::Event::Window(window::Event::Resized(size)) => {
             Some(Message::WindowResized(size.width, size.height))
         }
@@ -7073,18 +7126,18 @@ fn info_icon_button(key: &str) -> Element<'static, Message> {
 
 fn cyber_kpi_card(label: &str, value: String, sub: &str, accent: Color, info_key: &str) -> Element<'static, Message> {
     container(
-        column![
-            row![
-                text("\u{25cf}").size(12).color(accent),
-                text(label.to_owned()).size(11).color(c(TEXT_M)),
-                iced::widget::Space::new(Length::Fill, Length::Shrink),
-                info_icon_button(info_key),
-            ]
-            .align_y(Alignment::Center),
-            text(value).size(30).color(c(TEXT_H)),
-            text(sub.to_owned()).size(11).color(c(TEXT_D)),
-        ]
-        .spacing(6)
+        Column::new()
+            .push(
+                Row::new()
+                    .push(text("\u{25cf}").size(12).color(accent))
+                    .push(text(label.to_owned()).size(11).color(c(TEXT_M)))
+                    .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+                    .push(info_icon_button(info_key))
+                    .align_y(Alignment::Center)
+            )
+            .push(text(value).size(30).color(c(TEXT_H)))
+            .push(text(sub.to_owned()).size(11).color(c(TEXT_D)))
+            .spacing(6)
     )
     .style(accent_card_style)
     .padding(12)
@@ -7111,12 +7164,11 @@ fn dashboard_info_text(key: &str) -> &'static str {
 
 fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color) -> Element<'a, Message> {
     container(
-        column![
-            text(title.to_owned()).size(12).color(c(ACCENT)),
-            body,
-        ]
-        .spacing(8)
-        .padding(14),
+        Column::new()
+            .push(text(title.to_owned()).size(12).color(c(ACCENT)))
+            .push(body)
+            .spacing(8)
+            .padding(14),
     )
     .style(move |_: &Theme| container::Style {
         background: Some(Background::Color(panel_bg)),
@@ -7204,31 +7256,32 @@ fn panel_frame_style(_: &Theme) -> container::Style {
 #[allow(dead_code)]
 fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
     container(
-        column![
-            text(label.to_owned())
+        Column::new()
+            .push(text(label.to_owned())
                 .size(11)
-                .color(Color::from_rgb8(0x4E, 0x4A, 0x76)),
-            text(value)
+                .color(Color::from_rgb8(0x4E, 0x4A, 0x76)))
+            .push(text(value)
                 .size(22)
-                .color(accent),
-            container(
-                container(iced::widget::Space::new(Length::Fill, Length::Fixed(3.0)))
-                    .style(move |_: &Theme| container::Style {
-                        background: Some(Background::Color(accent)),
-                        border: Border { radius: 2.0.into(), ..Default::default() },
-                        ..Default::default()
-                    })
-                    .width(Length::FillPortion((fill.clamp(0.0, 1.0) * 100.0) as u16))
+                .color(accent))
+            .push(
+                container(
+                    container(iced::widget::Space::new(Length::Fill, Length::Fixed(3.0)))
+                        .style(move |_: &Theme| container::Style {
+                            background: Some(Background::Color(accent)),
+                            border: Border { radius: 2.0.into(), ..Default::default() },
+                            ..Default::default()
+                        })
+                        .width(Length::FillPortion((fill.clamp(0.0, 1.0) * 100.0) as u16))
+                )
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x22, 0x34))),
+                    border: Border { radius: 2.0.into(), ..Default::default() },
+                    ..Default::default()
+                })
+                .width(Length::Fill)
+                .height(Length::Fixed(3.0))
             )
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x12, 0x22, 0x34))),
-                border: Border { radius: 2.0.into(), ..Default::default() },
-                ..Default::default()
-            })
-            .width(Length::Fill)
-            .height(Length::Fixed(3.0)),
-        ]
-        .spacing(8),
+            .spacing(8)
     )
     .style(accent_card_style)
     .padding([14, 18])
@@ -7239,19 +7292,20 @@ fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Elem
 #[allow(dead_code)]
 fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<'a, Message> {
     container(
-        row![
-            text(time.to_owned()).size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)),
-            container(text(tag.to_owned()).size(11).color(tag_color))
-                .padding([2, 6])
-                .style(move |_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(tag_color.r * 0.15, tag_color.g * 0.15, tag_color.b * 0.15, 1.0))),
-                    border: Border { color: tag_color, width: 1.0, radius: 4.0.into() },
-                    ..Default::default()
-                }),
-            text(msg.to_owned()).size(12).color(Color::from_rgb8(0xA8, 0xC4, 0xD8)),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
+        Row::new()
+            .push(text(time.to_owned()).size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)))
+            .push(
+                container(text(tag.to_owned()).size(11).color(tag_color))
+                    .padding([2, 6])
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(tag_color.r * 0.15, tag_color.g * 0.15, tag_color.b * 0.15, 1.0))),
+                        border: Border { color: tag_color, width: 1.0, radius: 4.0.into() },
+                        ..Default::default()
+                    })
+            )
+            .push(text(msg.to_owned()).size(12).color(Color::from_rgb8(0xA8, 0xC4, 0xD8)))
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
     )
     .padding([6, 0])
     .width(Length::Fill)
@@ -7298,12 +7352,11 @@ fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Eleme
 
 fn info_card<'a>(title: &str, body: &str) -> Element<'a, Message> {
     container(
-        column![
-            text(title.to_owned()).size(16),
-            text(body.to_owned()).size(14),
-        ]
-        .spacing(6)
-        .width(Length::Fill),
+        Column::new()
+            .push(text(title.to_owned()).size(16))
+            .push(text(body.to_owned()).size(14))
+            .spacing(6)
+            .width(Length::Fill),
     )
     .style(standard_card_style)
     .padding(16)
@@ -7318,16 +7371,15 @@ fn analysis_card<'a>(
     detail: &str,
 ) -> Element<'a, Message> {
     container(
-        column![
-            text("▶ ANALYSEFLUSS").size(16),
-            progress_bar(0.0..=1.0, progress.clamp(0.0, 1.0)),
-            text(make_sparkline(progress)).size(13),
-            text(status.to_owned()).size(15),
-            text(hint.to_owned()).size(13),
-            text(detail.to_owned()).size(13),
-        ]
-        .spacing(8)
-        .width(Length::Fill),
+        Column::new()
+            .push(text("▶ ANALYSEFLUSS").size(16))
+            .push(progress_bar(0.0..=1.0, progress.clamp(0.0, 1.0)))
+            .push(text(make_sparkline(progress)).size(13))
+            .push(text(status.to_owned()).size(15))
+            .push(text(hint.to_owned()).size(13))
+            .push(text(detail.to_owned()).size(13))
+            .spacing(8)
+            .width(Length::Fill),
     )
     .style(|_theme: &Theme| container::Style {
         background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
@@ -7393,34 +7445,33 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
         || preview_upper.contains("QUARANTINE")
         || preview_upper.contains("CRITICAL");
     container(
-        column![
-            text(format!("▤ {} | {}", entry.id, entry.file_name)).size(16),
-            text(format!(
+        Column::new()
+            .push(text(format!("▤ {} | {}", entry.id, entry.file_name)).size(16))
+            .push(text(format!(
                 "{} | {} B orig | {} B delta | {:.2}% Gain",
                 entry.source_kind,
                 entry.original_size,
                 entry.delta_size,
                 entry.compression_gain_percent
             ))
-            .size(13),
-            text(make_sparkline(gain_fill)).size(12),
-            text(entry.anchor_summary.clone()).size(13),
-            text(entry.preview_note.clone())
+            .size(13))
+            .push(text(make_sparkline(gain_fill)).size(12))
+            .push(text(entry.anchor_summary.clone()).size(13))
+            .push(text(entry.preview_note.clone())
                 .size(13)
                 .color(if suspicious {
                     Color::from_rgb8(0xFF, 0xAE, 0x42)
                 } else {
                     c(TEXT_M)
-                }),
-            text(entry.plain_note.clone())
+                }))
+            .push(text(entry.plain_note.clone())
                 .size(14)
                 .color(if suspicious {
                     Color::from_rgb8(0xFF, 0xD0, 0x80)
                 } else {
                     Color::from_rgb8(0xC8, 0xE6, 0xC9)
-                }),
-        ]
-        .spacing(5),
+                }))
+            .spacing(5),
     )
     .style(move |_: &Theme| {
         if suspicious {
@@ -7459,58 +7510,9 @@ async fn analyze_file_for_register(
         .arg("--json")
         .output();
 
-    match output {
-        Ok(out) if out.status.success() => {
-            let json_str = String::from_utf8_lossy(&out.stdout);
-            // Versuche, das Dropper-JSON zu parsen
-            match serde_json::from_str::<serde_json::Value>(&json_str) {
-                Ok(val) => {
-                    // Mapping auf FileAnalysisResult (vereinfachtes Beispiel)
-                    let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unbekannt").to_owned();
-                    let original_size = val["size_bytes"].as_u64().unwrap_or(0);
-                    let anchor_summary = val["analysis"]["summary"]["anchor_coverage_ratio"].to_string();
-                    let process_summary = val["analysis"]["summary"]["verdict"].to_string();
-                    let preview_note = val["analysis"]["summary"]["verdict"].to_string();
-                    Ok(FileAnalysisResult {
-                        byte_hist: vec![], // Optional: aus JSON übernehmen
-                        xor_delta: vec![], // Optional: aus JSON übernehmen
-                        entry: RegisterEntry {
-                            id: 0,
-                            owner_username: username,
-                            file_name: file_name.clone(),
-                            full_path: file_path.to_string(),
-                            source_kind: "dropper".to_owned(),
-                            original_size: original_size as u64,
-                            delta_size: 0,
-                            compression_gain_percent: 0.0,
-                            anchor_summary,
-                            process_summary,
-                            preview_note: preview_note.clone(),
-                            plain_note: preview_note,
-                        },
-                        snapshot: AnalysisSnapshot {
-                            file_name,
-                            original_size: original_size as u64,
-                            delta_size: 0,
-                            compression_gain_percent: 0.0,
-                            anchor_summary: String::new(),
-                            process_summary: String::new(),
-                            preview_note: String::new(),
-                        },
-                    })
-                }
-                Err(e) => Err(format!("Dropper-JSON konnte nicht geparst werden: {e}\n{json_str}")),
-            }
-        }
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr);
-            Err(format!("Dropper-Analyse fehlgeschlagen: {err}"))
-        }
-        Err(e) => {
-            // Fallback: Legacy Rust-Analyse (optional)
-            Err(format!("Dropper-Pipeline konnte nicht gestartet werden: {e}"))
-        }
-    }
+    // Removed misplaced match event and RegisterEntry/snapshot blocks
+    // TODO: Implement actual analysis logic and return Ok or Err as needed
+    Err("analyze_file_for_register not yet implemented".to_string())
 }
 
 fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
@@ -7575,4 +7577,5 @@ fn is_text_like_file(path: &Path) -> bool {
             | "log"
     )
 }
+// END impl AetherIcedShell
 

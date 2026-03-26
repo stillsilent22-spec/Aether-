@@ -47,7 +47,7 @@ pub fn extract_archive<P: AsRef<Path>>(archive_path: P, out_dir: P) -> io::Resul
         "7z" => {
             // 7z.exe muss im PATH sein
             let status = std::process::Command::new("7z")
-                .args(["x", path.to_str().unwrap(), format!"-o{}", out_dir.as_ref().display().to_string()])
+                .args(["x", path.to_str().unwrap(), &format!("-o{}", out_dir.as_ref().display().to_string())])
                 .status()?;
             if !status.success() {
                 return Err(io::Error::new(io::ErrorKind::Other, "7z extraction failed"));

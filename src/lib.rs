@@ -47,3 +47,8 @@ pub mod ethics;
 pub mod bayes;
 pub mod observer;
 
+// ── Additional Rust Engines ───────────────────────────────────────────────
+pub mod archive;
+pub mod backup;
+pub mod deep_scan;
+
