@@ -21,12 +21,14 @@ impl DropperBridge {
         }
     }
 
-    pub fn start(&mut self, python_path: &str, script_path: &str, file_path: &str) -> Result<(), String> {
+    pub fn start(&mut self, python_path: &str, file_path: &str) -> Result<(), String> {
         if self.child.is_some() {
             return Err("Dropper pipeline already running".to_owned());
         }
+        let script_path = "aether_pipeline.py";
         let mut cmd = Command::new(python_path);
         cmd.arg(script_path)
+            .arg("--cascade").arg("shanway")
             .arg(file_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -36,7 +38,6 @@ impl DropperBridge {
         let stdout = child.stdout.take().ok_or("Failed to open stdout for dropper")?;
         let reader = BufReader::new(stdout);
         let results = self.results.clone();
-        // Spawn a thread to read output lines and push to results
         thread::spawn(move || {
             for line in reader.lines() {
                 if let Ok(l) = line {
@@ -45,7 +46,7 @@ impl DropperBridge {
             }
         });
         self.stdin = Some(stdin);
-        self.stdout = None; // Output is handled by thread
+        self.stdout = None;
         self.child = Some(child);
         Ok(())
     }
