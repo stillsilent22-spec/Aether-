@@ -500,6 +500,48 @@ def process_file(
         )
         progress_fn(55)
 
+
+        # Step 2b: Unified deterministic cascade (audit, session-encrypted delta, swarm submission)
+        from modules.unified_cascade import cascade
+        from modules.swarm_loop_bridge import submit_cascade_result
+
+        # Get session key if available
+        session_key = None
+        try:
+            from modules.session_engine import SessionContext
+            _ctx = SessionContext(seed=0xA37E)
+            session_key = _ctx.session_key if hasattr(_ctx, "session_key") else None
+            if session_key and isinstance(session_key, str):
+                session_key = session_key.encode()
+        except Exception:
+            pass
+
+        raw = file_path.read_bytes()
+        cascade_result = cascade(
+            raw,
+            source_id=str(file_path),
+            source_type="file",
+            session_key=session_key,
+        )
+        report["cascade"] = {k: v for k, v in cascade_result.to_dict().items() if k != "delta_encrypted_hex"}
+        report["cascade"]["delta_hash"] = cascade_result.delta_hash
+
+        log_fn(f"[CASCADE] run_id={cascade_result.run_id[:16]}… "
+               f"v={cascade_result.cascade_version} "
+               f"trust={cascade_result.trust_score:.2f} "
+               f"entropy={cascade_result.entropy:.3f} "
+               f"zipf={cascade_result.zipf_alpha:.3f} "
+               f"benford={cascade_result.benford_score:.3f} "
+               f"katz={cascade_result.katz_dimension:.3f} "
+               f"noether={cascade_result.noether_consistency:.3f} "
+               f"delta_encrypted={'yes' if cascade_result.delta_encrypted_hex else 'no'} "
+               f"flags={cascade_result.anomaly_flags}")
+
+        # Submit to swarm — genesis role = no quorum needed
+        swarm_result = submit_cascade_result(cascade_result, role="genesis")
+        log_fn(f"[SWARM] pack_id={swarm_result.get('pack_id', 'n/a')} "
+               f"promoted={swarm_result.get('promoted', False)}")
+
         log_fn("[STEP 3/4] Reconstruction and compression")
         reconstruction_result = bridge.build_reconstruction(file_path, output_dir, log_fn=log_fn)
         report["reconstruction"] = reconstruction_result

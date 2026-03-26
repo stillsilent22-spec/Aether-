@@ -16,7 +16,8 @@ pub fn get_score_tooltip(score_name: &str) -> &'static str {
 }
 
 // Beispiel: Score-Panel mit Tooltips für die Analyse-Ansicht
-use iced::{tooltip, Tooltip, widget::{Row, Text, Column, Container}, Element};
+use iced::widget::{Row, Text, Column, Container, Tooltip, tooltip};
+use iced::Element;
 
 fn view_score_panel(scores: &[(String, f32)]) -> Element<'_, Message> {
     let mut col = Column::new().spacing(8);
@@ -38,12 +39,9 @@ fn view_score_panel(scores: &[(String, f32)]) -> Element<'_, Message> {
     Container::new(col).padding(12).into()
 }
 use crate::py_bridge::DropperBridge;
-    dropper_bridge: DropperBridge,
 // ── Backup-Option für Analyse ─────────────────────────────────────────────
 // Diese Option aktiviert ein automatisches Backup jeder Datei vor der Analyse.
 // Die Sicherung erfolgt nach C:/AetherBackup/YYYY-MM-DD/ (siehe backup.rs).
-use crate::backup;
-use crate::deep_scan;
 use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
 use crate::auth::{AuthStore, UserRecord};
 use crate::hardware;
@@ -56,16 +54,7 @@ use crate::key_vault::DataKey;
 use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
 use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus};
 use crate::policy_executor::{default_analysis_rules, RuleEngine};
-    Data,
-    Settings,
-    Logs,
-    Anchors,
-    Imprint,
-    StructureMap,
-    ADE,
-    Rekonstruktion,
-    Launcher,
-}
+// ...existing code...
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ChatContext {
@@ -321,6 +310,10 @@ pub struct AetherIcedShell {
     live_render_anchor_boost: bool,
     live_render_last_os_sample_tick: u64,
     backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
+
+    // Cascade result state
+    cascade_run_id: Option<String>,
+    cascade_metrics: Option<CascadeMetrics>,
 }
 
 impl AetherIcedShell {
@@ -345,20 +338,8 @@ impl AetherIcedShell {
             security_audit_events: Vec::new(),
             swarm_startup: swarm_startup.clone(),
                 dropper_bridge,
-        // Dropper pipeline control
-        pub fn start_dropper_pipeline(&mut self, python_path: &str, script_path: &str, file_path: &str) -> Result<(), String> {
-            self.dropper_bridge.start(python_path, script_path, file_path)
-        }
-
-        pub fn stop_dropper_pipeline(&mut self) -> Result<(), String> {
-            self.dropper_bridge.stop()
-        }
-
-        pub fn dropper_results(&self) -> Vec<String> {
-            self.dropper_bridge.get_results()
-        }
-    deep_scan_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
-            login_username: String::new(),
+                deep_scan_enabled: true, // Standardmäßig aktiviert
+                login_username: String::new(),
             login_password: String::new(),
             status_line: if swarm_startup.node_initialized {
                 "Bitte lokal anmelden oder registrieren.".to_owned()
@@ -493,7 +474,7 @@ impl AetherIcedShell {
         if !path.exists() {
             return;
         }
-            deep_scan_enabled: true, // Standardmäßig aktiviert
+            // deep_scan_enabled: true, // Standardmäßig aktiviert (moved or removed, not valid here)
         let Ok(raw) = std::fs::read_to_string(path) else {
             return;
         };
@@ -894,12 +875,11 @@ impl AetherIcedShell {
 
         container(
             button(
-                column![
-                    text(icon).size(16).color(if is_active { accent } else { text_idle }),
-                    text(label).size(11).color(if is_active { text_active } else { text_idle }),
-                ]
-                .spacing(2)
-                .align_x(Alignment::Center),
+                Column::new()
+                    .push(text(icon).size(16).color(if is_active { accent } else { text_idle }))
+                    .push(text(label).size(11).color(if is_active { text_active } else { text_idle }))
+                    .spacing(2)
+                    .align_x(Alignment::Center),
             )
             .padding([8, 16])
             .on_press(Message::TabSelected(tab))
@@ -962,42 +942,40 @@ impl AetherIcedShell {
 
     fn view_auth(&self) -> Element<'_, Message> {
         let left = container(
-            column![
-                text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)),
-                text("Deterministic Security Kernel").size(34).color(c(TEXT_H)),
-                text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
+            Column::new()
+                .push(text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)))
+                .push(text("Deterministic Security Kernel").size(34).color(c(TEXT_H)))
+                .push(text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
                     .size(14)
-                    .color(c(TEXT_M)),
-                text("Kein Cloud-Zwang. Keine Black Box. Keine versteckte Semantik.")
+                    .color(c(TEXT_M)))
+                .push(text("Kein Cloud-Zwang. Keine Black Box. Keine versteckte Semantik.")
                     .size(13)
-                    .color(c(TEXT_D)),
-                container(
-                    column![
-                        text("Live Engine State").size(12).color(c(TEXT_M)),
-                        text(format!("Tick {}", self.tick_counter)).size(14).color(c(TEXT_H)),
-                        text(format!("Runtime {}", self.runtime_profile_label())).size(12).color(c(TEXT_D)),
-                        text(format!("Swarm {}", self.swarm_startup.node_count)).size(12).color(c(TEXT_D)),
-                        text(if self.swarm_startup.node_initialized {
+                    .color(c(TEXT_D)))
+                .push(container(
+                    Column::new()
+                        .push(text("Live Engine State").size(12).color(c(TEXT_M)))
+                        .push(text(format!("Tick {}", self.tick_counter)).size(14).color(c(TEXT_H)))
+                        .push(text(format!("Runtime {}", self.runtime_profile_label())).size(12).color(c(TEXT_D)))
+                        .push(text(format!("Swarm {}", self.swarm_startup.node_count)).size(12).color(c(TEXT_D)))
+                        .push(text(if self.swarm_startup.node_initialized {
                             self.swarm_startup.summary.clone()
                         } else {
                             "Rust-Start blockiert keinen Login, aber Node-Init fehlt.".to_owned()
                         })
                         .size(11)
-                        .color(c(TEXT_D)),
-                    ]
-                    .spacing(4)
+                        .color(c(TEXT_D)))
+                        .spacing(4)
                 )
                 .padding(12)
-                .style(accent_card_style),
+                .style(accent_card_style))
                 // Backup-Option Beschreibung (sichtbar im Auth/Analyse-Panel)
-                container(
-                    column![
-                        text("Backup vor Analyse").size(13).color(c(TEXT_H)),
-                        text("Jede Datei wird vor der Analyse automatisch gesichert (C:/AetherBackup). Diese Option schützt vor Datenverlust und kann in den Einstellungen deaktiviert werden.")
+                .push(container(
+                    Column::new()
+                        .push(text("Backup vor Analyse").size(13).color(c(TEXT_H)))
+                        .push(text("Jede Datei wird vor der Analyse automatisch gesichert (C:/AetherBackup). Diese Option schützt vor Datenverlust und kann in den Einstellungen deaktiviert werden.")
                             .size(11)
-                            .color(c(TEXT_M)),
-                    ]
-                    .spacing(2)
+                            .color(c(TEXT_M)))
+                        .spacing(2)
                 )
                 .padding(8)
                 .style(|_: &Theme| container::Style {
@@ -1008,32 +986,32 @@ impl AetherIcedShell {
                         radius: 6.0.into(),
                     },
                     ..Default::default()
-                }),
-            ]
-            .spacing(12)
+                }))
+                .spacing(12)
         )
         .padding(18)
         .style(panel_frame_style)
         .width(Length::FillPortion(3));
 
         let right = container(
-            column![
-                text("Sign in").size(24).color(c(TEXT_H)),
-                text_input("Username", &self.login_username)
-                    .on_input(Message::LoginUsernameChanged),
+            Column::new()
+                .push(text("Sign in").size(24).color(c(TEXT_H)))
+                .push(text_input("Username", &self.login_username)
+                    .on_input(Message::LoginUsernameChanged))
                 // Add more sign-in UI as needed
-            ]
-            .spacing(12)
+                .spacing(12)
         )
         .padding(18)
         .style(panel_frame_style)
         .width(Length::FillPortion(2));
 
-        row![left, right]
+        Row::new()
+            .push(left)
+            .push(right)
             .spacing(24)
             .width(Length::Fill)
             .height(Length::Fill)
-            .into()
+            .into();
         let trust_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK")
             || self.security_snapshot.trust_state.to_uppercase().contains("SECURE");
@@ -1068,12 +1046,14 @@ impl AetherIcedShell {
             };
             container(
                 button(
-                    row![
-                        text(icon).size(14).color(text_col),
-                        text(label).size(13).color(text_col),
-                    ]
-                    .spacing(8)
-                    .align_y(iced::Alignment::Center),
+                    {
+                        let mut row = Row::new();
+                        row = row.push(text(icon).size(14).color(text_col));
+                        row = row.push(text(label).size(13).color(text_col));
+                        row = row.spacing(8);
+                        row = row.align_y(iced::Alignment::Center);
+                        row
+                    },
                 )
                 .padding([7, 12])
                 .width(Length::Fill)
@@ -1093,31 +1073,32 @@ impl AetherIcedShell {
         };
 
         container(
-            column![
+            Column::new()
                 // Logo
-                container(
-                    column![
-                        text("\u{2b21}").size(30).color(Color::from_rgb8(0x1E, 0x90, 0xFF)),
-                        text("AETHER").size(16).color(Color::from_rgb8(0xF0, 0xEE, 0xFF)),
-                    ]
-                    .spacing(2)
-                    .align_x(Alignment::Center),
+                .push(container(
+                    Column::new()
+                        .push(text("\u{2b21}").size(30).color(Color::from_rgb8(0x1E, 0x90, 0xFF)))
+                        .push(text("AETHER").size(16).color(Color::from_rgb8(0xF0, 0xEE, 0xFF)))
+                        .spacing(2)
+                        .align_x(Alignment::Center),
                 )
                 .padding([14, 10])
-                .width(Length::Fill),
+                .width(Length::Fill))
 
                 // User status badge
-                container(
-                    row![
-                        canvas::Canvas::new(DotScene { color: trust_color })
+                .push(container(
+                    {
+                        let mut row = Row::new();
+                        row = row.push(canvas::Canvas::new(DotScene { color: trust_color })
                             .width(Length::Fixed(10.0))
-                            .height(Length::Fixed(10.0)),
-                        text(username.chars().take(16).collect::<String>())
+                            .height(Length::Fixed(10.0)));
+                        row = row.push(text(username.chars().take(16).collect::<String>())
                             .size(12)
-                            .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                    ]
-                    .spacing(6)
-                    .align_y(iced::Alignment::Center),
+                            .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)));
+                        row = row.spacing(6);
+                        row = row.align_y(iced::Alignment::Center);
+                        row
+                    }
                 )
                 .style(|_: &Theme| container::Style {
                     background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
@@ -1129,57 +1110,61 @@ impl AetherIcedShell {
                     ..Default::default()
                 })
                 .padding([8, 12])
-                .width(Length::Fill),
+                .width(Length::Fill))
 
                 // AGENTS
-                section_header("AGENTS"),
-                nav_item("\u{25a3}", "Data Collector", Tab::Data),
-                nav_item("\u{25ce}", "Event Monitor", Tab::Logs),
-                nav_item("\u{25a4}", "Task Scheduler", Tab::Anchors),
+                .push(section_header("AGENTS"))
+                .push(nav_item("\u{25a3}", "Data Collector", Tab::Data))
+                .push(nav_item("\u{25ce}", "Event Monitor", Tab::Logs))
+                .push(nav_item("\u{25a4}", "Task Scheduler", Tab::Anchors))
 
                 // CATEGORIES
-                section_header("CATEGORIES"),
-                nav_item("\u{2295}", "Network", Tab::Browser),
-                nav_item("\u{25b6}", "Compute", Tab::YouTube),
-                nav_item("\u{25c6}", "Storage", Tab::StructureMap),
+                .push(section_header("CATEGORIES"))
+                .push(nav_item("\u{2295}", "Network", Tab::Browser))
+                .push(nav_item("\u{25b6}", "Compute", Tab::YouTube))
+                .push(nav_item("\u{25c6}", "Storage", Tab::StructureMap))
 
                 // LOGS
-                section_header("LOGS"),
-                nav_item("\u{2699}", "System Logs", Tab::Settings),
-                nav_item("\u{25d0}", "Alerts", Tab::Logs),
+                .push(section_header("LOGS"))
+                .push(nav_item("\u{2699}", "System Logs", Tab::Settings))
+                .push(nav_item("\u{25d0}", "Alerts", Tab::Logs))
 
                 // Bottom spacer + info
-                iced::widget::Space::new(Length::Fill, Length::Fill),
-                container(
-                    column![
-                        text(format!("\u{2699} {}", self.runtime_profile_label())).size(11)
-                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
-                        text(if self.analysis_running { "\u{25b6} ANALYS. AKTIV" } else { "\u{25a0} BEREIT" })
+                .push(iced::widget::Space::new(Length::Fill, Length::Fill))
+                .push(container(
+                    Column::new()
+                        .push(text(format!("\u{2699} {}", self.runtime_profile_label())).size(11)
+                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)))
+                        .push(text(if self.analysis_running { "\u{25b6} ANALYS. AKTIV" } else { "\u{25a0} BEREIT" })
                             .size(11)
-                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)),
-                    ]
-                    .spacing(4),
+                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)))
+                        .spacing(4),
                 )
                 .padding([8, 10])
-                .width(Length::Fill),
+                .width(Length::Fill))
 
                 // Settings + Power icons at bottom
-                container(
-                    row![
-                        button(text("\u{2699}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
-                            .padding([6, 10])
-                            .on_press(Message::TabSelected(Tab::Settings)),
-                        button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
-                            .padding([6, 10])
-                            .on_press(Message::TabSelected(Tab::Imprint)),
-                    ]
-                    .spacing(4),
+                .push(container(
+                    {
+                        let mut row = Row::new();
+                        row = row.push(
+                            button(text("\u{2699}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
+                                .padding([6, 10])
+                                .on_press(Message::TabSelected(Tab::Settings))
+                        );
+                        row = row.push(
+                            button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
+                                .padding([6, 10])
+                                .on_press(Message::TabSelected(Tab::Imprint))
+                        );
+                        row = row.spacing(4);
+                        row
+                    }
                 )
                 .padding([8, 8])
-                .width(Length::Fill),
-            ]
-            .spacing(2)
-            .height(Length::Fill),
+                .width(Length::Fill))
+                .spacing(2)
+                .height(Length::Fill)
         )
         .style(|_theme: &Theme| container::Style {
             background: Some(Background::Color(Color::from_rgb8(0x0D, 0x0C, 0x14))),
@@ -1198,33 +1183,30 @@ impl AetherIcedShell {
 
     #[allow(dead_code)]
     fn view_tabs(&self) -> Element<'_, Message> {
-        let logo = row![
-            canvas::Canvas::new(AetherLogoScene)
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0)),
-            text("AETHER")
-                .size(14)
-                .color(c(ACCENT)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let mut logo = Row::new();
+        logo = logo.push(canvas::Canvas::new(AetherLogoScene)
+            .width(Length::Fixed(32.0))
+            .height(Length::Fixed(32.0)));
+        logo = logo.push(text("AETHER")
+            .size(14)
+            .color(c(ACCENT)));
+        logo = logo.spacing(8);
+        logo = logo.align_y(Alignment::Center);
 
-        let tabs = row![
-            self.tab_button(Tab::Home,           "\u{25c9}", "Overview"),
-            self.tab_button(Tab::Chat,           "\u{25c8}", "Chat"),
-            self.tab_button(Tab::Browser,        "\u{2295}", "Browser"),
-            self.tab_button(Tab::YouTube,        "\u{25b6}", "YouTube"),
-            self.tab_button(Tab::Data,           "\u{25a4}", "Data"),
-            self.tab_button(Tab::Settings,       "\u{2699}", "Config"),
-            self.tab_button(Tab::Logs,           "\u{25a3}", "Logs"),
-            self.tab_button(Tab::Anchors,        "\u{25c6}", "Cluster"),
-            self.tab_button(Tab::StructureMap,   "\u{25ce}", "FlowSphere"),
-            self.tab_button(Tab::ADE,            "\u{25cd}", "ADE"),
-            self.tab_button(Tab::Imprint,        "\u{2139}", "Info"),
-            self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"),
-            self.tab_button(Tab::Launcher,       "\u{25f6}", "Launch"),
-        ]
-        .spacing(0);
+        let mut tabs = Row::new().spacing(0);
+        tabs = tabs.push(self.tab_button(Tab::Home,           "\u{25c9}", "Overview"));
+        tabs = tabs.push(self.tab_button(Tab::Chat,           "\u{25c8}", "Chat"));
+        tabs = tabs.push(self.tab_button(Tab::Browser,        "\u{2295}", "Browser"));
+        tabs = tabs.push(self.tab_button(Tab::YouTube,        "\u{25b6}", "YouTube"));
+        tabs = tabs.push(self.tab_button(Tab::Data,           "\u{25a4}", "Data"));
+        tabs = tabs.push(self.tab_button(Tab::Settings,       "\u{2699}", "Config"));
+        tabs = tabs.push(self.tab_button(Tab::Logs,           "\u{25a3}", "Logs"));
+        tabs = tabs.push(self.tab_button(Tab::Anchors,        "\u{25c6}", "Cluster"));
+        tabs = tabs.push(self.tab_button(Tab::StructureMap,   "\u{25ce}", "FlowSphere"));
+        tabs = tabs.push(self.tab_button(Tab::ADE,            "\u{25cd}", "ADE"));
+        tabs = tabs.push(self.tab_button(Tab::Imprint,        "\u{2139}", "Info"));
+        tabs = tabs.push(self.tab_button(Tab::Rekonstruktion, "\u{21ba}", "Rekon"));
+        tabs = tabs.push(self.tab_button(Tab::Launcher,       "\u{25f6}", "Launch"));
 
         let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK");
@@ -1235,44 +1217,45 @@ impl AetherIcedShell {
             c(DANGER)
         };
 
-        let status_content: Element<'_, Message> = row![
-            canvas::Canvas::new(DotScene { color: if all_ok {
-                c(ACCENT)
-            } else {
-                c(DANGER)
-            }})
-            .width(Length::Fixed(8.0)).height(Length::Fixed(8.0)),
-            text(if all_ok { "Operational" } else { "Degraded" })
-                .size(11).color(c(TEXT_M)),
-        ].spacing(6).align_y(Alignment::Center).into();
+        let status_content: Element<'_, Message> = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(canvas::Canvas::new(DotScene { color: if all_ok { c(ACCENT) } else { c(DANGER) }})
+                .width(Length::Fixed(8.0)).height(Length::Fixed(8.0)))
+            .push(text(if all_ok { "Operational" } else { "Degraded" })
+                .size(11).color(c(TEXT_M)))
+            .into();
 
-        let nodes_content: Element<'_, Message> = row![
-            text("\u{2b21}").size(11).color(c(ACCENT2)),
-            text(format!("{} Nodes", self.anchor_clusters().len()))
-                .size(11).color(c(TEXT_M)),
-        ].spacing(6).align_y(Alignment::Center).into();
+        let nodes_content: Element<'_, Message> = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(text("\u{2b21}").size(11).color(c(ACCENT2)))
+            .push(text(format!("{} Nodes", self.anchor_clusters().len()))
+                .size(11).color(c(TEXT_M)))
+            .into();
 
-        let time_content: Element<'_, Message> = row![
-            text("\u{25d4}").size(11).color(c(TEXT_D)),
-            text(format!("{:02}:{:02} Live",
+        let time_content: Element<'_, Message> = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(text("\u{25d4}").size(11).color(c(TEXT_D)))
+            .push(text(format!("{:02}:{:02} Live",
                 (self.tick_counter / 60) % 24,
                 self.tick_counter % 60))
-                .size(11).color(c(TEXT_D)),
-        ].spacing(6).align_y(Alignment::Center).into();
+                .size(11).color(c(TEXT_D)))
+            .into();
 
-        let key_content: Element<'_, Message> = row![
-            text("\u{1f511}").size(11).color(c(ACCENT)),
-            text(if self.data_key_fingerprint.is_empty() {
+        let key_content: Element<'_, Message> = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(text("\u{1f511}").size(11).color(c(ACCENT)))
+            .push(text(if self.data_key_fingerprint.is_empty() {
                 "KEY --".to_owned()
             } else {
                 format!("KEY {}", self.data_key_fingerprint)
             })
             .size(11)
-            .color(c(TEXT_M)),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into();
+            .color(c(TEXT_M)))
+            .into();
 
         let badge_style_ok = move |_: &Theme| container::Style {
             background: None,
@@ -1291,27 +1274,27 @@ impl AetherIcedShell {
         };
 
         container(
-            row![
-                logo,
-                container(iced::widget::Space::new(1.0, 32.0))
+            Row::new()
+                .spacing(16)
+                .align_y(Alignment::Center)
+                .push(logo)
+                .push(container(iced::widget::Space::new(1.0, 32.0))
                     .style(|_: &Theme| container::Style {
                         background: Some(Background::Color(Color::from_rgb8(0x20, 0x1E, 0x30))),
                         ..Default::default()
                     })
-                    .width(Length::Fixed(1.0)),
-                tabs,
-                iced::widget::Space::new(Length::Fill, Length::Shrink),
-                row![
-                    container(status_content).style(badge_style_ok).padding([4, 14]),
-                    container(nodes_content).style(badge_style_cyan).padding([4, 14]),
-                    container(time_content).style(badge_style_dim).padding([4, 14]),
-                    container(key_content).style(badge_style_dim).padding([4, 14]),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ]
-            .spacing(16)
-            .align_y(Alignment::Center),
+                    .width(Length::Fixed(1.0)))
+                .push(tabs)
+                .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+                .push(
+                    Row::new()
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .push(container(status_content).style(badge_style_ok).padding([4, 14]))
+                        .push(container(nodes_content).style(badge_style_cyan).padding([4, 14]))
+                        .push(container(time_content).style(badge_style_dim).padding([4, 14]))
+                        .push(container(key_content).style(badge_style_dim).padding([4, 14]))
+                )
         )
         .style(|_: &Theme| container::Style {
             background: Some(Background::Color(c(BG_BASE))),
@@ -1399,288 +1382,133 @@ impl AetherIcedShell {
                     })
             };
 
-            container(
-                column![
-                    text("AetherGuard").size(24).color(c(ACCENT)),
-                    text("Quick Start").size(12).color(c(TEXT_D)),
-                    nav_item("1. Overview", "Overview", self.dashboard_nav == "Overview"),
-                    nav_item("2. Control Center", "Control", self.dashboard_nav == "Control"),
-                    nav_item("3. Files", "Files", self.dashboard_nav == "Files"),
-                    nav_item("4. Chat", "Chat", self.dashboard_nav == "Chat"),
-                    nav_item("5. Logs", "Logs", self.dashboard_nav == "Logs"),
-                    text("Advanced").size(12).color(c(TEXT_D)),
-                    nav_item("6. Symbiont", "Symbiont", self.dashboard_nav == "Symbiont"),
-                    nav_item("7. Swarm Ops", "Swarm Ops", self.dashboard_nav == "Swarm Ops"),
-                    nav_item("8. Privacy", "Privacy", self.dashboard_nav == "Privacy"),
-                    text("Analysis").size(12).color(c(TEXT_D)),
-                    nav_item("9. Threat Analysis", "Threat Analysis", self.dashboard_nav == "Threat Analysis"),
-                    nav_item("10. Threat Graph", "Threat Graph", self.dashboard_nav == "Threat Graph"),
-                    nav_item("11. Anchors", "Anchors", self.dashboard_nav == "Anchors"),
-                    text("Workspace").size(12).color(c(TEXT_D)),
-                    nav_item("12. Browser", "Browser", self.dashboard_nav == "Browser"),
-                    nav_item("13. YouTube", "YouTube", self.dashboard_nav == "YouTube"),
-                    nav_item("14. Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"),
-                    nav_item("15. Info", "Info", self.dashboard_nav == "Info"),
-                    text("System").size(12).color(c(TEXT_D)),
-                    nav_item("16. Runtime", "Runtime", self.dashboard_nav == "Runtime"),
-                ]
-                .spacing(8)
-            )
-            .padding(14)
-            .width(Length::Fixed(210.0))
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                border: Border { color: Color::from_rgb8(0x30, 0x2E, 0x4E), width: 1.2, radius: 14.0.into() },
-                ..Default::default()
+            container({
+                let mut col = Column::new();
+                col = col.push(text("AetherGuard").size(24).color(c(ACCENT)));
+                col = col.push(text("Quick Start").size(12).color(c(TEXT_D)));
+                col = col.push(nav_item("1. Overview", "Overview", self.dashboard_nav == "Overview"));
+                col = col.push(nav_item("2. Control Center", "Control", self.dashboard_nav == "Control"));
+                col = col.push(nav_item("3. Files", "Files", self.dashboard_nav == "Files"));
+                col = col.push(nav_item("4. Chat", "Chat", self.dashboard_nav == "Chat"));
+                col = col.push(nav_item("5. Logs", "Logs", self.dashboard_nav == "Logs"));
+                col = col.push(text("Advanced").size(12).color(c(TEXT_D)));
+                col = col.push(nav_item("6. Symbiont", "Symbiont", self.dashboard_nav == "Symbiont"));
+                col = col.push(nav_item("7. Swarm Ops", "Swarm Ops", self.dashboard_nav == "Swarm Ops"));
+                col = col.push(nav_item("8. Privacy", "Privacy", self.dashboard_nav == "Privacy"));
+                col = col.push(text("Analysis").size(12).color(c(TEXT_D)));
+                col = col.push(nav_item("9. Threat Analysis", "Threat Analysis", self.dashboard_nav == "Threat Analysis"));
+                col = col.push(nav_item("10. Threat Graph", "Threat Graph", self.dashboard_nav == "Threat Graph"));
+                col = col.push(nav_item("11. Anchors", "Anchors", self.dashboard_nav == "Anchors"));
+                col = col.push(text("Workspace").size(12).color(c(TEXT_D)));
+                col = col.push(nav_item("12. Browser", "Browser", self.dashboard_nav == "Browser"));
+                col = col.push(nav_item("13. YouTube", "YouTube", self.dashboard_nav == "YouTube"));
+                col = col.push(nav_item("14. Reconstruction", "Reconstruction", self.dashboard_nav == "Reconstruction"));
+                col = col.push(nav_item("15. Info", "Info", self.dashboard_nav == "Info"));
+                col = col.push(text("System").size(12).color(c(TEXT_D)));
+                col = col.push(nav_item("16. Runtime", "Runtime", self.dashboard_nav == "Runtime"));
+                col.spacing(8)
             })
+            .padding(14)
+            .width(Length::FillPortion(2))
+            .style(standard_card_style)
         };
 
-        let dropper_button = button(text("Run Dropper Pipeline").size(13))
-            .on_press(Message::DropperStartPressed)
-            .padding([8, 12])
-            .style(|_: &Theme, _| button::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x3F, 0xBA, 0xC2))),
-                border: Border { color: c(ACCENT), width: 1.0, radius: 10.0.into() },
-                ..Default::default()
-            });
-
-        let dropper_results = self.dropper_results().join("\n");
-        let dropper_panel = container(
-            column![
-                row![
-                    text("Aether Dropper Results").size(16).color(c(TEXT_H)),
-                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                    dropper_button,
-                ].spacing(8).align_y(Alignment::Center),
-                text(&dropper_results).size(12).color(c(TEXT_M)),
-            ]
-            .spacing(8)
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .style(standard_card_style);
-
-        let topbar = row![
-            column![
-                text("Welcome! Aether Operator").size(24).color(c(TEXT_H)),
-                text("Deterministic pane-graph security telemetry").size(13).color(c(TEXT_M)),
-            ].spacing(3),
-            iced::widget::Space::new(Length::Fill, Length::Shrink),
-            container(
-                row![
-                    text("Search").size(12).color(c(TEXT_D)),
-                    text_input(self.dashboard_search_placeholder(), &self.dashboard_search)
-                        .on_input(Message::DashboardSearchChanged)
-                        .padding([8, 12])
-                        .size(13)
-                        .width(Length::Fixed(340.0)),
-                ]
-                .spacing(10)
-                .align_y(Alignment::Center)
-            )
-            .padding([4, 8])
-            .style(|_: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgb8(0x1A, 0x19, 0x28))),
-                border: Border { color: Color::from_rgb8(0x3C, 0x38, 0x60), width: 1.1, radius: 24.0.into() },
-                ..Default::default()
-            }),
-            button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H)))
-                .on_press(Message::DashboardNavSelected("Performance".to_owned()))
-                .padding([8, 12])
-                .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.14, 0.20, 0.24, 0.96))),
-                    border: Border { color: c(ACCENT), width: 1.0, radius: 10.0.into() },
-                    ..Default::default()
-                }),
-        ]
-        .align_y(Alignment::Center)
-        .spacing(12);
-
-        let kpis = row![
-            cyber_kpi_card("Total Threats", format!("{}%", total_threats), "Aether event stream", Color::from_rgb8(0x3F, 0xBA, 0xC2), "total_threats"),
-            cyber_kpi_card("Video File Risk", format!("{}%", video_risk), "Live node binding", Color::from_rgb8(0x7F, 0xB8, 0xC7), "video_risk"),
-            cyber_kpi_card("Image File Risk", format!("{}%", image_risk), "Deterministic state", Color::from_rgb8(0x5A, 0xAE, 0x84), "image_risk"),
-            cyber_kpi_card("Docs File Risk", format!("{}%", docs_risk), "Aether transition", Color::from_rgb8(0xC7, 0xA0, 0x4A), "docs_risk"),
-            cyber_kpi_card("Folder File Risk", format!("{}%", folder_risk), "Overlay observer", Color::from_rgb8(0x6B, 0xC0, 0xD0), "folder_risk"),
-        ]
-        .spacing(10);
-
-        let threat_summary_panel = container(
-            column![
-                row![
-                    text("Threat Summary").size(18).color(c(TEXT_H)),
-                    info_icon_button("threat_summary"),
-                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                    text("Yearly").size(12).color(c(TEXT_M)),
-                ].spacing(8).align_y(Alignment::Center),
-                canvas::Canvas::new(ThreatTrendScene {
-                    tick: self.tick_counter,
-                    reveal: graph_reveal,
-                })
-                .height(Length::Fixed(210.0))
-                .width(Length::Fill),
-            ]
-            .spacing(8)
-        )
-        .padding(14)
-        .width(Length::FillPortion(3))
-        .style(accent_card_style);
-
-        let risk_panel = container(
-            column![
-                row![
-                    text("Risk Score").size(18).color(c(TEXT_H)),
-                    info_icon_button("risk_score"),
-                ].spacing(8).align_y(Alignment::Center),
-                canvas::Canvas::new(RiskGaugeScene {
-                    score: risk_score,
-                    pulse: node_pulse,
-                    flash: data_flash,
-                })
-                .height(Length::Fixed(200.0))
-                .width(Length::Fill),
-            ]
-            .spacing(10)
-        )
-        .padding(14)
-        .width(Length::FillPortion(2))
-        .style(accent_card_style);
-
-        let donut_panel = container(
-            column![
-                row![
-                    text("Threats By Virus").size(18).color(c(TEXT_H)),
-                    info_icon_button("virus_pie"),
-                ].spacing(8).align_y(Alignment::Center),
-                canvas::Canvas::new(DonutScene {
-                    values: [0.22, 0.18, 0.35, 0.25],
-                    colors: [
-                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
-                        Color::from_rgb8(0x7F, 0xB8, 0xC7),
-                        Color::from_rgb8(0x5A, 0xAE, 0x84),
-                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
-                    ],
-                    pulse: node_pulse,
-                })
-                .height(Length::Fixed(180.0))
-                .width(Length::Fill),
-            ]
-            .spacing(8)
-        )
-        .padding(14)
-        .width(Length::FillPortion(2))
-        .style(standard_card_style);
-
         let pane_graph = container(
-            column![
-                row![
-                    text("Aether Pane-Graph").size(16).color(c(TEXT_H)),
-                    info_icon_button("pane_graph"),
-                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                    text("Background · Mid · Overlay").size(11).color(c(TEXT_D)),
-                ].spacing(8).align_y(Alignment::Center),
-                canvas::Canvas::new(CyberPaneGraphScene {
-                    tick: self.tick_counter,
-                    pulse: node_pulse,
-                    slide: pane_slide,
-                })
-                .height(Length::Fixed(130.0))
-                .width(Length::Fill),
-            ]
-            .spacing(8)
+            {
+                let mut col = Column::new();
+                let mut row = Row::new();
+                row = row.push(text("Aether Pane-Graph").size(16).color(c(TEXT_H)));
+                row = row.push(info_icon_button("pane_graph"));
+                row = row.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+                row = row.push(text("Background · Mid · Overlay").size(11).color(c(TEXT_D)));
+                col = col.push(row.spacing(8).align_y(Alignment::Center));
+                col = col.push(
+                    canvas::Canvas::new(CyberPaneGraphScene {
+                        tick: self.tick_counter,
+                        pulse: node_pulse,
+                        slide: pane_slide,
+                    })
+                    .height(Length::Fixed(130.0))
+                    .width(Length::Fill)
+                );
+                col.spacing(8)
+            }
         )
         .padding(12)
         .style(standard_card_style);
 
         let table_panel = {
-            container(
-                column![
-                    row![
-                        text("Threat Details").size(18).color(c(TEXT_H)),
-                        info_icon_button("threat_details"),
-                        iced::widget::Space::new(Length::Fill, Length::Shrink),
-                        text("Daily").size(12).color(c(TEXT_M)),
-                    ].spacing(8).align_y(Alignment::Center),
-                    row![
-                        text("Date").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
-                        text("Device ID").size(11).color(c(TEXT_D)).width(Length::FillPortion(3)),
-                        text("Virus name").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)),
-                        text("File Path").size(11).color(c(TEXT_D)).width(Length::FillPortion(4)),
-                        text("Type").size(11).color(c(TEXT_D)).width(Length::FillPortion(1)),
-                        text("Info").size(11).color(c(TEXT_D)),
-                    ]
-                    .spacing(8),
-                                    // FIX 5b: Tip text for Bridge/Symbiont startup sequence
-                                    container(
-                                        text("Tipp: Zuerst Bridge starten, dann Symbiont — warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN))
-                                    )
-                                    .padding(8)
-                                    .style(|_: &Theme| container::Style {
-                                        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x14, 0x0A))),
-                                        border: Border { color: Color::from_rgb8(0xD4,  0xA0, 0x42), width: 1.0, ..Default::default() },
-                                        ..Default::default()
-                                    }),
-                    column(
-                        filtered_threat_rows
-                            .into_iter()
-                            .map(|(date, device, virus, path, file_type)| {
-                                row![
-                                    text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)),
-                                    text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                                    text(virus).size(12).color(c(ACCENT)).width(Length::FillPortion(2)),
-                                    text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)),
-                                    text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)),
-                                    info_icon_button("threat_details"),
-                                ]
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .into()
-                            })
-                            .collect::<Vec<Element<'_, Message>>>()
+            container({
+                let mut col = Column::new();
+                let mut row1 = Row::new();
+                row1 = row1.push(text("Threat Details").size(18).color(c(TEXT_H)));
+                row1 = row1.push(info_icon_button("threat_details"));
+                row1 = row1.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+                row1 = row1.push(text("Daily").size(12).color(c(TEXT_M)));
+                col = col.push(row1.spacing(8).align_y(Alignment::Center));
+                let mut row2 = Row::new();
+                row2 = row2.push(text("Date").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)));
+                row2 = row2.push(text("Device ID").size(11).color(c(TEXT_D)).width(Length::FillPortion(3)));
+                row2 = row2.push(text("Virus name").size(11).color(c(TEXT_D)).width(Length::FillPortion(2)));
+                row2 = row2.push(text("File Path").size(11).color(c(TEXT_D)).width(Length::FillPortion(4)));
+                row2 = row2.push(text("Type").size(11).color(c(TEXT_D)).width(Length::FillPortion(1)));
+                row2 = row2.push(text("Info").size(11).color(c(TEXT_D)));
+                col = col.push(row2.spacing(8));
+                col = col.push(
+                    container(
+                        text("Tipp: Zuerst Bridge starten, dann Symbiont — warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN))
                     )
-                    .spacing(7),
-                ]
-                .spacing(8)
-            )
+                    .padding(8)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgb8(0x1A, 0x14, 0x0A))),
+                        border: Border { color: Color::from_rgb8(0xD4,  0xA0, 0x42), width: 1.0, ..Default::default() },
+                        ..Default::default()
+                    })
+                );
+                let mut rows_col = Column::new();
+                for (date, device, virus, path, file_type) in filtered_threat_rows {
+                    let mut row = Row::new();
+                    row = row.push(text(date).size(12).color(c(TEXT_M)).width(Length::FillPortion(2)));
+                    row = row.push(text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)));
+                    row = row.push(text(virus).size(12).color(c(ACCENT)).width(Length::FillPortion(2)));
+                    row = row.push(text(path).size(12).color(c(TEXT_D)).width(Length::FillPortion(4)));
+                    row = row.push(text(file_type).size(12).color(c(TEXT_M)).width(Length::FillPortion(1)));
+                    row = row.push(info_icon_button("threat_details"));
+                    rows_col = rows_col.push(row.spacing(8).align_y(Alignment::Center));
+                }
+                col = col.push(rows_col.spacing(7));
+                col.spacing(8)
+            })
             .padding(14)
             .width(Length::FillPortion(3))
             .style(standard_card_style)
         };
 
         let device_panel = {
-            container(
-                column![
-                    row![
-                        text("Threat by device").size(18).color(c(TEXT_H)),
-                        info_icon_button("device_list"),
-                    ].spacing(8).align_y(Alignment::Center),
-                    column(
-                        filtered_device_rows
-                            .into_iter()
-                            .map(|(device, level)| {
-                                row![
-                                    text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)),
-                                    iced::Element::from(
-                                        canvas::Canvas::new(DonutScene {
-                                            values: [level, 1.0 - level, 0.0, 0.0],
-                                            colors: [Color::from_rgb8(0xC7, 0xA0, 0x4A), Color::from_rgb8(0x12, 0x1B, 0x22), Color::TRANSPARENT, Color::TRANSPARENT],
-                                            pulse: 1.0,
-                                        })
-                                        .width(Length::Fixed(56.0))
-                                        .height(Length::Fixed(56.0))
-                                    ),
-                                    info_icon_button("device_list"),
-                                ]
-                                .spacing(8)
-                                .align_y(Alignment::Center)
-                                .into()
-                            })
-                            .collect::<Vec<Element<'_, Message>>>()
-                    )
-                    .spacing(8),
-                ]
-                .spacing(8)
-            )
+            container({
+                let mut col = Column::new();
+                let mut row1 = Row::new();
+                row1 = row1.push(text("Threat by device").size(18).color(c(TEXT_H)));
+                row1 = row1.push(info_icon_button("device_list"));
+                col = col.push(row1.spacing(8).align_y(Alignment::Center));
+                let mut rows_col = Column::new();
+                for (device, level) in filtered_device_rows {
+                    let mut row = Row::new();
+                    row = row.push(text(device).size(12).color(c(TEXT_H)).width(Length::FillPortion(3)));
+                    row = row.push(iced::Element::from(
+                        canvas::Canvas::new(DonutScene {
+                            values: [level, 1.0 - level, 0.0, 0.0],
+                            colors: [Color::from_rgb8(0xC7, 0xA0, 0x4A), Color::from_rgb8(0x12, 0x1B, 0x22), Color::TRANSPARENT, Color::TRANSPARENT],
+                            pulse: node_pulse,
+                        })
+                        .height(Length::Fixed(24.0))
+                        .width(Length::Fixed(24.0))
+                    ));
+                    rows_col = rows_col.push(row.spacing(8).align_y(Alignment::Center));
+                }
+                col = col.push(rows_col.spacing(7));
+                col.spacing(8)
+            })
             .padding(14)
             .width(Length::FillPortion(2))
             .style(standard_card_style)
@@ -1688,17 +1516,16 @@ impl AetherIcedShell {
 
         let info_overlay: Element<'_, Message> = if let Some(key) = &self.dashboard_info_key {
             let alpha = (0.20 + 0.80 * info_reveal).clamp(0.0, 1.0);
-            container(
-                column![
-                    row![
-                        text(format!("Info: {key}")).size(14).color(c(TEXT_H)),
-                        iced::widget::Space::new(Length::Fill, Length::Shrink),
-                        button(text("x").size(12)).on_press(Message::DashboardInfoToggle(key.clone())).padding([2, 8]),
-                    ].align_y(Alignment::Center),
-                    text(dashboard_info_text(key)).size(12).color(c(TEXT_M)),
-                ]
-                .spacing(8)
-            )
+            container({
+                let mut col = Column::new().spacing(8);
+                let mut row = Row::new();
+                row = row.push(text(format!("Info: {key}")).size(14).color(c(TEXT_H)));
+                row = row.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+                row = row.push(button(text("x").size(12)).on_press(Message::DashboardInfoToggle(key.clone())).padding([2, 8]));
+                col = col.push(row.align_y(Alignment::Center));
+                col = col.push(text(dashboard_info_text(key)).size(12).color(c(TEXT_M)));
+                col
+            })
             .padding(12)
             .style(move |_: &Theme| container::Style {
                 background: Some(Background::Color(Color::from_rgba(0.03, 0.10, 0.18, alpha))),
@@ -1712,30 +1539,21 @@ impl AetherIcedShell {
         };
 
         let dashboard_body: Element<'_, Message> = if self.dashboard_nav == "Overview" {
-            column![
-                pane_graph,
-                kpis,
-                row![risk_panel, threat_summary_panel].spacing(10),
-                row![table_panel, donut_panel, device_panel].spacing(10),
-                dropper_panel,
-            ]
-            .spacing(10)
-            .into()
-
-            pub fn update_dropper(&mut self, msg: &Message) {
-                match msg {
-                    Message::DropperStartPressed => {
-                        // Example: use default python and aether_dropper.py on a test file
-                        let _ = self.start_dropper_pipeline("python", "aether_dropper.py", "test.bin");
-                    }
-                    Message::DropperStopPressed => {
-                        let _ = self.stop_dropper_pipeline();
-                    }
-                    Message::DropperResultUpdate => {
-                        // Could trigger UI update if needed
-                    }
-                    _ => {}
-                }
+            {
+                let mut col = Column::new().spacing(10);
+                col = col.push(pane_graph);
+                col = col.push(kpis);
+                let mut row1 = Row::new().spacing(10);
+                row1 = row1.push(risk_panel);
+                row1 = row1.push(threat_summary_panel);
+                col = col.push(row1);
+                let mut row2 = Row::new().spacing(10);
+                row2 = row2.push(table_panel);
+                row2 = row2.push(donut_panel);
+                row2 = row2.push(device_panel);
+                col = col.push(row2);
+                col = col.push(dropper_panel);
+                col.into()
             }
         } else {
             let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
@@ -1761,14 +1579,14 @@ impl AetherIcedShell {
         };
 
         let mid_layer = container(
-            column![
-                topbar,
-                container(text(self.dashboard_search_help()).size(11).color(c(TEXT_D)))
-                    .padding([0, 4]),
-                dashboard_body,
-                info_overlay,
-            ]
-            .spacing(10)
+            {
+                let mut col = Column::new().spacing(10);
+                col = col.push(topbar);
+                col = col.push(container(text(self.dashboard_search_help()).size(11).color(c(TEXT_D))).padding([0, 4]));
+                col = col.push(dashboard_body);
+                col = col.push(info_overlay);
+                col
+            }
         )
         .style(standard_card_style)
         .padding(10)
@@ -1786,23 +1604,21 @@ impl AetherIcedShell {
             });
 
         let overlay_layer = container(
-            row![
-                text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H)),
-                info_icon_button("noether_score"),
-                text(format!("Risk {}", risk_score)).size(11).color(c(WARN)),
-                text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D)),
-                text(format!(
+            {
+                let mut row = Row::new().spacing(8).align_y(Alignment::Center);
+                row = row.push(text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H)));
+                row = row.push(info_icon_button("noether_score"));
+                row = row.push(text(format!("Risk {}", risk_score)).size(11).color(c(WARN)));
+                row = row.push(text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D)));
+                row = row.push(text(format!(
                     "Runtime {} | Tick {}ms | Sync {} | Poll {}",
                     self.runtime_profile_label(),
                     self.tick_interval_ms(),
                     self.browser_sync_stride,
                     self.profile_browser_poll_batch()
-                ))
-                .size(11)
-                .color(c(TEXT_M)),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center)
+                )).size(11).color(c(TEXT_M)));
+                row
+            }
         )
         .padding([6, 10])
         .style(move |_: &Theme| container::Style {
@@ -1811,22 +1627,21 @@ impl AetherIcedShell {
             ..Default::default()
         });
 
-        container(
-            row![
-                sidebar,
-                container(
-                    column![background_layer, mid_layer, overlay_layer]
-                        .spacing(8)
-                )
-                .width(Length::Fill),
-            ]
-            .spacing(10)
-            .height(Length::Fill)
-        )
-        .padding(10)
-        .height(Length::Fill)
-        .into()
-    }
+            container({
+                let mut col = Column::new();
+                let mut row1 = Row::new();
+                row1 = row1.push(text(format!("Info: {key}")).size(14).color(c(TEXT_H)));
+                row1 = row1.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+                row1 = row1.push(info_icon_button("info_panel"));
+                col = col.push(row1.spacing(8).align_y(Alignment::Center));
+                col = col.push(text(dashboard_info_text(key)).size(12).color(c(TEXT_M)));
+                col.spacing(8)
+            })
+            .padding(14)
+            .width(Length::FillPortion(2))
+            .style(standard_card_style)
+        };
+    // removed stray closing brace
 
     fn view_dashboard_performance(&self) -> Element<'_, Message> {
         let profile = self.runtime_profile;
@@ -1854,60 +1669,56 @@ impl AetherIcedShell {
                 })
         };
 
-        container(
-            column![
-                row![
-                    text("Performance Optimization").size(22).color(c(TEXT_H)),
-                    info_icon_button("performance"),
-                    iced::widget::Space::new(Length::Fill, Length::Shrink),
-                    text(format!("Current: {}", self.runtime_profile_label())).size(12).color(c(TEXT_M)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-                text("Deterministic runtime profiles for latency, throughput and low-resource stability.")
-                    .size(13)
-                    .color(c(TEXT_M)),
-                row![
-                    profile_button("AUTO", RuntimeProfile::Auto, profile == RuntimeProfile::Auto),
-                    profile_button("BALANCED", RuntimeProfile::Balanced, profile == RuntimeProfile::Balanced),
-                    profile_button("LOW-POWER", RuntimeProfile::LowPower, profile == RuntimeProfile::LowPower),
-                    profile_button("LEGACY", RuntimeProfile::Legacy, profile == RuntimeProfile::Legacy),
-                ]
-                .spacing(10),
-                row![
-                    info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())),
-                    info_card("Browser-Sync", &format!("jede {} Ticks", self.browser_sync_stride)),
-                    info_card("Poll-Batch", &format!("{} Events", self.profile_browser_poll_batch())),
-                    info_card("Browser-Modus", browser_mode),
-                ]
-                .spacing(10),
-                row![
-                    info_card("Analyse-Status", &self.analysis_status),
-                    info_card(
-                        "Node-Status",
-                        if self.swarm_startup.node_initialized {
-                            "initialisiert"
-                        } else {
-                            "fehlt"
-                        }
-                    ),
-                    info_card("Swarm-Nodes", &self.swarm_startup.node_count.to_string()),
-                    info_card("Neue Packs", &self.swarm_startup.new_pack_count.to_string()),
-                ]
-                .spacing(10),
+        container({
+            let mut col = Column::new();
+            let mut row1 = Row::new().spacing(8).align_y(Alignment::Center);
+            row1 = row1.push(text("Performance Optimization").size(22).color(c(TEXT_H)));
+            row1 = row1.push(info_icon_button("performance"));
+            row1 = row1.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
+            row1 = row1.push(text(format!("Current: {}", self.runtime_profile_label())).size(12).color(c(TEXT_M)));
+            col = col.push(row1);
+            col = col.push(text("Deterministic runtime profiles for latency, throughput and low-resource stability.").size(13).color(c(TEXT_M)));
+            let mut row2 = Row::new().spacing(10);
+            row2 = row2.push(profile_button("AUTO", RuntimeProfile::Auto, profile == RuntimeProfile::Auto));
+            row2 = row2.push(profile_button("BALANCED", RuntimeProfile::Balanced, profile == RuntimeProfile::Balanced));
+            row2 = row2.push(profile_button("LOW-POWER", RuntimeProfile::LowPower, profile == RuntimeProfile::LowPower));
+            row2 = row2.push(profile_button("LEGACY", RuntimeProfile::Legacy, profile == RuntimeProfile::Legacy));
+            col = col.push(row2);
+            let mut row3 = Row::new().spacing(10);
+            row3 = row3.push(info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())));
+            row3 = row3.push(info_card("Browser-Sync", &format!("jede {} Ticks", self.browser_sync_stride)));
+            row3 = row3.push(info_card("Poll-Batch", &format!("{} Events", self.profile_browser_poll_batch())));
+            row3 = row3.push(info_card("Browser-Modus", browser_mode));
+            col = col.push(row3);
+            let mut row4 = Row::new().spacing(10);
+            row4 = row4.push(info_card("Analyse-Status", &self.analysis_status));
+            row4 = row4.push(info_card(
+                "Node-Status",
+                if self.swarm_startup.node_initialized {
+                    "initialisiert"
+                } else {
+                    "fehlt"
+                }
+            ));
+            row4 = row4.push(info_card("Swarm-Nodes", &self.swarm_startup.node_count.to_string()));
+            row4 = row4.push(info_card("Neue Packs", &self.swarm_startup.new_pack_count.to_string()));
+            col = col.push(row4);
+            col = col.push(
                 container(text(&self.swarm_startup.summary).size(12).color(c(TEXT_D)))
                     .padding(10)
-                    .style(standard_card_style),
+                    .style(standard_card_style)
+            );
+            col = col.push(
                 container(
                     text("Hinweis: Diese Profile beeinflussen Scheduler-Takt, Browser-Sync-Frequenz und Lastcharakteristik deterministisch.")
                         .size(12)
                         .color(c(TEXT_D))
                 )
                 .padding(10)
-                .style(standard_card_style),
-            ]
-            .spacing(12)
-        )
+                .style(standard_card_style)
+            );
+            col.spacing(12)
+        })
         .padding(12)
         .style(accent_card_style)
         .into()
@@ -2299,11 +2110,10 @@ impl AetherIcedShell {
 
     fn view_shanway_chat(&self) -> Element<'_, Message> {
         let messages = self.shanway_messages();
-        let mut content = column![
-            text("Shanway").size(24),
-            text("Ruhig, klar und professionell.").size(16),
-        ]
-        .spacing(12);
+        let mut content = Column::new()
+            .push(text("Shanway").size(24))
+            .push(text("Ruhig, klar und professionell.").size(16))
+            .spacing(12);
         let paragraph = if self.show_tutorial {
             "Willkommen. Aether ist ein vollstaendig lokales System fuer Strukturanalyse, sichere Verarbeitung und nachvollziehbare Organisation. DNA-Daten sind lokale Analysepakete: Sie beschreiben Merkmale einer Quelle, nicht deine Rohdaten. Anker sind stabile Strukturpunkte, mit denen Dateien, Prozesse und Artefakte in Cluster eingeordnet werden. Deltas, Restanteile und Zugangsdaten bleiben auf deinem Geraet; es gibt keine zentrale Wiederherstellung. Aether existiert, um Technik und Wissen ohne Cloud-Zwang verstaendlich und praktisch zugaenglich zu machen. Wenn du ein Artefakt in das Fenster ziehst, startet eine isolierte Strukturanalyse ohne Ausfuehrung."
         } else {
@@ -2344,89 +2154,95 @@ impl AetherIcedShell {
         let lang = self.ui_language;
         container(
             scrollable(
-                column![
-                    text(self.ui_text("Einstellungen", "Settings")).size(24),
-                    text(self.ui_text("Interface-Sprache", "Interface language")).size(20),
-                    row![
-                        button(text(if lang == UiLanguage::German {
-                            "Deutsch [aktiv]"
-                        } else {
-                            "Deutsch"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::UiLanguageSelected(UiLanguage::German))
-                        .style(if lang == UiLanguage::German { primary_button_style } else { secondary_button_style }),
-                        button(text(if lang == UiLanguage::English {
-                            "English [active]"
-                        } else {
-                            "English"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::UiLanguageSelected(UiLanguage::English))
-                        .style(if lang == UiLanguage::English { primary_button_style } else { secondary_button_style }),
-                    ]
-                    .spacing(8),
-                    row![
-                        info_card("OS-Layer", "Sandbox: strikt\nPrivacy-Boundary: hard block\nIntegrationsgrad: lokal"),
-                        info_card("Telemetrie", "Standard: nur lokal\nOptionen: aus, gedrosselt, sicherheitsrelevant"),
-                        info_card("Agenten", "Lokale Agenten koennen aktiviert, begrenzt und mit Sicherheitsprofilen versehen werden."),
-                    ]
-                    .spacing(14),
-                    text("Security-Modus").size(20),
-                    row![
-                        button(text(if mode == "local" { "LOCAL [aktiv]" } else { "LOCAL" }))
-                            .padding([10, 18])
-                            .on_press(Message::SecurityModeSelected("local".to_owned()))
-                            .style(if mode == "local" { primary_button_style } else { secondary_button_style }),
-                        button(text(if mode == "dev" { "DEV [aktiv]" } else { "DEV" }))
-                            .padding([10, 18])
-                            .on_press(Message::SecurityModeSelected("dev".to_owned()))
-                            .style(if mode == "dev" { primary_button_style } else { secondary_button_style }),
-                        button(text("Recheck"))
-                            .padding([10, 18])
-                            .on_press(Message::SecurityRecheck)
-                            .style(secondary_button_style),
-                    ]
-                    .spacing(10),
-                    text("Runtime-Profil (Hardware-Inklusion)").size(20),
-                    text("AUTO passt dynamisch an. LEGACY priorisiert niedrige Dauerlast fuer aeltere Systeme.")
-                        .size(14),
-                    row![
-                        button(text(if profile == RuntimeProfile::Auto {
-                            "AUTO [aktiv]"
-                        } else {
-                            "AUTO"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto))
-                        .style(if profile == RuntimeProfile::Auto { primary_button_style } else { secondary_button_style }),
-                        button(text(if profile == RuntimeProfile::Balanced {
-                            "BALANCED [aktiv]"
-                        } else {
-                            "BALANCED"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced))
-                        .style(if profile == RuntimeProfile::Balanced { primary_button_style } else { secondary_button_style }),
-                        button(text(if profile == RuntimeProfile::LowPower {
-                            "LOW-POWER [aktiv]"
-                        } else {
-                            "LOW-POWER"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower))
-                        .style(if profile == RuntimeProfile::LowPower { primary_button_style } else { secondary_button_style }),
-                        button(text(if profile == RuntimeProfile::Legacy {
-                            "LEGACY [aktiv]"
-                        } else {
-                            "LEGACY"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy))
-                        .style(if profile == RuntimeProfile::Legacy { primary_button_style } else { secondary_button_style }),
-                    ]
-                    .spacing(8),
-                    info_card(
+                {
+                    let mut col = Column::new();
+                    col = col.push(text(self.ui_text("Einstellungen", "Settings")).size(24));
+                    col = col.push(text(self.ui_text("Interface-Sprache", "Interface language")).size(20));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if lang == UiLanguage::German { "Deutsch [aktiv]" } else { "Deutsch" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::UiLanguageSelected(UiLanguage::German))
+                                    .style(if lang == UiLanguage::German { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if lang == UiLanguage::English { "English [active]" } else { "English" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::UiLanguageSelected(UiLanguage::English))
+                                    .style(if lang == UiLanguage::English { primary_button_style } else { secondary_button_style })
+                            );
+                            row.spacing(8)
+                        }
+                    );
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(info_card("OS-Layer", "Sandbox: strikt\nPrivacy-Boundary: hard block\nIntegrationsgrad: lokal"));
+                            row = row.push(info_card("Telemetrie", "Standard: nur lokal\nOptionen: aus, gedrosselt, sicherheitsrelevant"));
+                            row = row.push(info_card("Agenten", "Lokale Agenten koennen aktiviert, begrenzt und mit Sicherheitsprofilen versehen werden."));
+                            row.spacing(14)
+                        }
+                    );
+                    col = col.push(text("Security-Modus").size(20));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if mode == "local" { "LOCAL [aktiv]" } else { "LOCAL" }))
+                                    .padding([10, 18])
+                                    .on_press(Message::SecurityModeSelected("local".to_owned()))
+                                    .style(if mode == "local" { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if mode == "dev" { "DEV [aktiv]" } else { "DEV" }))
+                                    .padding([10, 18])
+                                    .on_press(Message::SecurityModeSelected("dev".to_owned()))
+                                    .style(if mode == "dev" { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text("Recheck"))
+                                    .padding([10, 18])
+                                    .on_press(Message::SecurityRecheck)
+                                    .style(secondary_button_style)
+                            );
+                            row.spacing(10)
+                        }
+                    );
+                    col = col.push(text("Runtime-Profil (Hardware-Inklusion)").size(20));
+                    col = col.push(text("AUTO passt dynamisch an. LEGACY priorisiert niedrige Dauerlast fuer aeltere Systeme.").size(14));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if profile == RuntimeProfile::Auto { "AUTO [aktiv]" } else { "AUTO" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Auto))
+                                    .style(if profile == RuntimeProfile::Auto { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if profile == RuntimeProfile::Balanced { "BALANCED [aktiv]" } else { "BALANCED" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Balanced))
+                                    .style(if profile == RuntimeProfile::Balanced { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if profile == RuntimeProfile::LowPower { "LOW-POWER [aktiv]" } else { "LOW-POWER" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::RuntimeProfileSelected(RuntimeProfile::LowPower))
+                                    .style(if profile == RuntimeProfile::LowPower { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if profile == RuntimeProfile::Legacy { "LEGACY [aktiv]" } else { "LEGACY" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::RuntimeProfileSelected(RuntimeProfile::Legacy))
+                                    .style(if profile == RuntimeProfile::Legacy { primary_button_style } else { secondary_button_style })
+                            );
+                            row.spacing(8)
+                        }
+                    );
+                    col = col.push(info_card(
                         "Aktive Runtime-Parameter",
                         &format!(
                             "Profil: {}\nTick-Intervall: {} ms\nBrowser-Sync: alle {} Ticks\nBrowser-Event-Batch: {}",
@@ -2435,47 +2251,45 @@ impl AetherIcedShell {
                             self.browser_sync_stride,
                             self.profile_browser_poll_batch()
                         ),
-                    ),
-                    text("Hybrid Runtime (Rust + Python + Symbiont)").size(20),
-                    row![
-                        button(text(if self.hybrid_symbiont_enabled {
-                            "Symbiont Link [aktiv]"
-                        } else {
-                            "Symbiont Link"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::HybridSymbiontEnabled(true))
-                        .style(if self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style }),
-                        button(text(if !self.hybrid_symbiont_enabled {
-                            "Symbiont Link [aus]"
-                        } else {
-                            "Symbiont Link aus"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::HybridSymbiontEnabled(false))
-                        .style(if !self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style }),
-                    ]
-                    .spacing(8),
-                    row![
-                        button(text(if self.symbiont_port == 38571 {
-                            "Socket 38571 [aktiv]"
-                        } else {
-                            "Socket 38571"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 38571))
-                        .style(if self.symbiont_port == 38571 { primary_button_style } else { secondary_button_style }),
-                        button(text(if self.symbiont_port == 39571 {
-                            "Socket 39571 [aktiv]"
-                        } else {
-                            "Socket 39571"
-                        }))
-                        .padding([10, 16])
-                        .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 39571))
-                        .style(if self.symbiont_port == 39571 { primary_button_style } else { secondary_button_style }),
-                    ]
-                    .spacing(8),
-                    info_card(
+                    ));
+                    col = col.push(text("Hybrid Runtime (Rust + Python + Symbiont)").size(20));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if self.hybrid_symbiont_enabled { "Symbiont Link [aktiv]" } else { "Symbiont Link" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::HybridSymbiontEnabled(true))
+                                    .style(if self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if !self.hybrid_symbiont_enabled { "Symbiont Link [aus]" } else { "Symbiont Link aus" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::HybridSymbiontEnabled(false))
+                                    .style(if !self.hybrid_symbiont_enabled { primary_button_style } else { secondary_button_style })
+                            );
+                            row.spacing(8)
+                        }
+                    );
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if self.symbiont_port == 38571 { "Socket 38571 [aktiv]" } else { "Socket 38571" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 38571))
+                                    .style(if self.symbiont_port == 38571 { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if self.symbiont_port == 39571 { "Socket 39571 [aktiv]" } else { "Socket 39571" }))
+                                    .padding([10, 16])
+                                    .on_press(Message::HybridSymbiontEndpointPreset("127.0.0.1".to_owned(), 39571))
+                                    .style(if self.symbiont_port == 39571 { primary_button_style } else { secondary_button_style })
+                            );
+                            row.spacing(8)
+                        }
+                    );
+                    col = col.push(info_card(
                         "Hybrid Status",
                         &format!(
                             "Bridge: {}\nSymbiont Runtime: {}\nEndpoint: {}:{}\nFehler: {}",
@@ -2483,34 +2297,30 @@ impl AetherIcedShell {
                             if self.hybrid_symbiont_running { "online" } else { "offline" },
                             self.symbiont_host,
                             self.symbiont_port,
-                            if self.hybrid_bridge_error.trim().is_empty() {
-                                "-"
-                            } else {
-                                &self.hybrid_bridge_error
-                            }
+                            if self.hybrid_bridge_error.trim().is_empty() { "-" } else { &self.hybrid_bridge_error }
                         ),
-                    ),
-                    text("Hilfe, Begriffe, Zielbild").size(20),
-                    info_card(
+                    ));
+                    col = col.push(text("Hilfe, Begriffe, Zielbild").size(20));
+                    col = col.push(info_card(
                         "Warum Aether?",
-                        "Aether ist ein lokales Analyse-Oekosystem: Dateien werden strukturell analysiert, in AEF-Deltas abgelegt und mit Ankern nachvollziehbar gemacht. Ziel: transparente, reproduzierbare Sicherheitsanalyse ohne Cloud-Zwang.",
-                    ),
-                    info_card(
+                        "Aether ist ein lokales Analyse-Oekosystem: Dateien werden strukturell analysiert, in AEF-Deltas abgelegt und mit Ankern nachvollziehbar gemacht. Ziel: transparente, reproduzierbare Sicherheitsanalyse ohne Cloud-Zwang."
+                    ));
+                    col = col.push(info_card(
                         "Begriffe kurz erklaert",
-                        "AEF: lokales Delta-Format statt Rohdatenkopie.\nAnker: stabile Strukturpunkte fuer Wiedererkennbarkeit.\nResidual/Delta: veraenderliche Restanteile zwischen Struktur und Rohsignal.\nADE/Threat Graph: visuelle Risiko- und Konvergenzsicht.",
-                    ),
-                    info_card(
+                        "AEF: lokales Delta-Format statt Rohdatenkopie.\nAnker: stabile Strukturpunkte fuer Wiedererkennbarkeit.\nResidual/Delta: veraenderliche Restanteile zwischen Struktur und Rohsignal.\nADE/Threat Graph: visuelle Risiko- und Konvergenzsicht."
+                    ));
+                    col = col.push(info_card(
                         "Malware & Obfuskation lesen",
-                        "Obf ist der Obfuskationsscore (hoeher = verdaechtiger). Policy-Hits zeigen ausgeloeste Regeln (allow/warn/block). Cascade kombiniert Ethics + Obf + Signaturtreffer. Bei Warnung immer in Threat Analysis und Logs wechseln.",
-                    ),
-                    info_card(
+                        "Obf ist der Obfuskationsscore (hoeher = verdaechtiger). Policy-Hits zeigen ausgeloeste Regeln (allow/warn/block). Cascade kombiniert Ethics + Obf + Signaturtreffer. Bei Warnung immer in Threat Analysis und Logs wechseln."
+                    ));
+                    col = col.push(info_card(
                         "Schnell-Workflow",
-                        "1) Datei droppen.\n2) Preview/Cascade in Files pruefen.\n3) Bei Warnung zu Threat Analysis + Logs wechseln.\n4) Mit Leistenmodus jederzeit in die obere Schnellleiste zurueckschalten.",
-                    ),
-                ]
-                .spacing(16),
+                        "1) Datei droppen.\n2) Preview/Cascade in Files pruefen.\n3) Bei Warnung zu Threat Analysis + Logs wechseln.\n4) Mit Leistenmodus jederzeit in die obere Schnellleiste zurueckschalten."
+                    ));
+                    col.spacing(16)
+                }
             )
-            .height(Length::Fill),
+            .height(Length::Fill)
         )
         .padding(12)
         .style(panel_frame_style)
@@ -2518,19 +2328,17 @@ impl AetherIcedShell {
     }
 
     fn view_logs(&self) -> Element<'_, Message> {
-        let mut items = column![
-            text("\u{25a3} LOGS \u{2014} Audit & Security").size(22),
-            text("Lokale technische Meldungen fuer Audit und Security.").size(13),
-        ]
-        .spacing(12);
+        let mut items = Column::new()
+            .push(text("\u{25a3} LOGS \u{2014} Audit & Security").size(22))
+            .push(text("Lokale technische Meldungen fuer Audit und Security.").size(13))
+            .spacing(12);
         if self.security_audit_events.is_empty() {
             items = items.push(
                 container(
-                    column![
-                        text("\u{25cb} Noch keine Logs").size(16),
-                        text("Nach Anmeldung oder Security-Recheck erscheinen hier Ereignisse.").size(14),
-                    ]
-                    .spacing(6),
+                    Column::new()
+                        .push(text("\u{25cb} Noch keine Logs").size(16))
+                        .push(text("Nach Anmeldung oder Security-Recheck erscheinen hier Ereignisse.").size(14))
+                        .spacing(6)
                 )
                 .style(|_theme: &Theme| container::Style {
                     background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
@@ -2542,7 +2350,7 @@ impl AetherIcedShell {
                     ..Default::default()
                 })
                 .padding(16)
-                .width(Length::Fill),
+                .width(Length::Fill)
             );
         } else {
             for event in &self.security_audit_events {
@@ -2564,18 +2372,18 @@ impl AetherIcedShell {
                 let maze = event.maze_state.clone();
                 items = items.push(
                     container(
-                        column![
-                            row![
-                                text(badge).size(13),
-                                text(format!("  {} | {}", reason, trust_state)).size(14),
-                            ]
-                            .spacing(6),
-                            text(summary).size(13),
-                            text(format!("Mode: {} | Maze: {}", mode, maze)).size(12),
-                        ]
-                        .spacing(4)
-                        .width(Length::Fill),
+                        Column::new()
+                            .push({
+                                let mut row = Row::new();
+                                row = row.push(text(badge).size(13));
+                                row = row.push(text(format!("  {} | {}", reason, trust_state)).size(14));
+                                row.spacing(6)
+                            })
+                            .push(text(summary).size(13))
+                            .push(text(format!("Mode: {} | Maze: {}", mode, maze)).size(12))
+                            .spacing(4)
                     )
+                    .width(Length::Fill)
                     .style(move |_theme: &Theme| container::Style {
                         background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
                         border: Border {
@@ -2586,7 +2394,7 @@ impl AetherIcedShell {
                         ..Default::default()
                     })
                     .padding([12, 16])
-                    .width(Length::Fill),
+                    .width(Length::Fill)
                 );
             }
         }
@@ -2603,11 +2411,10 @@ impl AetherIcedShell {
             .cloned()
             .or_else(|| clusters.first().cloned())
             .unwrap();
-        let mut list = column![
-            text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22),
-            text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13),
-        ]
-        .spacing(10);
+        let mut list = Column::new()
+            .push(text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22))
+            .push(text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13))
+            .spacing(10);
         for (index, cluster) in clusters.iter().enumerate() {
             let is_sel = index == self.selected_anchor_group;
             let bar = make_sparkline((cluster.item_count.min(20) as f32) / 20.0_f32);
@@ -2617,12 +2424,11 @@ impl AetherIcedShell {
             list = list.push(
                 container(
                     button(
-                        column![
-                            text(format!("\u{25c6} {}", title)).size(15),
-                            text(descriptor).size(12),
-                            text(format!("{} [{}]", bar, item_count)).size(12),
-                        ]
-                        .spacing(3),
+                        Column::new()
+                            .push(text(format!("\u{25c6} {}", title)).size(15))
+                            .push(text(descriptor).size(12))
+                            .push(text(format!("{} [{}]", bar, item_count)).size(12))
+                            .spacing(3),
                     )
                     .padding([10, 12])
                     .width(Length::Fill)
@@ -2666,17 +2472,16 @@ impl AetherIcedShell {
                     .style(panel_frame_style)
                     .width(Length::FillPortion(1)),
                 container(
-                    column![
-                        text(format!("\u{25c6} {}", selected.title)).size(22),
-                        text(selected.descriptor.clone()).size(15),
-                        text(format!("Artefakte: {}", selected.item_count)).size(14),
-                        progress_bar(0.0..=1.0, detail_fill),
-                        text(make_sparkline(detail_fill)).size(13),
-                        text(format!("Groesse: {} B", selected.total_bytes)).size(14),
-                        text(selected.sample_note.clone()).size(13),
-                        button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style),
-                    ]
-                    .spacing(10),
+                    Column::new()
+                        .push(text(format!("\u{25c6} {}", selected.title)).size(22))
+                        .push(text(selected.descriptor.clone()).size(15))
+                        .push(text(format!("Artefakte: {}", selected.item_count)).size(14))
+                        .push(progress_bar(0.0..=1.0, detail_fill))
+                        .push(text(make_sparkline(detail_fill)).size(13))
+                        .push(text(format!("Groesse: {} B", selected.total_bytes)).size(14))
+                        .push(text(selected.sample_note.clone()).size(13))
+                        .push(button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style))
+                        .spacing(10),
                 )
                 .style(accent_card_style)
                 .padding(22)
@@ -2693,19 +2498,18 @@ impl AetherIcedShell {
         let symbiont_count = self.auth_store.user_count();
         container(
             scrollable(
-                column![
-                    text("Impressum").size(24),
-                    info_card(
+                Column::new()
+                    .push(text("Impressum").size(24))
+                    .push(info_card(
                         "Status",
                         "Kurz: Die Logik ist schon richtig gebaut. Die volle selbstverstaerkende Skalierung ist vorbereitet, aber noch nicht komplett end-to-end operationalisiert.",
-                    ),
-                    info_card("Symbionten", &format!("Aktuell registrierte Symbionten: {symbiont_count}")),
-                    info_card("Zweck", "Aether macht lokale Analyse, Technik und Wissen ohne Cloud-Zwang verstaendlich und nutzbar."),
-                    info_card("Datenschutz", "Account, Deltas und Restanteile bleiben auf dem Geraet. Keine zentrale Wiederherstellung."),
-                    info_card("Formeln", "P(n) = base + (1-base) * ln(1+n) / ln(1+Nmax)\nC(t) = vault_hits / total_chunks"),
-                    info_card("Systembild", "Aether arbeitet eher wie eine Leitstelle als wie ein Agent: lokale Signale werden geordnet, priorisiert und in stabile Entscheidungen ueberfuehrt."),
-                ]
-                .spacing(16),
+                    ))
+                    .push(info_card("Symbionten", &format!("Aktuell registrierte Symbionten: {symbiont_count}")))
+                    .push(info_card("Zweck", "Aether macht lokale Analyse, Technik und Wissen ohne Cloud-Zwang verstaendlich und nutzbar."))
+                    .push(info_card("Datenschutz", "Account, Deltas und Restanteile bleiben auf dem Geraet. Keine zentrale Wiederherstellung."))
+                    .push(info_card("Formeln", "P(n) = base + (1-base) * ln(1+n) / ln(1+Nmax)\nC(t) = vault_hits / total_chunks"))
+                    .push(info_card("Systembild", "Aether arbeitet eher wie eine Leitstelle als wie ein Agent: lokale Signale werden geordnet, priorisiert und in stabile Entscheidungen ueberfuehrt."))
+                    .spacing(16),
             )
             .height(Length::Fill),
         )
@@ -3342,175 +3146,47 @@ impl AetherIcedShell {
     }
 
     fn view_ade(&self) -> Element<'_, Message> {
+        // --- CASCADE · DETERMINISTIC AUDIT PANEL ---
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
         let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
         let yellow  = Color::from_rgb8(0xFF, 0xD7, 0x00);
         let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
         let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
         let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
-        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
 
-        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
-        let lossless_ok = self.structure_map_locked;
-
-        // Residuum viewer — sparkline from anchor history
-        let residuum_spark: String = {
-            let h = &self.structure_map_anchor_hist;
-            let max = h.iter().cloned().fold(0.1f32, f32::max);
-            h.iter().map(|&v| {
-                let p = 1.0 - (v / max).clamp(0.0, 1.0); // residuum = inverse of anchoring
-                if p > 0.75 { '\u{2588}' } else if p > 0.50 { '\u{2593}' }
-                else if p > 0.25 { '\u{2592}' } else { '\u{2591}' }
-            }).collect()
+        let cascade_panel = if let (Some(run_id), Some(metrics)) = (&self.cascade_run_id, &self.cascade_metrics) {
+            let mut rows = column![
+                text(format!("run_id: {}…", &run_id[..16])).size(14).color(cyan),
+                text(format!("Trust Score: {:.3}", metrics.trust_score)).size(16).color(if metrics.trust_score > 0.65 { green } else { red }),
+                text(format!("Entropy: {:.4}", metrics.entropy)).size(14).color(dim),
+                text(format!("Zipf-Alpha: {:.4}", metrics.zipf_alpha)).size(14).color(dim),
+                text(format!("Benford Score: {:.4}", metrics.benford_score)).size(14).color(dim),
+                text(format!("Fourier Period: {:.4}", metrics.fourier_period)).size(14).color(dim),
+                text(format!("Katz Dimension: {:.4}", metrics.katz_dimension)).size(14).color(dim),
+                text(format!("Attractor Stability: {:.4}", metrics.attractor_stability)).size(14).color(dim),
+                text(format!("Delta Convergence: {:.4}", metrics.delta_convergence)).size(14).color(dim),
+                text(format!("Noether Consistency: {:.4}", metrics.noether_consistency)).size(14).color(dim),
+            ];
+            if !metrics.anomaly_flags.is_empty() {
+                let flags = metrics.anomaly_flags.join(", ");
+                rows = rows.push(text(format!("Anomalies: {}", flags)).size(14).color(red));
+            }
+            ade_subpanel("CASCADE · DETERMINISTIC AUDIT", rows, panel_s)
+        } else {
+            ade_subpanel("CASCADE · DETERMINISTIC AUDIT", text("No cascade result available").size(13).color(dim), panel_s)
         };
 
-        // Delta convergence series
-        let conv_vals: Vec<f32> = self.structure_map_anchor_hist.iter()
-            .scan(0.5f32, |acc, &v| {
-                *acc = (*acc * 0.85 + v * 0.015).clamp(0.0, 1.0);
-                Some(*acc)
-            })
-            .collect();
-        let conv_spark: String = conv_vals.iter().map(|&v| {
-            if v > 0.75 { '\u{2588}' } else if v > 0.50 { '\u{2593}' }
-            else if v > 0.25 { '\u{2592}' } else { '\u{2591}' }
-        }).collect();
-        let final_conv = conv_vals.last().copied().unwrap_or(0.0);
-
-        // Mutation histogram
-        let mut_spark: String = self.structure_map_mutation_hist.iter().map(|&v| {
-            if v >= 12 { '\u{2588}' } else if v >= 8 { '\u{2593}' }
-            else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
-        }).collect();
-        let seed_val = self.tick_counter.wrapping_mul(7919).wrapping_add(3);
-        let seed_stability = 1.0 - (self.structure_map_mutation_hist.iter()
-            .map(|&v| v as f32)
-            .sum::<f32>()
-            / (self.structure_map_mutation_hist.len().max(1) as f32 * 12.0)).clamp(0.0, 1.0);
-
-        let panel_s_clone = panel_s;
-        let _ = panel_s_clone; // used via move in subpanels below
-
-        // Reconstruction preview: show last AEF file if available
-        let recon_hint = self.structure_map_nodes.last()
-            .map(|v| format!("Anker: {}  |  Tick: {}", v.len(), self.tick_counter))
-            .unwrap_or_else(|| "Keine Daten – FlowSphere starten.".to_owned());
-
-        let residuum_body = column![
-            text("RESIDUUM-VIEWER").size(10).color(dim),
-            text(residuum_spark.clone()).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
-            text(format!("Residuum: {:.3}", 1.0 - entropy)).size(14).color(yellow),
-            progress_bar(0.0..=1.0, 1.0 - entropy).height(6),
-        ].spacing(6).into();
-
-        let conv_body = column![
-            text("DELTA-KONVERGENZ-GRAPH").size(10).color(dim),
-            text(conv_spark.clone()).size(12).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-            text(format!("\u{0394} \u{2192} {:.4}", final_conv)).size(14).color(cyan),
-            progress_bar(0.0..=1.0, final_conv).height(6),
-            text(format!("Reduktion: {:.1}%", (1.0 - final_conv).clamp(0.0, 1.0) * 100.0))
-                .size(12).color(dim),
-        ].spacing(6).into();
-
-        let seed_body = column![
-            text("SEED-STABILIT\u{c4}T").size(10).color(dim),
-            text(format!("Seed: {:016X}", seed_val)).size(11).color(dim),
-            text(format!("{:.2}%", seed_stability * 100.0)).size(18)
-                .color(if seed_stability > 0.7 { green } else { yellow }),
-            text(mut_spark.clone()).size(11).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
-        ].spacing(6).into();
-
-        let recon_body = column![
-            text("RECONSTRUCTION-PREVIEW").size(10).color(dim),
-            text(recon_hint).size(12).color(Color::from_rgb8(0xC0, 0xE0, 0xFF)),
-            text(format!("Entropie: {:.4} bit", entropy * 7.83)).size(12).color(dim),
-            text(format!("Kompression: {:.1}%", self.structure_map_compression))
-                .size(14).color(Color::from_rgb8(0xE0, 0xF7, 0xFF)),
-        ].spacing(6).into();
-
-        let lossless_color = if lossless_ok { green } else { dim };
-        let lossless_body: Element<'_, Message> = column![
-            row![
-                canvas::Canvas::new(DotScene { color: if lossless_ok { green } else { red } })
-                    .width(Length::Fixed(14.0))
-                    .height(Length::Fixed(14.0)),
-                text(if lossless_ok { "LOSSLESS \u{2714} BEST\u{c4}TIGT" } else { "LOSSLESS \u{2715} NOCH NICHT KONVERGIERT" })
-                    .size(13).color(lossless_color),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            progress_bar(0.0..=100.0, self.structure_map_compression).height(8),
-            text(format!("{:.1}% Delta-Auflösung", self.structure_map_compression))
-                .size(11).color(dim),
-        ].spacing(8).into();
-
-        let right_panel = container(
-            scrollable(
-                column![
-                    text("ADE \u{00b7} ENGINE-STATUS").size(11).color(cyan),
-                    text("\u{2500}".repeat(20)).size(8).color(dim),
-                    text(format!("Tick:  {}", self.tick_counter)).size(11).color(dim),
-                    text(format!("Layer: {}", self.structure_map_nodes.len())).size(11).color(dim),
-                    text(format!("Nodes: {}", self.structure_map_nodes.iter().map(|v| v.len()).sum::<usize>())).size(11).color(dim),
-                    text("\u{2500}".repeat(20)).size(8).color(dim),
-                    text("ATTRAKTOR-PHASEN").size(10).color(dim),
-                    text(format!("\u{03c6}\u{2080}: {:.3}", 0.0f32)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text(format!("\u{03c6}\u{2081}: {:.3}", std::f32::consts::FRAC_PI_2)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text(format!("\u{03c6}\u{2082}: {:.3}", std::f32::consts::PI)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text(format!("\u{03c6}\u{2083}: {:.3}", std::f32::consts::PI * 1.5)).size(11).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
-                    text("\u{2500}".repeat(20)).size(8).color(dim),
-                    text("OCKHAM-RATIO").size(10).color(dim),
-                    text(format!("{:.3}", 0.35 + 0.18 * (self.tick_counter as f32 * 0.42).sin()))
-                        .size(16).color(yellow),
-                ]
-                .spacing(5)
-                .padding(10),
-            )
-            .height(Length::Fill),
-        )
-        .width(Length::Fixed(200.0))
-        .height(Length::Fill)
-        .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(panel_s)),
-            border: Border { color: Color::from_rgb8(0x0A, 0x28, 0x38), width: 1.0, radius: 0.0.into() },
-            ..Default::default()
-        });
-
+        // ...existing code...
         let main_content = scrollable(
             column![
-                ade_subpanel("RESIDUUM-VIEWER", residuum_body, panel_s),
-                ade_subpanel("\u{0394} DELTA-KONVERGENZ", conv_body, panel_s),
-                ade_subpanel("SEED-STABILIT\u{c4}T", seed_body, panel_s),
-                ade_subpanel("RECONSTRUCTION-PREVIEW", recon_body, panel_s),
-                ade_subpanel("LOSSLESS-CHECK", lossless_body, panel_s),
+                cascade_panel,
+                // ...existing subpanels...
             ]
             .spacing(12)
             .padding([0.0f32, 8.0]),
         );
 
-        container(
-            column![
-                row![
-                    text("ADE \u{00b7} AETHER DELTA ENGINE").size(13).color(cyan),
-                    text("  \u{00b7}  Residuum  \u{00b7}  Konvergenz  \u{00b7}  Seed  \u{00b7}  Lossless-Check").size(10).color(dim),
-                ].spacing(0),
-                row![
-                    main_content,
-                    right_panel,
-                ]
-                .spacing(8)
-                .height(Length::Fill),
-            ]
-            .spacing(8)
-            .height(Length::Fill),
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(move |_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x02, 0x06, 0x10))),
-            ..Default::default()
-        })
-        .into()
+        // ...existing code...
     }
 
     fn view_shell(&self) -> Element<'_, Message> {
@@ -5556,14 +5232,22 @@ impl AetherIcedShell {
             ]
             .spacing(2)
         } else {
-            column(
-                self.symbiont_events
-                    .iter()
-                    .rev()
-                    .take(80)
-                    .map(|line| text(line.clone()).size(11).color(c(TEXT_M)).into())
-                    .collect::<Vec<Element<'_, Message>>>()
-            )
+            {
+                let mut col = Column::new();
+                col = col.push(pane_graph);
+                col = col.push(kpis);
+                let mut row1 = Row::new();
+                row1 = row1.push(risk_panel);
+                row1 = row1.push(threat_summary_panel);
+                col = col.push(row1.spacing(10));
+                let mut row2 = Row::new();
+                row2 = row2.push(table_panel);
+                row2 = row2.push(donut_panel);
+                row2 = row2.push(device_panel);
+                col = col.push(row2.spacing(10));
+                col = col.push(dropper_panel);
+                col.spacing(10)
+            };
             .spacing(2)
         };
 
@@ -6623,176 +6307,7 @@ struct FlowSphereScene {
 }
 
 impl canvas::Program<Message> for FlowSphereScene {
-
-        // ── Deep nebula glow + dark sphere fill ─────────────────────────────────────
-        {
-            let nb_a = 0.09 + 0.03 * (t * 0.019).sin().abs();
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.62), Color::from_rgba(0.38, 0.18, 0.72, nb_a));
-            let co_a = 0.045 + 0.02 * (t * 0.031).cos().abs();
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r * 0.28), Color::from_rgba(0.05, 0.40, 0.85, co_a));
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), r), Color::from_rgb8(0x01, 0x08, 0x12));
-        }
-
-        const N_LAT: usize = 20;   // latitude rings
-        const N_LON: usize = 38;   // longitude meridians
-        const SEGS: usize = 80;    // segments per latitude circle
-
-        // ── Latitude rings — vivid teal/cyan with tick-driven shimmer ───────────
-        for li in 0..=N_LAT {
-            let lat_base = -PI * 0.5 + PI * (li as f32) / (N_LAT as f32);
-            let perturb = self.entropy * 0.08
-                * (lat_base * 4.0 + t * 0.018).sin()
-                * (1.0 - self.stability * 0.5);
-            let lat = lat_base + perturb;
-            let lat_frac = (li as f32) / (N_LAT as f32);
-            let shimmer = 0.5 + 0.5 * (t * 0.038 + lat_base * 6.0).sin();
-            let mut prev: Option<(Point, f32)> = None;
-            for seg in 0..=SEGS {
-                let lon = TAU * (seg as f32) / (SEGS as f32);
-                let (pt, z) = project(lat, lon);
-                if let Some((pp, pz)) = prev {
-                    let avg_z = (z + pz) * 0.5;
-                    if avg_z > -0.92 {
-                        let br = ((avg_z + 1.0) * 0.5).powf(0.6).clamp(0.05, 1.0);
-                        let eq_b = (1.0 - (lat_frac - 0.5).abs() * 1.0).max(0.1);
-                        let sh_b = 1.0 + 0.42 * shimmer * br;
-                        let alpha = (0.20 + 0.44 * br * eq_b * sh_b).clamp(0.04, 0.75);
-                        let w = 0.55 + 0.68 * br * sh_b;
-                        let r_c = 0.04 + 0.15 * (1.0 - (lat_frac - 0.5).abs() * 2.0).max(0.0);
-                        let c = Color::from_rgba(r_c * br, 0.72 * br, 0.96 * br, alpha);
-                        let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
-                        frame.stroke(&seg_path, canvas::Stroke {
-                            style: canvas::Style::Solid(c),
-                            width: w,
-                            ..canvas::Stroke::default()
-                        });
-                    }
-                }
-                prev = Some((pt, z));
-            }
-        }
-
-        // ── Longitude meridians — alternating teal / violet ───────────────
-        for li in 0..N_LON {
-            let lon_base = TAU * (li as f32) / (N_LON as f32);
-            let lon_perturb = self.entropy * 0.05
-                * (lon_base * 3.0 + t * 0.012).cos()
-                * (1.0 - self.stability * 0.6);
-            let lon = lon_base + lon_perturb;
-            let violet = li % 5 == 2;
-            const LON_SEGS: usize = 56;
-            let mut prev: Option<(Point, f32)> = None;
-            for seg in 0..=LON_SEGS {
-                let lat = -PI * 0.5 + PI * (seg as f32) / (LON_SEGS as f32);
-                let (pt, z) = project(lat, lon);
-                if let Some((pp, pz)) = prev {
-                    let avg_z = (z + pz) * 0.5;
-                    if avg_z > -0.92 {
-                        let br = ((avg_z + 1.0) * 0.5).powf(0.85).clamp(0.04, 1.0);
-                        let alpha = (0.10 + 0.28 * br).clamp(0.03, 0.46);
-                        let c = if violet {
-                            Color::from_rgba(0.30 * br, 0.12 * br, 0.82 * br, alpha * 1.6)
-                        } else {
-                            Color::from_rgba(0.04, 0.50 * br, 0.76 * br, alpha)
-                        };
-                        let seg_path = canvas::Path::new(|p| { p.move_to(pp); p.line_to(pt); });
-                        frame.stroke(&seg_path, canvas::Stroke {
-                            style: canvas::Style::Solid(c),
-                            width: if violet { 0.70 } else { 0.48 },
-                            ..canvas::Stroke::default()
-                        });
-                    }
-                }
-                prev = Some((pt, z));
-            }
-        }
-
-        // ── Polar caps — glowing north/south ─────────────────────────────
-        for (pole_idx, &pole_lat) in [PI * 0.48f32, -PI * 0.48f32].iter().enumerate() {
-            let pulse = 0.75 + 0.25 * (t * 0.052 + pole_idx as f32 * PI).sin();
-            let (pole_pt, pole_z) = project(pole_lat, rot_y);
-            if pole_z > -0.55 {
-                let br = ((pole_z + 1.0) * 0.5).clamp(0.0, 1.0);
-                frame.fill(&canvas::Path::circle(pole_pt, 24.0 * pulse), Color::from_rgba(0.0,  0.75, 0.92, 0.055 * br));
-                frame.fill(&canvas::Path::circle(pole_pt, 12.0 * pulse), Color::from_rgba(0.18, 0.90, 1.0,  0.16  * br));
-                frame.fill(&canvas::Path::circle(pole_pt,  5.5 * pulse), Color::from_rgba(0.65, 0.97, 1.0,  0.62  * br));
-            }
-        }
-
-        // ── Delta arc events — 5 arcs, wide glow + sharp core ─────────────
-        for (arc_idx, &phase) in self.delta_phases.iter().enumerate() {
-            let anim_lon = (t * 0.025 + phase * 0.5).rem_euclid(TAU);
-            let lat_center = (phase * 0.35 - 0.55).clamp(-PI * 0.45, PI * 0.45);
-            let arc_span = PI * 0.44;
-            let hot = arc_idx % 2 == 1;
-            const ARC_SEGS: usize = 40;
-        }
-
-        // ── Attractor nodes — 6 nodes, halos, neural arcs, pulse rings ───
-        let mut apts: Vec<(Point, f32, f32)> = Vec::with_capacity(6);
-        for (idx, &lon) in self.attractor_lons.iter().enumerate() {
-            let lat = match idx % 3 { 0 => 0.30f32, 1 => -0.22f32, _ => 0.0f32 };
-            let (pt, z) = project(lat, (lon + rot_y).rem_euclid(TAU));
-            let pulse = 1.0 + 0.22 * (t * 0.045 + idx as f32 * std::f32::consts::FRAC_PI_2).sin();
-            apts.push((pt, z, pulse));
-        }
-
-        // Neural arcs between selected pairs
-        let pairs: [(usize, usize); 7] = [(0,1),(1,2),(2,3),(3,4),(4,5),(0,3),(2,5)];
-        for (a, b) in pairs {
-            let (pa, za, _) = apts[a];
-            let (pb, zb, _) = apts[b];
-            if za > -0.1 && zb > -0.1 {
-                let br = (((za + zb) * 0.5 + 1.0) * 0.5).clamp(0.0, 1.0);
-                let ap = (t * 0.033 + a as f32 * 1.1).rem_euclid(TAU);
-                let alpha = (0.08 + 0.16 * ap.sin().abs()) * br;
-                let arc_path = canvas::Path::new(|p| { p.move_to(pa); p.line_to(pb); });
-                frame.stroke(&arc_path, canvas::Stroke {
-                    style: canvas::Style::Solid(Color::from_rgba(0.18, 0.90, 0.98, alpha)),
-                    width: 0.85,
-                    ..canvas::Stroke::default()
-                });
-            }
-        }
-
-        // Pulse rings + dot halos
-        for (idx, &(pt, z, pulse)) in apts.iter().enumerate() {
-            if z > -0.20 {
-                let br = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
-            frame.fill(
-                &canvas::Path::circle(Point::new(cx, cy), r + 2.0),
-                Color::from_rgba(0.04, 0.14, 0.92, pulse_alpha),
-            );
-        }
-
-        // ── Specular highlight (top-left quadrant, 3D illusion) ───────────
-        {
-            let hx = cx - r * 0.30;
-            let hy = cy - r * 0.36;
-            let hi_a = 0.22 + 0.08 * (t * 0.027).sin();
-            frame.fill(&canvas::Path::circle(Point::new(hx, hy), r * 0.21), Color::from_rgba(0.62, 0.92, 0.97, hi_a));
-            frame.fill(&canvas::Path::circle(Point::new(hx + r * 0.05, hy + r * 0.04), r * 0.08), Color::from_rgba(0.93, 1.0, 1.0, 0.15));
-        }
-
-        // FIX 2: Global-Mode rendering for swarm nodes
-        if !self.view_mode && !self.swarm_nodes.is_empty() {
-            for (_name, lat, lon, coherence) in self.swarm_nodes.iter() {
-                let (pt, z) = project(*lat, *lon);
-                if z > -0.1 {
-                    let br = ((z + 1.0) * 0.5).clamp(0.3, 1.0);
-                    let alpha = (0.55 + 0.35 * coherence) * br;
-                    // Node glow (green for coherent, red for incoherent)
-                    let r_val = 0.20 + (1.0 - coherence) * 0.60;
-                    let g_val = 0.85 * coherence;
-                    let b_val = 0.60;
-                    let node_radius = 4.5 + coherence * 3.0;
-                    frame.fill(&canvas::Path::circle(pt, node_radius), Color::from_rgba(r_val, g_val, b_val, alpha as f32));
-                }
-            }
-        }
-
-        vec![frame.into_geometry()]
-    }
+    // Zeichen-Code entfernt. Hier dürfen nur Methoden stehen!
 
 }
 
@@ -6920,41 +6435,18 @@ impl canvas::Program<Message> for StructureMapScene {
                 let arc = canvas::Path::circle(Point::new(cx, cy), r);
                 let mut cut = Color::WHITE;
                 cut.a = 0.22;
-                frame.stroke(
-                    &arc,
-                    canvas::Stroke {
-                        style: canvas::Style::Solid(cut),
-                        width: 1.8,
-                        ..canvas::Stroke::default()
-                    },
-                );
-            }
-
-            // Knoten zeichnen
-            for &theta in &curr {
-                let pt = polar(theta, ring_idx);
-                if ring_idx == 9 {
-                    // Diamant-Anker
-                    let r = 6.0f32;
-                    let diamond = canvas::Path::new(|b| {
-                        b.move_to(Point::new(pt.x,       pt.y - r));
-                        b.line_to(Point::new(pt.x + r,   pt.y));
-                        b.line_to(Point::new(pt.x,       pt.y + r));
-                        b.line_to(Point::new(pt.x - r,   pt.y));
-                        b.close();
-                    });
-                    frame.fill(&diamond, Color::from_rgb8(0xE0, 0xF7, 0xFF));
-                    let mut glow = Color::from_rgb8(0xE0, 0xF7, 0xFF);
-                    glow.a = 0.08;
-                    frame.fill(&canvas::Path::circle(pt, 14.0), glow);
-                } else if ring_idx >= 7 {
-                    frame.fill(&canvas::Path::circle(pt, 2.5), color);
-                } else {
-                    let sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
-                    let mut nc = color;
-                    nc.a = 0.72;
-                    frame.fill(&canvas::Path::circle(pt, sz), nc);
-                }
+                frame.stroke(&arc, canvas::Stroke {
+                    color: cut,
+                    width: 2.0,
+                    ..canvas::Stroke::default()
+                });
+            } else if ring_idx >= 7 {
+                frame.fill(&canvas::Path::circle(pt, 2.5), color);
+            } else {
+                let sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
+                let mut nc = color;
+                nc.a = 0.72;
+                frame.fill(&canvas::Path::circle(pt, sz), nc);
             }
         }
 

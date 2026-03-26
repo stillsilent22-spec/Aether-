@@ -62,6 +62,28 @@ def _derive_alerts(*, node_count: int, reachable_count: int, genesis_key_ok: boo
 
 
 def get_swarm_status(
+        # --- CASCADE_VERSION consistency check ---
+        from modules.unified_cascade import CASCADE_VERSION
+        version_ok = True
+        version_mismatches = 0
+        pack_path = Path(anchor_dir)
+        for pack_file in pack_path.glob("*.pack"):
+            try:
+                pack = json.loads(pack_file.read_text(encoding="utf-8"))
+                if "cascade_version" in pack:
+                    if pack["cascade_version"] != CASCADE_VERSION:
+                        version_mismatches += 1
+                        version_ok = False
+            except Exception:
+                pass
+
+        if not version_ok:
+            alerts.append({
+                "severity": "critical",
+                "code": "CASCADE_VERSION_MISMATCH",
+                "message": f"{version_mismatches} pack(s) have wrong cascade_version."
+            })
+            health_score -= 0.30
     nodes_dir: str = "data/swarm/nodes",
     anchor_dir: str = "data/anchors",
     consensus_db: str = "data/consensus.db",

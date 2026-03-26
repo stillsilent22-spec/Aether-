@@ -146,6 +146,26 @@ class RenderCoordinator:
         self._frame_history.append(frame)
         if len(self._frame_history) > self._max_history:
             self._frame_history.pop(0)
+
+        # --- Unified deterministic cascade + swarm submission ---
+        from modules.unified_cascade import cascade
+        from modules.swarm_loop_bridge import submit_cascade_result
+        session_key = None
+        try:
+            if hasattr(self, "_session_context") and self._session_context:
+                sk = getattr(self._session_context, "session_key", None)
+                session_key = sk.encode() if isinstance(sk, str) else sk
+        except Exception:
+            pass
+        if raw:
+            cascade_result = cascade(
+                raw,
+                source_id=f"render_{pid}",
+                source_type="render",
+                session_key=session_key,
+            )
+            submit_cascade_result(cascade_result, role="genesis")
+
         return frame
 
     def get_etw_render_events(self, pid: int) -> list[dict[str, Any]]:

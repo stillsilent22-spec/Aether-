@@ -12,82 +12,84 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 class AetherPipeline:
-                def learn_structural_patterns(self) -> dict:
-                    """
-                    Lernt typische mathematische Strukturen (z.B. Symmetrie, Entropie, Invarianten) aus dem Audit-Log.
-                    Erkennt Muster von Malware, Obfuskation, KI-generierten Texten, verschleiertem Code usw.
-                    Keine Inhaltsanalyse, nur mathematische Regeln/Verteilungen.
-                    Gibt typische Wertebereiche und Auffälligkeiten zurück.
-                    """
-                    if not self.audit_log:
-                        return {}
-                    # Sammle Werte
-                    entropies = [entry.get("entropy", 0.0) for entry in self.audit_log]
-                    symmetries = [entry.get("symmetry", 0.0) for entry in self.audit_log]
-                    periodicities = [entry.get("periodicity", 0.0) for entry in self.audit_log]
-                    invariant_strengths = [entry.get("invariants", {}).get("invariant_strength", 0.0) for entry in self.audit_log]
-                    # Statistische Auswertung
-                    import numpy as np
-                    def stats(arr):
-                        arr = np.array(arr)
-                        return {
-                            "mean": float(np.mean(arr)),
-                            "std": float(np.std(arr)),
-                            "min": float(np.min(arr)),
-                            "max": float(np.max(arr)),
-                        } if len(arr) else {}
-                    patterns = {
-                        "entropy": stats(entropies),
-                        "symmetry": stats(symmetries),
-                        "periodicity": stats(periodicities),
-                        "invariant_strength": stats(invariant_strengths),
-                    }
-                    # Heuristik: Auffällige Bereiche
-                    hints = []
-                    if patterns["entropy"].get("mean", 0) > 7.5:
-                        hints.append("Hohe Entropie: Mögliche Verschlüsselung/Obfuskation/Malware")
-                    if patterns["symmetry"].get("mean", 1) < 0.5:
-                        hints.append("Niedrige Symmetrie: Starke Obfuskation oder KI-generierter Text")
-                    if patterns["invariant_strength"].get("mean", 0) > 0.7:
-                        hints.append("Starke mathematische Invarianten: KI-generierte oder stark strukturierte Daten")
-                    patterns["hints"] = hints
-                    return patterns
-            def compute_invariants(self, data: bytes) -> dict:
-                """
-                Führt mathematische Invariantenerkennung (Fourier, Benford, Zipf, Mandelbrot) auf den Daten durch.
-                Nutzt die Algorithmen aus modules/invariant_detector.py.
-                """
-                try:
-                    from modules import invariant_detector
-                except ImportError:
-                    import invariant_detector
-                # Beispiel: change_sequence = Byte-Differenzen
-                arr = list(data)
-                change_sequence = [abs(arr[i] - arr[i-1]) for i in range(1, len(arr))] if len(arr) > 1 else []
-                # Anchor-Frequenzen: Hashes als Strings
-                anchor_frequencies = {}
-                for i in range(0, len(data), 256):
-                    block = data[i:i+256]
-                    h = hashlib.sha256(block).hexdigest()
-                    anchor_frequencies[h] = anchor_frequencies.get(h, 0) + 1
-                # File sizes: nur aktuelle Datei
-                file_sizes = [len(data)]
-                # Mandelbrot: simuliert als Blocktiefe
-                tree_depths = [1 for _ in range(len(data) // 256)]
-                return invariant_detector.compute_invariant_score(
-                    change_sequence=change_sequence,
-                    anchor_frequencies=anchor_frequencies,
-                    file_sizes=file_sizes,
-                    tree_depths=tree_depths
-                )
-        def optimize_pipeline(self):
-            """
-            Analysiert die Audit-Logs und erkennt, welche Schichten/Pfade redundant oder ineffizient sind.
-            Gibt Optimierungsvorschläge zurück (z.B. Schichten überspringen, Pfade verkürzen).
-            """
-            if not self.audit_log:
-                print("[OPTIMIZE] Keine Audit-Daten vorhanden.")
-                return []
+    def learn_structural_patterns(self) -> dict:
+        """
+        Lernt typische mathematische Strukturen (z.B. Symmetrie, Entropie, Invarianten) aus dem Audit-Log.
+        Erkennt Muster von Malware, Obfuskation, KI-generierten Texten, verschleiertem Code usw.
+        Keine Inhaltsanalyse, nur mathematische Regeln/Verteilungen.
+        Gibt typische Wertebereiche und Auffälligkeiten zurück.
+        """
+        if not self.audit_log:
+            return {}
+        # Sammle Werte
+        entropies = [entry.get("entropy", 0.0) for entry in self.audit_log]
+        symmetries = [entry.get("symmetry", 0.0) for entry in self.audit_log]
+        periodicities = [entry.get("periodicity", 0.0) for entry in self.audit_log]
+        invariant_strengths = [entry.get("invariants", {}).get("invariant_strength", 0.0) for entry in self.audit_log]
+        # Statistische Auswertung
+        import numpy as np
+        def stats(arr):
+            arr = np.array(arr)
+            return {
+                "mean": float(np.mean(arr)),
+                "std": float(np.std(arr)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+            } if len(arr) else {}
+        patterns = {
+            "entropy": stats(entropies),
+            "symmetry": stats(symmetries),
+            "periodicity": stats(periodicities),
+            "invariant_strength": stats(invariant_strengths),
+        }
+        # Heuristik: Auffällige Bereiche
+        hints = []
+        if patterns["entropy"].get("mean", 0) > 7.5:
+            hints.append("Hohe Entropie: Mögliche Verschlüsselung/Obfuskation/Malware")
+        if patterns["symmetry"].get("mean", 1) < 0.5:
+            hints.append("Niedrige Symmetrie: Starke Obfuskation oder KI-generierter Text")
+        if patterns["invariant_strength"].get("mean", 0) > 0.7:
+            hints.append("Starke mathematische Invarianten: KI-generierte oder stark strukturierte Daten")
+        patterns["hints"] = hints
+        return patterns
+
+    def compute_invariants(self, data: bytes) -> dict:
+        """
+        Führt mathematische Invariantenerkennung (Fourier, Benford, Zipf, Mandelbrot) auf den Daten durch.
+        Nutzt die Algorithmen aus modules/invariant_detector.py.
+        """
+        try:
+            from modules import invariant_detector
+        except ImportError:
+            import invariant_detector
+        # Beispiel: change_sequence = Byte-Differenzen
+        arr = list(data)
+        change_sequence = [abs(arr[i] - arr[i-1]) for i in range(1, len(arr))] if len(arr) > 1 else []
+        # Anchor-Frequenzen: Hashes als Strings
+        anchor_frequencies = {}
+        for i in range(0, len(data), 256):
+            block = data[i:i+256]
+            h = hashlib.sha256(block).hexdigest()
+            anchor_frequencies[h] = anchor_frequencies.get(h, 0) + 1
+        # File sizes: nur aktuelle Datei
+        file_sizes = [len(data)]
+        # Mandelbrot: simuliert als Blocktiefe
+        tree_depths = [1 for _ in range(len(data) // 256)]
+        return invariant_detector.compute_invariant_score(
+            change_sequence=change_sequence,
+            anchor_frequencies=anchor_frequencies,
+            file_sizes=file_sizes,
+            tree_depths=tree_depths
+        )
+
+    def optimize_pipeline(self):
+        """
+        Analysiert die Audit-Logs und erkennt, welche Schichten/Pfade redundant oder ineffizient sind.
+        Gibt Optimierungsvorschläge zurück (z.B. Schichten überspringen, Pfade verkürzen).
+        """
+        if not self.audit_log:
+            print("[OPTIMIZE] Keine Audit-Daten vorhanden.")
+            return []
             # Beispiel: Zähle, wie oft jede Schicht signifikant zum Ergebnis beiträgt
             stats = {k: 0 for k in [
                 "entropy", "h_lambda", "anchors", "symmetry", "xor_delta", "periodicity", "sce", "bayes", "trust"

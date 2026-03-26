@@ -48,3 +48,46 @@ jobs:
       - name: Solo bootstrap smoke test
         run: |
           python solo_bootstrap.py --dry-run
+
+      - name: Cascade determinism + version check
+        run: |
+          python -c "
+          import hashlib
+          from modules.unified_cascade import cascade, CASCADE_VERSION
+
+          data = b'aether determinism test vector 001'
+
+          # Same data → same run_id always
+          r1 = cascade(data, source_id='test_a', source_type='bytes')
+          r2 = cascade(data, source_id='test_b', source_type='bytes')
+          assert r1.run_id == r2.run_id, f'run_id not deterministic: {r1.run_id} vs {r2.run_id}'
+
+          # run_id is version-bound
+          expected = hashlib.sha256(data + CASCADE_VERSION.encode()).hexdigest()
+          assert r1.run_id == expected, f'run_id formula wrong: {r1.run_id} vs {expected}'
+
+          # cascade_version in result
+          assert r1.cascade_version == CASCADE_VERSION, 'cascade_version missing from result'
+
+          # delta plaintext never in result
+          assert r1.delta_encrypted_hex == '', 'delta must be empty without session key'
+
+          # session key encrypts delta
+          r3 = cascade(data, source_id='test_c', source_type='bytes', session_key=b'testsessionkey32')
+          assert r3.delta_encrypted_hex != '', 'delta must be encrypted with session key'
+          assert r3.delta_hash != '', 'delta_hash must always be present'
+
+          # Genesis trust gate — low-entropy data must be rejected even for admin
+          tiny = b'\x00' * 4  # all-zero = zero entropy = trust_score near 0
+          r_tiny = cascade(tiny, source_id='test_gate', source_type='bytes')
+          from modules.swarm_loop_bridge import submit_cascade_result
+          gate_result = submit_cascade_result(r_tiny, role='genesis')
+          assert gate_result.get('promoted') != True or r_tiny.trust_score >= 0.65, \
+              f'Trust gate failed: promoted={gate_result.get("promoted")} score={r_tiny.trust_score}'
+
+          print(f'CASCADE DETERMINISM: OK')
+          print(f'  run_id={r1.run_id[:16]}...')
+          print(f'  cascade_version={CASCADE_VERSION}')
+          print(f'  trust_score={r1.trust_score:.3f}')
+          print(f'  trust_gate: {"PASS" if gate_result.get("promoted") != True else "FAIL"}')
+          "
