@@ -27,23 +27,9 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
-    Home,
-    Control,
-    Symbiont,
-    SwarmOps,
-    Privacy,
-    Chat,
-    Browser,
-    YouTube,
-    Data,
-    Anchors,
-    Logs,
-    Settings,
-    ADE,
-    StructureMap,
-    Rekonstruktion,
-    Launcher,
-    Imprint,
+    Home, Control, Symbiont, SwarmOps, Privacy, Chat,
+    Browser, YouTube, Data, Anchors, Logs, Settings,
+    ADE, StructureMap, Rekonstruktion, Launcher, Imprint,
 }
 
 impl Tab {
@@ -68,7 +54,6 @@ impl Tab {
             Tab::Imprint => "Imprint",
         }
     }
-}
 // ── Farbkonstanten und Hilfsfunktion ─────────────────────────────
 
 fn TEXT_H() -> Color { Color::from_rgb8(0xE4, 0xEE, 0xF2) } // Headline/Primary Text
@@ -117,7 +102,7 @@ impl CascadeMetrics {
                 .and_then(|x| x.as_array())
                 .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
                 .unwrap_or_else(Vec::new),
-        };
+        }
     }
 }
 // Score-Tooltip-Mapping für die UI
@@ -138,153 +123,6 @@ pub fn get_score_tooltip(score_name: &str) -> &'static str {
 }
 
 // Beispiel: Score-Panel mit Tooltips für die Analyse-Ansicht
-use iced::widget::{row, column, text, button, container, scrollable, text_input};
-
-fn view_score_panel(scores: &[(String, f32)]) -> Element<'_, Message> {
-    let mut col = Column::new().spacing(8);
-    for (score_name, value) in scores {
-        let tooltip_text = get_score_tooltip(score_name);
-        let score_row = Row::new()
-            .push(Text::new(format!("{score_name}: {:.3}", value)).size(16))
-            .push(
-                Tooltip::new(
-                    Text::new("ⓘ").size(14).color([0.5, 0.5, 1.0]),
-                    tooltip_text,
-                    tooltip::Position::Right,
-                )
-                .gap(8)
-            );
-        col = col.push(score_row);
-    }
-    Container::new(col).padding(12).into()
-}
-use crate::py_bridge::DropperBridge;
-// ── Backup-Option für Analyse ─────────────────────────────────────────────
-// Diese Option aktiviert ein automatisches Backup jeder Datei vor der Analyse.
-// Die Sicherung erfolgt nach C:/AetherBackup/YYYY-MM-DD/ (siehe backup.rs).
-use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
-use crate::auth::{AuthStore, UserRecord};
-use crate::hardware;
-use crate::browser::{
-    BrowserInspector, BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext,
-};
-use crate::browser_embed::{BrowserHostRect, EmbeddedBrowser};
-use crate::ethics::{code_suspicion_score, structural_text_integrity};
-use crate::key_vault::DataKey;
-use crate::lab_boundary::{extract_stable_metrics, validate_response, LabResponse, LAB_SCHEMA_VERSION};
-use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus};
-use crate::policy_executor::{default_analysis_rules, RuleEngine};
-use std::fs;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ChatContext {
-    Private,
-    Group,
-    Shanway,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AppMode {
-    Overlay,
-    Full,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RuntimeProfile {
-    Auto,
-    Balanced,
-    LowPower,
-    Legacy,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum UiLanguage {
-    German,
-    English,
-}
-
-#[derive(Debug, Clone)]
-enum Message {
-    LoginUsernameChanged(String),
-    LoginPasswordChanged(String),
-    LoginPressed,
-    RegisterPressed,
-    TabSelected(Tab),
-    ChatContextSelected(ChatContext),
-    SecurityModeSelected(String),
-    RuntimeProfileSelected(RuntimeProfile),
-    UiLanguageSelected(UiLanguage),
-    DashboardSearchChanged(String),
-    DashboardNavSelected(String),
-    DashboardInfoToggle(String),
-    SecurityRecheck,
-    TutorialDismissed,
-    AnchorGroupSelected(usize),
-    ChatUserSearchChanged(String),
-    PrivatePartnerSelected(String),
-    PrivateMessageChanged(String),
-    PrivateMessageSend,
-    GroupMessageChanged(String),
-    GroupMessageSend,
-    ShanwayMessageChanged(String),
-    ShanwayMessageSend,
-    BrowserAddressChanged(String),
-    BrowserSearchQueryChanged(String),
-    BrowserLoadPressed,
-    BrowserInspectPressed,
-    BrowserSearchPressed,
-    BrowserInspectCompleted(BrowserProbeResult),
-    BrowserSearchCompleted(BrowserSearchContext),
-    YouTubeAddressChanged(String),
-    YouTubeLoadPressed,
-        YouTubeKiAnalysisPressed,
-    FileHovered(PathBuf),
-        ShowTooltip(String),
-    FileHoverCleared,
-    FileDropped(PathBuf),
-    FileAnalysisCompleted(Result<FileAnalysisResult, String>),
-    ReconstructPressed(u64),
-    ReconstructionCompleted(Result<(String, AefDecodeResult), String>),
-    ExportPressed(u64),
-    FlowSphereSnapshotSelected(usize),
-    FlowSphereExportPressed,
-    FlowSphereZoomIn,
-    FlowSphereZoomOut,
-    FlowSphereRotateLeft,
-    FlowSphereRotateRight,
-    FlowSphereResetView,
-    FlowSphereToggleViewMode,
-    FlowSphereNodeClicked(usize),
-    OpenFullTab(Tab),
-    SymbiontInputChanged(String),
-    SymbiontProfilePressed,
-    SymbiontRazorPressed,
-    SymbiontSnapshotPressed,
-    SymbiontStatusPressed,
-    SymbiontRpcCompleted(Result<String, String>),
-    SymbiontEventsReceived(Result<(Vec<String>, u64), String>),
-    SymbiontEventsClearPressed,
-    HybridBridgeStartPressed,
-    HybridBridgeStopPressed,
-    HybridBridgeRestartPressed,
-    HybridSymbiontEnabled(bool),
-    HybridSymbiontEndpointPreset(String, u16),
-    ToggleMode,
-    WindowResized(f32, f32),
-    // Dropper pipeline integration
-    DropperStartPressed,
-    DropperStopPressed,
-    DropperResultUpdate,
-    // Launcher Dashboard
-    LauncherModeSelected(crate::launcher_dashboard::LauncherMode),
-    LauncherServiceStartPressed(String),
-    LauncherServiceStopPressed(String),
-    LauncherBuildTaskPressed(String),
-    LauncherBuildTaskCompleted(String, Result<crate::launcher_dashboard::BuildTaskResult, String>),
-    LauncherLogsClearPressed,
-    LiveRenderToggle,
-    Tick,
-}
 
 #[derive(Debug, Clone)]
 struct AnchorClusterView {
@@ -361,6 +199,7 @@ pub struct AetherIcedShell {
     dashboard_info_open_tick: u64,
     // --- StructureMap / FlowSphere ---
     structure_map_nodes: Vec<Vec<f32>>,
+    // ...existing code...
     structure_map_compression: f32,
     structure_map_locked: bool,
     structure_map_anchor_hist: Vec<f32>,
@@ -432,6 +271,7 @@ pub struct AetherIcedShell {
     backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
 
     // Cascade result state
+    dropper_bridge: DropperBridge,
     cascade_run_id: Option<String>,
     cascade_metrics: Option<CascadeMetrics>,
 }
