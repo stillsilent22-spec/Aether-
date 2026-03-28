@@ -1,4 +1,4 @@
-"""Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
+﻿"""Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class AgentDirective:
 
 
 class AgentLoopEngine:
-    """Leitet Kamera- und Folgeaktionen aus Clustern, Offenheit und Shanway-Befunden ab."""
+    """Leitet Kamera- und Folgeaktionen aus Clustern, Offenheit und Assistant-Befunden ab."""
 
     def __init__(self) -> None:
         self._last_instruction_update = 0.0
@@ -180,7 +180,7 @@ class AgentLoopEngine:
             f"Browser-Kontextlauf {iteration}/{max(1, int(max_iterations))}."
         )
         return AgentDirective(
-            instruction=f"SHANWAY LOOP {iteration}: Kontext fuer {file_type or source_label} laden",
+            instruction=f"ASSISTANT LOOP {iteration}: Kontext fuer {file_type or source_label} laden",
             resolved_flash=False,
             resolved_count=self.resolved_count,
             target_cluster=None,

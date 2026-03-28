@@ -1,10 +1,10 @@
-import os
+﻿import os
 from analysis_engine import entropy, gini
-from modules.shanway_engine import shanway_normalize, shanway_reduce
+from modules.assistant_engine import assistant_normalize, assistant_reduce
 
 def route_text_input(text: str) -> dict:
-    norm = shanway_normalize(text)
-    features = shanway_reduce(text)
+    norm = assistant_normalize(text)
+    features = assistant_reduce(text)
     return {"type": "text", "normalized": norm, "features": features}
 
 def route_file_input(path: str) -> dict:

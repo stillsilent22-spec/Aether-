@@ -1,11 +1,11 @@
-from modules.preload_optimizer import PreloadOptimizer
-from modules.shanway import ShanwayEngine
-from modules.shanway_interface import ShanwayInterface
+﻿from modules.preload_optimizer import PreloadOptimizer
+from modules.assistant import AssistantEngine
+from modules.assistant_interface import AssistantInterface
 
 
 def test_analyze_and_route_without_browser_engine_runs() -> None:
-    interface = ShanwayInterface(
-        shanway_engine=ShanwayEngine(),
+    interface = AssistantInterface(
+        assistant_engine=AssistantEngine(),
         preload_optimizer=PreloadOptimizer(),
         browser_engine=None,
         auto_push_ttd=False,
@@ -16,8 +16,8 @@ def test_analyze_and_route_without_browser_engine_runs() -> None:
 
 
 def test_fetch_multi_source_web_context_with_insufficient_sources() -> None:
-    interface = ShanwayInterface(
-        shanway_engine=ShanwayEngine(),
+    interface = AssistantInterface(
+        assistant_engine=AssistantEngine(),
         preload_optimizer=PreloadOptimizer(),
         browser_engine=None,
         auto_push_ttd=False,
@@ -27,8 +27,8 @@ def test_fetch_multi_source_web_context_with_insufficient_sources() -> None:
 
 
 def test_auto_push_default_is_disabled() -> None:
-    interface = ShanwayInterface(
-        shanway_engine=ShanwayEngine(),
+    interface = AssistantInterface(
+        assistant_engine=AssistantEngine(),
         preload_optimizer=PreloadOptimizer(),
         browser_engine=None,
         auto_push_ttd=False,

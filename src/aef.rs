@@ -22,7 +22,7 @@ pub const AEF_MAGIC: [u8; 4] = [0x41, 0x45, 0x46, 0x00];
 pub const AEF_EOF_MARKER: [u8; 4] = [0x45, 0x4F, 0x46, 0x41];
 pub const AEF_FORMAT_VERSION: u16 = 1;
 pub const DEFAULT_CHUNK_SIZE: usize = 256;
-const DEFAULT_SIGNING_CONTEXT: &[u8] = b"aether/aef/shanway/signing-key/v1";
+const DEFAULT_SIGNING_CONTEXT: &[u8] = b"aether/aef/engine/signing-key/v1";
 
 mod serde_signature64 {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -46,7 +46,7 @@ mod serde_signature64 {
 }
 
 pub mod engine_flags {
-    // SHANWAY_MASTER Filter [0]–[9]
+    // ENGINE Filter [0]–[9]
     pub const SECURITY: u64    = 1 << 0;  // [0] deny by default — Sicherheitsschicht
     pub const SHANNON: u64     = 1 << 1;  // [1] H(X) klassische Entropie
     pub const H_LAMBDA: u64    = 1 << 2;  // [2] H(X|M_t) beobachterrelative Restunsicherheit
@@ -162,7 +162,7 @@ pub struct AefTrustMetadata {
     pub e_lambda_label: String,
     pub confirmed_at: u64,
     #[serde(with = "serde_signature64")]
-    pub shanway_signature: [u8; 64],
+    pub engine_signature: [u8; 64],
 }
 
 #[derive(Debug, Clone)]
@@ -371,12 +371,12 @@ pub struct EnginePipeline {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct EngineEvaluation {
-    coherence_index: f64,
-    trust_score: f32,
-    engine_flags: u64,
-    e_lambda: f32,
-    e_lambda_label: String,
+pub struct EngineEvaluation {
+    pub coherence_index: f64,
+    pub trust_score: f32,
+    pub engine_flags: u64,
+    pub e_lambda: f32,
+    pub e_lambda_label: String,
 }
 
 impl EnginePipeline {
@@ -494,7 +494,7 @@ impl EnginePipeline {
         let signature = Signature::from_bytes(signature);
         self.verifying_key
             .verify(payload, &signature)
-            .map_err(|err| AefError::Signature(format!("Shanway-Signatur ungueltig: {err}")))
+            .map_err(|err| AefError::Signature(format!("Engine-Signatur ungueltig: {err}")))
     }
 }
 
@@ -639,7 +639,7 @@ impl AefEncoder {
                 e_lambda: evaluation.e_lambda,
                 e_lambda_label: evaluation.e_lambda_label.clone(),
                 confirmed_at: created_at,
-                shanway_signature: [0u8; 64],
+                engine_signature: [0u8; 64],
             },
         };
 
@@ -661,7 +661,7 @@ impl AefEncoder {
             && evaluation.trust_score >= 0.65
             && evaluation.engine_flags == engine_flags::ALL_CONFIRMED;
         file.trust_metadata.lossless_confirmed = lossless_confirmed;
-        file.trust_metadata.shanway_signature = self.engine_pipeline.sign(&file.signable_bytes()?);
+        file.trust_metadata.engine_signature = self.engine_pipeline.sign(&file.signable_bytes()?);
 
         let output = file.to_bytes()?;
         if let Some(parent) = output_path.parent() {
@@ -702,7 +702,7 @@ impl AefDecoder {
         let engine = EnginePipeline::new();
         engine.verify(
             &file.signable_bytes()?,
-            &file.trust_metadata.shanway_signature,
+            &file.trust_metadata.engine_signature,
         )?;
 
         let (reconstructed, missing_refs) = {
@@ -878,7 +878,7 @@ impl AefFile {
         };
         EnginePipeline::new().verify(
             &file.signable_bytes()?,
-            &file.trust_metadata.shanway_signature,
+            &file.trust_metadata.engine_signature,
         )?;
         Ok(file)
     }
@@ -1003,7 +1003,7 @@ impl AefFile {
         bytes.extend_from_slice(&self.trust_metadata.engine_flags.to_le_bytes());
         bytes.extend_from_slice(&self.trust_metadata.confirmed_at.to_le_bytes());
         if include_signature {
-            bytes.extend_from_slice(&self.trust_metadata.shanway_signature);
+            bytes.extend_from_slice(&self.trust_metadata.engine_signature);
         }
         bytes
     }
@@ -1115,7 +1115,7 @@ fn read_trust_metadata(cursor: &mut std::io::Cursor<&[u8]>) -> Result<AefTrustMe
         e_lambda: 0.0,        // wird aus fingerprint berechnet, nicht serialisiert
         e_lambda_label: String::from("LATENT"),
         confirmed_at: read_u64(cursor)?,
-        shanway_signature: read_exact_array::<64>(cursor)?,
+        engine_signature: read_exact_array::<64>(cursor)?,
     })
 }
 

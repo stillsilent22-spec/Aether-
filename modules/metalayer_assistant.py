@@ -1,7 +1,7 @@
-"""metalayer_shanway.py — MetaLayer OS Phase D: Shanway-gefilterte Befunde.
+﻿"""metalayer_assistant.py — MetaLayer OS Phase D: Assistant-gefilterte Befunde.
 
-Übersetzt MetaLayer-OS-Erkenntnisse in das Shanway-Konsensformat.
-Alle Ausgaben durchlaufen die Shanway-Pipeline (h_lambda-Gate, Trust-Score).
+Übersetzt MetaLayer-OS-Erkenntnisse in das Assistant-Konsensformat.
+Alle Ausgaben durchlaufen die Assistant-Pipeline (h_lambda-Gate, Trust-Score).
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional, List, Any
 
-# ── Shanway-Konstanten (aus shanway_pipeline.py) ──────────────────────────────
+# ── Assistant-Konstanten (aus assistant_pipeline.py) ──────────────────────────────
 
 TRUST_THRESHOLD   = 0.45
 CONFIDENCE_MIN    = 0.65
@@ -39,7 +39,7 @@ class MetaLayerFinding:
     body: str
     confidence: float           # [0, 1]
     h_lambda: float             # Beobachter-Restunsicherheit
-    trust_score: float          # Gesamtscore aus Shanway-Pipeline
+    trust_score: float          # Gesamtscore aus Assistant-Pipeline
     pid: Optional[int] = None
     process_name: Optional[str] = None
     payload: dict = field(default_factory=dict)
@@ -47,7 +47,7 @@ class MetaLayerFinding:
 
     @property
     def is_publishable(self) -> bool:
-        """True wenn Befund Shanway-Qualitätsgates passiert."""
+        """True wenn Befund Assistant-Qualitätsgates passiert."""
         return (
             self.h_lambda <= H_LAMBDA_MAX
             and self.confidence >= CONFIDENCE_MIN
@@ -70,11 +70,11 @@ class MetaLayerFinding:
         }
 
 
-# ── Shanway-Filter-Wrapper ────────────────────────────────────────────────────
+# ── Assistant-Filter-Wrapper ────────────────────────────────────────────────────
 
 def format_finding(finding: MetaLayerFinding) -> str:
     """
-    Formatiert einen MetaLayerFinding als Shanway-gefilterter Textbefund.
+    Formatiert einen MetaLayerFinding als Assistant-gefilterter Textbefund.
     Gibt leeren String zurück wenn Qualitätsgates nicht bestanden.
     """
     if not finding.is_publishable:
@@ -91,16 +91,16 @@ def format_finding(finding: MetaLayerFinding) -> str:
     return "\n".join(lines)
 
 
-class MetaLayerShanwayBridge:
+class MetaLayerAssistantBridge:
     """
-    Verbindet MetaLayer-OS-Ergebnisse mit der Shanway-Pipeline.
+    Verbindet MetaLayer-OS-Ergebnisse mit der Assistant-Pipeline.
 
-    Wenn keine Shanway-Pipeline übergeben wird, werden strukturelle
+    Wenn keine Assistant-Pipeline übergeben wird, werden strukturelle
     Heuristiken für h_lambda und trust_score verwendet.
     """
 
-    def __init__(self, shanway_pipeline: Optional[Any] = None) -> None:
-        self._pipeline = shanway_pipeline
+    def __init__(self, assistant_pipeline: Optional[Any] = None) -> None:
+        self._pipeline = assistant_pipeline
 
     def create_finding(
         self,
@@ -112,7 +112,7 @@ class MetaLayerShanwayBridge:
         process_name: Optional[str] = None,
         payload: Optional[dict] = None,
     ) -> MetaLayerFinding:
-        """Erstellt einen MetaLayerFinding und misst Shanway-Parameter."""
+        """Erstellt einen MetaLayerFinding und misst Assistant-Parameter."""
         h_lambda, trust_score = self._measure(title, body, confidence)
         return MetaLayerFinding(
             finding_type  = finding_type,
@@ -185,7 +185,7 @@ class MetaLayerShanwayBridge:
         self, title: str, body: str, confidence: float
     ) -> tuple[float, float]:
         """
-        Bestimmt h_lambda und Trust-Score via Shanway-Pipeline oder Heuristik.
+        Bestimmt h_lambda und Trust-Score via Assistant-Pipeline oder Heuristik.
         """
         if self._pipeline is not None:
             try:

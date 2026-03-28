@@ -76,7 +76,7 @@ pub struct PublicAnchorRecord {
     pub lossless_confirmed: bool,
     pub created_at: u64,
     pub aether_version: String,
-    pub shanway_signature: String,
+    pub engine_signature: String,
     pub vault_version: u64,
     pub genesis_block_ref: String,
 }
@@ -227,7 +227,7 @@ impl VaultAccessLayer {
             lossless_confirmed: anchor.lossless_confirmed,
             created_at: Utc::now().timestamp() as u64,
             aether_version: "vera_aether_core_rust_shell".to_owned(),
-            shanway_signature: String::new(),
+            engine_signature: String::new(),
             vault_version,
             genesis_block_ref: hex_encode(&genesis_block_ref),
         };
@@ -474,7 +474,7 @@ impl VaultAccessLayer {
             VaultAccessError::PipelineError(format!("Signatur-Payload ungueltig: {err}"))
         })?;
         let signature = self.engine_pipeline.sign(&payload);
-        record.shanway_signature = BASE64.encode(signature);
+        record.engine_signature = BASE64.encode(signature);
         Ok(record)
     }
 
@@ -483,12 +483,12 @@ impl VaultAccessLayer {
         record: &PublicAnchorRecord,
     ) -> Result<(), VaultAccessError> {
         let mut unsigned = record.clone();
-        unsigned.shanway_signature.clear();
+        unsigned.engine_signature.clear();
         let payload = serde_json::to_vec(&unsigned).map_err(|err| {
             VaultAccessError::PipelineError(format!("Signaturpruefung fehlgeschlagen: {err}"))
         })?;
         let raw = BASE64
-            .decode(&record.shanway_signature)
+            .decode(&record.engine_signature)
             .map_err(|_| VaultAccessError::InvalidSignature)?;
         if raw.len() != 64 {
             return Err(VaultAccessError::InvalidSignature);

@@ -54,7 +54,7 @@ pub struct CommunicationStyle {
 pub struct InteractionRecord {
     pub timestamp: u64,
     pub signal_hash: [u8; 32],
-    pub shanway_depth_used: ExplanationDepth,
+    pub depth_used: ExplanationDepth,
     pub comprehension_signal: ComprehensionSignal,
 }
 
@@ -332,7 +332,7 @@ impl MindModelEngine {
         model.interaction_history.push(InteractionRecord {
             timestamp: now_epoch(),
             signal_hash,
-            shanway_depth_used: depth,
+            depth_used: depth,
             comprehension_signal,
         });
         if model.interaction_history.len() > 64 {

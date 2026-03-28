@@ -296,8 +296,8 @@ mod tests {
     #[test]
     fn sync_event_roundtrip_is_lossless() {
         let payload = json!({
-            "room_kind": "shanway",
-            "room_name": "Shanway",
+            "room_kind": "private",
+            "room_name": "test-room",
             "author": "tester",
             "body": "hallo"
         });

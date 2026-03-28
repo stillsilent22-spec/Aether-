@@ -1,4 +1,4 @@
-"""tests/test_shanway_safety.py — Tests für die Shanway Sicherheits-Filterschicht.
+﻿"""tests/test_assistant_safety.py — Tests für die Assistant Sicherheits-Filterschicht.
 
 Deckt ab:
   - Medizin-Schweigeregel (DE + EN, absolute Stille)
@@ -24,10 +24,10 @@ import pytest
 # ---------------------------------------------------------------------------
 
 def _import_safety():
-    """Importiert modules.shanway_safety isoliert."""
-    if "modules.shanway_safety" in sys.modules:
-        return sys.modules["modules.shanway_safety"]
-    return importlib.import_module("modules.shanway_safety")
+    """Importiert modules.assistant_safety isoliert."""
+    if "modules.assistant_safety" in sys.modules:
+        return sys.modules["modules.assistant_safety"]
+    return importlib.import_module("modules.assistant_safety")
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +36,7 @@ def _import_safety():
 
 @pytest.fixture(scope="module")
 def sf():
-    """Singleton ShanwaySafetyFilter, einmal erzeugt."""
+    """Singleton AssistantSafetyFilter, einmal erzeugt."""
     mod = _import_safety()
     return mod.get_safety_filter()
 
@@ -51,7 +51,7 @@ def safety_mod():
 # ===========================================================================
 
 class TestMedicalFilter:
-    """Shanway schweigt bei JEDER medizinischer Anfrage — keine Ausnahme."""
+    """Assistant schweigt bei JEDER medizinischer Anfrage — keine Ausnahme."""
 
     @pytest.mark.parametrize("text", [
         # Deutsch
@@ -483,7 +483,7 @@ class TestConstants:
 
 class TestPipelineConsensusGate:
     """
-    Shanway darf keine Inhalte ausgeben, die nicht durch mindestens
+    Assistant darf keine Inhalte ausgeben, die nicht durch mindestens
     CONSENSUS_MIN_SOURCES_STRICT (3) Quellen bestaetigt wurden —
     sofern eine Web-Anfrage stattgefunden hat (sources_confirmed > 0).
 
@@ -561,12 +561,12 @@ class TestPipelineConsensusGate:
 
 
 # ===========================================================================
-# 11. Shanway-Identitaet (Kevin-Hannemann-Spec)
+# 11. Assistant-Identitaet (Kevin-Hannemann-Spec)
 # ===========================================================================
 
-class TestShanwayIdentity:
+class TestAssistantIdentity:
     """
-    Shanway ist kein Agent, kein Assistent, kein autonomer Generator.
+    Assistant ist kein Agent, kein Assistent, kein autonomer Generator.
     Er ist ein deterministischer Renderer.
     """
 
@@ -592,7 +592,7 @@ class TestShanwayIdentity:
     def test_no_output_without_pipeline_consensus(self, sf):
         """
         Kern-Invariante: kein Output wenn Pipeline-Konsens nicht erreicht.
-        Shanway darf keine Inhalte ausgeben, die nicht durch die Pipeline
+        Assistant darf keine Inhalte ausgeben, die nicht durch die Pipeline
         freigegeben wurden.
         """
         # sources_confirmed=1: eine Web-Quelle hat geantwortet, aber Konsens fehlt

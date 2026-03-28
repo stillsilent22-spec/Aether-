@@ -27,9 +27,6 @@ pub enum BusEvent {
     TrustScoreUpdated(TrustScoreEvent),
     ObservationEngineBlock(ObservationBlockEvent),
     ObservationEngineLearn(ObservationLearnEvent),
-    ShanwayDecision(ShanwayDecisionEvent),
-    ShanwayOptimizationApplied(ShanwayOptimizationEvent),
-    ShanwayUserMessage(ShanwayUserMessageEvent),
     VramPressureChanged(VramPressureEvent),
     TextureUploadRequested(TextureUploadRequestEvent),
     TextureUploadCompleted(TextureUploadResultEvent),
@@ -47,7 +44,6 @@ pub enum BusEvent {
     WorkflowAnchorLearned(WorkflowLearnedEvent),
     WorkflowOptimizationExecuted(WorkflowOptEvent),
     CrossProgramVramReuse(CrossProgramReuseEvent),
-    ShanwayVramDecision(VramDecisionEvent),
     PackRecommended(PackRecommendedEvent),
     PackDownloadConfirmed(PackDownloadEvent),
     PackInstalled(PackInstalledEvent),
@@ -216,31 +212,6 @@ pub struct ObservationBlockEvent {
 pub struct ObservationLearnEvent {
     pub category: QuarantineCategory,
     pub is_new_pattern: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ShanwayDecisionEvent {
-    pub process_id: Option<u32>,
-    pub summary: String,
-    pub confidence: f32,
-    pub action_requested: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct ShanwayOptimizationEvent {
-    pub process_id: u32,
-    pub optimization_type: OptimizationType,
-    pub applied: bool,
-    pub confidence: f32,
-    pub note: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct ShanwayUserMessageEvent {
-    pub process_id: Option<u32>,
-    pub message: String,
-    pub trust_score: f32,
-    pub action_available: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

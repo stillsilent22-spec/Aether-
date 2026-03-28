@@ -1,4 +1,4 @@
-"""Lightweight bridge daemon for Rust <-> Python hybrid runtime.
+﻿"""Lightweight bridge daemon for Rust <-> Python hybrid runtime.
 
 This process is started by the Rust shell and keeps shared status files fresh.
 It can also launch the Symbiont JSON-RPC server as a child process.
@@ -284,7 +284,7 @@ def _merge_backend_heartbeat(existing: Dict[str, Any]) -> Dict[str, Any]:
         "anchor_count": int(existing.get("anchor_count", 0) or 0),
         "cpu_pct": float(existing.get("cpu_pct", 0.0) or 0.0),
         "mem_used_gb": float(existing.get("mem_used_gb", 0.0) or 0.0),
-        "shanway_last": str(existing.get("shanway_last", "") or ""),
+        "assistant_last": str(existing.get("assistant_last", "") or ""),
         "swarm_node_count": int(existing.get("swarm_node_count", 0) or 0),
         "swarm_reachable_node_count": int(existing.get("swarm_reachable_node_count", 0) or 0),
         "swarm_pack_count": int(existing.get("swarm_pack_count", 0) or 0),

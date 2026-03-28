@@ -1,15 +1,11 @@
-use iced::event;
+﻿use iced::event;
 use iced::window;
-use crate::shanway::ShanwayBrowserContext;
-use crate::shanway::ShanwayInput;
 use std::collections::BTreeMap;
 use crate::state::RegisterEntry;
 use iced::widget::progress_bar;
 use iced::theme::Palette;
 use iced::Task;
 use iced::keyboard;
-use iced::keyboard::Key;
-use iced::keyboard::key::Named;
 use iced::time;
 use iced::Settings;
 use iced::mouse;
@@ -19,17 +15,33 @@ use iced::widget::canvas;
 use iced::{
     Alignment, Background, Border, Color, Element, Length, Point, Rectangle, Size, Subscription, Theme,
 };
-use iced::widget::{self, Button, Column, Container, Row, Scrollable, Text, TextInput, Tooltip};
+use iced::widget::{Column, Row};
 use std::path::{Path, PathBuf};
 use std::ffi::OsStr;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use crate::auth::{AuthStore, UserRecord};
+use crate::state::{StateStore, ChatMessage, PrivateThread, GroupRoom};
+use crate::security::{SecurityMonitor, SecuritySnapshot, SecurityAuditEvent};
+use crate::key_vault::DataKey;
+use crate::swarm_bootstrap::{SwarmStartupStatus, probe_swarm_startup};
+use crate::browser_embed::{EmbeddedBrowser, BrowserHostRect};
+use crate::browser::{BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext, BrowserInspector};
+use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus, BuildTaskResult};
+use crate::py_bridge::{DropperBridge, PythonBridgeManager, load_hybrid_settings, read_hybrid_status};
+use crate::aef::{AefDecodeResult, AefDecoder, VaultStore};
+use crate::hardware;
+use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use base64::Engine;
+use zeroize::Zeroize;
+use std::io::Write;
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Home, Control, Symbiont, SwarmOps, Privacy, Chat,
     Browser, YouTube, Data, Anchors, Logs, Settings,
-    ADE, StructureMap, Rekonstruktion, Launcher, Imprint,
+    ADE, FlowSphere, StructureMap, Rekonstruktion, Launcher, Imprint,
 }
 
 impl Tab {
@@ -48,26 +60,44 @@ impl Tab {
             Tab::Logs => "Logs",
             Tab::Settings => "Settings",
             Tab::ADE => "ADE",
-            Tab::StructureMap => "Structure Map",
+            Tab::FlowSphere => "FlowSphere",
+            Tab::StructureMap => "Delta Convergence",
             Tab::Rekonstruktion => "Rekonstruktion",
             Tab::Launcher => "Launcher",
             Tab::Imprint => "Imprint",
         }
     }
+}
 // ── Farbkonstanten und Hilfsfunktion ─────────────────────────────
-
+#[allow(non_snake_case, dead_code)]
 fn TEXT_H() -> Color { Color::from_rgb8(0xE4, 0xEE, 0xF2) } // Headline/Primary Text
+#[allow(non_snake_case, dead_code)]
 fn TEXT_M() -> Color { Color::from_rgb8(0xA8, 0xC4, 0xD8) } // Medium/Secondary Text
+#[allow(non_snake_case, dead_code)]
 fn TEXT_D() -> Color { Color::from_rgb8(0x70, 0x90, 0xA8) } // Disabled/Dimmed Text
+#[allow(non_snake_case, dead_code)]
 fn ACCENT() -> Color { Color::from_rgb8(0x66, 0x40, 0xCD) } // Main Accent
+#[allow(non_snake_case, dead_code)]
 fn ACCENT2() -> Color { Color::from_rgb8(0x4C, 0xD9, 0x6E) } // Secondary Accent
+#[allow(non_snake_case, dead_code)]
 fn BG_CARD() -> Color { Color::from_rgb8(0x1E, 0x1A, 0x2A) } // Card Background
+#[allow(non_snake_case, dead_code)]
 fn BG_CARD2() -> Color { Color::from_rgb8(0x24, 0x20, 0x36) } // Card Background 2
+#[allow(non_snake_case, dead_code)]
 fn BG_BASE() -> Color { Color::from_rgb8(0x12, 0x11, 0x1E) } // Main Background
+#[allow(non_snake_case, dead_code)]
 fn BORDER() -> Color { Color::from_rgb8(0x2A, 0x28, 0x3C) } // Standard Border
+#[allow(non_snake_case, dead_code)]
 fn BORDER_ACT() -> Color { Color::from_rgb8(0x66, 0x40, 0xCD) } // Active Border
+#[allow(non_snake_case, dead_code)]
 fn DANGER() -> Color { Color::from_rgb8(0xC6, 0x6A, 0x6A) } // Danger/Alert
+#[allow(non_snake_case, dead_code)]
 fn WARN() -> Color { Color::from_rgb8(0xD4, 0xA0, 0x42) } // Warning/Notice
+
+const FULL_WINDOW_WIDTH: f32 = 1180.0;
+const FULL_WINDOW_HEIGHT: f32 = 700.0;
+const OVERLAY_WINDOW_WIDTH: f32 = 960.0;
+const OVERLAY_WINDOW_HEIGHT: f32 = 72.0;
 
 /// Helper to allow c(NAME) for color constants (for compatibility with codebase usage)
 fn c(color: Color) -> Color { color }
@@ -86,23 +116,249 @@ pub struct CascadeMetrics {
 }
 
 impl CascadeMetrics {
-    /// Parse from the JSON dict that aether_dropper writes into report["cascade"].
-    pub fn from_json(v: &serde_json::Value) -> Self {
+    fn from_capsule_state(capsule: &CapsuleViewState, structure_map: &StructureMapViewState) -> Self {
         Self {
-            entropy: v.get("entropy").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            zipf_alpha: v.get("zipf_alpha").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            benford_score: v.get("benford_score").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            fourier_period: v.get("fourier_period").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            katz_dimension: v.get("katz_dimension").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            attractor_stability: v.get("attractor_stability").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            delta_convergence: v.get("delta_convergence").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            noether_consistency: v.get("noether_consistency").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            trust_score: v.get("trust_score").and_then(|x| x.as_f64()).unwrap_or(0.0),
-            anomaly_flags: v.get("anomaly_flags")
-                .and_then(|x| x.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                .unwrap_or_else(Vec::new),
+            entropy: capsule.entropy as f64,
+            zipf_alpha: capsule.zipf_alpha as f64,
+            benford_score: capsule.benford_score as f64,
+            fourier_period: capsule.periodicity as f64,
+            katz_dimension: capsule.katz_dimension as f64,
+            attractor_stability: structure_map.coherence_score as f64,
+            delta_convergence: (1.0 - capsule.delta_ratio).clamp(0.0, 1.0) as f64,
+            noether_consistency: capsule.noether_consistency as f64,
+            trust_score: capsule.trust_score as f64,
+            anomaly_flags: capsule.anomaly_flags.clone(),
         }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CapsuleViewState {
+    source_label: String,
+    source_type: String,
+    trigger: String,
+    domain_hint: String,
+    source_hash: String,
+    size_bytes: u64,
+    entropy: f32,
+    h_lambda: f32,
+    symmetry: f32,
+    periodicity: f32,
+    zipf_alpha: f32,
+    benford_score: f32,
+    katz_dimension: f32,
+    sce_score: f32,
+    bayes_confidence: f32,
+    trust_score: f32,
+    noether_consistency: f32,
+    delta_ratio: f32,
+    changed_bytes: u64,
+    anomaly_flags: Vec<String>,
+}
+
+impl CapsuleViewState {
+    fn from_pipeline_result(result: &serde_json::Value) -> Self {
+        let capsule = result.get("capsule").unwrap_or(&serde_json::Value::Null);
+        let capsule_meta = capsule.get("capsule").unwrap_or(&serde_json::Value::Null);
+        let envelope = capsule.get("envelope").unwrap_or(&serde_json::Value::Null);
+        let metrics = capsule.get("metrics").unwrap_or(&serde_json::Value::Null);
+        let local_delta = capsule.get("local_delta").unwrap_or(&serde_json::Value::Null);
+
+        Self {
+            source_label: envelope.get("source_label").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            source_type: envelope
+                .get("source_type")
+                .and_then(|value| value.as_str())
+                .unwrap_or_else(|| capsule_meta.get("source_type").and_then(|value| value.as_str()).unwrap_or_default())
+                .to_owned(),
+            trigger: capsule_meta.get("trigger").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            domain_hint: envelope
+                .get("domain_hint")
+                .and_then(|value| value.as_str())
+                .unwrap_or_else(|| capsule_meta.get("domain_hint").and_then(|value| value.as_str()).unwrap_or_default())
+                .to_owned(),
+            source_hash: envelope.get("source_hash").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            size_bytes: envelope.get("size_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
+            entropy: value_as_f32(metrics.get("entropy")),
+            h_lambda: value_as_f32(metrics.get("h_lambda")),
+            symmetry: value_as_f32(metrics.get("symmetry")),
+            periodicity: value_as_f32(metrics.get("periodicity")),
+            zipf_alpha: value_as_f32(metrics.get("zipf_alpha")),
+            benford_score: value_as_f32(metrics.get("benford_score")),
+            katz_dimension: value_as_f32(metrics.get("katz_dimension")),
+            sce_score: value_as_f32(metrics.get("sce_score")),
+            bayes_confidence: value_as_f32(metrics.get("bayes_confidence")),
+            trust_score: value_as_f32(metrics.get("trust_score")),
+            noether_consistency: value_as_f32(metrics.get("noether_consistency")),
+            delta_ratio: value_as_f32(metrics.get("delta_ratio")),
+            changed_bytes: local_delta.get("changed_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
+            anomaly_flags: capsule
+                .get("anomaly_flags")
+                .or_else(|| result.get("anomaly_flags"))
+                .and_then(|value| value.as_array())
+                .map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct StructureMapViewState {
+    region_label: String,
+    node_count: usize,
+    edge_count: usize,
+    anchor_count: usize,
+    anomaly_count: u32,
+    locked: bool,
+    trust_score: f32,
+    coherence_score: f32,
+}
+
+impl StructureMapViewState {
+    fn from_json(value: &serde_json::Value) -> Self {
+        Self {
+            region_label: value.get("region_label").and_then(|item| item.as_str()).unwrap_or("REGION LOCAL").to_owned(),
+            node_count: value.get("node_count").and_then(|item| item.as_u64()).unwrap_or_default() as usize,
+            edge_count: value.get("edge_count").and_then(|item| item.as_u64()).unwrap_or_default() as usize,
+            anchor_count: value.get("anchor_count").and_then(|item| item.as_u64()).unwrap_or_default() as usize,
+            anomaly_count: value.get("anomaly_count").and_then(|item| item.as_u64()).unwrap_or_default() as u32,
+            locked: value.get("locked").and_then(|item| item.as_bool()).unwrap_or(false),
+            trust_score: value_as_f32(value.get("trust_score")),
+            coherence_score: value_as_f32(value.get("coherence_score")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct AelabViewState {
+    fitness: f32,
+    lossless: f32,
+    nodes: u32,
+    depth: u32,
+    has_anchor: bool,
+    evolved: bool,
+    signature: String,
+    seed_label: String,
+    seed_bucket: String,
+    seed_coupling: f32,
+    seed_coherence: f32,
+    seed_utility: f32,
+    seed_times_used: u32,
+    has_sequence: bool,
+    has_bridge: bool,
+    has_xor: bool,
+    has_interfere: bool,
+    vault_root: String,
+    vault_total_entries: u32,
+    vault_main_entries: u32,
+    vault_inactive_entries: u32,
+    vault_recovered_entries: u32,
+    vault_integrity_ok: bool,
+}
+
+impl AelabViewState {
+    fn from_result(result: &serde_json::Value) -> Option<Self> {
+        let aelab = result.get("aelab")?;
+        if !aelab.is_object() {
+            return None;
+        }
+        let selected_seed = aelab.get("selected_seed").unwrap_or(&serde_json::Value::Null);
+        let vault = aelab.get("vault").unwrap_or(&serde_json::Value::Null);
+        Some(Self {
+            fitness: value_as_f32(aelab.get("fitness")),
+            lossless: value_as_f32(aelab.get("lossless")),
+            nodes: aelab.get("nodes").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            depth: aelab.get("depth").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            has_anchor: aelab.get("has_anchor").and_then(|value| value.as_bool()).unwrap_or(false),
+            evolved: aelab.get("evolved").and_then(|value| value.as_bool()).unwrap_or(false),
+            signature: aelab.get("signature").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            seed_label: selected_seed.get("label").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            seed_bucket: selected_seed.get("bucket").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            seed_coupling: value_as_f32(selected_seed.get("coupling")),
+            seed_coherence: value_as_f32(selected_seed.get("coherence")),
+            seed_utility: value_as_f32(selected_seed.get("utility_score")),
+            seed_times_used: selected_seed.get("times_used").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            has_sequence: selected_seed.get("has_sequence").and_then(|value| value.as_bool()).unwrap_or(false),
+            has_bridge: selected_seed.get("has_bridge").and_then(|value| value.as_bool()).unwrap_or(false),
+            has_xor: selected_seed.get("has_xor").and_then(|value| value.as_bool()).unwrap_or(false),
+            has_interfere: selected_seed.get("has_interfere").and_then(|value| value.as_bool()).unwrap_or(false),
+            vault_root: vault.get("root").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            vault_total_entries: vault.get("total_entries").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            vault_main_entries: vault.get("main_entries").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            vault_inactive_entries: vault.get("inactive_entries").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            vault_recovered_entries: vault.get("recovered_entries").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            vault_integrity_ok: vault.get("integrity_ok").and_then(|value| value.as_bool()).unwrap_or(false),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct CompressionViewState {
+    format: String,
+    original_bytes: u64,
+    changed_bytes: u64,
+    compressed_bytes: u64,
+    ratio: f32,
+    gain_percent: f32,
+}
+
+impl CompressionViewState {
+    fn from_result(result: &serde_json::Value) -> Option<Self> {
+        let compression = result.get("compression")?;
+        if !compression.is_object() {
+            return None;
+        }
+        let changed_bytes = result
+            .get("capsule")
+            .and_then(|value| value.get("local_delta"))
+            .and_then(|value| value.get("changed_bytes"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or_default();
+        Some(Self {
+            format: compression.get("format").and_then(|value| value.as_str()).unwrap_or("zlib").to_owned(),
+            original_bytes: compression.get("original_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
+            changed_bytes,
+            compressed_bytes: compression.get("compressed_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
+            ratio: value_as_f32(compression.get("ratio")),
+            gain_percent: value_as_f32(compression.get("gain_percent")),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct ReconstructionAuditViewState {
+    quality_score: f32,
+    verified: bool,
+    error_count: u32,
+    error_fields: Vec<String>,
+    path_steps: Vec<String>,
+    compressibility: f32,
+    anchor_coverage: f32,
+}
+
+impl ReconstructionAuditViewState {
+    fn from_result(result: &serde_json::Value) -> Option<Self> {
+        let reconstruction = result.get("reconstruction")?;
+        if !reconstruction.is_object() {
+            return None;
+        }
+        Some(Self {
+            quality_score: value_as_f32(reconstruction.get("quality_score")),
+            verified: reconstruction.get("verified").and_then(|value| value.as_bool()).unwrap_or(false),
+            error_count: reconstruction.get("error_count").and_then(|value| value.as_u64()).unwrap_or_default() as u32,
+            error_fields: reconstruction
+                .get("error_fields")
+                .and_then(|value| value.as_array())
+                .map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default(),
+            path_steps: reconstruction
+                .get("path")
+                .and_then(|value| value.as_array())
+                .map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_owned)).collect())
+                .unwrap_or_default(),
+            compressibility: value_as_f32(reconstruction.get("compressibility")),
+            anchor_coverage: value_as_f32(reconstruction.get("anchor_coverage")),
+        })
     }
 }
 // Score-Tooltip-Mapping für die UI
@@ -136,8 +392,8 @@ struct AnchorClusterView {
 #[derive(Debug, Clone)]
 struct AnalysisSnapshot {
     file_name: String,
+    #[allow(dead_code)]
     original_size: u64,
-    delta_size: u64,
     compression_gain_percent: f32,
     anchor_summary: String,
     process_summary: String,
@@ -150,6 +406,113 @@ struct FileAnalysisResult {
     snapshot: AnalysisSnapshot,
     byte_hist: Vec<f32>,   // 64-bucket normalized originalbytehistogram
     xor_delta: Vec<f32>,   // 64-bucket |orig−delta| divergence for XOR-compare
+    capsule_state: CapsuleViewState,
+    structure_map_state: StructureMapViewState,
+    aelab_state: Option<AelabViewState>,
+    compression_state: Option<CompressionViewState>,
+    reconstruction_state: Option<ReconstructionAuditViewState>,
+    structure_map_nodes: Vec<Vec<f32>>,
+}
+
+#[derive(Debug, Clone)]
+struct LiveRenderAnalysisResult {
+    capsule_state: CapsuleViewState,
+    structure_map_state: StructureMapViewState,
+    aelab_state: Option<AelabViewState>,
+    compression_state: Option<CompressionViewState>,
+    reconstruction_state: Option<ReconstructionAuditViewState>,
+    structure_map_nodes: Vec<Vec<f32>>,
+}
+
+// ─── Domain enums & types ─────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppMode { Overlay, Full }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ChatContext { Private, Group }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UiLanguage { German, English }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeProfile { Auto, Balanced, LowPower, Legacy }
+
+#[derive(Debug, Clone)]
+enum Message {
+    LoginUsernameChanged(String),
+    LoginPasswordChanged(String),
+    LoginPressed,
+    RegisterPressed,
+    TabSelected(Tab),
+    ChatContextSelected(ChatContext),
+    SecurityModeSelected(String),
+    RuntimeProfileSelected(RuntimeProfile),
+    UiLanguageSelected(UiLanguage),
+    DashboardSearchChanged(String),
+    DashboardNavSelected(String),
+    DashboardInfoToggle(String),
+    ChatUserSearchChanged(String),
+    PrivatePartnerSelected(String),
+    PrivateMessageChanged(String),
+    PrivateMessageSend,
+    GroupMessageChanged(String),
+    GroupMessageSend,
+    BrowserAddressChanged(String),
+    BrowserSearchQueryChanged(String),
+    BrowserLoadPressed,
+    BrowserInspectPressed,
+    BrowserSearchPressed,
+    BrowserInspectCompleted(BrowserProbeResult),
+    BrowserSearchCompleted(BrowserSearchContext),
+    YouTubeAddressChanged(String),
+    YouTubeLoadPressed,
+    YouTubeKiAnalysisPressed,
+    FileHovered(PathBuf),
+    FileHoverCleared,
+    ShowTooltip(String),
+    FileDropped(PathBuf),
+    FileAnalysisCompleted(Result<FileAnalysisResult, String>),
+    LiveRenderAnalysisCompleted(Result<LiveRenderAnalysisResult, String>),
+    ReconstructPressed(u64),
+    ReconstructionCompleted(Result<(String, AefDecodeResult), String>),
+    ExportPressed(u64),
+    WindowResized(f32, f32),
+    FlowSphereSnapshotSelected(usize),
+    FlowSphereZoomIn,
+    FlowSphereZoomOut,
+    FlowSphereRotateLeft,
+    FlowSphereRotateRight,
+    FlowSphereResetView,
+    FlowSphereToggleViewMode,
+    FlowSphereNodeClicked(usize),
+    FlowSphereExportPressed,
+    OpenFullTab(Tab),
+    ToggleMode,
+    LiveRenderToggle,
+    SymbiontInputChanged(String),
+    SymbiontProfilePressed,
+    SymbiontRazorPressed,
+    SymbiontSnapshotPressed,
+    SymbiontStatusPressed,
+    SymbiontRpcCompleted(Result<String, String>),
+    SymbiontEventsReceived(Result<(Vec<String>, u64), String>),
+    SymbiontEventsClearPressed,
+    HybridBridgeStartPressed,
+    HybridBridgeStopPressed,
+    HybridBridgeRestartPressed,
+    HybridSymbiontEnabled(bool),
+    HybridSymbiontEndpointPreset(String, u16),
+    Tick,
+    SecurityRecheck,
+    TutorialDismissed,
+    AnchorGroupSelected(usize),
+    LauncherModeSelected(LauncherMode),
+    LauncherServiceStartPressed(String),
+    LauncherServiceStopPressed(String),
+    LauncherBuildTaskPressed(String),
+    LauncherBuildTaskCompleted(String, Result<BuildTaskResult, String>),
+    LauncherLogsClearPressed,
 }
 
 pub struct AetherIcedShell {
@@ -174,7 +537,6 @@ pub struct AetherIcedShell {
     selected_private_partner: Option<String>,
     private_message_draft: String,
     group_message_draft: String,
-    shanway_message_draft: String,
     browser_address: String,
     browser_search_query: String,
     browser_note: String,
@@ -187,6 +549,11 @@ pub struct AetherIcedShell {
     analysis_status: String,
     hovered_file_label: String,
     last_analysis: Option<AnalysisSnapshot>,
+    capsule_state: Option<CapsuleViewState>,
+    structure_map_state: Option<StructureMapViewState>,
+    aelab_state: Option<AelabViewState>,
+    compression_state: Option<CompressionViewState>,
+    reconstruction_state: Option<ReconstructionAuditViewState>,
     window_width: f32,
     window_height: f32,
     tick_counter: u64,
@@ -202,6 +569,8 @@ pub struct AetherIcedShell {
     // ...existing code...
     structure_map_compression: f32,
     structure_map_locked: bool,
+    structure_map_anchor_count: usize,
+    structure_map_anomaly_count: u32,
     structure_map_anchor_hist: Vec<f32>,
     structure_map_mutation_hist: Vec<u32>,
     flow_sphere_snapshot_idx: usize,
@@ -221,7 +590,6 @@ pub struct AetherIcedShell {
     backend_anchor_count: u64,
     backend_cpu_pct: f32,
     backend_mem_used_gb: f32,
-    backend_shanway_last: String,
     backend_swarm_node_count: u64,
     backend_swarm_reachable_node_count: u64,
     backend_swarm_pack_count: u64,
@@ -256,6 +624,7 @@ pub struct AetherIcedShell {
     last_xor_delta: Vec<f32>,
     // Persistent live render analytics mode
     live_render_mode: bool,
+    live_render_analysis_running: bool,
     live_render_last_frame: Vec<u8>,
     live_render_last_running_services: Vec<String>,
     live_render_last_os_processes: Vec<String>,
@@ -268,9 +637,18 @@ pub struct AetherIcedShell {
     live_render_last_godel_delta: f32,
     live_render_anchor_boost: bool,
     live_render_last_os_sample_tick: u64,
+    // Noether K: temporale Erhaltungsgrösse (Symmetriebruch-Detektor nach Noether-Theorem)
+    // K = 0.40 * spektrale_aehlichkeit + 0.30 * (1 - entropiedrift) + 0.30 * (1 - deltavarianz)
+    live_render_noether_k: f32,
+    live_render_noether_delta_k: f32,
+    live_render_noether_symmetry_preserved: bool,
+    live_render_noether_prev_spectral: [f32; 5],
+    live_render_noether_prev_entropy: f32,
+    #[allow(dead_code)]
     backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
 
     // Cascade result state
+    #[allow(dead_code)]
     dropper_bridge: DropperBridge,
     cascade_run_id: Option<String>,
     cascade_metrics: Option<CascadeMetrics>,
@@ -287,9 +665,12 @@ impl AetherIcedShell {
             String::new()
         };
         let dropper_bridge = DropperBridge::new();
+        let auth_store = AuthStore::load_default();
+        let known_user_count = auth_store.user_count();
+        let state_store = StateStore::load_default();
         let mut shell = Self {
-            auth_store: AuthStore::load_default(),
-            state_store: StateStore::load_default(),
+            auth_store,
+            state_store,
             security_monitor: SecurityMonitor::new(PathBuf::from(".")),
             current_user: None,
             data_key: None,
@@ -298,24 +679,27 @@ impl AetherIcedShell {
             security_audit_events: Vec::new(),
             swarm_startup: swarm_startup.clone(),
                 dropper_bridge,
-                deep_scan_enabled: true, // Standardmäßig aktiviert
                 login_username: String::new(),
             login_password: String::new(),
-            status_line: if swarm_startup.node_initialized {
+            status_line: if known_user_count > 0 {
+                format!(
+                    "{} lokaler Nutzer erkannt. Anmeldung weiterhin erforderlich.",
+                    known_user_count
+                )
+            } else if swarm_startup.node_initialized {
                 "Bitte lokal anmelden oder registrieren.".to_owned()
             } else {
                 swarm_startup.summary.clone()
             },
-            app_mode: AppMode::Overlay,
+            app_mode: AppMode::Full,
             active_tab: Tab::Home,
-            chat_context: ChatContext::Shanway,
+            chat_context: ChatContext::Private,
             show_tutorial: false,
             selected_anchor_group: 0,
             chat_user_search: String::new(),
             selected_private_partner: None,
             private_message_draft: String::new(),
             group_message_draft: String::new(),
-            shanway_message_draft: String::new(),
             browser_address: "https://duckduckgo.com/".to_owned(),
             browser_search_query: String::new(),
             browser_note:
@@ -331,10 +715,15 @@ impl AetherIcedShell {
             hovered_file_label: "Datei in das Fenster ziehen, um die Analyse zu starten."
                 .to_owned(),
             last_analysis: None,
+            capsule_state: None,
+            structure_map_state: None,
+            aelab_state: None,
+            compression_state: None,
+            reconstruction_state: None,
             last_byte_hist: Vec::new(),
             last_xor_delta: Vec::new(),
-            window_width: 1560.0,
-            window_height: 900.0,
+            window_width: FULL_WINDOW_WIDTH,
+            window_height: FULL_WINDOW_HEIGHT,
             tick_counter: 0,
             browser_sync_stride: 3,
             runtime_profile: {
@@ -353,6 +742,8 @@ impl AetherIcedShell {
             structure_map_nodes: Vec::new(),
             structure_map_compression: 0.0,
             structure_map_locked: false,
+            structure_map_anchor_count: 0,
+            structure_map_anomaly_count: 0,
             structure_map_anchor_hist: Vec::new(),
             structure_map_mutation_hist: Vec::new(),
             flow_sphere_snapshot_idx: 0,
@@ -369,7 +760,6 @@ impl AetherIcedShell {
             backend_anchor_count: 0,
             backend_cpu_pct: 0.0,
             backend_mem_used_gb: 0.0,
-            backend_shanway_last: String::new(),
             backend_swarm_node_count: 0,
             backend_swarm_reachable_node_count: 0,
             backend_swarm_pack_count: 0,
@@ -399,6 +789,7 @@ impl AetherIcedShell {
             vscode_symbiont_mode: String::new(),
             launcher_state: LauncherState::new(),
             live_render_mode: false,
+            live_render_analysis_running: false,
             live_render_last_frame: Vec::new(),
             live_render_last_running_services: Vec::new(),
             live_render_last_os_processes: Vec::new(),
@@ -411,7 +802,14 @@ impl AetherIcedShell {
             live_render_last_godel_delta: 0.0,
             live_render_anchor_boost: false,
             live_render_last_os_sample_tick: 0,
-            backup_enabled: true, // Standardmäßig aktiviert
+            live_render_noether_k: 1.0,
+            live_render_noether_delta_k: 0.0,
+            live_render_noether_symmetry_preserved: true,
+            live_render_noether_prev_spectral: [0.0f32; 5],
+            live_render_noether_prev_entropy: 0.0,
+            cascade_run_id: None,
+            cascade_metrics: None,
+            backup_enabled: true, // Standardm\u00e4\u00dfig aktiviert
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -426,6 +824,47 @@ impl AetherIcedShell {
 
 // --- Moved methods into impl block ---
 impl AetherIcedShell {
+    fn apply_projection_state(
+        &mut self,
+        capsule_state: CapsuleViewState,
+        structure_map_state: StructureMapViewState,
+        structure_map_nodes: Vec<Vec<f32>>,
+        aelab_state: Option<AelabViewState>,
+        compression_state: Option<CompressionViewState>,
+        reconstruction_state: Option<ReconstructionAuditViewState>,
+    ) {
+        self.cascade_run_id = Some(if capsule_state.source_hash.is_empty() {
+            capsule_state.source_label.clone()
+        } else {
+            capsule_state.source_hash.clone()
+        });
+        self.cascade_metrics = Some(CascadeMetrics::from_capsule_state(&capsule_state, &structure_map_state));
+        self.capsule_state = Some(capsule_state);
+        self.structure_map_state = Some(structure_map_state.clone());
+        if aelab_state.is_some() {
+            self.aelab_state = aelab_state;
+        }
+        if compression_state.is_some() {
+            self.compression_state = compression_state;
+        }
+        if reconstruction_state.is_some() {
+            self.reconstruction_state = reconstruction_state;
+        }
+        self.structure_map_nodes = structure_map_nodes;
+        self.structure_map_compression = (structure_map_state.coherence_score * 100.0).clamp(0.0, 100.0);
+        self.structure_map_locked = structure_map_state.locked;
+        self.structure_map_anchor_count = structure_map_state.anchor_count;
+        self.structure_map_anomaly_count = structure_map_state.anomaly_count;
+        self.structure_map_anchor_hist.push(structure_map_state.anchor_count as f32);
+        if self.structure_map_anchor_hist.len() > 30 {
+            self.structure_map_anchor_hist.remove(0);
+        }
+        self.structure_map_mutation_hist.push(structure_map_state.anomaly_count);
+        if self.structure_map_mutation_hist.len() > 20 {
+            self.structure_map_mutation_hist.remove(0);
+        }
+    }
+
     fn ui_text<'a>(&self, de: &'a str, en: &'a str) -> &'a str {
         match self.ui_language {
             UiLanguage::German => de,
@@ -452,10 +891,6 @@ impl AetherIcedShell {
         self.backend_cpu_pct = val["cpu_pct"].as_f64().unwrap_or(self.backend_cpu_pct as f64) as f32;
         self.backend_mem_used_gb =
             val["mem_used_gb"].as_f64().unwrap_or(self.backend_mem_used_gb as f64) as f32;
-        self.backend_shanway_last = val["shanway_last"]
-            .as_str()
-            .unwrap_or(&self.backend_shanway_last.clone())
-            .to_owned();
         self.backend_swarm_node_count = val["swarm_node_count"]
             .as_u64()
             .unwrap_or(self.backend_swarm_node_count);
@@ -588,7 +1023,6 @@ impl AetherIcedShell {
             }
         }
     }
-}
 
     fn entries(&self) -> Vec<RegisterEntry> {
         self.current_username()
@@ -640,69 +1074,6 @@ impl AetherIcedShell {
             .find(|thread| thread.partner_name == partner)
             .map(|thread| thread.messages)
             .unwrap_or_default()
-    }
-
-    fn shanway_messages(&self) -> Vec<ChatMessage> {
-        self.private_threads()
-            .into_iter()
-            .find(|thread| thread.partner_name == "Shanway")
-            .map(|thread| thread.messages)
-            .unwrap_or_default()
-    }
-
-    fn current_shanway_input(&self) -> Option<ShanwayInput> {
-        let snapshot = self.last_analysis.as_ref()?;
-        let original = snapshot.original_size.max(1) as f32;
-        let delta = snapshot.delta_size as f32;
-        let knowledge_ratio = (1.0 - (delta / original)).clamp(0.0, 1.0);
-        let residual_ratio = (delta / original).clamp(0.0, 1.0);
-        let e_lambda = (1.0 - knowledge_ratio).clamp(0.0, 1.0);
-        let e_lambda_label = if e_lambda < 0.15 {
-            "LATENT"
-        } else if e_lambda < 0.35 {
-            "EMERGING"
-        } else if e_lambda < 0.60 {
-            "ACTIVE"
-        } else {
-            "CRITICAL"
-        };
-        let browser_context = self
-            .browser_probe
-            .as_ref()
-            .map(|probe| ShanwayBrowserContext {
-                url: probe.final_url.clone(),
-                risk_label: probe.risk_label.clone(),
-                risk_score: probe.risk_score,
-                reasons: probe.risk_reasons.clone(),
-                frontend_summary: probe.frontend_summary.clone(),
-                backend_summary: probe.backend_summary.clone(),
-                search_context_summary: self
-                    .browser_search_context
-                    .as_ref()
-                    .map(|context| context.summary.clone())
-                    .unwrap_or_default(),
-            });
-        Some(ShanwayInput {
-            file_name: snapshot.file_name.clone(),
-            file_type: detect_file_type_from_name(&snapshot.file_name),
-            entropy_mean: (1.0 - residual_ratio).clamp(0.0, 1.0) * 8.0,
-            knowledge_ratio,
-            symmetry_gini: (1.0 - knowledge_ratio).clamp(0.0, 1.0),
-            delta_paths: 1,
-            bayes_priors: "lokal kalibriert".to_owned(),
-            residual_ratio,
-            observer_mutual_info: knowledge_ratio,
-            h_lambda: (1.0 - knowledge_ratio).clamp(0.0, 1.0),
-            e_lambda,
-            e_lambda_label: e_lambda_label.to_owned(),
-            boundary: "LOCAL_ONLY".to_owned(),
-            anchor_summary: snapshot.anchor_summary.clone(),
-            process_summary: snapshot.process_summary.clone(),
-            observer_context: None,
-            pack_hints: Vec::new(),
-            browser_context,
-            public_ttd_status: Some("lokal deaktiviert".to_owned()),
-        })
     }
 
     fn browser_embed_rect(&self) -> BrowserHostRect {
@@ -905,8 +1276,25 @@ impl AetherIcedShell {
     }
 
     fn view_auth(&self) -> Element<'_, Message> {
-        let left = container(
+        let left: Element<'_, Message> = container(
             Column::new()
+                .push(
+                    container(
+                        row![
+                            text("ADE").size(54).color(Color::from_rgb8(0x8B, 0x52, 0xF6)),
+                            column![
+                                text("Aether-Delta Engine").size(28).color(c(TEXT_H())),
+                                text("Structural capsule runtime for local analysis and reconstruction.")
+                                    .size(12)
+                                    .color(c(TEXT_M())),
+                            ]
+                            .spacing(2)
+                        ]
+                        .spacing(14)
+                        .align_y(Alignment::Center)
+                    )
+                    .padding([6, 0])
+                )
                 .push(text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)))
                 .push(text("Deterministic Security Kernel").size(34).color(c(TEXT_H())))
                 .push(text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
@@ -955,194 +1343,98 @@ impl AetherIcedShell {
         )
         .padding(18)
         .style(panel_frame_style)
-        .width(Length::FillPortion(3));
+        .width(Length::FillPortion(3))
+        .into();
 
-        let right = container(
-            Column::new()
-                .push(text("Sign in").size(24).color(c(TEXT_H())))
-                .push(text_input("Username", &self.login_username)
-                    .on_input(Message::LoginUsernameChanged))
-                // Add more sign-in UI as needed
-                .spacing(12)
-        )
-        .padding(18)
-        .style(panel_frame_style)
-        .width(Length::FillPortion(2));
-
-        Row::new()
-            .push(left)
-            .push(right)
-            .spacing(24)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-        let trust_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
-            || self.security_snapshot.trust_state.to_uppercase().contains("OK")
-            || self.security_snapshot.trust_state.to_uppercase().contains("SECURE");
-        let trust_color = if trust_ok {
+        let status_color = if self.status_line.contains("erfolgreich") || self.status_line.contains("abgeschlossen") {
             Color::from_rgb8(0x4C, 0xD9, 0x6E)
+        } else if self.status_line.is_empty() || self.status_line.contains("Bitte") {
+            Color::from_rgb8(0x88, 0x84, 0xAA)
         } else {
-            Color::from_rgb8(0xD9, 0xA0, 0x4C)
+            Color::from_rgb8(0xD9, 0x6E, 0x4C)
         };
 
-        // Helper: sidebar section header
-        let section_header = |label: &'static str| -> Element<'_, Message> {
-            container(
-                text(label).size(11).color(Color::from_rgb8(0x7E, 0x76, 0xA8)),
-            )
-            .padding([6, 10])
-            .width(Length::Fill)
-            .into()
-        };
-
-        // Helper: sidebar nav item
-        let nav_item = |icon: &'static str, label: &'static str, tab: Tab| -> Element<'_, Message> {
-            let active = self.active_tab == tab;
-            let bg = if active {
-                Color::from_rgb8(0x20, 0x18, 0x38)
-            } else {
-                Color::from_rgba8(0, 0, 0, 0.0f32)
-            };
-            let text_col = if active {
-                Color::from_rgb8(0xF0, 0xEE, 0xFF)
-            } else {
-                Color::from_rgb8(0x9E, 0x96, 0xC0)
-            };
-            container(
-                button(
-                    {
-                        let mut row = Row::new();
-                        row = row.push(text(icon).size(14).color(text_col));
-                        row = row.push(text(label).size(13).color(text_col));
-                        row = row.spacing(8);
-                        row = row.align_y(iced::Alignment::Center);
-                        row
-                    },
+        let right: Element<'_, Message> = container(
+            Column::new()
+                .push(text("Anmelden").size(28).color(c(TEXT_H())))
+                .push(text("Benutzername").size(12).color(c(TEXT_M())))
+                .push(
+                    text_input("Benutzername eingeben", &self.login_username)
+                        .on_input(Message::LoginUsernameChanged)
+                        .padding([11, 14])
+                        .size(15)
                 )
-                .padding([7, 12])
-                .width(Length::Fill)
-                .on_press(Message::TabSelected(tab)),
-            )
-            .style(move |_: &Theme| container::Style {
-                background: Some(Background::Color(bg)),
-                border: Border {
-                    color: if active { Color::from_rgb8(0x1E, 0x90, 0xFF) } else { Color::TRANSPARENT },
-                    width: if active { 1.0 } else { 0.0 },
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            })
-            .width(Length::Fill)
-            .into()
-        };
+                .push(text("Passwort").size(12).color(c(TEXT_M())))
+                .push(
+                    text_input("Passwort eingeben", &self.login_password)
+                        .on_input(Message::LoginPasswordChanged)
+                        .secure(true)
+                        .padding([11, 14])
+                        .size(15)
+                )
+                .push(
+                    button(text("  Anmelden  ").size(15).color(Color::WHITE))
+                        .on_press(Message::LoginPressed)
+                        .padding([12, 28])
+                        .style(|_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgb8(0x5A, 0x2E, 0xC8))),
+                            border: Border {
+                                color: Color::from_rgb8(0xA0, 0x70, 0xFF),
+                                width: 1.0,
+                                radius: 10.0.into(),
+                            },
+                            text_color: Color::WHITE,
+                            ..Default::default()
+                        })
+                )
+                .push(
+                    button(text("Neu registrieren").size(13).color(c(TEXT_M())))
+                        .on_press(Message::RegisterPressed)
+                        .padding([9, 18])
+                        .style(|_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgba(0.28, 0.18, 0.55, 0.35))),
+                            border: Border {
+                                color: Color::from_rgb8(0x60, 0x50, 0x90),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        })
+                )
+                .push(
+                    container(
+                        text(if self.status_line.is_empty() {
+                            "Lokale Authentifizierung — kein Cloud-Zugang erforderlich.".to_owned()
+                        } else {
+                            self.status_line.clone()
+                        })
+                        .size(12)
+                        .color(status_color),
+                    )
+                    .padding([8, 0])
+                )
+                .spacing(14)
+        )
+        .padding(32)
+        .style(panel_frame_style)
+        .width(Length::FillPortion(2))
+        .into();
 
         container(
-            Column::new()
-                // Logo
-                .push(container(
-                    Column::new()
-                        .push(text("\u{2b21}").size(30).color(Color::from_rgb8(0x1E, 0x90, 0xFF)))
-                        .push(text("AETHER").size(16).color(Color::from_rgb8(0xF0, 0xEE, 0xFF)))
-                        .spacing(2)
-                        .align_x(Alignment::Center),
-                )
-                .padding([14, 10])
-                .width(Length::Fill))
-
-                // User status badge
-                .push(container(
-                    {
-                        let mut row = Row::new();
-                        row = row.push(canvas::Canvas::new(DotScene { color: trust_color })
-                            .width(Length::Fixed(10.0))
-                            .height(Length::Fixed(10.0)));
-                        row = row.push(text(username.chars().take(16).collect::<String>())
-                            .size(12)
-                            .color(Color::from_rgb8(0xCC, 0xC6, 0xF4)));
-                        row = row.spacing(6);
-                        row = row.align_y(iced::Alignment::Center);
-                        row
-                    }
-                )
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x10, 0x10, 0x1A))),
-                    border: Border {
-                        color: Color::from_rgb8(0x28, 0x26, 0x42),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .padding([8, 12])
-                .width(Length::Fill))
-
-                // AGENTS
-                .push(section_header("AGENTS"))
-                .push(nav_item("\u{25a3}", "Data Collector", Tab::Data))
-                .push(nav_item("\u{25ce}", "Event Monitor", Tab::Logs))
-                .push(nav_item("\u{25a4}", "Task Scheduler", Tab::Anchors))
-
-                // CATEGORIES
-                .push(section_header("CATEGORIES"))
-                .push(nav_item("\u{2295}", "Network", Tab::Browser))
-                .push(nav_item("\u{25b6}", "Compute", Tab::YouTube))
-                .push(nav_item("\u{25c6}", "Storage", Tab::StructureMap))
-
-                // LOGS
-                .push(section_header("LOGS"))
-                .push(nav_item("\u{2699}", "System Logs", Tab::Settings))
-                .push(nav_item("\u{25d0}", "Alerts", Tab::Logs))
-
-                // Bottom spacer + info
-                .push(iced::widget::Space::new(Length::Fill, Length::Fill))
-                .push(container(
-                    Column::new()
-                        .push(text(format!("\u{2699} {}", self.runtime_profile_label())).size(11)
-                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)))
-                        .push(text(if self.analysis_running { "\u{25b6} ANALYS. AKTIV" } else { "\u{25a0} BEREIT" })
-                            .size(11)
-                            .color(Color::from_rgb8(0x62, 0x5E, 0x90)))
-                        .spacing(4),
-                )
-                .padding([8, 10])
-                .width(Length::Fill))
-
-                // Settings + Power icons at bottom
-                .push(container(
-                    {
-                        let mut row = Row::new();
-                        row = row.push(
-                            button(text("\u{2699}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
-                                .padding([6, 10])
-                                .on_press(Message::TabSelected(Tab::Settings))
-                        );
-                        row = row.push(
-                            button(text("\u{23fb}").size(16).color(Color::from_rgb8(0x84, 0x7C, 0xB2)))
-                                .padding([6, 10])
-                                .on_press(Message::TabSelected(Tab::Imprint))
-                        );
-                        row = row.spacing(4);
-                        row
-                    }
-                )
-                .padding([8, 8])
-                .width(Length::Fill))
-                .spacing(2)
-                .height(Length::Fill)
+            Row::new()
+                .push(left)
+                .push(right)
+                .spacing(0)
+                .width(Length::Fill)
+                .height(Length::Fill),
         )
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x0D, 0x0C, 0x14))),
-            border: Border {
-                color: Color::from_rgb8(0x24, 0x22, 0x3A),
-                width: 1.0,
-                radius: 0.0.into(),
-            },
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x06, 0x08, 0x14))),
             ..Default::default()
         })
-        .padding([8, 6])
-        .width(Length::Fixed(200.0))
-        .height(Length::Fill)
-        .into();
+        .into()
     }
     // ---------------------------------------------------------------------------
 // Aether.FlowSphere – deterministic 3D sphere projection (iced Canvas)
@@ -1152,7 +1444,8 @@ impl AetherIcedShell {
 
 
 // struct FlowSphereScene wurde auf Modulebene verschoben (siehe oben)
-fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) -> Element<'_, Message> {
+#[allow(dead_code)]
+fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Message>) -> Element<'a, Message> {
         let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
             || self.security_snapshot.trust_state.to_uppercase().contains("OK");
 
@@ -1282,21 +1575,59 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
 
     fn view_home_aether_cyber(&self) -> Element<'_, Message> {
         let t = self.tick_counter as f32;
-            let risk_score = (self.backend_entropy_mean * 1000.0) as u32;
-            let noether_score = if self.backend_state_loaded {
-                (self.backend_entropy_mean / 8.0).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let total_threats = self.backend_anchor_count as u32;
-            let video_risk: u32 = 0;
-            let image_risk: u32 = 0;
-            let docs_risk: u32 = 0;
-            let folder_risk: u32 = 0;
+        let risk_score = (self.backend_entropy_mean * 1000.0) as u32;
+        let noether_score = if self.backend_state_loaded {
+            (self.backend_entropy_mean / 8.0).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let entries = self.entries();
+        let private_threads = self.private_threads();
+        let group_rooms = self.group_rooms();
+        let anchor_clusters = self.anchor_clusters();
+        let total_original_bytes: u64 = entries.iter().map(|entry| entry.original_size).sum();
+        let total_delta_bytes: u64 = entries.iter().map(|entry| entry.delta_size).sum();
+        let avg_compression_gain = if entries.is_empty() {
+            0.0
+        } else {
+            entries
+                .iter()
+                .map(|entry| entry.compression_gain_percent)
+                .sum::<f32>()
+                / entries.len() as f32
+        };
+        let total_private_messages: usize = private_threads
+            .iter()
+            .map(|thread| thread.messages.len())
+            .sum();
+        let total_group_messages: usize = group_rooms
+            .iter()
+            .map(|room| room.messages.len())
+            .sum();
+        let latest_entry_note = entries
+            .first()
+            .map(|entry| {
+                format!(
+                    "#{} {} | {} | {}",
+                    entry.id,
+                    entry.file_name,
+                    if entry.anchor_summary.trim().is_empty() {
+                        "kein Anchor-Summary".to_owned()
+                    } else {
+                        entry.anchor_summary.clone()
+                    },
+                    if entry.preview_note.trim().is_empty() {
+                        "keine Vorschau".to_owned()
+                    } else {
+                        entry.preview_note.clone()
+                    }
+                )
+            })
+            .unwrap_or_else(|| "Noch keine lokale Analyse ausgefuehrt.".to_owned());
         let pane_slide = ((self.tick_counter % 8) as f32 / 8.0).clamp(0.0, 1.0); // 120ms @ ~60fps
         let node_pulse = 1.0 + 0.03 * (t * 1.57).sin(); // 40ms pulse
         let data_flash = 0.45 + 0.55 * (t * 5.0).sin().abs(); // pulse intensity for border shimmer
-        let graph_reveal = ((self.tick_counter % 6) as f32 / 6.0).clamp(0.0, 1.0); // 90ms reveal
+        let _graph_reveal = ((self.tick_counter % 6) as f32 / 6.0).clamp(0.0, 1.0); // 90ms reveal
         let info_reveal = (((self.tick_counter.saturating_sub(self.dashboard_info_open_tick)) as f32)
             * self.tick_interval_ms() as f32 / 80.0)
             .clamp(0.0, 1.0);
@@ -1313,7 +1644,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         ];
 
         let q = self.dashboard_search.trim().to_ascii_lowercase();
-        let filtered_threat_rows: Vec<_> = threat_rows
+        let _filtered_threat_rows: Vec<_> = threat_rows
             .into_iter()
             .filter(|(_, device, virus, path, file_type)| {
                 q.is_empty()
@@ -1324,35 +1655,46 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             })
             .collect();
 
-        let device_panel = {
-            container({
-                let mut col = Column::new();
-                let mut row1 = Row::new();
-                row1 = row1.push(text("Threat by device").size(18).color(c(TEXT_H())));
-                row1 = row1.push(info_icon_button("device_list"));
-                col = col.push(row1.spacing(8).align_y(Alignment::Center));
-                let mut rows_col = Column::new();
-                for (device, level) in filtered_device_rows {
-                    let mut row = Row::new();
-                    row = row.push(text(device).size(12).color(c(TEXT_H())).width(Length::FillPortion(3)));
-                    row = row.push(iced::Element::from(
-                        canvas::Canvas::new(DonutScene {
-                            values: [level, 1.0 - level, 0.0, 0.0],
-                            colors: [Color::from_rgb8(0xC7, 0xA0, 0x4A), Color::from_rgb8(0x12, 0x1B, 0x22), Color::TRANSPARENT, Color::TRANSPARENT],
-                            pulse: node_pulse,
-                        })
-                        .height(Length::Fixed(24.0))
-                        .width(Length::Fixed(24.0))
-                    ));
-                    rows_col = rows_col.push(row.spacing(8).align_y(Alignment::Center));
-                }
-                col = col.push(rows_col.spacing(7));
-                col.spacing(8)
-            })
-            .padding(14)
-            .width(Length::FillPortion(2))
-            .style(standard_card_style)
-            .style(standard_card_style);
+        let device_panel: Element<'_, Message> = container({
+            let mut col = Column::new();
+            let mut row1 = Row::new();
+            row1 = row1.push(text("Threat by device").size(18).color(c(TEXT_H())));
+            row1 = row1.push(info_icon_button("device_list"));
+            col = col.push(row1.spacing(8).align_y(Alignment::Center));
+
+            let mut rows_col = Column::new();
+            for (device, level) in device_rows {
+                let mut row = Row::new();
+                row = row.push(
+                    text(device)
+                        .size(12)
+                        .color(c(TEXT_H()))
+                        .width(Length::FillPortion(3)),
+                );
+                row = row.push(iced::Element::from(
+                    canvas::Canvas::new(DonutScene {
+                        values: [level, 1.0 - level, 0.0, 0.0],
+                        colors: [
+                            Color::from_rgb8(0xC7, 0xA0, 0x4A),
+                            Color::from_rgb8(0x12, 0x1B, 0x22),
+                            Color::TRANSPARENT,
+                            Color::TRANSPARENT,
+                        ],
+                        pulse: node_pulse,
+                    })
+                    .height(Length::Fixed(24.0))
+                    .width(Length::Fixed(24.0)),
+                ));
+                rows_col = rows_col.push(row.spacing(8).align_y(Alignment::Center));
+            }
+
+            col = col.push(rows_col.spacing(7));
+            col.spacing(8)
+        })
+        .padding(14)
+        .width(Length::FillPortion(2))
+        .style(standard_card_style)
+        .into();
 
         let info_overlay: Element<'_, Message> = if let Some(key) = &self.dashboard_info_key {
             let alpha = (0.20 + 0.80 * info_reveal).clamp(0.0, 1.0);
@@ -1379,29 +1721,151 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         };
 
         let dashboard_body: Element<'_, Message> = if self.dashboard_nav == "Overview" {
-            {
-                let mut col = Column::new().spacing(10);
-                col = col.push(text("[Pane Graph]").size(16).color([0.7,0.7,1.0]));
-                col = col.push(text("[KPIs]").size(16).color([0.7,0.7,1.0]));
-                let mut row1 = Row::new().spacing(10);
-                row1 = row1.push(text("[Risk Panel]").size(14).color([1.0,0.6,0.6]));
-                row1 = row1.push(text("[Threat Summary Panel]").size(14).color([1.0,0.6,0.6]));
-                col = col.push(row1);
-                let mut row2 = Row::new().spacing(10);
-                row2 = row2.push(text("[Table Panel]").size(14).color([0.6,1.0,0.6]));
-                row2 = row2.push(text("[Donut Panel]").size(14).color([0.6,1.0,0.6]));
-                row2 = row2.push(text("[Device Panel]").size(14).color([0.6,1.0,0.6]));
-                col = col.push(row2);
-                col = col.push(text("[Dropper Panel]").size(14).color([0.6,0.6,1.0]));
-                col.into()
-            }
+            let primary_metrics = Row::new()
+                .spacing(10)
+                .push(info_card("Trust-State", &self.security_snapshot.trust_state))
+                .push(info_card("Lokale Artefakte", &entries.len().to_string()))
+                .push(info_card("Anchor-Cluster", &anchor_clusters.len().to_string()))
+                .push(info_card("Risk Score", &risk_score.to_string()));
+
+            let system_metrics = Row::new()
+                .spacing(10)
+                .push(info_card("Noether", &format!("{:.3}", noether_score)))
+                .push(info_card("CPU", &format!("{:.1}%", self.backend_cpu_pct)))
+                .push(info_card("RAM", &format!("{:.2} GB", self.backend_mem_used_gb)))
+                .push(info_card("Swarm-Nodes", &self.swarm_startup.node_count.to_string()));
+
+            let quick_actions = container(
+                Row::new()
+                    .spacing(10)
+                    .push(
+                        button(text("Dateien pruefen").size(13))
+                            .on_press(Message::TabSelected(Tab::Data))
+                            .padding([10, 14])
+                            .style(primary_button_style),
+                    )
+                    .push(
+                        button(text("Threat Analysis").size(13))
+                            .on_press(Message::TabSelected(Tab::ADE))
+                            .padding([10, 14])
+                            .style(secondary_button_style),
+                    )
+                    .push(
+                        button(text("Launcher").size(13))
+                            .on_press(Message::TabSelected(Tab::Launcher))
+                            .padding([10, 14])
+                            .style(secondary_button_style),
+                    )
+                    .push(
+                        button(text("Logs").size(13))
+                            .on_press(Message::TabSelected(Tab::Logs))
+                            .padding([10, 14])
+                            .style(secondary_button_style),
+                    ),
+            )
+            .padding(12)
+            .style(accent_card_style);
+
+            let artifacts_panel: Element<'_, Message> = container({
+                let mut col = Column::new().spacing(8);
+                col = col.push(text("Artefaktlage").size(18).color(c(TEXT_H())));
+                col = col.push(text(format!(
+                    "Originaldaten {} B | Delta {} B | mittlere Kompression {:.2}%",
+                    total_original_bytes,
+                    total_delta_bytes,
+                    avg_compression_gain
+                )).size(12).color(c(TEXT_M())));
+                col = col.push(info_card("Neueste Analyse", &latest_entry_note));
+
+                if entries.is_empty() {
+                    col = col.push(text("Noch keine Register-Eintraege vorhanden. Ziehe eine Datei in das Fenster oder oeffne den Files-Tab.")
+                        .size(12)
+                        .color(c(TEXT_D())));
+                } else {
+                    for entry in entries.iter().take(4) {
+                        let summary = format!(
+                            "{} | {} B -> {} B | {:.2}% | {}",
+                            entry.file_name,
+                            entry.original_size,
+                            entry.delta_size,
+                            entry.compression_gain_percent,
+                            if entry.process_summary.trim().is_empty() {
+                                "kein Prozess-Summary"
+                            } else {
+                                entry.process_summary.as_str()
+                            }
+                        );
+                        col = col.push(info_card("Register", &summary));
+                    }
+                }
+
+                col
+            })
+            .padding(14)
+            .style(standard_card_style)
+            .width(Length::FillPortion(2))
+            .into();
+
+            let comms_panel: Element<'_, Message> = container({
+                let mut col = Column::new().spacing(8);
+                col = col.push(text("Kommunikation & Sitzungen").size(18).color(c(TEXT_H())));
+                col = col.push(info_card("Private Threads", &private_threads.len().to_string()));
+                col = col.push(info_card("Gruppen", &group_rooms.len().to_string()));
+                col = col.push(info_card("Private Nachrichten", &total_private_messages.to_string()));
+                col = col.push(info_card("Gruppen-Nachrichten", &total_group_messages.to_string()));
+                col = col.push(info_card(
+                    "Session-Policy",
+                    "Aktive Session wird nicht von Platte wiederhergestellt. Jeder Start verlangt eine neue lokale Anmeldung.",
+                ));
+                col
+            })
+            .padding(14)
+            .style(standard_card_style)
+            .width(Length::FillPortion(1))
+            .into();
+
+            let runtime_panel: Element<'_, Message> = container({
+                let mut col = Column::new().spacing(8);
+                col = col.push(text("Systemzustand").size(18).color(c(TEXT_H())));
+                col = col.push(info_card("Runtime-Profil", self.runtime_profile_label()));
+                col = col.push(info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())));
+                col = col.push(info_card("Analyse-Status", &self.analysis_status));
+                col = col.push(info_card(
+                    "Swarm",
+                    &if self.swarm_startup.node_initialized {
+                        self.swarm_startup.summary.clone()
+                    } else {
+                        format!("Node-Init fehlt | {}", self.swarm_startup.summary)
+                    },
+                ));
+                col = col.push(info_card(
+                    "Hybrid-Bridge",
+                    if self.hybrid_bridge_running { "aktiv" } else { "inaktiv" },
+                ));
+                col
+            })
+            .padding(14)
+            .style(standard_card_style)
+            .width(Length::Fill)
+            .into();
+
+            Column::new()
+                .spacing(10)
+                .push(primary_metrics)
+                .push(system_metrics)
+                .push(quick_actions)
+                .push(Row::new().spacing(10).push(artifacts_panel).push(comms_panel))
+                .push(runtime_panel)
+                .into()
         } else {
             let embedded: Element<'_, Message> = match self.dashboard_nav.as_str() {
                 "Files" => self.view_data(),
                 "Chat" => self.view_chat(),
                 "Logs" => self.view_logs(),
                 "Threat Analysis" => self.view_ade(),
+                "FlowSphere" => self.view_flow_sphere(),
                 "Threat Graph" => self.view_flow_sphere(),
+                "Delta Convergence" => self.view_delta_convergence(),
                 "Anchors" => self.view_anchors(),
                 "Browser" => self.view_browser(),
                 "YouTube" => self.view_youtube(),
@@ -1432,7 +1896,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         .padding(10)
         .width(Length::Fill);
 
-        let background_layer = container(iced::widget::Space::new(Length::Fill, Length::Fill))
+        let _background_layer: Element<'_, Message> = container(iced::widget::Space::new(Length::Fill, Length::Fill))
             .style(move |_: &Theme| container::Style {
                 background: Some(Background::Color(Color::from_rgb8(0x0C, 0x0B, 0x12))),
                 border: Border {
@@ -1441,14 +1905,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     radius: 14.0.into(),
                 },
                 ..Default::default()
-            });
+            })
+            .into();
 
         let overlay_layer = container(
             {
                 let mut row = Row::new().spacing(8).align_y(Alignment::Center);
                 row = row.push(text(format!("Noether {:.3}", noether_score)).size(11).color(c(TEXT_H())));
                 row = row.push(info_icon_button("noether_score"));
-                row = row.push(text(format!("Risk {}", risk_score)).size(11).color(c(WARN)));
+                row = row.push(text(format!("Risk {}", risk_score)).size(11).color(c(WARN())));
                 row = row.push(text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D())));
                 row = row.push(text(format!(
                     "Runtime {} | Tick {}ms | Sync {} | Poll {}",
@@ -1467,20 +1932,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             ..Default::default()
         });
 
-            container({
-                let mut col = Column::new();
-                let mut row1 = Row::new();
-                // row1 = row1.push(text(format!("Info: {key}")).size(14).color(c(TEXT_H))); // TODO: key nicht definiert
-                row1 = row1.push(iced::widget::Space::new(Length::Fill, Length::Shrink));
-                row1 = row1.push(info_icon_button("info_panel"));
-                col = col.push(row1.spacing(8).align_y(Alignment::Center));
-                // col = col.push(text(dashboard_info_text(key)).size(12).color(c(TEXT_M))); // TODO: key nicht definiert
-                col.spacing(8)
-            })
-            .padding(14)
-            .width(Length::FillPortion(2))
-            .style(standard_card_style)
-        };
+        column![overlay_layer, mid_layer, device_panel]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .spacing(10)
+            .into()
     }
     fn view_dashboard_performance(&self) -> Element<'_, Message> {
         let profile = self.runtime_profile;
@@ -1575,25 +2031,6 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         let panel = match self.chat_context {
             ChatContext::Private => self.view_private_chat(),
             ChatContext::Group => self.view_group_chat(),
-            ChatContext::Shanway => {
-                let avatar = container(
-                    canvas::Canvas::new(AetherLogoScene)
-                        .width(Length::Fixed(90.0))
-                        .height(Length::Fixed(110.0)),
-                )
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x15, 0x14, 0x22))),
-                    border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.1, radius: 10.0.into() },
-                    ..Default::default()
-                })
-                .padding(8);
-
-                Row::new()
-                    .push(avatar)
-                    .push(self.view_shanway_chat())
-                    .spacing(12)
-                    .into()
-            }
         };
         container(
             Column::new()
@@ -1601,7 +2038,6 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     Row::new()
                         .push(self.context_button(ChatContext::Private, "Privat"))
                         .push(self.context_button(ChatContext::Group, "Gruppen"))
-                        .push(self.context_button(ChatContext::Shanway, "Shanway"))
                         .push(tutorial_button)
                         .spacing(10)
                 )
@@ -1768,6 +2204,30 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
     }
 
     fn view_data(&self) -> Element<'_, Message> {
+        let capsule_state = self.capsule_state.as_ref();
+        let structure_map_state = self.structure_map_state.as_ref();
+        let analysis_detail = match (capsule_state, structure_map_state, self.last_analysis.as_ref()) {
+            (Some(capsule), Some(structure_map), Some(analysis)) => format!(
+                "{}\nTrigger {} | {} | {} B\nRegion {} | Nodes {} | Edges {} | Anchors {} | Flags {}\n{}",
+                analysis.preview_note,
+                capsule.trigger,
+                capsule.domain_hint,
+                capsule.size_bytes,
+                structure_map.region_label,
+                structure_map.node_count,
+                structure_map.edge_count,
+                structure_map.anchor_count,
+                structure_map.anomaly_count,
+                analysis.process_summary,
+            ),
+            (_, _, Some(analysis)) => format!(
+                "{}\n{}\n{}",
+                analysis.preview_note,
+                analysis.anchor_summary,
+                analysis.process_summary,
+            ),
+            _ => "Kompressionsgewinn, Delta, Capsule-Metriken und Structure-Map erscheinen nach dem ersten Drop oder Live-Render-Zyklus.".to_owned(),
+        };
         let mut items = Column::new()
             .push(text("Data").size(24))
             .push(text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.").size(16))
@@ -1794,35 +2254,28 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     self.analysis_progress,
                     &self.analysis_status,
                     &self.hovered_file_label,
-                    &self
-                        .last_analysis
-                        .as_ref()
-                        .map(|analysis| format!(
-                            "{}\n{}\n{}",
-                            analysis.preview_note, analysis.anchor_summary, analysis.process_summary
-                        ))
-                        .unwrap_or_else(|| {
-                            "Kompressionsgewinn, Delta und Anker erscheinen nach dem ersten Drop."
-                                .to_owned()
-                        }),
+                    &analysis_detail,
                 )
             )
             .push(
                 {
-                    if let Some(analysis) = &self.last_analysis {
+                    if let (Some(capsule), Some(structure_map)) = (capsule_state, structure_map_state) {
                         let scores = vec![
-                            ("SHANNON".to_string(), analysis.compression_gain_percent),
-                            ("DELTA".to_string(), analysis.delta_size as f32),
-                            ("ANCHOR".to_string(), analysis.anchor_summary.parse().unwrap_or(0.0)),
-                            ("TRUST".to_string(), analysis.process_summary.parse().unwrap_or(0.0)),
+                            ("ENTROPY".to_string(), capsule.entropy),
+                            ("H_LAMBDA".to_string(), capsule.h_lambda),
+                            ("SYMMETRY".to_string(), capsule.symmetry),
+                            ("PERIOD".to_string(), capsule.periodicity),
+                            ("TRUST".to_string(), capsule.trust_score),
+                            ("SCE".to_string(), structure_map.coherence_score),
+                            ("ANCHORS".to_string(), structure_map.anchor_count as f32),
+                            ("NODES".to_string(), structure_map.node_count as f32),
                         ];
-                        view_score_panel(&scores)
+                        view_score_panel(scores)
                     } else {
-                        Column::new() // leer, falls keine Analyse vorliegt
+                        Column::new().into() // leer, falls keine Analyse vorliegt
                     }
                 }
             );
-        let mut items = Column::new();
         let entries = self.entries();
         if entries.is_empty() {
             items = items.push(info_card(
@@ -1961,46 +2414,6 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 .style(primary_button_style),
         );
 
-        container(scrollable(content).height(Length::Fill))
-            .padding(12)
-            .style(panel_frame_style)
-            .into()
-    }
-
-    fn view_shanway_chat(&self) -> Element<'_, Message> {
-        let messages = self.shanway_messages();
-        let mut content = Column::new()
-            .push(text("Shanway").size(24))
-            .push(text("Ruhig, klar und professionell.").size(16))
-            .spacing(12);
-        let paragraph = if self.show_tutorial {
-            "Willkommen. Aether ist ein vollstaendig lokales System fuer Strukturanalyse, sichere Verarbeitung und nachvollziehbare Organisation. DNA-Daten sind lokale Analysepakete: Sie beschreiben Merkmale einer Quelle, nicht deine Rohdaten. Anker sind stabile Strukturpunkte, mit denen Dateien, Prozesse und Artefakte in Cluster eingeordnet werden. Deltas, Restanteile und Zugangsdaten bleiben auf deinem Geraet; es gibt keine zentrale Wiederherstellung. Aether existiert, um Technik und Wissen ohne Cloud-Zwang verstaendlich und praktisch zugaenglich zu machen. Wenn du ein Artefakt in das Fenster ziehst, startet eine isolierte Strukturanalyse ohne Ausfuehrung."
-        } else {
-            "Ich erklaere den lokalen Zustand verstaendlich und ohne Effekte. Dateien werden isoliert verarbeitet, private Kontexte blockiert und die Analyse endet nach Merkmalsprofil, Anchor-Signalen und Cluster-Zuordnung."
-        };
-        content = content.push(info_card("Einfuehrung", paragraph));
-        if messages.is_empty() {
-            content = content.push(info_card(
-                "Dialogstart",
-                "Du kannst Shanway direkt fragen, wie Aether arbeitet, was DNA-Daten sind, wie Anker verwendet werden oder wie deine Daten lokal geschuetzt bleiben.",
-            ));
-        } else {
-            for message in messages.iter().take(40) {
-                content = content.push(info_card(&message.author, &message.body));
-            }
-        }
-        content = content.push(
-            text_input("Frage an Shanway", &self.shanway_message_draft)
-                .on_input(Message::ShanwayMessageChanged)
-                .padding(10)
-                .size(16),
-        );
-        content = content.push(
-            button(text("An Shanway senden"))
-                .padding([10, 16])
-                .on_press(Message::ShanwayMessageSend)
-                .style(primary_button_style),
-        );
         container(scrollable(content).height(Length::Fill))
             .padding(12)
             .style(panel_frame_style)
@@ -2458,7 +2871,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     .into()
                 })
                 .collect();
-            scrollable(Column::new().push(rows).spacing(4))
+            scrollable(Column::with_children(rows).spacing(4))
                 .height(Length::Fixed(320.0))
                 .into()
         };
@@ -2769,10 +3182,53 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         let panel_bg   = Color::from_rgb8(0x05, 0x0F, 0x1C);
 
         // Derived metrics from live data
-        let entropy = (self.structure_map_compression / 100.0).clamp(0.0, 1.0);
-        let stability = if self.structure_map_locked { 1.0f32 } else { entropy * 0.82 };
-        let anchor_count = self.structure_map_nodes.last().map_or(4, |v| v.len());
+        let entropy = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| (capsule.entropy / 8.0).clamp(0.0, 1.0))
+            .unwrap_or((self.structure_map_compression / 100.0).clamp(0.0, 1.0));
+        let stability = self
+            .structure_map_state
+            .as_ref()
+            .map(|state| if state.locked { 1.0f32 } else { state.coherence_score.clamp(0.0, 1.0) })
+            .unwrap_or_else(|| if self.structure_map_locked { 1.0f32 } else { entropy * 0.82 });
+        let anchor_count = self
+            .structure_map_state
+            .as_ref()
+            .map(|state| state.anchor_count)
+            .unwrap_or_else(|| self.structure_map_nodes.last().map_or(4, |v| v.len()));
         let info_growth = entropy;
+        let delta_convergence = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.delta_convergence as f32)
+            .unwrap_or((1.0 - self.live_render_last_delta_ratio).clamp(0.0, 1.0));
+        let compression_gain = self
+            .compression_state
+            .as_ref()
+            .map(|state| (state.gain_percent / 100.0).clamp(0.0, 1.0))
+            .unwrap_or((1.0 - entropy).clamp(0.0, 1.0));
+        let reconstruction_quality = self
+            .reconstruction_state
+            .as_ref()
+            .map(|state| state.quality_score.clamp(0.0, 1.0))
+            .unwrap_or(stability);
+        let aelab_coupling = self
+            .aelab_state
+            .as_ref()
+            .map(|state| state.seed_coupling.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let reconstruction_path = self
+            .reconstruction_state
+            .as_ref()
+            .map(|state| {
+                if state.path_steps.is_empty() {
+                    "capsule.metrics -> structure_map.snapshot".to_owned()
+                } else {
+                    state.path_steps.join(" -> ")
+                }
+            })
+            .unwrap_or_else(|| "capsule.metrics -> structure_map.snapshot".to_owned());
 
         let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
 
@@ -2911,7 +3367,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         let timeline_row = container(
             Column::new()
                 .push(text("TEMPORAL LAYER  \u{2500}  Session-Verlauf").size(10).color(dim))
-                .push(Row::new().push(timeline).spacing(2))
+                .push(Row::with_children(timeline).spacing(2))
                 .spacing(4)
                 .padding([6, 10]),
         )
@@ -2942,7 +3398,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         // Main layout
         let header = Row::new()
             .push(text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan))
-            .push(text("  \u{00b7}  Strukturraum \u{1d4ae}  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Delta-Konvergenz  \u{00b7}  h\u{209c} Observer").size(10).color(dim))
+            .push(text("  \u{00b7}  visuelle Musterhilfe  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Ueberlagerungen erkennen  \u{00b7}  h\u{209c} Observer").size(10).color(dim))
             .spacing(0);
 
         let interaction_bar = Row::new()
@@ -2976,11 +3432,48 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             .spacing(8)
             .align_y(Alignment::Center);
 
+        let audit_chip = |title: &'static str, value: String, accent: Color| {
+            container(
+                column![
+                    text(title).size(10).color(dim),
+                    text(value).size(14).color(accent),
+                ]
+                .spacing(3),
+            )
+            .padding([8, 12])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.10, 0.14, 0.22, 0.82))),
+                border: Border { color: accent, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let audit_row = Row::new()
+            .push(audit_chip("DELTA", format!("{:.1}%", delta_convergence * 100.0), Color::from_rgb8(0xFF, 0xD7, 0x00)))
+            .push(audit_chip("KOMPRESSION", format!("{:.1}%", compression_gain * 100.0), Color::from_rgb8(0x4C, 0xD9, 0x6E)))
+            .push(audit_chip("REKONSTRUKTION", format!("{:.1}%", reconstruction_quality * 100.0), Color::from_rgb8(0x7F, 0xD9, 0xFF)))
+            .push(audit_chip("AELAB-KOPPLUNG", format!("{:.1}%", aelab_coupling * 100.0), Color::from_rgb8(0xC0, 0x8D, 0xFF)))
+            .spacing(8);
+
         container(
             Column::new()
                 .push(header)
                 .push(interaction_bar)
-                .push(text("Nutzen: Visuelle Lage der Anker/Delta-Phasen. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
+                .push(audit_row)
+                .push(
+                    text(format!(
+                        "Musterpfad: {}{}",
+                        reconstruction_path,
+                        if self.live_render_mode {
+                            " | Live Render aktualisiert nur die Grafik, nicht die Analysefenster."
+                        } else {
+                            ""
+                        }
+                    ))
+                    .size(11)
+                    .color(dim)
+                )
+                .push(text("Nutzen: grafische Hilfe zum Erkennen sich ueberlagernder Muster. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
                     .size(11)
                     .color(dim))
                 .push(Row::new()
@@ -3002,48 +3495,228 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         .into()
     }
 
-    fn view_ade(&self) -> Element<'_, Message> {
-        // --- CASCADE · DETERMINISTIC AUDIT PANEL ---
+    fn view_delta_convergence(&self) -> Element<'_, Message> {
         let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
         let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
-        let yellow  = Color::from_rgb8(0xFF, 0xD7, 0x00);
         let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
         let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
         let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
 
-        let cascade_panel = if let (Some(run_id), Some(metrics)) = (&self.cascade_run_id, &self.cascade_metrics) {
+        let capsule_panel = if let Some(capsule) = &self.capsule_state {
             let mut rows = column![
-                text(format!("run_id: {}…", &run_id[..16])).size(14).color(cyan),
-                text(format!("Trust Score: {:.3}", metrics.trust_score)).size(16).color(if metrics.trust_score > 0.65 { green } else { red }),
-                text(format!("Entropy: {:.4}", metrics.entropy)).size(14).color(dim),
-                text(format!("Zipf-Alpha: {:.4}", metrics.zipf_alpha)).size(14).color(dim),
-                text(format!("Benford Score: {:.4}", metrics.benford_score)).size(14).color(dim),
-                text(format!("Fourier Period: {:.4}", metrics.fourier_period)).size(14).color(dim),
-                text(format!("Katz Dimension: {:.4}", metrics.katz_dimension)).size(14).color(dim),
-                text(format!("Attractor Stability: {:.4}", metrics.attractor_stability)).size(14).color(dim),
-                text(format!("Delta Convergence: {:.4}", metrics.delta_convergence)).size(14).color(dim),
-                text(format!("Noether Consistency: {:.4}", metrics.noether_consistency)).size(14).color(dim),
+                text(format!("source: {}", capsule.source_label)).size(14).color(cyan),
+                text(format!("trigger: {} | type: {} | domain: {}", capsule.trigger, capsule.source_type, capsule.domain_hint)).size(13).color(dim),
+                text(format!("Trust Score: {:.3}", capsule.trust_score)).size(16).color(if capsule.trust_score > 0.65 { green } else { red }),
+                text(format!("Entropy: {:.4}", capsule.entropy)).size(14).color(dim),
+                text(format!("H_lambda: {:.4}", capsule.h_lambda)).size(14).color(dim),
+                text(format!("Symmetry: {:.4}", capsule.symmetry)).size(14).color(dim),
+                text(format!("Periodicity: {:.4}", capsule.periodicity)).size(14).color(dim),
+                text(format!("Zipf Alpha: {:.4}", capsule.zipf_alpha)).size(14).color(dim),
+                text(format!("Benford Score: {:.4}", capsule.benford_score)).size(14).color(dim),
+                text(format!("Katz Dimension: {:.4}", capsule.katz_dimension)).size(14).color(dim),
+                text(format!("SCE Score: {:.4}", capsule.sce_score)).size(14).color(dim),
+                text(format!("Bayes Confidence: {:.4}", capsule.bayes_confidence)).size(14).color(dim),
+                text(format!("Noether Consistency: {:.4}", capsule.noether_consistency)).size(14).color(dim),
+                text(format!("Delta Ratio: {:.4} | Changed Bytes: {}", capsule.delta_ratio, capsule.changed_bytes)).size(14).color(dim),
             ];
-            if !metrics.anomaly_flags.is_empty() {
-                let flags = metrics.anomaly_flags.join(", ");
+            if !capsule.anomaly_flags.is_empty() {
+                let flags = capsule.anomaly_flags.join(", ");
                 rows = rows.push(text(format!("Anomalies: {}", flags)).size(14).color(red));
             }
-            ade_subpanel("CASCADE · DETERMINISTIC AUDIT", rows, panel_s)
+            ade_subpanel("CAPSULE · DETERMINISTIC AUDIT", rows.into(), panel_s)
         } else {
-            ade_subpanel("CASCADE · DETERMINISTIC AUDIT", text("No cascade result available").size(13).color(dim), panel_s)
+            ade_subpanel("CAPSULE · DETERMINISTIC AUDIT", text("No capsule result available").size(13).color(dim).into(), panel_s)
         };
 
-        // ...existing code...
+        let structure_map_panel = if let Some(state) = &self.structure_map_state {
+            let rows = column![
+                text(format!("region: {}", state.region_label)).size(14).color(cyan),
+                text(format!("nodes: {} | edges: {}", state.node_count, state.edge_count)).size(14).color(dim),
+                text(format!("anchors: {} | anomalies: {}", state.anchor_count, state.anomaly_count)).size(14).color(dim),
+                text(format!("coherence: {:.4} | trust: {:.4}", state.coherence_score, state.trust_score)).size(14).color(dim),
+                text(format!("locked: {}", if state.locked { "yes" } else { "no" })).size(14).color(if state.locked { green } else { dim }),
+            ];
+            ade_subpanel("STRUCTURE MAP · SNAPSHOT", rows.into(), panel_s)
+        } else {
+            ade_subpanel("STRUCTURE MAP · SNAPSHOT", text("No structure-map snapshot available").size(13).color(dim).into(), panel_s)
+        };
+
+        let aelab_panel = if let Some(aelab) = &self.aelab_state {
+            let signature_preview: String = aelab.signature.chars().take(16).collect();
+            let seed_preview = if aelab.seed_label.is_empty() {
+                "no active seed".to_owned()
+            } else {
+                format!("{} | {} | used {}x", aelab.seed_label, aelab.seed_bucket, aelab.seed_times_used)
+            };
+            let operator_flags = [
+                if aelab.has_sequence { "sequence" } else { "-" },
+                if aelab.has_bridge { "bridge" } else { "-" },
+                if aelab.has_xor { "xor" } else { "-" },
+                if aelab.has_interfere { "interfere" } else { "-" },
+            ]
+            .join(" | ");
+            let rows = column![
+                text(format!("fitness: {:.4} | lossless: {:.1}%", aelab.fitness, aelab.lossless * 100.0)).size(14).color(cyan),
+                text(format!("nodes: {} | depth: {} | anchor: {} | evolved: {}", aelab.nodes, aelab.depth, aelab.has_anchor, aelab.evolved)).size(14).color(dim),
+                text(format!("seed: {}", seed_preview)).size(13).color(dim),
+                text(format!("coupling: {:.3} | coherence: {:.3} | utility: {:.3}", aelab.seed_coupling, aelab.seed_coherence, aelab.seed_utility)).size(13).color(dim),
+                text(format!("ops: {}", operator_flags)).size(13).color(dim),
+                text(format!("vault main/inactive/recovered: {}/{}/{}", aelab.vault_main_entries, aelab.vault_inactive_entries, aelab.vault_recovered_entries)).size(13).color(dim),
+                text(format!("vault total: {} | integrity: {}", aelab.vault_total_entries, if aelab.vault_integrity_ok { "ok" } else { "check" })).size(13).color(if aelab.vault_integrity_ok { green } else { red }),
+                text(format!("vault root: {}", aelab.vault_root)).size(12).color(dim),
+                text(format!("signature: {}", signature_preview)).size(12).color(dim),
+            ];
+            ade_subpanel("AELAB · MOTOR / VAULT COUPLING", rows.into(), panel_s)
+        } else {
+            ade_subpanel("AELAB · MOTOR / VAULT COUPLING", text("No AELab coupling available yet").size(13).color(dim).into(), panel_s)
+        };
+
+        let compression_panel = if let Some(compression) = &self.compression_state {
+            let rows = column![
+                text(format!("format: {}", compression.format)).size(14).color(cyan),
+                text(format!("original: {} B | changed: {} B", compression.original_bytes, compression.changed_bytes)).size(14).color(dim),
+                text(format!("compressed: {} B | ratio: {:.4}", compression.compressed_bytes, compression.ratio)).size(14).color(dim),
+                text(format!("gain: {:.2}%", compression.gain_percent)).size(16).color(if compression.gain_percent > 0.0 { green } else { dim }),
+            ];
+            ade_subpanel("COMPRESSION · AUDIT", rows.into(), panel_s)
+        } else {
+            ade_subpanel("COMPRESSION · AUDIT", text("No compression summary available").size(13).color(dim).into(), panel_s)
+        };
+
+        let reconstruction_panel = if let Some(reconstruction) = &self.reconstruction_state {
+            let path_text = if reconstruction.path_steps.is_empty() {
+                "capsule.metrics -> structure_map.snapshot".to_owned()
+            } else {
+                reconstruction.path_steps.join(" -> ")
+            };
+            let error_text = if reconstruction.error_fields.is_empty() {
+                "none".to_owned()
+            } else {
+                reconstruction.error_fields.join(", ")
+            };
+            let rows = column![
+                text(format!("quality: {:.2}% | verified: {}", reconstruction.quality_score * 100.0, reconstruction.verified)).size(14).color(if reconstruction.verified { green } else { red }),
+                text(format!("compressibility: {:.2}% | anchor coverage: {:.2}%", reconstruction.compressibility * 100.0, reconstruction.anchor_coverage * 100.0)).size(13).color(dim),
+                text(format!("error count: {} | fields: {}", reconstruction.error_count, error_text)).size(13).color(dim),
+                text(format!("path: {}", path_text)).size(13).color(cyan),
+            ];
+            ade_subpanel("RECONSTRUCTION · PATH", rows.into(), panel_s)
+        } else {
+            ade_subpanel("RECONSTRUCTION · PATH", text("No reconstruction audit available").size(13).color(dim).into(), panel_s)
+        };
+
+        let lineage_panel = {
+            let delta_value = self
+                .cascade_metrics
+                .as_ref()
+                .map(|metrics| metrics.delta_convergence * 100.0)
+                .unwrap_or(0.0);
+            let lineage = if let Some(reconstruction) = &self.reconstruction_state {
+                if reconstruction.path_steps.is_empty() {
+                    "capsule.metrics -> structure_map.snapshot -> operator review".to_owned()
+                } else {
+                    reconstruction.path_steps.join(" -> ")
+                }
+            } else {
+                "capsule.metrics -> structure_map.snapshot -> operator review".to_owned()
+            };
+            let rows = column![
+                text(format!("lineage: {}", lineage)).size(13).color(cyan),
+                text(format!("delta convergence: {:.2}% | flow lock: {}", delta_value, self.structure_map_locked)).size(13).color(dim),
+                text(if self.live_render_mode {
+                    "Live Render updates the audit metrics in place and keeps the shell layout fixed."
+                } else {
+                    "Live Render is off; file drops remain the current deterministic source of truth."
+                })
+                .size(13)
+                .color(dim),
+            ];
+            ade_subpanel("AUDIT CHAIN · DETERMINISTIC LINEAGE", rows.into(), panel_s)
+        };
+
         let main_content = scrollable(
             column![
-                cascade_panel,
-                // ...existing subpanels...
+                capsule_panel,
+                structure_map_panel,
+                aelab_panel,
+                compression_panel,
+                reconstruction_panel,
+                lineage_panel,
             ]
             .spacing(12)
             .padding([0.0f32, 8.0]),
         );
 
-        // ...existing code...
+        main_content.into()
+    }
+
+    fn view_ade(&self) -> Element<'_, Message> {
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+        let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
+        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+
+        let capsule_panel = if let Some(capsule) = &self.capsule_state {
+            let mut rows = column![
+                text(format!("source: {}", capsule.source_label)).size(14).color(cyan),
+                text(format!("trigger: {} | type: {} | domain: {}", capsule.trigger, capsule.source_type, capsule.domain_hint)).size(13).color(dim),
+                text(format!("Trust Score: {:.3}", capsule.trust_score)).size(16).color(if capsule.trust_score > 0.65 { green } else { red }),
+                text(format!("Entropy: {:.4}", capsule.entropy)).size(14).color(dim),
+                text(format!("H_lambda: {:.4}", capsule.h_lambda)).size(14).color(dim),
+                text(format!("Symmetry: {:.4}", capsule.symmetry)).size(14).color(dim),
+                text(format!("Periodicity: {:.4}", capsule.periodicity)).size(14).color(dim),
+                text(format!("Zipf Alpha: {:.4}", capsule.zipf_alpha)).size(14).color(dim),
+                text(format!("Benford Score: {:.4}", capsule.benford_score)).size(14).color(dim),
+                text(format!("Katz Dimension: {:.4}", capsule.katz_dimension)).size(14).color(dim),
+                text(format!("SCE Score: {:.4}", capsule.sce_score)).size(14).color(dim),
+                text(format!("Bayes Confidence: {:.4}", capsule.bayes_confidence)).size(14).color(dim),
+                text(format!("Noether Consistency: {:.4}", capsule.noether_consistency)).size(14).color(dim),
+                text(format!("Delta Ratio: {:.4} | Changed Bytes: {}", capsule.delta_ratio, capsule.changed_bytes)).size(14).color(dim),
+            ];
+            if !capsule.anomaly_flags.is_empty() {
+                let flags = capsule.anomaly_flags.join(", ");
+                rows = rows.push(text(format!("Anomalies: {}", flags)).size(14).color(red));
+            }
+            ade_subpanel("CAPSULE · THREAT SIGNALS", rows.into(), panel_s)
+        } else {
+            ade_subpanel("CAPSULE · THREAT SIGNALS", text("No capsule result available").size(13).color(dim).into(), panel_s)
+        };
+
+        let structure_panel = if let Some(state) = &self.structure_map_state {
+            let rows = column![
+                text(format!("region: {}", state.region_label)).size(14).color(cyan),
+                text(format!("coherence: {:.4} | trust: {:.4}", state.coherence_score, state.trust_score)).size(14).color(dim),
+                text(format!("anchors: {} | anomalies: {}", state.anchor_count, state.anomaly_count)).size(14).color(dim),
+                text(format!("locked: {}", if state.locked { "yes" } else { "no" })).size(14).color(if state.locked { green } else { dim }),
+            ];
+            ade_subpanel("STRUCTURE SNAPSHOT · THREAT CONTEXT", rows.into(), panel_s)
+        } else {
+            ade_subpanel("STRUCTURE SNAPSHOT · THREAT CONTEXT", text("No structure snapshot available").size(13).color(dim).into(), panel_s)
+        };
+
+        let aelab_panel = if let Some(aelab) = &self.aelab_state {
+            let rows = column![
+                text(format!("fitness: {:.4} | lossless: {:.1}%", aelab.fitness, aelab.lossless * 100.0)).size(14).color(cyan),
+                text(format!("coupling: {:.3} | coherence: {:.3}", aelab.seed_coupling, aelab.seed_coherence)).size(13).color(dim),
+                text(format!("vault total: {} | integrity: {}", aelab.vault_total_entries, if aelab.vault_integrity_ok { "ok" } else { "check" })).size(13).color(if aelab.vault_integrity_ok { green } else { red }),
+                text(format!("vault root: {}", aelab.vault_root)).size(12).color(dim),
+            ];
+            ade_subpanel("AELAB · THREAT CORRELATION", rows.into(), panel_s)
+        } else {
+            ade_subpanel("AELAB · THREAT CORRELATION", text("No AELab correlation available yet").size(13).color(dim).into(), panel_s)
+        };
+
+        scrollable(
+            column![
+                capsule_panel,
+                structure_panel,
+                aelab_panel,
+            ]
+            .spacing(12)
+            .padding([0.0f32, 8.0]),
+        )
+        .into()
     }
 
     fn view_shell(&self) -> Element<'_, Message> {
@@ -3060,7 +3733,8 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             Tab::Settings => self.view_settings(),
             Tab::Logs => self.view_logs(),
             Tab::Anchors => self.view_anchors(),
-            Tab::StructureMap => self.view_flow_sphere(),
+            Tab::FlowSphere => self.view_flow_sphere(),
+            Tab::StructureMap => self.view_delta_convergence(),
             Tab::ADE => self.view_ade(),
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
@@ -3087,6 +3761,21 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 })
         };
 
+        let action_item = |label: String, message: Message| {
+            button(text(label).size(13).color(c(TEXT_H())))
+                .on_press(message)
+                .padding([8, 10])
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.22, 0.33, 0.60, 0.25))),
+                    border: Border {
+                        color: Color::from_rgb8(0x5A, 0x8C, 0xE8),
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
+        };
+
         let shell_sidebar = container(
             column![
                 text("AetherGuard").size(26).color(Color::from_rgb8(0xD3, 0xC6, 0xFF)),
@@ -3103,16 +3792,25 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 nav_item("8. Privacy", Tab::Privacy, self.active_tab),
                 text("Analysis").size(12).color(c(TEXT_D())),
                 nav_item("9. Threat Analysis", Tab::ADE, self.active_tab),
-                nav_item("10. Threat Graph", Tab::StructureMap, self.active_tab),
-                nav_item("11. Anchors", Tab::Anchors, self.active_tab),
+                nav_item("10. FlowSphere", Tab::FlowSphere, self.active_tab),
+                nav_item("11. Delta Convergence", Tab::StructureMap, self.active_tab),
+                action_item(
+                    if self.live_render_mode {
+                        "12. Live Render deaktivieren".to_owned()
+                    } else {
+                        "12. Live Render aktivieren".to_owned()
+                    },
+                    Message::LiveRenderToggle,
+                ),
+                nav_item("13. Anchors", Tab::Anchors, self.active_tab),
                 text("Workspace").size(12).color(c(TEXT_D())),
-                nav_item("12. Browser", Tab::Browser, self.active_tab),
-                nav_item("13. YouTube", Tab::YouTube, self.active_tab),
-                nav_item("14. Reconstruction", Tab::Rekonstruktion, self.active_tab),
-                nav_item("15. Info", Tab::Imprint, self.active_tab),
+                nav_item("14. Browser", Tab::Browser, self.active_tab),
+                nav_item("15. YouTube", Tab::YouTube, self.active_tab),
+                nav_item("16. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("17. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D())),
-                nav_item("16. Runtime", Tab::Settings, self.active_tab),
-                nav_item("17. Launcher", Tab::Launcher, self.active_tab),
+                nav_item("18. Runtime", Tab::Settings, self.active_tab),
+                nav_item("19. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -3140,7 +3838,8 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         Tab::Settings => "Runtime",
                         Tab::Logs => "Logs",
                         Tab::Anchors => "Anchors",
-                        Tab::StructureMap => "Threat Graph",
+                        Tab::FlowSphere => "FlowSphere",
+                        Tab::StructureMap => "Delta Convergence",
                         Tab::ADE => "Threat Analysis",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
@@ -3159,7 +3858,8 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         Tab::Settings => "Adjust runtime profile, cadence, and behavior controls.",
                         Tab::Logs => "Review recent events, errors, and execution timeline.",
                         Tab::Anchors => "View immutable checkpoints and anchor integrity evidence.",
-                        Tab::StructureMap => "Visualize graph relations and threat structure links.",
+                        Tab::FlowSphere => "Visual aid for overlapping patterns, attractors, and structural interference.",
+                        Tab::StructureMap => "Inspect delta convergence, compression, and the deterministic reconstruction path.",
                         Tab::ADE => "Run threat analysis and inspect signal confidence.",
                         Tab::Imprint => "Read version, policy, and legal metadata.",
                         Tab::Rekonstruktion => "Generate or inspect reconstruction outputs from traces.",
@@ -3206,14 +3906,14 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     border: Border { color: Color::from_rgb8(0x3F, 0xBA, 0xC2), width: 1.0, radius: 10.0.into() },
                     ..Default::default()
                 }),
-                button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H()))
+                button(text(format!("Performance {}", self.runtime_profile_label())).size(12).color(c(TEXT_H())))
                     .on_press(Message::TabSelected(Tab::Settings))
                     .padding([8, 12])
                     .style(|_: &Theme, _| button::Style {
                         background: Some(Background::Color(Color::from_rgba(0.59, 0.34, 0.96, 0.18))),
                         border: Border { color: Color::from_rgb8(0xA0, 0x70, 0xFF), width: 1.1, radius: 10.0.into() },
                         ..Default::default()
-                    })),
+                    }),
                 container(
                     text(if self.live_render_mode {
                         format!(
@@ -3244,22 +3944,22 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     },
                     ..Default::default()
                 }),
-                button(text(if self.live_render_mode { "LiveRender: AUS" } else { "LiveRender: AN" }).size(12).color(c(TEXT_H()))
+                button(text(if self.live_render_mode { "Live Render: AUS" } else { "Live Render: AN" }).size(12).color(c(TEXT_H())))
                     .on_press(Message::LiveRenderToggle)
                     .padding([8, 12])
                     .style(|_: &Theme, _| button::Style {
                         background: Some(Background::Color(Color::from_rgba(0.19, 0.42, 0.24, 0.28))),
                         border: Border { color: Color::from_rgb8(0x5E, 0xBE, 0x6E), width: 1.1, radius: 10.0.into() },
                         ..Default::default()
-                    })),
-                button(text(self.ui_text("▼ Leistenmodus", "▼ Overlay Bar")).size(12).color(c(TEXT_H()))
+                    }),
+                button(text(self.ui_text("▼ Leistenmodus", "▼ Overlay Bar")).size(12).color(c(TEXT_H())))
                     .on_press(Message::ToggleMode)
                     .padding([8, 12])
                     .style(|_: &Theme, _| button::Style {
                         background: Some(Background::Color(Color::from_rgba(0.22, 0.33, 0.60, 0.25))),
                         border: Border { color: Color::from_rgb8(0x5A, 0x8C, 0xE8), width: 1.1, radius: 10.0.into() },
                         ..Default::default()
-                    })),
+                    }),
             ]
             .align_y(Alignment::Center)
             .spacing(12)
@@ -3299,7 +3999,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
 
     fn view_global_control_bar(&self) -> Element<'_, Message> {
         let quick_button = |label: &'static str, tab: Tab| {
-            button(text(label).size(11))
+            button(text(label).size(11).color(c(TEXT_H())))
                 .on_press(Message::TabSelected(tab))
                 .style(|_: &Theme, _| button::Style {
                     background: Some(Background::Color(c(BG_CARD2()))),
@@ -3318,12 +4018,13 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             text("⬡ AETHER").size(12).color(c(ACCENT())),
             quick_button("Control", Tab::Control),
             quick_button("Symbiont", Tab::Symbiont),
-            quick_button("Threat Graph", Tab::StructureMap),
+            quick_button("FlowSphere", Tab::FlowSphere),
+            quick_button("Delta Conv", Tab::StructureMap),
             quick_button("Browser", Tab::Browser),
             quick_button("YouTube", Tab::YouTube),
             quick_button("Logs", Tab::Logs),
             iced::widget::Space::new(Length::Fill, Length::Shrink),
-            button(text(if self.live_render_mode { "LiveRender: AUS" } else { "LiveRender: AN" }).size(11))
+            button(text(if self.live_render_mode { "Live Render: AUS" } else { "Live Render: AN" }).size(11).color(c(TEXT_H())))
                 .on_press(Message::LiveRenderToggle)
                 .style(|_: &Theme, _| button::Style {
                     background: Some(Background::Color(c(BG_CARD2()))),
@@ -3336,7 +4037,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     ..Default::default()
                 })
                 .padding([3, 8]),
-            button(text("▼ Overlay").size(11))
+            button(text("▼ Kompaktleiste").size(11).color(c(TEXT_H())))
                 .on_press(Message::ToggleMode)
                 .style(|_: &Theme, _| button::Style {
                     background: Some(Background::Color(c(BG_CARD2()))),
@@ -3423,66 +4124,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         }
     }
 
-    fn send_shanway_message(&mut self) {
-        let Some(username) = self.current_username() else {
-            self.status_line = "Shanway erfordert eine Anmeldung.".to_owned();
-            return;
-        };
-        let prompt = self.shanway_message_draft.trim().to_owned();
-        if prompt.is_empty() {
-            self.status_line = "Bitte zuerst eine Frage eingeben.".to_owned();
-            return;
-        }
-        if let Some(enable_live_render) = self.parse_live_render_mode_command(&prompt) {
-            self.apply_live_render_mode(enable_live_render);
-            let reply = if enable_live_render {
-                "\u{1F7E2} Live-Analyse AN\nLive-Render-Modus ist aktiv. Frame-Hooks, Delta-Analyse, Invarianten-Extraktion und Pixeldynamik laufen kontinuierlich, bis du den Modus deaktivierst."
-                    .to_owned()
-            } else {
-                "\u{1F534} Live-Analyse AUS\nLive-Render-Modus ist vollstaendig deaktiviert. Frame-Hooks, Delta-Analyse und Invarianten-Extraktion sind gestoppt. Passiver Normalmodus ist wieder aktiv."
-                    .to_owned()
-            };
-            if let Err(err) = self
-                .state_store
-                .add_private_message(&username, "Shanway", &username, &prompt)
-            {
-                self.status_line = err;
-                return;
-            }
-            if let Err(err) = self
-                .state_store
-                .add_private_message(&username, "Shanway", "Shanway", &reply)
-            {
-                self.status_line = err;
-                return;
-            }
-            self.shanway_message_draft.clear();
-            self.status_line = if enable_live_render {
-                "Live-Render-Modus aktiviert (permanent bis Deaktivierung).".to_owned()
-            } else {
-                "Live-Render-Modus deaktiviert. Passiver Normalmodus aktiv.".to_owned()
-            };
-            return;
-        }
-        let reply = render_shanway_reply(self.current_shanway_input().as_ref(), &prompt);
-        if let Err(err) = self
-            .state_store
-            .add_private_message(&username, "Shanway", &username, &prompt)
-        {
-            self.status_line = err;
-            return;
-        }
-        if let Err(err) = self
-            .state_store
-            .add_private_message(&username, "Shanway", "Shanway", &reply)
-        {
-            self.status_line = err;
-            return;
-        }
-        self.shanway_message_draft.clear();
-        self.status_line = "Shanway hat lokal geantwortet.".to_owned();
-    }
-
+    #[allow(dead_code)]
     fn normalize_live_command(text: &str) -> String {
         let mut normalized = text.trim().to_lowercase();
         for dash in ['‑', '–', '—'] {
@@ -3505,6 +4147,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         "unbekannter Panic-Payload".to_owned()
     }
 
+    #[allow(dead_code)]
     fn parse_live_render_mode_command(&self, prompt: &str) -> Option<bool> {
         let normalized = Self::normalize_live_command(prompt);
         let mentions_live = normalized.contains("live")
@@ -3564,6 +4207,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
     fn apply_live_render_mode(&mut self, enabled: bool) {
         self.live_render_mode = enabled;
         if !enabled {
+            self.live_render_analysis_running = false;
             self.live_render_last_frame.clear();
             self.live_render_last_running_services.clear();
             self.live_render_last_os_processes.clear();
@@ -3575,6 +4219,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             self.live_render_last_godel_delta = 0.0;
             self.live_render_anchor_boost = false;
             self.live_render_last_os_sample_tick = 0;
+            self.live_render_noether_k = 1.0;
+            self.live_render_noether_delta_k = 0.0;
+            self.live_render_noether_symmetry_preserved = true;
+            self.live_render_noether_prev_spectral = [0.0f32; 5];
+            self.live_render_noether_prev_entropy = 0.0;
         }
     }
 
@@ -3705,6 +4354,42 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             .map(|(a, b)| (a - b).abs())
             .sum();
         (sum / len as f32).clamp(0.0, 1.0)
+    }
+
+    /// Extrahiert 5 DFT-Magnitude-Bins (k=1..5) aus einem Byte-Slice.
+    /// Arbeitet auf bis zu 256 Bytes, normalisiert durch N.
+    /// Invariant: reiner Betrag, kein Phasenanteil – auditierbar.
+    fn noether_spectral_5(data: &[u8]) -> [f32; 5] {
+        let sample: Vec<f32> = data.iter().take(256).map(|b| *b as f32 / 255.0).collect();
+        let n = sample.len();
+        if n == 0 {
+            return [0.0f32; 5];
+        }
+        let nf = n as f32;
+        let mut out = [0.0f32; 5];
+        for (ki, k) in (1usize..=5).enumerate() {
+            let mut re = 0.0f32;
+            let mut im = 0.0f32;
+            for (idx, x) in sample.iter().enumerate() {
+                let angle = std::f32::consts::TAU * k as f32 * idx as f32 / nf;
+                re += x * angle.cos();
+                im -= x * angle.sin();
+            }
+            out[ki] = (re * re + im * im).sqrt() / nf;
+        }
+        out
+    }
+
+    /// Kosinus-Ähnlichkeit zweier 5-Bin-Spektralvektoren [0, 1].
+    /// Beide Nullvektoren gelten als identisch (sim = 1.0).
+    fn noether_cosine_sim(a: &[f32; 5], b: &[f32; 5]) -> f32 {
+        let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+        let mag_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let mag_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if mag_a < 1e-9 || mag_b < 1e-9 {
+            return 1.0; // beide Null ≙ identisch
+        }
+        (dot / (mag_a * mag_b)).clamp(0.0, 1.0)
     }
 
     fn sample_os_processes() -> Vec<String> {
@@ -3843,6 +4528,31 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             self.live_render_invariant_streak = 0;
         }
 
+        // --- Noether K: Zeitliche Erhaltungsgröße nach Noether-Theorem ---
+        // K = 0.40 * spektrale_ähnlichkeit + 0.30 * (1 − entropiedrift) + 0.30 * (1 − deltavarianz)
+        let noether_curr_spectral = Self::noether_spectral_5(&frame_bytes);
+        let noether_curr_entropy = Self::live_entropy_bytes(&frame_bytes);
+        let is_first_noether = self.live_render_noether_prev_spectral == [0.0f32; 5]
+            && self.live_render_noether_prev_entropy == 0.0;
+        let noether_spectral_sim = if is_first_noether {
+            1.0f32
+        } else {
+            Self::noether_cosine_sim(&self.live_render_noether_prev_spectral, &noether_curr_spectral)
+        };
+        let noether_entropy_drift = if is_first_noether {
+            0.0f32
+        } else {
+            ((noether_curr_entropy - self.live_render_noether_prev_entropy).abs()
+                / self.live_render_noether_prev_entropy.max(1e-6))
+            .min(1.0)
+        };
+        let noether_k = (0.40 * noether_spectral_sim
+            + 0.30 * (1.0 - noether_entropy_drift)
+            + 0.30 * (1.0 - delta_ratio.min(1.0)))
+        .clamp(0.0, 1.0);
+        let noether_delta_k = noether_k - self.live_render_noether_k;
+        let noether_sym = noether_k >= 0.60;
+
         let structural_pattern = serde_json::json!({
             "tick": self.tick_counter,
             "frame_bytes": frame_bytes.len(),
@@ -3855,6 +4565,13 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             },
             "running_services": running_services,
             "os_process_count": os_processes.len(),
+            "noether": {
+                "k": noether_k,
+                "delta_k": noether_delta_k,
+                "symmetry_preserved": noether_sym,
+                "spectral_sim": noether_spectral_sim,
+                "entropy_drift": noether_entropy_drift,
+            },
         });
 
         let (godel_level, godel_delta_percent) = self.run_live_godel_probe(&frame_bytes, 3);
@@ -3881,6 +4598,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         self.live_render_prev_xor_delta = self.last_xor_delta.clone();
         self.live_render_last_delta_ratio = delta_ratio;
         self.live_render_last_pixeldynamics = pixeldynamics;
+        self.live_render_noether_k = noether_k;
+        self.live_render_noether_delta_k = noether_delta_k;
+        self.live_render_noether_symmetry_preserved = noether_sym;
+        self.live_render_noether_prev_spectral = noether_curr_spectral;
+        self.live_render_noether_prev_entropy = noether_curr_entropy;
     }
 
     fn theme_definition(&self) -> Theme {
@@ -3905,7 +4627,19 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         }
     }
 
+    fn dashboard_search_help(&self) -> &'static str {
+        self.ui_text("Suche: Datei, Anchor, Bedrohung \u{2026}", "Search: file, anchor, threat \u{2026}")
+    }
+
+    fn dashboard_search_placeholder(&self) -> &'static str {
+        self.ui_text("Suche \u{2026}", "Search \u{2026}")
+    }
+
     fn browser_surface_mode(&self) -> Option<Tab> {
+        if self.current_user.is_none() {
+            return None;
+        }
+
         match self.active_tab {
             Tab::Browser => Some(Tab::Browser),
             Tab::YouTube => Some(Tab::YouTube),
@@ -3994,7 +4728,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         self.show_tutorial = self.state_store.entries_for(&user.username).is_empty();
                         self.current_user = Some(user);
                         self.active_tab = Tab::Home;
-                        self.chat_context = ChatContext::Shanway;
+                        self.chat_context = ChatContext::Private;
                         self.selected_private_partner = None;
                         self.refresh_security_snapshot(true, "login");
                         self.status_line = format!(
@@ -4024,7 +4758,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                             self.current_user = Some(user);
                             self.show_tutorial = true;
                             self.active_tab = Tab::Chat;
-                            self.chat_context = ChatContext::Shanway;
+                            self.chat_context = ChatContext::Private;
                             self.selected_private_partner = None;
                             self.refresh_security_snapshot(true, "register");
                             self.status_line = format!(
@@ -4108,7 +4842,9 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     "Files" => Some(Tab::Data),
                     "Anchors" => Some(Tab::Anchors),
                     "Threat Analysis" => Some(Tab::ADE),
-                    "Threat Graph" => Some(Tab::StructureMap),
+                    "FlowSphere" => Some(Tab::FlowSphere),
+                    "Threat Graph" => Some(Tab::FlowSphere),
+                    "Delta Convergence" => Some(Tab::StructureMap),
                     "Chat" => Some(Tab::Chat),
                     "Browser" => Some(Tab::Browser),
                     "YouTube" => Some(Tab::YouTube),
@@ -4172,8 +4908,6 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             Message::PrivateMessageSend => self.send_private_message(),
             Message::GroupMessageChanged(value) => self.group_message_draft = value,
             Message::GroupMessageSend => self.send_group_message(),
-            Message::ShanwayMessageChanged(value) => self.shanway_message_draft = value,
-            Message::ShanwayMessageSend => self.send_shanway_message(),
             Message::BrowserAddressChanged(value) => self.browser_address = value,
             Message::BrowserSearchQueryChanged(value) => self.browser_search_query = value,
             Message::YouTubeAddressChanged(value) => {
@@ -4332,6 +5066,14 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                             self.last_analysis = Some(result.snapshot.clone());
                             self.last_byte_hist = result.byte_hist.clone();
                             self.last_xor_delta = result.xor_delta.clone();
+                            self.apply_projection_state(
+                                result.capsule_state.clone(),
+                                result.structure_map_state.clone(),
+                                result.structure_map_nodes.clone(),
+                                result.aelab_state.clone(),
+                                result.compression_state.clone(),
+                                result.reconstruction_state.clone(),
+                            );
                             self.analysis_progress = 1.0;
                             let preview_upper = result.snapshot.preview_note.to_ascii_uppercase();
                             let malware_flag = preview_upper.contains("MALWARE")
@@ -4367,6 +5109,24 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         self.analysis_progress = 0.0;
                         self.analysis_status = format!("Analyse fehlgeschlagen: {err}");
                         self.status_line = self.analysis_status.clone();
+                    }
+                }
+            }
+            Message::LiveRenderAnalysisCompleted(result) => {
+                self.live_render_analysis_running = false;
+                match result {
+                    Ok(result) => {
+                        self.apply_projection_state(
+                            result.capsule_state,
+                            result.structure_map_state,
+                            result.structure_map_nodes,
+                            result.aelab_state,
+                            result.compression_state,
+                            result.reconstruction_state,
+                        );
+                    }
+                    Err(err) => {
+                        self.status_line = format!("Live-Render Capsule fehlgeschlagen: {err}");
                     }
                 }
             }
@@ -4508,7 +5268,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 self.app_mode = AppMode::Full;
                 return window::get_latest().then(|id_opt| {
                     if let Some(id) = id_opt {
-                        window::resize(id, iced::Size::new(1560.0, 900.0))
+                        window::resize(id, iced::Size::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT))
                     } else {
                         Task::none()
                     }
@@ -4707,13 +5467,16 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 self.poll_hybrid_state();
             }
             Message::ToggleMode => {
+                if self.current_user.is_none() {
+                    return Task::none();
+                }
                 self.app_mode = match self.app_mode {
                     AppMode::Overlay => AppMode::Full,
                     AppMode::Full => AppMode::Overlay,
                 };
                 let (new_w, new_h) = match self.app_mode {
-                    AppMode::Full => (1560.0f32, 900.0f32),
-                    AppMode::Overlay => (960.0f32, 72.0f32),
+                    AppMode::Full => (FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT),
+                    AppMode::Overlay => (OVERLAY_WINDOW_WIDTH, OVERLAY_WINDOW_HEIGHT),
                 };
                 return window::get_latest().then(move |id_opt| {
                     if let Some(id) = id_opt {
@@ -4733,9 +5496,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 };
             }
             Message::Tick => {
+                let mut queued_tasks: Vec<Task<Message>> = Vec::new();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
                 self.launcher_state.poll_processes();
                 if self.live_render_mode {
+                    let previous_live_signal = self.live_render_last_frame.clone();
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         self.capture_live_render_frame();
                     })) {
@@ -4761,6 +5526,20 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                             }
                         }
                     }
+                    if !self.live_render_analysis_running
+                        && self.tick_counter % 8 == 0
+                        && !self.live_render_last_frame.is_empty()
+                    {
+                        self.live_render_analysis_running = true;
+                        queued_tasks.push(Task::perform(
+                            analyze_live_signal_for_shell(
+                                self.live_render_last_frame.clone(),
+                                previous_live_signal,
+                                self.tick_counter,
+                            ),
+                            Message::LiveRenderAnalysisCompleted,
+                        ));
+                    }
                 }
                 if self.tick_counter % 60 == 0 {
                     self.poll_hybrid_state();
@@ -4777,7 +5556,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     let host = self.symbiont_host.clone();
                     let port = self.symbiont_port;
                     let since = self.symbiont_last_event_idx;
-                    return Task::perform(
+                    queued_tasks.push(Task::perform(
                         async move {
                             let result = symbiont_rpc::request_json(
                                 &host,
@@ -4812,14 +5591,28 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                             Ok((entries, last_idx))
                         },
                         Message::SymbiontEventsReceived,
-                    );
+                    ));
                 }
                 if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE {
-                    self.step_structure_map();
-                    return Task::none();
+                    if !self.live_render_mode
+                        && self.structure_map_state.is_none()
+                        && self.structure_map_nodes.iter().all(|ring| ring.is_empty())
+                    {
+                        self.step_structure_map();
+                    }
+                    return if queued_tasks.is_empty() {
+                        Task::none()
+                    } else {
+                        Task::batch(queued_tasks)
+                    };
                 }
                 if self.browser_surface_mode().is_none() {
-                    return Task::none();
+                    self.browser_embed.hide();
+                    return if queued_tasks.is_empty() {
+                        Task::none()
+                    } else {
+                        Task::batch(queued_tasks)
+                    };
                 }
                 let (effective_browser_stride, boost_activity) = if self.live_render_mode && self.live_render_anchor_boost {
                     // Real boost: reduce stride (faster sync) + enable high-load delta compression
@@ -4871,6 +5664,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         _ => {}
                     }
                 }
+                return if queued_tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(queued_tasks)
+                };
             }
             Message::SecurityRecheck => {
                 self.refresh_security_snapshot(true, "manual_recheck");
@@ -4878,7 +5676,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             }
             Message::TutorialDismissed => {
                 self.show_tutorial = false;
-                self.status_line = "Shanway-Tutorial ausgeblendet.".to_owned();
+                self.status_line = "Tutorial ausgeblendet.".to_owned();
             }
             // ── Launcher Dashboard Messages ────────────────────────────────────────
             Message::LauncherModeSelected(mode) => {
@@ -4974,10 +5772,10 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         };
 
         let quick_button = |label: String, tab: Tab| {
-            button(text(label).size(11))
+            button(text(label).size(11).color(c(TEXT_H())))
                 .on_press(Message::OpenFullTab(tab))
                 .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(c(BG_CARD2))),
+                    background: Some(Background::Color(c(BG_CARD2()))),
                     border: Border {
                         color: c(BORDER()),
                         width: 1.0,
@@ -4990,7 +5788,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         };
 
         let bar = row![
-            text("⬡ AETHER").size(13).color(c(ACCENT)),
+            text("⬡ AETHER").size(13).color(c(ACCENT())),
             text(entropy_str).size(12).color(c(TEXT_M())),
             text(vault_str).size(12).color(c(TEXT_M())),
             text(cpu_str).size(12).color(c(TEXT_M())),
@@ -4998,30 +5796,31 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
             quick_button(self.ui_text("Symbiont", "Symbiont").to_owned(), Tab::Symbiont),
             quick_button(self.ui_text("Swarm Ops", "Swarm Ops").to_owned(), Tab::SwarmOps),
             quick_button(self.ui_text("Threat", "Threat").to_owned(), Tab::ADE),
-            quick_button(self.ui_text("FlowSphere", "FlowSphere").to_owned(), Tab::StructureMap),
+            quick_button(self.ui_text("FlowSphere", "FlowSphere").to_owned(), Tab::FlowSphere),
+            quick_button(self.ui_text("Delta", "Delta").to_owned(), Tab::StructureMap),
             quick_button(self.ui_text("Privatsphaere", "Privacy").to_owned(), Tab::Privacy),
             quick_button(self.ui_text("Dateien", "Files").to_owned(), Tab::Data),
             quick_button(self.ui_text("Verlauf", "Logs").to_owned(), Tab::Logs),
             quick_button(self.ui_text("Chat", "Chat").to_owned(), Tab::Chat),
-            button(text(if self.live_render_mode { "Live: ON" } else { "Live: OFF" }).size(11))
+            button(text(if self.live_render_mode { "Live: ON" } else { "Live: OFF" }).size(11).color(c(TEXT_H())))
                 .on_press(Message::LiveRenderToggle)
                 .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(c(BG_CARD2))),
+                    background: Some(Background::Color(c(BG_CARD2()))),
                     border: Border {
-                        color: c(BORDER_ACT),
+                        color: c(BORDER_ACT()),
                         width: 1.0,
                         radius: 4.0.into(),
                     },
-                    text_color: c(TEXT_M),
+                    text_color: c(TEXT_M()),
                     ..Default::default()
                 })
                 .padding([3, 8]),
-            button(text(self.ui_text("▲ Oeffnen", "▲ Open")).size(12))
+            button(text(self.ui_text("▲ Vollansicht", "▲ Open Full View")).size(12).color(c(TEXT_H())))
                 .on_press(Message::OpenFullTab(self.active_tab))
                 .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(c(BG_CARD2))),
-                    border: Border { color: c(BORDER_ACT), width: 1.0, radius: 4.0.into() },
-                    text_color: c(ACCENT),
+                    background: Some(Background::Color(c(BG_CARD2()))),
+                    border: Border { color: c(BORDER_ACT()), width: 1.0, radius: 4.0.into() },
+                    text_color: c(ACCENT()),
                     ..Default::default()
                 })
                 .padding([4, 10]),
@@ -5068,10 +5867,9 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
         let vscode_state = if self.vscode_symbiont_active { "online" } else { "offline" };
         let status = if self.backend_state_loaded {
             format!(
-                "Backend aktiv | Entropy {:.2} | Vault {} | Last: {}",
+                "Backend aktiv | Entropy {:.2} | Vault {}",
                 self.backend_entropy_mean,
                 self.backend_vault_main,
-                if self.backend_shanway_last.is_empty() { "--" } else { "vorhanden" }
             )
         } else {
             "Backend noch nicht geladen. Overlay laeuft trotzdem weiter.".to_owned()
@@ -5112,15 +5910,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 text("Symbiont Control").size(28).color(c(TEXT_H())),
                 text("Zentrale Stelle fuer Signal- und Strukturanalyse. Symbiont-Module leben teils im Backend, hier bekommst du klare Einstiegspunkte.")
                     .size(13)
-                    .color(c(TEXT_M)),
+                    .color(c(TEXT_M())),
                 container(
                     column![
-                        text("Hybrid Bridge: Python-Bruecke zwischen Rust-Core und Python-Modulen. Start/Stop/Restart startet den Prozess modules/hybrid_bridge.py.").size(11).color(c(TEXT_D)),
-                        text("Symbiont: Das Python-Backend (aether-symbiont/server/symbiont_server.py) stellt Vault-Daten und Analyse-Ergebnisse ueber IPC bereit.").size(11).color(c(TEXT_D)),
-                        text("WebSocket: Echtzeit-Kanal zwischen Symbiont-Backend und Rust-Shell. Aktiv wenn Hybrid Bridge online ist.").size(11).color(c(TEXT_D)),
-                        text("SymbiontLink: Verbindungsstatus zum VS-Code-Plugin (aether-symbiont Extension). Zeigt ob IDE-Integration aktiv ist.").size(11).color(c(TEXT_D)),
-                        text("Runtime Hybrid / Runtime Web: Betriebsmodi des Backends. Hybrid = Python+Rust gemischt, Web = Browser-Bridge aktiv.").size(11).color(c(TEXT_D)),
-                        text("Razor-Signale: Mehrzeilige Eingabe im Signalfeld. Jede Zeile wird als separates strukturelles Signal analysiert, nicht als Freitext.").size(11).color(c(TEXT_D)),
+                        text("Hybrid Bridge: Python-Bruecke zwischen Rust-Core und Python-Modulen. Start/Stop/Restart startet den Prozess modules/hybrid_bridge.py.").size(11).color(c(TEXT_D())),
+                        text("Symbiont: Das Python-Backend (aether-symbiont/server/symbiont_server.py) stellt Vault-Daten und Analyse-Ergebnisse ueber IPC bereit.").size(11).color(c(TEXT_D())),
+                        text("WebSocket: Echtzeit-Kanal zwischen Symbiont-Backend und Rust-Shell. Aktiv wenn Hybrid Bridge online ist.").size(11).color(c(TEXT_D())),
+                        text("SymbiontLink: Verbindungsstatus zum VS-Code-Plugin (aether-symbiont Extension). Zeigt ob IDE-Integration aktiv ist.").size(11).color(c(TEXT_D())),
+                        text("Runtime Hybrid / Runtime Web: Betriebsmodi des Backends. Hybrid = Python+Rust gemischt, Web = Browser-Bridge aktiv.").size(11).color(c(TEXT_D())),
+                        text("Razor-Signale: Mehrzeilige Eingabe im Signalfeld. Jede Zeile wird als separates strukturelles Signal analysiert, nicht als Freitext.").size(11).color(c(TEXT_D())),
                     ]
                     .spacing(6)
                 )
@@ -5154,15 +5952,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 ]
                 .spacing(10),
                 row![
-                    button(text("Open Data Analysis").size(12).color(c(TEXT_H()))),
+                    button(text("Open Data Analysis").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Data))
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Threat Analysis").size(12).color(c(TEXT_H()))),
+                    button(text("Open Threat Analysis").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::ADE))
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Chat / Shanway").size(12).color(c(TEXT_H()))),
+                    button(text("Open Chat").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Chat))
                         .padding([8, 12])
                         .style(primary_button_style),
@@ -5172,12 +5970,12 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     column![
                         row![
                             text("Hybrid Bridge:").size(12).color(c(TEXT_D())),
-                            button(text(format!(" {} (?)", bridge_state)).size(12).color(c(TEXT_H()))),
+                            button(text(format!(" {} (?)", bridge_state)).size(12).color(c(TEXT_H())))
                                 .on_press(Message::ShowTooltip("Hybrid Bridge: Python-Bruecke zwischen Rust-Core und Python-Modulen.".to_owned()))
                                 .style(secondary_button_style)
                                 .padding([2, 6]),
                             text("| Symbiont:").size(12).color(c(TEXT_D())),
-                            button(text(format!(" {} (?)", sym_state)).size(12).color(c(TEXT_H()))),
+                            button(text(format!(" {} (?)", sym_state)).size(12).color(c(TEXT_H())))
                                 .on_press(Message::ShowTooltip("Symbiont: Python-Backend fuer Vault- und Analyse-Daten ueber IPC.".to_owned()))
                                 .style(secondary_button_style)
                                 .padding([2, 6]),
@@ -5186,7 +5984,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         .align_y(Alignment::Center),
                         row![
                             text("VS Code Symbiont:").size(12).color(c(TEXT_D())),
-                            button(text(format!(" {} (?)", vscode_state)).size(12).color(c(TEXT_H()))),
+                            button(text(format!(" {} (?)", vscode_state)).size(12).color(c(TEXT_H())))
                                 .on_press(Message::ShowTooltip("SymbiontLink: Status der VS-Code-Integration.".to_owned()))
                                 .style(secondary_button_style)
                                 .padding([2, 6]),
@@ -5198,15 +5996,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         .spacing(2)
                         .align_y(Alignment::Center),
                         row![
-                            button(text("Bridge Start").size(12).color(c(TEXT_H()))),
+                            button(text("Bridge Start").size(12).color(c(TEXT_H())))
                                 .on_press(Message::HybridBridgeStartPressed)
                                 .padding([8, 12])
                                 .style(primary_button_style),
-                            button(text("Bridge Restart").size(12).color(c(TEXT_H()))),
+                            button(text("Bridge Restart").size(12).color(c(TEXT_H())))
                                 .on_press(Message::HybridBridgeRestartPressed)
                                 .padding([8, 12])
                                 .style(primary_button_style),
-                            button(text("Bridge Stop").size(12).color(c(TEXT_H()))),
+                            button(text("Bridge Stop").size(12).color(c(TEXT_H())))
                                 .on_press(Message::HybridBridgeStopPressed)
                                 .padding([8, 12])
                                 .style(secondary_button_style),
@@ -5218,7 +6016,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 .padding(10)
                 .style(panel_frame_style),
                 container(
-                    text("Tipp: Zuerst Bridge starten, dann Symbiont - warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN))
+                    text("Tipp: Zuerst Bridge starten, dann Symbiont - warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN()))
                 )
                 .padding(8)
                 .style(|_: &Theme| container::Style {
@@ -5238,19 +6036,19 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                             .size(11)
                             .color(c(TEXT_D())),
                         row![
-                            button(text(if self.symbiont_busy { "Profil ..." } else { "Profil" }).size(12).color(c(TEXT_H()))),
+                            button(text(if self.symbiont_busy { "Profil ..." } else { "Profil" }).size(12).color(c(TEXT_H())))
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontProfilePressed))
                                 .padding([8, 12])
                                 .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Razor ..." } else { "Razor" }).size(12).color(c(TEXT_H()))),
+                            button(text(if self.symbiont_busy { "Razor ..." } else { "Razor" }).size(12).color(c(TEXT_H())))
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontRazorPressed))
                                 .padding([8, 12])
                                 .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Snapshot ..." } else { "Snapshot" }).size(12).color(c(TEXT_H()))),
+                            button(text(if self.symbiont_busy { "Snapshot ..." } else { "Snapshot" }).size(12).color(c(TEXT_H())))
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontSnapshotPressed))
                                 .padding([8, 12])
                                 .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Status ..." } else { "Status" }).size(12).color(c(TEXT_H()))),
+                            button(text(if self.symbiont_busy { "Status ..." } else { "Status" }).size(12).color(c(TEXT_H())))
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontStatusPressed))
                                 .padding([8, 12])
                                 .style(secondary_button_style),
@@ -5347,15 +6145,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 ]
                 .spacing(10),
                 row![
-                    button(text("Open Anchors").size(12).color(c(TEXT_H()))),
+                    button(text("Open Anchors").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Anchors))
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Runtime").size(12).color(c(TEXT_H()))),
+                    button(text("Open Runtime").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Settings))
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Logs").size(12).color(c(TEXT_H()))),
+                    button(text("Open Logs").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Logs))
                         .padding([8, 12])
                         .style(primary_button_style),
@@ -5414,15 +6212,15 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 ]
                 .spacing(10),
                 row![
-                    button(text("Security Recheck").size(12).color(c(TEXT_H()))),
+                    button(text("Security Recheck").size(12).color(c(TEXT_H())))
                         .on_press(Message::SecurityRecheck)
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Logs").size(12).color(c(TEXT_H()))),
+                    button(text("Open Logs").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Logs))
                         .padding([8, 12])
                         .style(primary_button_style),
-                    button(text("Open Browser").size(12).color(c(TEXT_H()))),
+                    button(text("Open Browser").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Browser))
                         .padding([8, 12])
                         .style(primary_button_style),
@@ -5454,7 +6252,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         row![
                             text(title).size(18).color(c(TEXT_H())),
                             iced::widget::Space::new(Length::Fill, Length::Shrink),
-                            container(text(status).size(11).color(c(ACCENT)))
+                            container(text(status).size(11).color(c(ACCENT())))
                                 .padding([4, 8])
                                 .style(|_: &Theme| container::Style {
                                     background: Some(Background::Color(Color::from_rgba(0.12, 0.24, 0.28, 0.85))),
@@ -5464,7 +6262,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         ]
                         .align_y(Alignment::Center),
                         text(desc).size(13).color(c(TEXT_M())),
-                        button(text(route_label).size(12).color(c(TEXT_H()))),
+                        button(text(route_label).size(12).color(c(TEXT_H())))
                             .on_press(Message::TabSelected(route_tab))
                             .padding([8, 12])
                             .style(primary_button_style),
@@ -5532,7 +6330,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 )
                 .padding([6, 10])
                 .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(c(BG_CARD2))),
+                    background: Some(Background::Color(c(BG_CARD2()))),
                     border: Border { color: c(BORDER()), width: 1.0, radius: 8.0.into() },
                     ..Default::default()
                 })
@@ -5625,31 +6423,31 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
 
             let quick_start_row = Row::new()
                 .push(
-                    button(text(self.ui_text("1) Uebersicht", "1) Overview")).size(12).color(c(TEXT_H()))),
+                    button(text(self.ui_text("1) Uebersicht", "1) Overview")).size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Home))
                         .padding([8, 12])
                         .style(primary_button_style)
                 )
                 .push(
-                    button(text(self.ui_text("2) Security-Pruefung", "2) Security Recheck")).size(12).color(c(TEXT_H()))),
+                    button(text(self.ui_text("2) Security-Pruefung", "2) Security Recheck")).size(12).color(c(TEXT_H())))
                         .on_press(Message::SecurityRecheck)
                         .padding([8, 12])
                         .style(primary_button_style)
                 )
                 .push(
-                    button(text(self.ui_text("3) Kontrollzentrum", "3) Control Center")).size(12).color(c(TEXT_H()))),
+                    button(text(self.ui_text("3) Kontrollzentrum", "3) Control Center")).size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Control))
                         .padding([8, 12])
                         .style(primary_button_style)
                 )
                 .push(
-                    button(text("4) Swarm Ops").size(12).color(c(TEXT_H()))),
+                    button(text("4) Swarm Ops").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::SwarmOps))
                         .padding([8, 12])
                         .style(primary_button_style)
                 )
                 .push(
-                    button(text("5) Runtime").size(12).color(c(TEXT_H()))),
+                    button(text("5) Runtime").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Settings))
                         .padding([8, 12])
                         .style(primary_button_style)
@@ -5746,7 +6544,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
 
     fn mode_button<'a>(&self, mode: LauncherMode, label: &'a str) -> Element<'a, Message> {
         let is_active = self.launcher_state.mode == mode;
-        button(text(label).size(13).color(if is_active { c(ACCENT) } else { c(TEXT_M()) }))
+        button(text(label).size(13).color(if is_active { c(ACCENT()) } else { c(TEXT_M()) }))
             .on_press(Message::LauncherModeSelected(mode))
             .padding([8, 16])
             .style(move |_: &Theme, _| button::Style {
@@ -5756,11 +6554,11 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     Color::TRANSPARENT
                 })),
                 border: Border {
-                    color: if is_active { c(ACCENT) } else { c(BORDER()) },
+                    color: if is_active { c(ACCENT()) } else { c(BORDER()) },
                     width: 1.0,
                     radius: 6.0.into(),
                 },
-                text_color: if is_active { c(ACCENT) } else { c(TEXT_M()) },
+                text_color: if is_active { c(ACCENT()) } else { c(TEXT_M()) },
                 ..Default::default()
             })
             .into()
@@ -5781,7 +6579,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     ServiceStatus::Running => (
                         None,
                         Some(
-                            button(text("Stop").size(12).color(c(TEXT_H()))),
+                            button(text("Stop").size(12).color(c(TEXT_H())))
                                 .on_press(Message::LauncherServiceStopPressed(service.id.clone()))
                                 .padding([6, 12])
                                 .style(secondary_button_style)
@@ -5790,7 +6588,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                     ),
                     ServiceStatus::Idle => (
                         Some(
-                            button(text("Start").size(12).color(c(TEXT_H()))),
+                            button(text("Start").size(12).color(c(TEXT_H())))
                                 .on_press(Message::LauncherServiceStartPressed(service.id.clone()))
                                 .padding([6, 12])
                                 .style(primary_button_style)
@@ -5887,7 +6685,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                         .spacing(8),
                         text(task.description.clone()).size(11).color(c(TEXT_M())),
                         row![
-                            button(text(if task.running { "Running..." } else { "Execute" }).size(12).color(c(TEXT_H()))),
+                            button(text(if task.running { "Running..." } else { "Execute" }).size(12).color(c(TEXT_H())))
                                 .on_press_maybe((!task.running).then_some(Message::LauncherBuildTaskPressed(task.id.clone())))
                                 .padding([6, 12])
                                 .style(primary_button_style)
@@ -5960,7 +6758,7 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
                 row![
                     text("Recent Logs").size(14).color(c(TEXT_H())),
                     iced::widget::Space::new(Length::Fill, Length::Shrink),
-                    button(text("Clear").size(12).color(c(TEXT_H()))),
+                    button(text("Clear").size(12).color(c(TEXT_H())))
                         .on_press(Message::LauncherLogsClearPressed)
                         .padding([4, 12])
                         .style(secondary_button_style),
@@ -6040,41 +6838,43 @@ fn view_header(&self, logo: Element<'_, Message>, tabs: Element<'_, Message>) ->
     }
 
     fn root_view(&self) -> Element<'_, Message> {
+        if self.current_user.is_none() {
+            return self.view_auth();
+        }
+
         match self.app_mode {
             AppMode::Overlay => self.view_overlay(),
             AppMode::Full => {
-                if self.current_user.is_none() {
-                    self.view_auth()
-                } else {
-                    let shell = self.view_shell();
-                    let global_bar = self.view_global_control_bar();
-                    let minimize_bar = container(
-                        row![
-                            button(text("▼ Minimize").size(11))
-                                .on_press(Message::ToggleMode)
-                                .style(|_: &Theme, _| button::Style {
-                                    background: Some(Background::Color(c(BG_CARD()))),
-                                    border: Border { color: c(BORDER()), width: 1.0, radius: 4.0.into() },
-                                    text_color: c(TEXT_M()),
-                                    ..Default::default()
-                                })
-                                .padding([3, 10]),
-                        ]
-                        .padding([4, 12])
-                    )
-                    .width(Length::Fill)
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(c(BG_BASE()))),
-                        border: Border { color: c(BORDER()), width: 1.0, radius: 0.0.into() },
-                        ..Default::default()
-                    });
+                let shell = self.view_shell();
+                let global_bar = self.view_global_control_bar();
+                let minimize_bar = container(
+                    row![
+                        text("Kompaktleiste am unteren Rand | Esc blendet um").size(11).color(c(TEXT_M())),
+                        iced::widget::Space::new(Length::Fill, Length::Shrink),
+                        button(text("▼ Zur Kompaktleiste (Esc)").size(11).color(c(TEXT_H())))
+                            .on_press(Message::ToggleMode)
+                            .style(|_: &Theme, _| button::Style {
+                                background: Some(Background::Color(c(BG_CARD()))),
+                                border: Border { color: c(BORDER()), width: 1.0, radius: 4.0.into() },
+                                text_color: c(TEXT_M()),
+                                ..Default::default()
+                            })
+                            .padding([3, 10]),
+                    ]
+                    .padding([4, 12])
+                )
+                .width(Length::Fill)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(c(BG_BASE()))),
+                    border: Border { color: c(BORDER()), width: 1.0, radius: 0.0.into() },
+                    ..Default::default()
+                });
 
-                    column![shell, global_bar, minimize_bar].into()
-                }
+                column![shell, global_bar, minimize_bar].into()
             }
         }
     }
-// removed stray closing brace
+}
 
 fn app_title(_state: &AetherIcedShell) -> String {
     "Aether".to_owned()
@@ -6103,7 +6903,6 @@ fn app_event(event: iced::Event, status: event::Status, _window: window::Id) -> 
             }
             None
         }
-        _ => None,
         iced::Event::Window(window::Event::Resized(size)) => {
             Some(Message::WindowResized(size.width, size.height))
         }
@@ -6122,7 +6921,7 @@ fn app_subscription(state: &AetherIcedShell) -> Subscription<Message> {
 }
 
 pub fn run() -> iced::Result {
-    // application(app_title, app_update, app_view) // TODO: application nicht importiert
+    iced::application(app_title, app_update, app_view)
         .theme(app_theme)
         .subscription(app_subscription)
         .settings(Settings {
@@ -6130,14 +6929,22 @@ pub fn run() -> iced::Result {
             ..Settings::default()
         })
         .window(window::Settings {
-            size: iced::Size::new(480.0, 36.0),
-            min_size: Some(iced::Size::new(320.0, 36.0)),
-            position: window::Position::Specific(iced::Point::new(0.0, 0.0)),
-            decorations: false,
-            level: window::Level::AlwaysOnTop,
+            size: iced::Size::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT),
+            min_size: Some(iced::Size::new(960.0, 640.0)),
+            position: window::Position::Specific(Point::new(36.0, 28.0)),
+            decorations: true,
             ..window::Settings::default()
         })
-        .run_with(|| (AetherIcedShell::bootstrap(), Task::none()))
+        .run_with(|| {
+            let startup_resize = window::get_latest().then(|id_opt| {
+                if let Some(id) = id_opt {
+                    window::resize(id, iced::Size::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT))
+                } else {
+                    Task::none()
+                }
+            });
+            (AetherIcedShell::bootstrap(), startup_resize)
+        })
 }
 
 fn make_sparkline(fill: f32) -> String {
@@ -6153,6 +6960,7 @@ fn make_sparkline(fill: f32) -> String {
 // All animation parameters are derived from tick + entropy, no random values.
 // ---------------------------------------------------------------------------
 
+#[allow(dead_code)]
 struct FlowSphereScene {
     tick: u64,
     entropy: f32,
@@ -6178,7 +6986,7 @@ impl canvas::Program<Message> for FlowSphereScene {
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry<iced::Renderer>> {
         // Placeholder: just return an empty frame for now
-        let mut frame = canvas::Frame::new(_renderer, bounds.size());
+        let frame = canvas::Frame::new(_renderer, bounds.size());
         vec![frame.into_geometry()]
     }
 }
@@ -6315,10 +7123,9 @@ impl canvas::Program<Message> for StructureMapScene {
             } else if ring_idx >= 7 {
                 // frame.fill(&canvas::Path::circle(pt, 2.5), color); // TODO: pt nicht definiert
             } else {
-                let sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
-                let mut nc = color;
-                nc.a = 0.72;
-                // frame.fill(&canvas::Path::circle(pt, sz), nc); // TODO: pt nicht definiert
+                let _sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
+                // TODO: pt not defined — fill call below is incomplete
+                // frame.fill(&canvas::Path::circle(pt, _sz), nc); // TODO: pt nicht definiert
             }
         }
 
@@ -6328,6 +7135,7 @@ impl canvas::Program<Message> for StructureMapScene {
 
 // ── AetherLogoScene ──────────────────────────────────────────────────────────
 
+#[allow(dead_code)]
 struct AetherLogoScene;
 impl canvas::Program<Message> for AetherLogoScene {
     type State = ();
@@ -6371,119 +7179,6 @@ impl canvas::Program<Message> for AetherLogoScene {
                 frame.stroke(&l, canvas::Stroke { style: canvas::Style::Solid(lc), width: 0.8, ..canvas::Stroke::default() });
             }
         }
-        vec![frame.into_geometry()]
-    }
-}
-
-// ── ShanwayRobotScene ─────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-struct ShanwayRobotScene {
-    tick: u64,
-    size: f32,
-}
-
-impl canvas::Program<Message> for ShanwayRobotScene {
-    type State = ();
-    fn draw(&self, _: &(), renderer: &iced::Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let t = self.tick as f32;
-        let s = self.size;
-        let cx = bounds.width * 0.5;
-        let cy = bounds.height * 0.5;
-        let green = Color::from_rgb8(0x9A, 0x67, 0xFF);
-        let cyan  = Color::from_rgb8(0x2A, 0xB6, 0xFF);
-        let dark  = Color::from_rgba(0.59, 0.34, 0.96, 0.10);
-
-        // Antenne
-        let ant_x = cx;
-        let ant_top = cy - s * 0.72;
-        let ant_base = cy - s * 0.52;
-        let ant = canvas::Path::new(|b| {
-            b.move_to(Point::new(ant_x, ant_base));
-            b.line_to(Point::new(ant_x, ant_top));
-        });
-        frame.stroke(&ant, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.8, ..canvas::Stroke::default() });
-        frame.fill(&canvas::Path::circle(Point::new(ant_x, ant_top), 3.2), green);
-
-        // Kopf
-        let hw = s * 0.42;
-        let hh = s * 0.32;
-        let hy = cy - s * 0.5 + hh * 0.5;
-        let head = canvas::Path::new(|b| {
-            let r = 6.0f32;
-            b.move_to(Point::new(cx - hw + r, hy - hh));
-            b.line_to(Point::new(cx + hw - r, hy - hh));
-            b.arc_to(Point::new(cx + hw, hy - hh), Point::new(cx + hw, hy - hh + r), r);
-            b.line_to(Point::new(cx + hw, hy + hh - r));
-            b.arc_to(Point::new(cx + hw, hy + hh), Point::new(cx + hw - r, hy + hh), r);
-            b.line_to(Point::new(cx - hw + r, hy + hh));
-            b.arc_to(Point::new(cx - hw, hy + hh), Point::new(cx - hw, hy + hh - r), r);
-            b.line_to(Point::new(cx - hw, hy - hh + r));
-            b.arc_to(Point::new(cx - hw, hy - hh), Point::new(cx - hw + r, hy - hh), r);
-            b.close();
-        });
-        frame.fill(&head, dark);
-        frame.stroke(&head, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.8, ..canvas::Stroke::default() });
-
-        // Augen
-        let blink = (t % 120.0) > 116.0;
-        let eye_y = hy - s * 0.04;
-        let eye_r = if blink { 1.0 } else { s * 0.065 };
-        let eye_glow_a = 0.18 + 0.12 * (t * 0.08).sin();
-        for &ex in &[cx - hw * 0.38, cx + hw * 0.38] {
-            let mut gc = cyan; gc.a = eye_glow_a;
-            frame.fill(&canvas::Path::circle(Point::new(ex, eye_y), eye_r * 2.2), gc);
-            frame.fill(&canvas::Path::circle(Point::new(ex, eye_y), eye_r), cyan);
-        }
-
-        // Mund
-        let mouth = canvas::Path::new(|b| {
-            b.move_to(Point::new(cx - hw * 0.22, hy + hh * 0.45));
-            b.line_to(Point::new(cx + hw * 0.22, hy + hh * 0.45));
-        });
-        let mut mc = green; mc.a = 0.7;
-        frame.stroke(&mouth, canvas::Stroke { style: canvas::Style::Solid(mc), width: 1.5, ..canvas::Stroke::default() });
-
-        // Körper
-        let bw = s * 0.38;
-        let bh = s * 0.28;
-        let by = hy + hh + s * 0.04 + bh * 0.5;
-        let body = canvas::Path::new(|b| {
-            let r = 5.0f32;
-            b.move_to(Point::new(cx - bw + r, by - bh));
-            b.line_to(Point::new(cx + bw - r, by - bh));
-            b.arc_to(Point::new(cx + bw, by - bh), Point::new(cx + bw, by - bh + r), r);
-            b.line_to(Point::new(cx + bw, by + bh - r));
-            b.arc_to(Point::new(cx + bw, by + bh), Point::new(cx + bw - r, by + bh), r);
-            b.line_to(Point::new(cx - bw + r, by + bh));
-            b.arc_to(Point::new(cx - bw, by + bh), Point::new(cx - bw, by + bh - r), r);
-            b.line_to(Point::new(cx - bw, by - bh + r));
-            b.arc_to(Point::new(cx - bw, by - bh), Point::new(cx - bw + r, by - bh), r);
-            b.close();
-        });
-        frame.fill(&body, dark);
-        frame.stroke(&body, canvas::Stroke { style: canvas::Style::Solid(green), width: 1.5, ..canvas::Stroke::default() });
-
-        // Körper-Details
-        for i in 0..3 {
-            let ly = by - bh * 0.3 + i as f32 * bh * 0.3;
-            let mut lc = green; lc.a = 0.25;
-            let l = canvas::Path::new(|b| {
-                b.move_to(Point::new(cx - bw * 0.55, ly));
-                b.line_to(Point::new(cx + bw * 0.55, ly));
-            });
-            frame.stroke(&l, canvas::Stroke { style: canvas::Style::Solid(lc), width: 1.0, ..canvas::Stroke::default() });
-        }
-
-        // Glow-Ring
-        let glow_r = hw * 1.35 + 4.0 * (t * 0.05).sin();
-        let mut glow_c = green; glow_c.a = 0.05 + 0.03 * (t * 0.05).sin();
-        frame.stroke(
-            &canvas::Path::circle(Point::new(cx, hy), glow_r),
-            canvas::Stroke { style: canvas::Style::Solid(glow_c), width: 8.0, ..canvas::Stroke::default() },
-        );
-
         vec![frame.into_geometry()]
     }
 }
@@ -6606,7 +7301,7 @@ impl canvas::Program<Message> for OrchestrationScene {
                 }
                 // Label
                 frame.fill_text(canvas::Text {
-                    content: "Shanway".to_string(),
+                    content: "Router".to_string(),
                     position: Point::new(cx, cy + robot_h - 4.0),
                     color: Color::from_rgb8(0xCC, 0xC6, 0xF4),
                     size: iced::Pixels(9.0),
@@ -6750,6 +7445,7 @@ impl canvas::Program<Message> for DotScene {
     }
 }
 
+#[allow(dead_code)]
 struct ThreatTrendScene {
     tick: u64,
     reveal: f32,
@@ -6788,6 +7484,7 @@ impl canvas::Program<Message> for ThreatTrendScene {
     }
 }
 
+#[allow(dead_code)]
 struct RiskGaugeScene {
     score: u32,
     pulse: f32,
@@ -6869,6 +7566,7 @@ impl canvas::Program<Message> for DonutScene {
     }
 }
 
+#[allow(dead_code)]
 struct CyberPaneGraphScene {
     tick: u64,
     pulse: f32,
@@ -6979,6 +7677,19 @@ fn dashboard_info_text(key: &str) -> &'static str {
         "performance" => "Performance steuert den deterministischen Laufzeitmodus: AUTO, BALANCED, LOW-POWER oder LEGACY fuer planbare Lastprofile.",
         _ => "Aether erklaert jeden Wert deterministisch: gleicher Input erzeugt dieselbe Metrik und dieselbe Darstellung.",
     }
+}
+
+fn view_score_panel(scores: Vec<(String, f32)>) -> Element<'static, Message> {
+    let mut col = Column::new().spacing(4);
+    for (label, value) in scores {
+        col = col.push(
+            Row::new()
+                .push(text(label).size(11).width(Length::FillPortion(3)))
+                .push(text(format!("{:.2}", value)).size(11).width(Length::FillPortion(2)))
+                .spacing(8),
+        );
+    }
+    col.into()
 }
 
 fn ade_subpanel<'a>(title: &'a str, body: Element<'a, Message>, panel_bg: Color) -> Element<'a, Message> {
@@ -7215,6 +7926,7 @@ fn analysis_card<'a>(
 }
 
 /// Erzeugt eine menschenlesbare Erklaerungszeile aus den Analyse-Metriken.
+#[allow(dead_code)]
 fn plain_note_from_metrics(
     trust_score: f32,
     anchor_count: u32,
@@ -7312,28 +8024,397 @@ fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
     .into()
 }
 
+fn fallback_capsule_state(
+    source_label: &str,
+    source_type: &str,
+    domain_hint: &str,
+    size_bytes: u64,
+    entropy: f32,
+    symmetry: f32,
+    drift: f32,
+    anomaly_flags: Vec<String>,
+) -> CapsuleViewState {
+    CapsuleViewState {
+        source_label: source_label.to_owned(),
+        source_type: source_type.to_owned(),
+        trigger: "fallback".to_owned(),
+        domain_hint: domain_hint.to_owned(),
+        source_hash: String::new(),
+        size_bytes,
+        entropy,
+        h_lambda: (entropy * drift * (1.0 - symmetry + 0.1)).clamp(0.0, 8.0),
+        symmetry,
+        periodicity: 0.0,
+        zipf_alpha: 0.0,
+        benford_score: 0.0,
+        katz_dimension: 1.0,
+        sce_score: symmetry.clamp(0.0, 1.0),
+        bayes_confidence: symmetry.clamp(0.0, 1.0),
+        trust_score: (0.65 * symmetry + 0.35 * (1.0 - drift).clamp(0.0, 1.0)).clamp(0.0, 1.0),
+        noether_consistency: (1.0 - drift).clamp(0.0, 1.0),
+        delta_ratio: drift.clamp(0.0, 1.0),
+        changed_bytes: size_bytes,
+        anomaly_flags,
+    }
+}
+
+fn fallback_structure_map_state(symmetry: f32) -> StructureMapViewState {
+    StructureMapViewState {
+        region_label: "REGION LOCAL".to_owned(),
+        node_count: 4,
+        edge_count: 0,
+        anchor_count: 0,
+        anomaly_count: 1,
+        locked: false,
+        trust_score: symmetry.clamp(0.0, 1.0),
+        coherence_score: symmetry.clamp(0.0, 1.0),
+    }
+}
+
+fn structure_map_state_from_result(result: &serde_json::Value) -> StructureMapViewState {
+    let structure_map = result.get("structure_map").cloned().unwrap_or(serde_json::Value::Null);
+    StructureMapViewState::from_json(&structure_map)
+}
+
 async fn analyze_file_for_register(
     path: PathBuf,
     username: String,
-    data_key: Option<DataKey>,
+    _data_key: Option<DataKey>,
 ) -> Result<FileAnalysisResult, String> {
-    // --- Dropper-Pipeline als deterministische Kaskade ---
+    use std::f32::consts::TAU;
     use std::process::Command;
-    use std::io::Read;
-    let python = "python";
-    let script = "aether_pipeline.py";
-    let file_path = path.to_string_lossy();
-    let output = Command::new(python)
-        .arg(script)
-        .arg(&file_path)
-        .arg("--json")
+
+    let bytes = fs::read(&path).map_err(|err| format!("Datei konnte nicht gelesen werden: {err}"))?;
+    let metadata = fs::metadata(&path)
+        .map_err(|err| format!("Metadaten konnten nicht gelesen werden: {err}"))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unbekannt")
+        .to_owned();
+    let source_kind = detect_source_kind(&path, &bytes);
+
+    let python_output = Command::new("python")
+        .arg("-c")
+        .arg(
+            "import json,sys; from pathlib import Path; from aether_pipeline import AetherPipeline; print(json.dumps(AetherPipeline().process(Path(sys.argv[1])), ensure_ascii=True))",
+        )
+        .arg(path.to_string_lossy().to_string())
         .output();
 
-    // Removed misplaced match event and RegisterEntry/snapshot blocks
-    // TODO: Implement actual analysis logic and return Ok or Err as needed
-    Err("analyze_file_for_register not yet implemented".to_string())
+    let parsed = match python_output {
+        Ok(output) if output.status.success() => {
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            serde_json::from_str::<serde_json::Value>(&raw)
+                .map_err(|err| format!("Pipeline-JSON konnte nicht gelesen werden: {err}"))
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(format!("Python-Pipeline fehlgeschlagen: {}", stderr))
+        }
+        Err(err) => Err(format!("Python konnte nicht gestartet werden: {err}")),
+    };
+
+    let result = match parsed {
+        Ok(payload) => payload,
+        Err(pipeline_error) => {
+            let entropy = shannon_entropy_local(&bytes);
+            let symmetry = symmetry_from_histogram(&histogram64(&bytes));
+            let drift = byte_drift_local(&bytes);
+            let delta_size = metadata.len();
+            let capsule_state = fallback_capsule_state(
+                &path.to_string_lossy(),
+                "file",
+                &detect_file_type_from_name(&file_name),
+                metadata.len(),
+                entropy,
+                symmetry,
+                drift,
+                vec!["pipeline_fallback".to_owned()],
+            );
+            let structure_map_state = fallback_structure_map_state(symmetry);
+            let preview_note = format!(
+                "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Drift {:.2} | Fallback aktiv",
+                source_kind,
+                entropy,
+                symmetry * 100.0,
+                drift,
+            );
+            let anchor_summary = format!(
+                "Fallback | Noether {:.1}% | Drift {:.2}",
+                symmetry * 100.0,
+                drift,
+            );
+            let process_summary = format!(
+                "Quelle: {}\nFallback-Analyse lokal aktiv\n{}",
+                source_kind,
+                pipeline_error,
+            );
+            return Ok(FileAnalysisResult {
+                entry: RegisterEntry {
+                    id: 0,
+                    owner_username: username,
+                    file_name: file_name.clone(),
+                    full_path: path.to_string_lossy().to_string(),
+                    source_kind: source_kind.clone(),
+                    original_size: metadata.len(),
+                    delta_size,
+                    compression_gain_percent: 0.0,
+                    anchor_summary: anchor_summary.clone(),
+                    process_summary: process_summary.clone(),
+                    preview_note: preview_note.clone(),
+                    plain_note: preview_note.clone(),
+                },
+                snapshot: AnalysisSnapshot {
+                    file_name,
+                    original_size: metadata.len(),
+                    compression_gain_percent: 0.0,
+                    anchor_summary,
+                    process_summary,
+                    preview_note,
+                },
+                byte_hist: histogram64(&bytes),
+                xor_delta: histogram64(pipeline_error.as_bytes()),
+                capsule_state,
+                structure_map_state,
+                aelab_state: None,
+                compression_state: None,
+                reconstruction_state: None,
+                structure_map_nodes: vec![vec![0.0, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0]],
+            });
+        }
+    };
+
+    let capsule_state = CapsuleViewState::from_pipeline_result(&result);
+    let structure_map_state = structure_map_state_from_result(&result);
+    let aelab_state = AelabViewState::from_result(&result);
+    let compression_state = CompressionViewState::from_result(&result);
+    let reconstruction_state = ReconstructionAuditViewState::from_result(&result);
+
+    let anchors = result
+        .get("anchors")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let anomaly_flags = result
+        .get("anomaly_flags")
+        .and_then(|value| value.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let delta_size = result
+        .get("capsule")
+        .and_then(|value| value.get("local_delta"))
+        .and_then(|value| value.get("changed_bytes"))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(capsule_state.changed_bytes.max(metadata.len()));
+    let compression_gain_percent = if metadata.len() == 0 {
+        0.0
+    } else {
+        ((1.0 - (delta_size as f32 / metadata.len() as f32)).clamp(0.0, 1.0) * 10000.0).round() / 100.0
+    };
+    let preview_note = format!(
+        "{} | Entropie {:.2} bit | Symmetrie {:.1}% | Trust {:.1}% | H_lambda {:.2}",
+        source_kind,
+        capsule_state.entropy,
+        capsule_state.symmetry * 100.0,
+        capsule_state.trust_score * 100.0,
+        capsule_state.h_lambda,
+    );
+    let anchor_summary = format!(
+        "{} Anchors | {} Flags | SCE {:.1}%",
+        anchors.len(),
+        anomaly_flags.len(),
+        capsule_state.sce_score * 100.0,
+    );
+    let process_summary = format!(
+        "Quelle: {}\nVerdichtung: {:.2}% Gewinn\nSCE: {:.1}% | Trust {:.1}% | H_lambda {:.2}",
+        source_kind,
+        compression_gain_percent,
+        capsule_state.sce_score * 100.0,
+        capsule_state.trust_score * 100.0,
+        capsule_state.h_lambda,
+    );
+
+    let structure_map = result.get("structure_map").cloned().unwrap_or(serde_json::Value::Null);
+    let structure_map_nodes = structure_map_rings(&structure_map);
+    Ok(FileAnalysisResult {
+        entry: RegisterEntry {
+            id: 0,
+            owner_username: username,
+            file_name: file_name.clone(),
+            full_path: path.to_string_lossy().to_string(),
+            source_kind: source_kind.clone(),
+            original_size: metadata.len(),
+            delta_size,
+            compression_gain_percent,
+            anchor_summary: anchor_summary.clone(),
+            process_summary: process_summary.clone(),
+            preview_note: preview_note.clone(),
+            plain_note: preview_note.clone(),
+        },
+        snapshot: AnalysisSnapshot {
+            file_name,
+            original_size: metadata.len(),
+            compression_gain_percent,
+            anchor_summary,
+            process_summary,
+            preview_note,
+        },
+        byte_hist: histogram64(&bytes),
+        xor_delta: histogram64(
+            result
+                .get("xor_delta")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .as_bytes(),
+        ),
+        capsule_state,
+        structure_map_state,
+        aelab_state,
+        compression_state,
+        reconstruction_state,
+        structure_map_nodes,
+    })
 }
 
+async fn analyze_live_signal_for_shell(
+    raw: Vec<u8>,
+    previous_signal: Vec<u8>,
+    tick: u64,
+) -> Result<LiveRenderAnalysisResult, String> {
+    use std::process::Command;
+
+    let raw_b64 = base64::engine::general_purpose::STANDARD.encode(raw.as_slice());
+    let previous_b64 = if previous_signal.is_empty() {
+        String::new()
+    } else {
+        base64::engine::general_purpose::STANDARD.encode(previous_signal.as_slice())
+    };
+    let source_label = format!("live_render:{tick}");
+    let python_output = Command::new("python")
+        .arg("-c")
+        .arg(
+            "import base64,json,sys; from aether_pipeline import AetherPipeline; raw=base64.b64decode(sys.argv[1]); prev=base64.b64decode(sys.argv[2]) if sys.argv[2] else None; print(json.dumps(AetherPipeline().process_live_signal(raw, source_label=sys.argv[3], previous_signal=prev), ensure_ascii=True))",
+        )
+        .arg(raw_b64)
+        .arg(previous_b64)
+        .arg(source_label)
+        .output();
+
+    let result = match python_output {
+        Ok(output) if output.status.success() => {
+            let raw = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+            serde_json::from_str::<serde_json::Value>(&raw)
+                .map_err(|err| format!("Live-Render JSON konnte nicht gelesen werden: {err}"))?
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            return Err(format!("Live-Render Python-Pipeline fehlgeschlagen: {}", stderr));
+        }
+        Err(err) => {
+            return Err(format!("Python konnte fuer Live-Render nicht gestartet werden: {err}"));
+        }
+    };
+
+    let structure_map = result.get("structure_map").cloned().unwrap_or(serde_json::Value::Null);
+    Ok(LiveRenderAnalysisResult {
+        capsule_state: CapsuleViewState::from_pipeline_result(&result),
+        structure_map_state: structure_map_state_from_result(&result),
+        aelab_state: AelabViewState::from_result(&result),
+        compression_state: CompressionViewState::from_result(&result),
+        reconstruction_state: ReconstructionAuditViewState::from_result(&result),
+        structure_map_nodes: structure_map_rings(&structure_map),
+    })
+}
+
+fn value_as_f32(value: Option<&serde_json::Value>) -> f32 {
+    value
+        .and_then(|item| item.as_f64())
+        .map(|item| item as f32)
+        .unwrap_or(0.0)
+}
+
+fn histogram64(bytes: &[u8]) -> Vec<f32> {
+    if bytes.is_empty() {
+        return vec![0.0; 64];
+    }
+    let mut buckets = vec![0.0f32; 64];
+    for byte in bytes {
+        let idx = ((*byte as usize) * 64) / 256;
+        buckets[idx] += 1.0;
+    }
+    let total = bytes.len() as f32;
+    for value in &mut buckets {
+        *value /= total;
+    }
+    buckets
+}
+
+fn symmetry_from_histogram(hist: &[f32]) -> f32 {
+    if hist.is_empty() {
+        return 1.0;
+    }
+    let mean = hist.iter().copied().sum::<f32>() / hist.len() as f32;
+    if mean <= 1e-9 {
+        return 1.0;
+    }
+    let deviation = hist.iter().map(|value| (*value - mean).abs()).sum::<f32>() / hist.len() as f32;
+    (1.0 - (deviation / mean)).clamp(0.0, 1.0)
+}
+
+fn shannon_entropy_local(bytes: &[u8]) -> f32 {
+    if bytes.is_empty() {
+        return 0.0;
+    }
+    let mut counts = [0usize; 256];
+    for byte in bytes {
+        counts[*byte as usize] += 1;
+    }
+    let total = bytes.len() as f32;
+    counts
+        .iter()
+        .filter(|count| **count > 0)
+        .map(|count| {
+            let probability = *count as f32 / total;
+            -(probability * probability.log2())
+        })
+        .sum()
+}
+
+fn byte_drift_local(bytes: &[u8]) -> f32 {
+    if bytes.len() < 2 {
+        return 0.0;
+    }
+    let total: u64 = bytes
+        .windows(2)
+        .map(|window| (window[0] as i32 - window[1] as i32).unsigned_abs() as u64)
+        .sum();
+    total as f32 / bytes.len().saturating_sub(1) as f32
+}
+
+fn structure_map_rings(payload: &serde_json::Value) -> Vec<Vec<f32>> {
+    use std::f32::consts::PI;
+    const RING_COUNT: usize = 10;
+    let mut rings = vec![Vec::new(); RING_COUNT];
+    let Some(nodes) = payload.get("nodes").and_then(|value| value.as_array()) else {
+        return rings;
+    };
+    for node in nodes {
+        let x = value_as_f32(node.get("x"));
+        let y = value_as_f32(node.get("y"));
+        let t = value_as_f32(node.get("t")).clamp(0.0, 1.0);
+        let ring_idx = ((t * (RING_COUNT.saturating_sub(1) as f32)).round() as usize)
+            .min(RING_COUNT.saturating_sub(1));
+        let angle = (y - 0.5).atan2(x - 0.5).rem_euclid(2.0 * PI);
+        rings[ring_idx].push(angle);
+    }
+    for ring in &mut rings {
+        ring.sort_by(|left, right| left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal));
+    }
+    rings
+}
+
+#[allow(dead_code)]
 fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
     let extension = path
         .extension()
@@ -7352,6 +8433,7 @@ fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn detect_file_type_from_name(file_name: &str) -> String {
     let extension = Path::new(file_name)
         .extension()
@@ -7370,6 +8452,7 @@ fn detect_file_type_from_name(file_name: &str) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn is_text_like_file(path: &Path) -> bool {
     let extension = path
         .extension()

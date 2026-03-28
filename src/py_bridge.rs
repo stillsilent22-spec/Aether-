@@ -1,5 +1,5 @@
 // ── DropperBridge: Rust ↔ Python Dropper Pipeline ─────────────────────────────
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader};
 use std::process::{ChildStdin, ChildStdout};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -25,10 +25,8 @@ impl DropperBridge {
         if self.child.is_some() {
             return Err("Dropper pipeline already running".to_owned());
         }
-        let script_path = "aether_pipeline.py";
-        let mut cmd = Command::new(python_path);
-        cmd.arg(script_path)
-            .arg("--cascade").arg("shanway")
+    let mut cmd = Command::new(python_path);
+        cmd.arg("aether_pipeline.py")
             .arg(file_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())

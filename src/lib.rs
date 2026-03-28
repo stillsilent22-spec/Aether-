@@ -32,7 +32,6 @@ pub mod network_guard;
 pub mod orchestrator;
 pub mod egl_api;
 pub mod egl_example;
-pub mod shanway;
 pub mod state;
 pub mod symbiont_rpc;
 pub mod swarm_bootstrap;

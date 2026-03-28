@@ -1,4 +1,4 @@
-name: Shanway Vault PR Check
+﻿name: Assistant Vault PR Check
 
 on:
   pull_request:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  shanway-verify:
+  assistant-verify:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -43,12 +43,12 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const report = fs.existsSync('shanway-report.json')
-              ? fs.readFileSync('shanway-report.json', 'utf8')
+            const report = fs.existsSync('assistant-report.json')
+              ? fs.readFileSync('assistant-report.json', 'utf8')
               : '{"status":"no-report"}';
             await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `## Shanway Verification Report\n\`\`\`json\n${report}\n\`\`\``
+              body: `## Assistant Verification Report\n\`\`\`json\n${report}\n\`\`\``
             });

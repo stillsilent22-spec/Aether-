@@ -1,4 +1,4 @@
-"""Deterministic 6-field Shanway response rendering."""
+﻿"""Deterministic 6-field Assistant response rendering."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Any
 
 
 @dataclass
-class ShanwayStructuredResponse:
+class AssistantStructuredResponse:
     ergebnis: str
     quellenkonsistenz: str
     quellen_symmetrie: float
@@ -55,15 +55,15 @@ class ShanwayStructuredResponse:
         }
 
 
-class ShanwayResponseBuilder:
-    """Builds deterministic structured Shanway responses."""
+class AssistantResponseBuilder:
+    """Builds deterministic structured Assistant responses."""
 
     def build(
         self,
         assessment: Any,
         interface_result: Any,
         raw_answer: str = "",
-    ) -> ShanwayStructuredResponse:
+    ) -> AssistantStructuredResponse:
         web_context = dict(getattr(interface_result, "web_context", {}) or {})
         consistency = str(web_context.get("consistency", "") or "")
         ok = bool(web_context.get("ok", False))
@@ -73,7 +73,7 @@ class ShanwayResponseBuilder:
         unsicherheiten: list[str] = []
 
         if str(getattr(assessment, "classification", "") or "") == "inactive":
-            ergebnis = "Shanway inaktiv"
+            ergebnis = "Assistant inaktiv"
         elif not ok and not raw:
             ergebnis = "Keine ausreichende Datenlage"
             keine_datenlage = True
@@ -132,7 +132,7 @@ class ShanwayResponseBuilder:
         else:
             endbewertung = "stabil"
 
-        return ShanwayStructuredResponse(
+        return AssistantStructuredResponse(
             ergebnis=ergebnis,
             quellenkonsistenz=quellenkonsistenz,
             quellen_symmetrie=float(web_context.get("source_symmetry", 0.0) or 0.0),
@@ -147,5 +147,5 @@ class ShanwayResponseBuilder:
         )
 
     @staticmethod
-    def render(response: ShanwayStructuredResponse) -> str:
+    def render(response: AssistantStructuredResponse) -> str:
         return response.render()

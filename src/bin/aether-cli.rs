@@ -95,7 +95,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let root = PathBuf::from("vault").join("anchors");
             let report = pipeline_check(&root, &access, threshold)?;
             fs::write(
-                "shanway-report.json",
+                "pipeline-report.json",
                 serde_json::to_string_pretty(&report)?,
             )?;
             println!("{}", serde_json::to_string_pretty(&report)?);

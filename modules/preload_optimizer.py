@@ -1,4 +1,4 @@
-"""Adaptive preload recommendations based on vault analysis."""
+﻿"""Adaptive preload recommendations based on vault analysis."""
 
 from __future__ import annotations
 
@@ -201,7 +201,7 @@ class PreloadOptimizer:
             ".pdf": "Weitere wissenschaftliche PDFs einspeisen",
             ".json": "Strukturierte JSON-Datensaetze nachladen",
             ".png": "Bildmuster mit wiederkehrenden Texturen vorbereiten",
-            ".txt": "Textkorpus fuer Shanway lokal erweitern",
+            ".txt": "Textkorpus fuer Assistant lokal erweitern",
             ".zip": "Archivstrukturen und Manifeste vorbereiten",
         }
         return str(hints.get(str(file_type), "Weitere strukturkompatible Daten lokal vorbereiten"))

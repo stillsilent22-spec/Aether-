@@ -1,4 +1,4 @@
-# Aether
+﻿# Aether
 
 ## Quick Start
 
@@ -79,7 +79,7 @@ ohne Trainingsdaten, ohne inhaltliche Interpretation.
 **Aether ist:**
 - Ein lokales Anomalieerkennungs-Werkzeug auf Basis messbarer Strukturmetriken
 - Ein symbiotischer Betriebssystem-Layer mit integrierten Datenschutzgarantien und kryptografisch nicht invertierbaren Fingerprints
-- Ein deterministischer Ausgabefilter (Shanway) für pipeline-verifizierte Strukturbefunde
+- Ein deterministischer Ausgabefilter (Assistant) für pipeline-verifizierte Strukturbefunde
 - Ein Systemoptimierungswerkzeug auf Basis von Prozess-Strukturprofilen
 
 ---
@@ -227,9 +227,9 @@ kryptografischen Hash: er identifiziert, ohne etwas preiszugeben.
 
 ---
 
-## Shanway: Deterministischer Ausgabefilter
+## Assistant: Deterministischer Ausgabefilter
 
-Shanway ist kein Sprachmodell, das eigenständig Inhalte generiert. Es ist ein
+Assistant ist kein Sprachmodell, das eigenständig Inhalte generiert. Es ist ein
 **deterministischer Renderer**: Es übersetzt ausschließlich pipeline-verifizierte Strukturbefunde
 in Sprache.
 
@@ -262,7 +262,7 @@ reconstruction_engine  --> D(Snapshot, Residuum) = Original
    v
 registry (SQLite, lokal) --> Vault, Audit-Log, append-only
    |
-   +-> shanway          --> Sprachausgabe (nur verifizierte Daten)
+   +-> assistant          --> Sprachausgabe (nur verifizierte Daten)
    +-> aethernet        --> Ankerpfad (optional, consent-gebunden)
 ```
 

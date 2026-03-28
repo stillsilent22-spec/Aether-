@@ -1,8 +1,8 @@
-"""
-Aether – Anchor Query Adapter für Shanway.
+﻿"""
+Aether – Anchor Query Adapter für Assistant.
 
 Macht Basis-, Konsens- und Meta-Anker über eine einheitliche API
-abfragbar — ohne dass Shanway direkt auf SQLite zugreift.
+abfragbar — ohne dass Assistant direkt auf SQLite zugreift.
 
 Privacy-Garantie: Keine Rohdaten, nur strukturelle Metadaten.
 """
@@ -23,7 +23,7 @@ def _store(db_path: Path | None = None):
 
 class AnchorQuery:
     """
-    Shanway-seitige Schnittstelle zum Anker-Store.
+    Assistant-seitige Schnittstelle zum Anker-Store.
 
     Alle Methoden geben strukturelle Zusammenfassungen zurück —
     kein Prozessinhalt, keine PID-Liste, keine Benutzeridentität.
@@ -61,12 +61,12 @@ class AnchorQuery:
         )
 
     # ------------------------------------------------------------------
-    # Shanway-formatierte Ausgaben (Fließtext)
+    # Assistant-formatierte Ausgaben (Fließtext)
     # ------------------------------------------------------------------
 
     def describe_meta_anchors(self, limit: int = 10) -> str:
         """
-        Erzeugt eine Shanway-lesbare Zusammenfassung der Meta-Anker.
+        Erzeugt eine Assistant-lesbare Zusammenfassung der Meta-Anker.
 
         Ausgabe enthält ausschließlich strukturelle Beobachtungen —
         keine Interpretationen, keine Kausalaussagen.
@@ -103,7 +103,7 @@ class AnchorQuery:
         window_hours: float = 168.0,
     ) -> str:
         """
-        Zusammenfassung der DBSCAN-Cluster für Shanway.
+        Zusammenfassung der DBSCAN-Cluster für Assistant.
 
         Spiegelt Gruppen strukturell ähnlicher Prozesse wider.
         """
@@ -147,9 +147,9 @@ class AnchorQuery:
             f"{meta} Meta-Anker."
         )
 
-    def full_report_for_shanway(self) -> str:
+    def full_report_for_assistant(self) -> str:
         """
-        Vollständiger struktureller Bericht — für Shanway-Abfragen.
+        Vollständiger struktureller Bericht — für Assistant-Abfragen.
 
         Kein roher Prozessinhalt. Nur strukturelle Beobachtungen.
         """
@@ -198,4 +198,4 @@ if __name__ == "__main__":
     import sys
     db_arg = sys.argv[1] if len(sys.argv) > 1 else None
     q = AnchorQuery(db_arg)
-    print(q.full_report_for_shanway())
+    print(q.full_report_for_assistant())

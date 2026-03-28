@@ -70,7 +70,7 @@ def _line_anchor_values(format_tag: str, line: str) -> list[float]:
     parts = [part for part in str(line).split() if part]
     if not parts:
         return []
-    if format_tag in {"AETHER_AE_DNA", "AETHER_SHANWAY_DNA"} and len(parts) >= 2:
+    if format_tag in {"AETHER_AE_DNA", "AETHER_ASSISTANT_DNA"} and len(parts) >= 2:
         value = _safe_float(parts[1])
         return [float(value)] if value is not None else []
     if format_tag == "AELAB_DNA":

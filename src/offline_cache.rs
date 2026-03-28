@@ -1,4 +1,4 @@
-use crate::inter_layer_bus::{BusEvent, BusPublisher, OfflineCacheEvent, ShanwayUserMessageEvent};
+use crate::inter_layer_bus::{BusEvent, BusPublisher, OfflineCacheEvent};
 use crate::vault_access::VaultAccessLayer;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -74,19 +74,8 @@ impl OfflineCacheManager {
             .map(|(activity, ratio)| format!("  {activity} -> {:.0}%", ratio * 100.0))
             .collect::<Vec<_>>()
             .join("\n");
-        self.bus
-            .publish(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-                process_id: None,
-                message: format!(
-                "Offline-Cache bereit fuer: {}\nAnker: {} | Groesse: ~{:.1} MB\n\nAbdeckung:\n{}",
-                request.planned_activities.join(", "),
-                total_anchors,
-                cache_size_mb,
-                coverage_str
-            ),
-                trust_score: 0.75,
-                action_available: false,
-            }));
+        eprintln!("[OFFLINE-CACHE] Bereit | Aktivitaeten: {} | Anker: {} | Groesse: ~{:.1} MB\n{}",
+            request.planned_activities.join(", "), total_anchors, cache_size_mb, coverage_str);
 
         Ok(())
     }

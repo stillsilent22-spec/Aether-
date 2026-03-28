@@ -1,4 +1,4 @@
-"""Scoped screen capture fuer explizite Aether-Dateianalysen."""
+﻿"""Scoped screen capture fuer explizite Aether-Dateianalysen."""
 
 from __future__ import annotations
 
@@ -284,7 +284,7 @@ class ScreenVisionEngine:
         )
 
 
-class ShanwayAetherVision:
+class AssistantAetherVision:
     """
     Permanenter, fail-closed Vision-Loop fuer Aether-eigene Oberflaechen.
 
@@ -292,7 +292,7 @@ class ShanwayAetherVision:
     Privacy-Boundary wie der Runtime-Pfad.
     """
 
-    AETHER_WINDOW_KEYWORDS = ["aether", "shanway", "vera_aether"]
+    AETHER_WINDOW_KEYWORDS = ["aether", "assistant", "vera_aether"]
     SAMPLE_INTERVAL_MS: int = 500
 
     def __init__(self, analysis_engine: Any, bus_publish_fn: Any) -> None:
@@ -351,7 +351,7 @@ class ShanwayAetherVision:
             try:
                 bus_publish(
                     {
-                        "type": "shanway_aether_vision",
+                        "type": "assistant_aether_vision",
                         "window_title": str(frame.get("window_title", "") or ""),
                         "timestamp": int(frame.get("timestamp", 0) or 0),
                     }

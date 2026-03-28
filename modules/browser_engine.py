@@ -1,4 +1,4 @@
-"""Sicherer Browser-Companion auf Basis von pywebview."""
+﻿"""Sicherer Browser-Companion auf Basis von pywebview."""
 
 from __future__ import annotations
 
@@ -1263,7 +1263,7 @@ class BrowserEngine:
         timeout: float = 6.0,
         searx_base_url: str = "",
     ) -> dict[str, Any]:
-        """Laedt einen kurzen Netz-Kontext fuer Shanway ohne Rohdatenpersistenz."""
+        """Laedt einen kurzen Netz-Kontext fuer Assistant ohne Rohdatenpersistenz."""
         result = cls.fetch_search_results(
             query,
             provider=provider,

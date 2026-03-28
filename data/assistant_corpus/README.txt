@@ -1,6 +1,6 @@
-Shanway Text Corpus
+﻿Assistant Text Corpus
 
-Lege hier saubere UTF-8-Textdateien ab, wenn du Shanway sprachlich fuettern willst.
+Lege hier saubere UTF-8-Textdateien ab, wenn du Assistant sprachlich fuettern willst.
 
 Empfohlen:
 - de/*.txt fuer deutsche Texte
@@ -22,4 +22,4 @@ Gute Startdaten:
 - kleine DE/EN Frage-Antwort-Sammlungen
 
 Ziel:
-Shanway lernt hier keine "Bedeutung" wie ein LLM, sondern wiederkehrende Sprachstruktur.
+Assistant lernt hier keine "Bedeutung" wie ein LLM, sondern wiederkehrende Sprachstruktur.

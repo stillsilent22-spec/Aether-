@@ -1,4 +1,4 @@
-"""Tkinter-GUI fuer Vera Aether Core inklusive Aether-Theremin."""
+﻿"""Tkinter-GUI fuer Vera Aether Core inklusive Aether-Theremin."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ from .privacy_anchor_builder import PrivacyAnchorBuilder
 from .privacy_observer import WindowsPrivacyObserver
 from .reconstruction_engine import LosslessReconstructionEngine
 from .registry import AetherRegistry, GENESIS_HASH, compute_chain_block_hash
-from .screen_vision_engine import ScreenVisionEngine, ShanwayAetherVision
+from .screen_vision_engine import ScreenVisionEngine, AssistantAetherVision
 from .security_engine import (
     browser_probe_policy,
     network_access_policy,
@@ -57,9 +57,9 @@ from .security_engine import (
 )
 from .security_monitor import AetherSecurityMonitor
 from .session_engine import SessionContext
-from .shanway import ShanwayAssessment, ShanwayEngine
-from .shanway_interface import PrivacyAnalysisResult, ShanwayInterface, ShanwayInterfaceResult
-from .shanway_response_builder import ShanwayResponseBuilder, ShanwayStructuredResponse
+from .assistant import AssistantAssessment, AssistantEngine
+from .assistant_interface import PrivacyAnalysisResult, AssistantInterface, AssistantInterfaceResult
+from .assistant_response_builder import AssistantResponseBuilder, AssistantStructuredResponse
 from .symbol_grounding import SymbolGroundingLayer
 from .spectrum_engine import SpectrumEngine
 from .scene_renderer import AetherSceneRenderer, SceneRenderState
@@ -95,7 +95,7 @@ APP_EDITOR = "#0B1115"
 
 
 class VeiraGUI:
-    """Stellt die komplette Bedienoberflaeche fuer Analyse, Kamera-Raster und Shanway bereit."""
+    """Stellt die komplette Bedienoberflaeche fuer Analyse, Kamera-Raster und Assistant bereit."""
 
     def __init__(
         self,
@@ -122,11 +122,11 @@ class VeiraGUI:
         self.bayes_engine = BayesianBeliefEngine()
         self.conway_engine = ContinuousConway()
         self.dialog_engine = StructuralDialogEngine(registry=registry)
-        self.shanway_engine = ShanwayEngine()
+        self.assistant_engine = AssistantEngine()
         self.preload_optimizer = PreloadOptimizer()
         self.bus_bridge = RustBusBridge(event_filter=[
             "WorkflowAnchorHit",
-            "ShanwayUserMessage",
+            "AssistantUserMessage",
             "OfflineCachePrepared",
             "CrossProgramVramReuse",
         ])
@@ -141,9 +141,9 @@ class VeiraGUI:
         self.privacy_observer = WindowsPrivacyObserver()
         self.telemetry_classifier = TelemetryClassifier()
         self.privacy_anchor_builder = PrivacyAnchorBuilder(session_engine=session_context)
-        self.response_builder = ShanwayResponseBuilder()
-        self.shanway_interface = ShanwayInterface(
-            shanway_engine=self.shanway_engine,
+        self.response_builder = AssistantResponseBuilder()
+        self.assistant_interface = AssistantInterface(
+            assistant_engine=self.assistant_engine,
             preload_optimizer=self.preload_optimizer,
             browser_engine=self.browser_engine,
             bus_bridge=self.bus_bridge,
@@ -225,7 +225,7 @@ class VeiraGUI:
         self.header_user_var = tk.StringVar(
             value=f"USER {self.session_context.username} | ROLE {self.session_context.user_role.upper()}"
         )
-        self.header_assistant_var = tk.StringVar(value="ASSIST Shanway")
+        self.header_assistant_var = tk.StringVar(value="ASSIST Assistant")
         self.header_vault_var = tk.StringVar(value="VAULT 0")
         self.header_chain_var = tk.StringVar(value="F-CHAIN 0")
         self.header_anchor_var = tk.StringVar(value="ANCHOR Q0")
@@ -246,7 +246,7 @@ class VeiraGUI:
         self.browser_ct_var = tk.StringVar(value="C(t): --")
         self.browser_d_var = tk.StringVar(value="D: --")
         self.browser_recon_var = tk.StringVar(value="RECON: ✗")
-        self.browser_status_var = tk.StringVar(value="Shanway Browser bereit")
+        self.browser_status_var = tk.StringVar(value="Assistant Browser bereit")
         self.browser_title_var = tk.StringVar(value="Kein Seitentitel")
         self.browser_probe_var = tk.StringVar(value="URL-Pruefung: bereit | keine lokale Netzprobe aktiv")
         self.browser_dock_var = tk.BooleanVar(value=False)
@@ -282,33 +282,33 @@ class VeiraGUI:
         self.chat_input_var = tk.StringVar(value="")
         self.chat_channel_var = tk.StringVar(value="# global")
         self.chat_scope_var = tk.StringVar(value="private")
-        self.chat_status_var = tk.StringVar(value="Shanway bereit | lokal | ohne LLM")
-        self.chat_reply_var = tk.StringVar(value="Shanway: --")
+        self.chat_status_var = tk.StringVar(value="Assistant bereit | lokal | ohne LLM")
+        self.chat_reply_var = tk.StringVar(value="Assistant: --")
         self.chat_semantic_var = tk.StringVar(value="Semantik: -- | Schoenheit: --")
-        self.shanway_vault_watch_var = tk.StringVar(value="AELAB Watch: bereit")
+        self.assistant_vault_watch_var = tk.StringVar(value="AELAB Watch: bereit")
         self.chat_channel_note_var = tk.StringVar(value="Kanal: global | oeffentlich")
         self.chat_analysis_mode_var = tk.StringVar(value="shared")
         self.chat_delta_share_var = tk.BooleanVar(value=False)
         self.chat_attachment_var = tk.StringVar(value="Analyse: lokal | kein aktiver Dateibeitrag")
-        self.shanway_corpus_var = tk.StringVar(value="Corpus: 0 de | 0 en")
-        self.shanway_enabled_var = tk.BooleanVar(
-            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_enabled", False))
+        self.assistant_corpus_var = tk.StringVar(value="Corpus: 0 de | 0 en")
+        self.assistant_enabled_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("assistant_enabled", False))
         )
-        self.shanway_browser_mode_var = tk.BooleanVar(
-            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_browser_mode", False))
+        self.assistant_browser_mode_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("assistant_browser_mode", False))
         )
-        self.shanway_browser_mode_label_var = tk.StringVar(value="Browser-Liveanalyse aus")
-        self.shanway_network_mode_var = tk.BooleanVar(
-            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_network_mode", False))
+        self.assistant_browser_mode_label_var = tk.StringVar(value="Browser-Liveanalyse aus")
+        self.assistant_network_mode_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("assistant_network_mode", False))
         )
-        self.shanway_network_mode_label_var = tk.StringVar(value="Netz-Kontext aus")
+        self.assistant_network_mode_label_var = tk.StringVar(value="Netz-Kontext aus")
         self.ttd_auto_share_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("ttd_auto_share", False))
         )
-        self.shanway_raster_insight_var = tk.BooleanVar(
-            value=bool(getattr(self.session_context, "user_settings", {}).get("shanway_raster_insight", False))
+        self.assistant_raster_insight_var = tk.BooleanVar(
+            value=bool(getattr(self.session_context, "user_settings", {}).get("assistant_raster_insight", False))
         )
-        self.shanway_sensitive_var = tk.StringVar(value="Shanway Guard: bereit")
+        self.assistant_sensitive_var = tk.StringVar(value="Assistant Guard: bereit")
         self.peer_delta_status_var = tk.StringVar(value="Peer-Delta: lokal | keine Freigabe")
         self.public_ttd_status_var = tk.StringVar(value="TTD-Pool: lokal | keine oeffentliche Freigabe")
         self.public_ttd_network_status_var = tk.StringVar(value="TTD-Netz: aus")
@@ -321,7 +321,7 @@ class VeiraGUI:
         self.agent_control_auto_var = tk.BooleanVar(
             value=bool(getattr(self.session_context, "user_settings", {}).get("agent_control_auto", True))
         )
-        self.shanway_ttd_push_var = tk.BooleanVar(value=False)
+        self.assistant_ttd_push_var = tk.BooleanVar(value=False)
         self.chat_sync_url_var = tk.StringVar(
             value=str(getattr(self.session_context, "user_settings", {}).get("chat_sync_url", "") or "")
         )
@@ -361,7 +361,7 @@ class VeiraGUI:
         self.spectrum_thread: threading.Thread | None = None
         self._pending_screen_scope: dict[str, Any] | None = None
         self.chat_thread: threading.Thread | None = None
-        self.shanway_corpus_thread: threading.Thread | None = None
+        self.assistant_corpus_thread: threading.Thread | None = None
         self._last_ae_vault_notice_signature = ""
         self.current_canvas: FigureCanvasTkAgg | None = None
         self.current_figure = None
@@ -371,7 +371,7 @@ class VeiraGUI:
         self.center_file_text: tk.Text | None = None
         self.center_process_text: tk.Text | None = None
         self.center_anchor_text: tk.Text | None = None
-        self.shanway_face_canvas: tk.Canvas | None = None
+        self.assistant_face_canvas: tk.Canvas | None = None
         self.ae_anchor_text: tk.Text | None = None
         self.ae_vault_text: tk.Text | None = None
         self.ae_stop_button: tk.Button | None = None
@@ -412,11 +412,11 @@ class VeiraGUI:
         self._local_register_entries: list[dict[str, object]] = []
         self._selected_local_register_id: int | None = None
         self._vault_line_map: dict[int, dict[str, object]] = {}
-        self.shanway_browser_mode_label_var.set(
-            "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
+        self.assistant_browser_mode_label_var.set(
+            "Browser-Liveanalyse an" if bool(self.assistant_browser_mode_var.get()) else "Browser-Liveanalyse aus"
         )
-        self.shanway_network_mode_label_var.set(
-            "Netz-Kontext an" if bool(self.shanway_network_mode_var.get()) else "Netz-Kontext aus"
+        self.assistant_network_mode_label_var.set(
+            "Netz-Kontext an" if bool(self.assistant_network_mode_var.get()) else "Netz-Kontext aus"
         )
         self._chain_line_map: dict[int, dict[str, object]] = {}
         self._previous_theremin_anchors: list[AnchorPoint] = []
@@ -463,19 +463,19 @@ class VeiraGUI:
         self._last_dual_storage_decision: dict[str, object] = {}
         self._updating_security_mode = False
         self._aether_vision_state: dict[str, Any] = {}
-        self.aether_vision = ShanwayAetherVision(
+        self.aether_vision = AssistantAetherVision(
             analysis_engine=self.analysis_engine,
             bus_publish_fn=self._publish_aether_vision_event,
         )
 
-        self._last_shanway_output: str = ""
+        self._last_assistant_output: str = ""
         self._configure_styles()
         self.renderer.set_storage_layer(self.storage_layer_var.get())
         self.session_context.generate_honeypots()
         self._build_layout()
         self._apply_collective_feedback()
         self._apply_security_snapshot()
-        self._refresh_shanway_corpus_status()
+        self._refresh_assistant_corpus_status()
         self._render_placeholder()
         self._refresh_recent_logs()
         self._refresh_restore_status()
@@ -500,7 +500,7 @@ class VeiraGUI:
         self.root.after(1800, lambda: self._sync_official_anchor_mirror(silent=True))
         self.root.after(2200, lambda: self._sync_local_public_ttd_pool(silent=True))
         self.root.after(2600, lambda: self._sync_remote_public_ttd_pool(silent=True))
-        self.bus_bridge.start(callback=self.shanway_interface.on_bus_event)
+        self.bus_bridge.start(callback=self.assistant_interface.on_bus_event)
         self.aether_vision.start()
         self._start_ipc_writer()
 
@@ -561,7 +561,7 @@ class VeiraGUI:
                         ),
                         "cpu_pct": 0.0,
                         "mem_used_gb": 0.0,
-                        "shanway_last": str(getattr(self, "_last_shanway_output", "") or ""),
+                        "assistant_last": str(getattr(self, "_last_assistant_output", "") or ""),
                         "swarm_node_count": int(swarm_status.get("node_count", 0) or 0),
                         "swarm_pack_count": int(swarm_status.get("pack_count", 0) or 0),
                         "swarm_candidate_count": int(swarm_status.get("candidate_count", 0) or 0),
@@ -580,9 +580,9 @@ class VeiraGUI:
         t.start()
 
 
-    def _toggle_shanway_ttd_push(self) -> None:
-        enabled = bool(self.shanway_ttd_push_var.get())
-        self.shanway_interface.auto_push_ttd = enabled
+    def _toggle_assistant_ttd_push(self) -> None:
+        enabled = bool(self.assistant_ttd_push_var.get())
+        self.assistant_interface.auto_push_ttd = enabled
         self.preload_status_var.set(
             "Preload: TTD-Opt-in aktiv"
             if enabled else
@@ -631,7 +631,7 @@ class VeiraGUI:
         self._latest_privacy_snapshot = dict(snapshot or {})
         self._latest_privacy_snapshot_at = time.monotonic()
         try:
-            result = self.shanway_interface.analyze_privacy_snapshot(snapshot)
+            result = self.assistant_interface.analyze_privacy_snapshot(snapshot)
         except Exception as exc:
             self.privacy_status_var.set(f"Privacy Analyse fehlgeschlagen: {exc}")
             return
@@ -764,12 +764,12 @@ class VeiraGUI:
                 tags=(action,),
             )
 
-    def _build_structured_shanway_output(
+    def _build_structured_assistant_output(
         self,
-        assessment: ShanwayAssessment,
-        interface_result: ShanwayInterfaceResult,
+        assessment: AssistantAssessment,
+        interface_result: AssistantInterfaceResult,
         raw_answer: str,
-    ) -> ShanwayStructuredResponse:
+    ) -> AssistantStructuredResponse:
         structured = self.response_builder.build(
             assessment,
             interface_result,
@@ -779,7 +779,7 @@ class VeiraGUI:
         self.chat_semantic_var.set(
             f"Semantik: {assessment.classification} | Vault {structured.vault_abgleich} | Ende {structured.endbewertung}"
         )
-        self._last_shanway_output = structured.render()
+        self._last_assistant_output = structured.render()
         return structured
 
     def _ae_vault_notice_signature(self, summary: dict[str, object]) -> str:
@@ -798,7 +798,7 @@ class VeiraGUI:
         ).hexdigest()
 
     def _announce_ae_vault_update(self, summary: dict[str, object]) -> None:
-        """Schreibt eine deduplizierte Shanway-Systemmeldung bei echten MAIN-/SUB-Aenderungen."""
+        """Schreibt eine deduplizierte Assistant-Systemmeldung bei echten MAIN-/SUB-Aenderungen."""
         signature = self._ae_vault_notice_signature(summary)
         if not signature or signature == self._last_ae_vault_notice_signature:
             return
@@ -822,7 +822,7 @@ class VeiraGUI:
             f"{' | ' + capacity_text if capacity_text else ''} | "
             f"{self._ae_guard_preview(summary)}"
         )
-        self.shanway_vault_watch_var.set(notice)
+        self.assistant_vault_watch_var.set(notice)
         try:
             self.registry.save_chat_message(
                 session_id=self.session_context.session_id,
@@ -830,7 +830,7 @@ class VeiraGUI:
                 username=str(getattr(self.session_context, "username", "")),
                 message_text="",
                 reply_text=notice,
-                channel="private:shanway",
+                channel="private:assistant",
                 payload={
                     "assistant_intent": "vault_update",
                     "system_notice": True,
@@ -844,21 +844,21 @@ class VeiraGUI:
                     },
                 },
                 is_private=True,
-                recipient_username="shanway",
-                visible_to_shanway=False,
+                recipient_username="assistant",
+                visible_to_assistant=False,
             )
         except Exception:
             return
-        self._refresh_shanway_view()
+        self._refresh_assistant_view()
 
-    def _build_ae_shanway_feedback(
+    def _build_ae_assistant_feedback(
         self,
         summary: dict[str, object],
         fingerprint: AetherFingerprint | None = None,
         *,
         stop_requested: bool = False,
     ) -> str:
-        """Verdichtet AELAB-Zwischenstand zu einem klaren schriftlichen Shanway-Bericht."""
+        """Verdichtet AELAB-Zwischenstand zu einem klaren schriftlichen Assistant-Bericht."""
         current = fingerprint or self.current_fingerprint
         iteration = int(summary.get("iteration", 0) or 0)
         phase = str(summary.get("phase", "idle") or "idle")
@@ -903,7 +903,7 @@ class VeiraGUI:
         if current is None:
             return details
         try:
-            assessment = self.shanway_engine.detect_asymmetry(
+            assessment = self.assistant_engine.detect_asymmetry(
                 details,
                 coherence_score=float(getattr(current, "ethics_score", 0.0) or 0.0),
                 h_lambda=float(getattr(current, "h_lambda", 0.0) or 0.0),
@@ -916,29 +916,29 @@ class VeiraGUI:
                 sce_signature=dict(getattr(current, "sce_signature", {}) or {}),
                 observer_knowledge_ratio=float(getattr(current, "observer_knowledge_ratio", 0.0) or 0.0),
                 fingerprint_payload=current.to_payload() if hasattr(current, "to_payload") else {},
-                **self._shanway_visual_payloads(current),
+                **self._assistant_visual_payloads(current),
             )
-            return self.shanway_engine.render_response(assessment, assistant_text=details)
+            return self.assistant_engine.render_response(assessment, assistant_text=details)
         except Exception:
             return details
 
-    def _publish_ae_shanway_feedback(
+    def _publish_ae_assistant_feedback(
         self,
         summary: dict[str, object],
         fingerprint: AetherFingerprint | None = None,
         *,
         stop_requested: bool = False,
     ) -> None:
-        """Spiegelt AELAB-Ergebnisse als lesbaren Shanway-Status in GUI und Verlauf."""
-        feedback = self._build_ae_shanway_feedback(
+        """Spiegelt AELAB-Ergebnisse als lesbaren Assistant-Status in GUI und Verlauf."""
+        feedback = self._build_ae_assistant_feedback(
             summary,
             fingerprint=fingerprint,
             stop_requested=stop_requested,
         )
-        self.chat_reply_var.set(f"Shanway: {feedback}")
+        self.chat_reply_var.set(f"Assistant: {feedback}")
         iteration = int(summary.get("iteration", 0) or 0)
         phase = str(summary.get("phase", "idle") or "idle")
-        self.chat_status_var.set(f"Shanway aktiv | AELAB Iteration {iteration} | Phase {phase}")
+        self.chat_status_var.set(f"Assistant aktiv | AELAB Iteration {iteration} | Phase {phase}")
         self.chat_semantic_var.set(
             f"Semantik: Anker {int(summary.get('anchor_count', 0) or 0)} | "
             f"Main {int(summary.get('main_ready', 0) or 0)} | "
@@ -951,19 +951,19 @@ class VeiraGUI:
                 username=str(getattr(self.session_context, "username", "")),
                 message_text="",
                 reply_text=feedback,
-                channel="private:shanway",
+                channel="private:assistant",
                 payload={
                     "assistant_intent": "ae_iteration_feedback",
                     "system_notice": True,
                     "ae_iteration_feedback": dict(summary),
                 },
                 is_private=True,
-                recipient_username="shanway",
-                visible_to_shanway=False,
+                recipient_username="assistant",
+                visible_to_assistant=False,
             )
         except Exception:
             pass
-        self._refresh_shanway_view()
+        self._refresh_assistant_view()
 
     @staticmethod
     def _ae_constant_display_label(raw_label: str) -> str:
@@ -1280,7 +1280,7 @@ class VeiraGUI:
         )
         self._set_ae_stop_button_state(f"Gestoppt (Iteration {iteration})", enabled=False)
         self.theremin_state_var.set("Kamera-Raster: bereit | Audio deaktiviert")
-        self._publish_ae_shanway_feedback(
+        self._publish_ae_assistant_feedback(
             {
                 "iteration": iteration,
                 "phase": phase,
@@ -1457,11 +1457,11 @@ class VeiraGUI:
         self._refresh_ae_anchor_panel(ae_anchors)
         self._sync_ae_vault_registry()
         self._announce_ae_vault_update(summary)
-        self._publish_ae_shanway_feedback(summary, fingerprint=fingerprint)
+        self._publish_ae_assistant_feedback(summary, fingerprint=fingerprint)
         return summary
 
     def _is_text_silent_source(self, fingerprint: AetherFingerprint | None) -> bool:
-        """Unterdrueckt Audio fuer rein textuelle Shanway-/Browser-Quellen."""
+        """Unterdrueckt Audio fuer rein textuelle Assistant-/Browser-Quellen."""
         source_type = str(getattr(fingerprint, "source_type", "") or "").strip().lower()
         return source_type in {
             "chat",
@@ -1704,7 +1704,7 @@ class VeiraGUI:
         return status
 
     def _build_augment_window(self) -> None:
-        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Dateivorschau, Kamera und Shanway bleiben sichtbar."""
+        """Erzeugt eingebettete Modul-Tabs im Hauptfenster; Dateivorschau, Kamera und Assistant bleiben sichtbar."""
         self.augment_window = self.root
         for child in self.right_frame.winfo_children():
             child.destroy()
@@ -1742,7 +1742,7 @@ class VeiraGUI:
         camera_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         efficiency_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         live_tab = tk.Frame(self.right_notebook, bg=APP_BG)
-        shanway_tab = tk.Frame(self.right_notebook, bg=APP_BG)
+        assistant_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         privacy_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         agent_tab = tk.Frame(self.right_notebook, bg=APP_BG)
         chat_tab = tk.Frame(self.right_notebook, bg=APP_BG)
@@ -1754,7 +1754,7 @@ class VeiraGUI:
         self.right_notebook.add(camera_tab, text="KAMERA")
         self.right_notebook.add(efficiency_tab, text="EFFIZIENZ")
         self.right_notebook.add(live_tab, text="LIVE-FEEDBACK")
-        self.right_notebook.add(shanway_tab, text="SHANWAY")
+            self.right_notebook.add(assistant_tab, text="ASSISTANT")
         self.right_notebook.add(privacy_tab, text="PRIVACY")
         self.right_notebook.add(agent_tab, text="AGENTEN")
         self.right_notebook.add(chat_tab, text="CHATS")
@@ -1895,7 +1895,7 @@ class VeiraGUI:
 
         tk.Label(live_tab, text="Live-Feedback", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         tk.Label(live_tab, textvariable=self.theremin_state_var, bg="#0D1930", fg="#8FD6FF", font=("Segoe UI", 10, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 6))
-        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Shanway meldet Funde schriftlich und die Dateivorschau bleibt bewusst kompakt und statisch.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
+        tk.Label(live_tab, text="Kamera bleibt fuer visuelle Strukturdiagnose aktiv. Assistant meldet Funde schriftlich und die Dateivorschau bleibt bewusst kompakt und statisch.", bg="#0D1930", fg="#CFE8FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 8))
         tk.Label(live_tab, textvariable=self.wavelength_var, bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 9, "bold"), wraplength=400, justify="left").pack(anchor="w", padx=10, pady=(0, 8))
         live_metrics = tk.Frame(live_tab, bg="#0D1930")
         live_metrics.pack(fill="x", padx=10, pady=(0, 8))
@@ -1906,75 +1906,75 @@ class VeiraGUI:
             tk.Label(row, textvariable=variable, bg="#0D1930", fg="#E7F4FF", font=("Consolas", 9, "bold")).pack(side="right")
         live_feedback = tk.Frame(live_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         live_feedback.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        tk.Label(live_feedback, text="Shanway Abschlussfeedback", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(live_feedback, text="Assistant Abschlussfeedback", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
         tk.Label(live_feedback, textvariable=self.chat_reply_var, bg="#10223F", fg="#E7F4FF", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 4))
         tk.Label(live_feedback, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
 
-        tk.Label(shanway_tab, text="Shanway", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
-        shanway_mode_row = tk.Frame(shanway_tab, bg="#0D1930")
-        shanway_mode_row.pack(fill="x", padx=10, pady=(0, 6))
-        ttk.Checkbutton(shanway_mode_row, text="Shanway aktiv", variable=self.shanway_enabled_var, command=self._on_shanway_toggle).pack(side="left", padx=(0, 8))
+        tk.Label(assistant_tab, text="Assistant", bg="#0D1930", fg="#E7F4FF", font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
+        assistant_mode_row = tk.Frame(assistant_tab, bg="#0D1930")
+        assistant_mode_row.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Checkbutton(assistant_mode_row, text="Assistant aktiv", variable=self.assistant_enabled_var, command=self._on_assistant_toggle).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
-            shanway_mode_row,
-            textvariable=self.shanway_browser_mode_label_var,
-            variable=self.shanway_browser_mode_var,
-            command=self._on_shanway_browser_toggle,
+            assistant_mode_row,
+            textvariable=self.assistant_browser_mode_label_var,
+            variable=self.assistant_browser_mode_var,
+            command=self._on_assistant_browser_toggle,
         ).pack(side="left")
         ttk.Checkbutton(
-            shanway_mode_row,
-            textvariable=self.shanway_network_mode_label_var,
-            variable=self.shanway_network_mode_var,
-            command=self._on_shanway_network_toggle,
+            assistant_mode_row,
+            textvariable=self.assistant_network_mode_label_var,
+            variable=self.assistant_network_mode_var,
+            command=self._on_assistant_network_toggle,
         ).pack(side="left", padx=(8, 0))
         ttk.Checkbutton(
-            shanway_mode_row,
+            assistant_mode_row,
             text="Datei-/Screen-Einsicht",
-            variable=self.shanway_raster_insight_var,
-            command=self._on_shanway_raster_toggle,
+            variable=self.assistant_raster_insight_var,
+            command=self._on_assistant_raster_toggle,
         ).pack(side="left", padx=(8, 0))
-        shanway_corpus_row = tk.Frame(shanway_tab, bg="#0D1930")
-        shanway_corpus_row.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Button(shanway_corpus_row, text="Corpus einlesen", command=self._import_shanway_corpus).pack(side="left")
-        ttk.Button(shanway_corpus_row, text="Corpus-Ordner", command=self._open_shanway_corpus_dir).pack(side="left", padx=(6, 0))
+        assistant_corpus_row = tk.Frame(assistant_tab, bg="#0D1930")
+        assistant_corpus_row.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(assistant_corpus_row, text="Corpus einlesen", command=self._import_assistant_corpus).pack(side="left")
+        ttk.Button(assistant_corpus_row, text="Corpus-Ordner", command=self._open_assistant_corpus_dir).pack(side="left", padx=(6, 0))
         tk.Label(
-            shanway_corpus_row,
-            textvariable=self.shanway_corpus_var,
+            assistant_corpus_row,
+            textvariable=self.assistant_corpus_var,
             bg="#0D1930",
             fg="#8FD6FF",
             font=("Consolas", 9, "bold"),
         ).pack(side="right")
-        shanway_share_row = tk.Frame(shanway_tab, bg="#0D1930")
-        shanway_share_row.pack(fill="x", padx=10, pady=(0, 8))
-        ttk.Button(shanway_share_row, text="Peer-Delta export", command=self._export_self_reflection_bundle_dialog).pack(side="left")
-        ttk.Button(shanway_share_row, text="Peer-Delta import", command=self._import_self_reflection_bundle_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(shanway_share_row, text="TTD teilen", command=self._share_current_ttd_anchor_dialog).pack(side="left", padx=(6, 0))
-        ttk.Button(shanway_share_row, text="TTD lernen", command=self._sync_local_public_ttd_pool).pack(side="left", padx=(6, 0))
-        ttk.Button(shanway_share_row, text="TTD Netz", command=self._open_public_ttd_network_settings).pack(side="left", padx=(6, 0))
-        ttk.Button(shanway_share_row, text="TTD Sync Netz", command=self._sync_remote_public_ttd_pool).pack(side="left", padx=(6, 0))
+        assistant_share_row = tk.Frame(assistant_tab, bg="#0D1930")
+        assistant_share_row.pack(fill="x", padx=10, pady=(0, 8))
+        ttk.Button(assistant_share_row, text="Peer-Delta export", command=self._export_self_reflection_bundle_dialog).pack(side="left")
+        ttk.Button(assistant_share_row, text="Peer-Delta import", command=self._import_self_reflection_bundle_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(assistant_share_row, text="TTD teilen", command=self._share_current_ttd_anchor_dialog).pack(side="left", padx=(6, 0))
+        ttk.Button(assistant_share_row, text="TTD lernen", command=self._sync_local_public_ttd_pool).pack(side="left", padx=(6, 0))
+        ttk.Button(assistant_share_row, text="TTD Netz", command=self._open_public_ttd_network_settings).pack(side="left", padx=(6, 0))
+        ttk.Button(assistant_share_row, text="TTD Sync Netz", command=self._sync_remote_public_ttd_pool).pack(side="left", padx=(6, 0))
         ttk.Checkbutton(
-            shanway_share_row,
+            assistant_share_row,
             text="TTD auto teilen",
             variable=self.ttd_auto_share_var,
             command=self._on_ttd_auto_share_toggle,
         ).pack(side="left", padx=(8, 0))
-        tk.Label(shanway_share_row, textvariable=self.peer_delta_status_var, bg="#0D1930", fg="#8FD6FF", font=("Consolas", 8, "bold")).pack(side="right")
-        tk.Label(shanway_tab, textvariable=self.public_ttd_status_var, bg="#0D1930", fg="#9CB0CC", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
-        tk.Label(shanway_tab, textvariable=self.public_ttd_network_status_var, bg="#0D1930", fg="#7FD8A7", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
-        shanway_status_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
-        shanway_status_card.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(shanway_status_card, textvariable=self.shanway_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
-        tk.Label(shanway_status_card, textvariable=self.chat_status_var, bg="#10223F", fg="#2DE2E6", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
-        tk.Label(shanway_status_card, textvariable=self.shanway_vault_watch_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
-        tk.Label(shanway_status_card, textvariable=self.chat_reply_var, bg="#10223F", fg="#F6E7A7", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 2))
-        tk.Label(shanway_status_card, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
-        preload_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        tk.Label(assistant_share_row, textvariable=self.peer_delta_status_var, bg="#0D1930", fg="#8FD6FF", font=("Consolas", 8, "bold")).pack(side="right")
+        tk.Label(assistant_tab, textvariable=self.public_ttd_status_var, bg="#0D1930", fg="#9CB0CC", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
+        tk.Label(assistant_tab, textvariable=self.public_ttd_network_status_var, bg="#0D1930", fg="#7FD8A7", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 6))
+        assistant_status_card = tk.Frame(assistant_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        assistant_status_card.pack(fill="x", padx=10, pady=(0, 8))
+        tk.Label(assistant_status_card, textvariable=self.assistant_sensitive_var, bg="#10223F", fg="#F2C14E", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(10, 4))
+        tk.Label(assistant_status_card, textvariable=self.chat_status_var, bg="#10223F", fg="#2DE2E6", wraplength=400, justify="left", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(assistant_status_card, textvariable=self.assistant_vault_watch_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(assistant_status_card, textvariable=self.chat_reply_var, bg="#10223F", fg="#F6E7A7", wraplength=400, justify="left", font=("Segoe UI", 9)).pack(anchor="w", padx=10, pady=(0, 2))
+        tk.Label(assistant_status_card, textvariable=self.chat_semantic_var, bg="#10223F", fg="#9CB0CC", wraplength=400, justify="left", font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 10))
+        preload_card = tk.Frame(assistant_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         preload_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(preload_card, text="Preload-Empfehlungen", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
         ttk.Checkbutton(
             preload_card,
             text="TTD-Anker anonym teilen (Opt-in)",
-            variable=self.shanway_ttd_push_var,
-            command=self._toggle_shanway_ttd_push,
+            variable=self.assistant_ttd_push_var,
+            command=self._toggle_assistant_ttd_push,
         ).pack(anchor="w", padx=10, pady=(0, 4))
         tk.Label(preload_card, textvariable=self.preload_status_var, bg="#10223F", fg="#8FD6FF", wraplength=400, justify="left", font=("Consolas", 8, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
         self.preload_text = tk.Text(
@@ -1990,23 +1990,23 @@ class VeiraGUI:
         )
         self.preload_text.pack(fill="x", padx=10, pady=(0, 10))
         self.preload_text.configure(state="disabled")
-        miniature_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        miniature_card = tk.Frame(assistant_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
         miniature_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(miniature_card, text="Miniatur", bg="#10223F", fg="#F6E7A7", font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 4))
-        self.shanway_miniature_label = tk.Label(miniature_card, bg="#07111F", width=128, height=128)
-        self.shanway_miniature_label.pack(anchor="w", padx=10, pady=(0, 6))
+        self.assistant_miniature_label = tk.Label(miniature_card, bg="#07111F", width=128, height=128)
+        self.assistant_miniature_label.pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(
             miniature_card,
-            text="Die Miniatur bleibt getrennt von der Hauptvorschau und dient nur der lokalen Shanway-Reflexion.",
+            text="Die Miniatur bleibt getrennt von der Hauptvorschau und dient nur der lokalen Assistant-Reflexion.",
             bg="#10223F",
             fg="#CFE8FF",
             wraplength=400,
             justify="left",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=10, pady=(0, 10))
-        tk.Label(shanway_tab, text="Privater Verlauf mit Shanway", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
-        self.shanway_text = tk.Text(
-            shanway_tab,
+        tk.Label(assistant_tab, text="Privater Verlauf mit Assistant", bg="#0D1930", fg="#8FB5FF", font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        self.assistant_text = tk.Text(
+            assistant_tab,
             bg="#07111F",
             fg="#D7E8FF",
             relief="flat",
@@ -2016,19 +2016,19 @@ class VeiraGUI:
             padx=10,
             pady=10,
         )
-        self.shanway_text.pack(fill="both", expand=True, padx=10, pady=(0, 8))
-        self.shanway_text.configure(state="disabled")
-        shanway_compose_card = tk.Frame(shanway_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
-        shanway_compose_card.pack(fill="x", padx=10, pady=(0, 8))
+        self.assistant_text.pack(fill="both", expand=True, padx=10, pady=(0, 8))
+        self.assistant_text.configure(state="disabled")
+        assistant_compose_card = tk.Frame(assistant_tab, bg="#10223F", bd=0, relief="flat", highlightthickness=1, highlightbackground="#233A5A")
+        assistant_compose_card.pack(fill="x", padx=10, pady=(0, 8))
         tk.Label(
-            shanway_compose_card,
-            text="Hier direkt an Shanway schreiben. Ctrl+Enter sendet.",
+            assistant_compose_card,
+            text="Hier direkt an Assistant schreiben. Ctrl+Enter sendet.",
             bg="#10223F",
             fg="#CFE8FF",
             font=("Segoe UI", 9, "bold"),
         ).pack(anchor="w", padx=10, pady=(10, 6))
-        self.shanway_input_text = tk.Text(
-            shanway_compose_card,
+        self.assistant_input_text = tk.Text(
+            assistant_compose_card,
             bg="#0B1628",
             fg="#E7F4FF",
             insertbackground="#E7F4FF",
@@ -2039,20 +2039,20 @@ class VeiraGUI:
             padx=10,
             pady=8,
         )
-        self.shanway_input_text.pack(fill="x", padx=10, pady=(0, 8))
-        self.shanway_input_text.bind("<Control-Return>", lambda _event: (self._send_private_shanway_message(), "break")[1])
-        shanway_actions = tk.Frame(shanway_compose_card, bg="#10223F")
-        shanway_actions.pack(fill="x", padx=10, pady=(0, 10))
-        ttk.Button(shanway_actions, text="An Shanway senden", command=self._send_private_shanway_message).pack(side="left")
+        self.assistant_input_text.pack(fill="x", padx=10, pady=(0, 8))
+        self.assistant_input_text.bind("<Control-Return>", lambda _event: (self._send_private_assistant_message(), "break")[1])
+        assistant_actions = tk.Frame(assistant_compose_card, bg="#10223F")
+        assistant_actions.pack(fill="x", padx=10, pady=(0, 10))
+        ttk.Button(assistant_actions, text="An Assistant senden", command=self._send_private_assistant_message).pack(side="left")
         ttk.Button(
-            shanway_actions,
+            assistant_actions,
             text="Mit Netz",
-            command=lambda: self._send_private_shanway_message(force_network=True),
+            command=lambda: self._send_private_assistant_message(force_network=True),
         ).pack(side="left", padx=(6, 0))
         ttk.Button(
-            shanway_actions,
+            assistant_actions,
             text="Leeren",
-            command=lambda: self._clear_message_input("shanway"),
+            command=lambda: self._clear_message_input("assistant"),
         ).pack(side="left", padx=(6, 0))
         tk.Label(privacy_tab, text="Privacy Monitor", bg=APP_BG, fg=APP_TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=10, pady=(12, 6))
         privacy_controls = tk.Frame(privacy_tab, bg=APP_BG)
@@ -2084,7 +2084,7 @@ class VeiraGUI:
         self.privacy_tree.tag_configure("SUSPECTED", foreground=APP_WARN)
         self.privacy_tree.tag_configure("DEFAULT", foreground=APP_TEXT)
         self.privacy_tree.pack(fill="x", padx=10, pady=(0, 8))
-        tk.Label(privacy_tab, text="Shanway Structured Response", bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
+        tk.Label(privacy_tab, text="Assistant Structured Response", bg=APP_BG, fg=APP_TEXT_MUTED, font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(0, 4))
         self.privacy_response_text = tk.Text(
             privacy_tab,
             bg=APP_EDITOR,
@@ -2251,21 +2251,21 @@ class VeiraGUI:
         self.chat_scope_notebook.pack(fill="x", expand=True)
         chat_private_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
         chat_group_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
-        chat_shanway_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
+        chat_assistant_scope = tk.Frame(self.chat_scope_notebook, bg="#081120")
         self.chat_scope_notebook.add(chat_private_scope, text="PRIVATE")
         self.chat_scope_notebook.add(chat_group_scope, text="GROUP")
-        self.chat_scope_notebook.add(chat_shanway_scope, text="SHANWAY")
+            self.chat_scope_notebook.add(chat_assistant_scope, text="ASSISTANT")
         self.chat_scope_notebook.bind("<<NotebookTabChanged>>", self._on_chat_scope_changed)
         ttk.Button(chat_private_scope, text="Direkt...", command=self._chat_open_private_dialog).pack(side="left", padx=8, pady=8)
-        tk.Label(chat_private_scope, text="Direktnachrichten und private Shanway-Sitzungen", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
+        tk.Label(chat_private_scope, text="Direktnachrichten und private Assistant-Sitzungen", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
         ttk.Button(chat_group_scope, text="Neue Gruppe", command=self._chat_create_group_dialog).pack(side="left", padx=(8, 4), pady=8)
         ttk.Button(chat_group_scope, text="Mitglied+", command=self._chat_add_group_member).pack(side="left", padx=4, pady=8)
         ttk.Button(chat_group_scope, text="Mitglied-", command=self._chat_remove_group_member).pack(side="left", padx=4, pady=8)
-        ttk.Button(chat_group_scope, text="Shanway", command=self._chat_toggle_group_shanway).pack(side="left", padx=4, pady=8)
+        ttk.Button(chat_group_scope, text="Assistant", command=self._chat_toggle_group_assistant).pack(side="left", padx=4, pady=8)
         ttk.Button(chat_group_scope, text="Modus", command=self._chat_toggle_analysis_mode).pack(side="left", padx=4, pady=8)
         ttk.Button(chat_group_scope, text="Verlassen", command=self._chat_leave_group).pack(side="left", padx=4, pady=8)
-        ttk.Button(chat_shanway_scope, text="Privaten Shanway-Chat oeffnen", command=self._send_private_shanway_message).pack(side="left", padx=8, pady=8)
-        tk.Label(chat_shanway_scope, text="Shanway bleibt lokal und antwortet textbasiert.", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
+        ttk.Button(chat_assistant_scope, text="Privaten Assistant-Chat oeffnen", command=self._send_private_assistant_message).pack(side="left", padx=8, pady=8)
+        tk.Label(chat_assistant_scope, text="Assistant bleibt lokal und antwortet textbasiert.", bg="#081120", fg="#9CB0CC", font=("Segoe UI", 9)).pack(side="left", padx=(0, 8), pady=8)
 
         chat_header = tk.Frame(chat_tab, bg="#081120")
         chat_header.pack(fill="x", padx=8, pady=(8, 6))
@@ -2291,27 +2291,27 @@ class VeiraGUI:
         chat_action_row.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Button(chat_action_row, text="Direkt...", command=self._chat_open_private_dialog).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Neue Gruppe", command=self._chat_create_group_dialog).pack(side="left", padx=(0, 4))
-        ttk.Button(chat_action_row, text="Shanway", command=self._send_private_shanway_message).pack(side="left", padx=(0, 4))
+        ttk.Button(chat_action_row, text="Assistant", command=self._send_private_assistant_message).pack(side="left", padx=(0, 4))
         ttk.Button(chat_action_row, text="Aktualisieren", command=self._refresh_chat_view).pack(side="left")
         chat_mode_row = tk.Frame(chat_header, bg="#081120")
         chat_mode_row.pack(fill="x", padx=8, pady=(0, 4))
         ttk.Checkbutton(
             chat_mode_row,
-            text="Shanway aktiv",
-            variable=self.shanway_enabled_var,
-            command=self._on_shanway_toggle,
+            text="Assistant aktiv",
+            variable=self.assistant_enabled_var,
+            command=self._on_assistant_toggle,
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
-            textvariable=self.shanway_browser_mode_label_var,
-            variable=self.shanway_browser_mode_var,
-            command=self._on_shanway_browser_toggle,
+            textvariable=self.assistant_browser_mode_label_var,
+            variable=self.assistant_browser_mode_var,
+            command=self._on_assistant_browser_toggle,
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
-            textvariable=self.shanway_network_mode_label_var,
-            variable=self.shanway_network_mode_var,
-            command=self._on_shanway_network_toggle,
+            textvariable=self.assistant_network_mode_label_var,
+            variable=self.assistant_network_mode_var,
+            command=self._on_assistant_network_toggle,
         ).pack(side="left", padx=(0, 8))
         ttk.Checkbutton(
             chat_mode_row,
@@ -2320,7 +2320,7 @@ class VeiraGUI:
         ).pack(side="left", padx=(0, 8))
         tk.Label(
             chat_mode_row,
-            textvariable=self.shanway_sensitive_var,
+            textvariable=self.assistant_sensitive_var,
             bg="#081120",
             fg="#F2C14E",
             font=("Segoe UI", 9),
@@ -2480,19 +2480,19 @@ class VeiraGUI:
         ).pack(anchor="w", padx=10, pady=(0, 8))
         ttk.Checkbutton(
             self.browser_panel,
-            textvariable=self.shanway_browser_mode_label_var,
-            variable=self.shanway_browser_mode_var,
-            command=self._on_shanway_browser_toggle,
+            textvariable=self.assistant_browser_mode_label_var,
+            variable=self.assistant_browser_mode_var,
+            command=self._on_assistant_browser_toggle,
         ).pack(anchor="w", padx=10, pady=(0, 6))
         ttk.Checkbutton(
             self.browser_panel,
-            textvariable=self.shanway_network_mode_label_var,
-            variable=self.shanway_network_mode_var,
-            command=self._on_shanway_network_toggle,
+            textvariable=self.assistant_network_mode_label_var,
+            variable=self.assistant_network_mode_var,
+            command=self._on_assistant_network_toggle,
         ).pack(anchor="w", padx=10, pady=(0, 6))
         tk.Label(
             self.browser_panel,
-            textvariable=self.shanway_sensitive_var,
+            textvariable=self.assistant_sensitive_var,
             bg="#07111F",
             fg="#F2C14E",
             wraplength=340,
@@ -2501,7 +2501,7 @@ class VeiraGUI:
         ).pack(anchor="w", padx=10, pady=(0, 8))
         tk.Label(
             self.browser_panel,
-            text="Der Browser bleibt verfuegbar, ist aber von Shanway, Raster, Vault, Chain und Audio getrennt. Er liefert nur visuelles Feedback und oeffnet Seiten ohne Liveanalyse.",
+            text="Der Browser bleibt verfuegbar, ist aber von Assistant, Raster, Vault, Chain und Audio getrennt. Er liefert nur visuelles Feedback und oeffnet Seiten ohne Liveanalyse.",
             bg="#07111F",
             fg="#7AB6FF",
             wraplength=340,
@@ -2604,20 +2604,20 @@ class VeiraGUI:
         """Es gibt kein separates Zusatzfenster mehr; der rechte Bereich bleibt eingebettet."""
         self._apply_browser_surface()
 
-    def _send_private_shanway_message(self, force_network: bool = False) -> None:
-        """Leitet eine Eingabe direkt in den privaten Shanway-Kanal."""
-        self._refresh_chat_channels(selected_channel="private:shanway")
+    def _send_private_assistant_message(self, force_network: bool = False) -> None:
+        """Leitet eine Eingabe direkt in den privaten Assistant-Kanal."""
+        self._refresh_chat_channels(selected_channel="private:assistant")
         try:
             for tab_index in range(self.right_notebook.index("end")):
-                if str(self.right_notebook.tab(tab_index, "text")) == "SHANWAY":
+                if str(self.right_notebook.tab(tab_index, "text")) == "ASSISTANT":
                     self.right_notebook.select(tab_index)
                     break
         except Exception:
             pass
-        self._send_chat_message("shanway", force_network=bool(force_network))
+        self._send_chat_message("assistant", force_network=bool(force_network))
 
     def _chat_recent_history_excerpt(self, descriptor: dict[str, object] | None, limit: int = 4) -> str:
-        """Verdichtet wenige letzte Chateintraege als Shanway-Kontext fuer die Folgeantwort."""
+        """Verdichtet wenige letzte Chateintraege als Assistant-Kontext fuer die Folgeantwort."""
         if not descriptor:
             return ""
         current_username = str(getattr(self.session_context, "username", "local") or "local")
@@ -2642,8 +2642,8 @@ class VeiraGUI:
             if message_text:
                 lines.append({"speaker": str(item.get("username", "User") or "User"), "text": message_text})
             if reply_text:
-                lines.append({"speaker": "Shanway", "text": reply_text})
-        return self.shanway_engine.summarize_chat_history(lines, limit=limit)
+                lines.append({"speaker": "Assistant", "text": reply_text})
+        return self.assistant_engine.summarize_chat_history(lines, limit=limit)
 
     def _browser_search_query_from_text(self, text: str) -> str:
         """Formt eine knappe Suchanfrage aus Nutzerfrage und aktuellem Dateikontext."""
@@ -2727,7 +2727,7 @@ class VeiraGUI:
         }
 
     def _browser_probe_text(self, probe_payload: dict[str, Any]) -> str:
-        """Verdichtet die lokale URL-Probe zu Text fuer Shanway und Registry-Kontext."""
+        """Verdichtet die lokale URL-Probe zu Text fuer Assistant und Registry-Kontext."""
         probe = dict(probe_payload or {})
         parts = [
             str(probe.get("title", "") or ""),
@@ -2835,13 +2835,13 @@ class VeiraGUI:
                 else:
                     miniature_payload = {}
                 raster_payload: dict[str, Any] = {}
-                if bool(self.shanway_raster_insight_var.get()):
+                if bool(self.assistant_raster_insight_var.get()):
                     raster_payload = self.renderer.get_current_grid_data(fingerprint=fingerprint)
                 self_reflection_delta = self.observer_engine.summarize_reflection_state(
                     miniature_payload=miniature_payload,
                     raster_payload=raster_payload,
                     fingerprint=fingerprint,
-                    enable_raster_insight=bool(self.shanway_raster_insight_var.get()),
+                    enable_raster_insight=bool(self.assistant_raster_insight_var.get()),
                     max_depth=5,
                 )
                 learning_state = self.observer_engine.update_learning_state(
@@ -2874,7 +2874,7 @@ class VeiraGUI:
                 }
                 record_id = int(self.registry.save(fingerprint, self.session_context, payload_update=payload_update))
                 log_path = str(self.log_system.write_analysis_log(fingerprint))
-            assistant_text = self.shanway_engine.compose_browser_probe_reply(probe_payload)
+            assistant_text = self.assistant_engine.compose_browser_probe_reply(probe_payload)
             self.root.after(
                 0,
                 lambda: self._on_browser_probe_complete(
@@ -2899,7 +2899,7 @@ class VeiraGUI:
         assistant_text: str,
         log_path: str,
     ) -> None:
-        """Uebernimmt eine abgeschlossene URL-Probe in GUI, Shanway und optionales Oeffnen."""
+        """Uebernimmt eine abgeschlossene URL-Probe in GUI, Assistant und optionales Oeffnen."""
         if job_id != self._browser_probe_job_id:
             return
         probe = dict(probe_payload or {})
@@ -2920,7 +2920,7 @@ class VeiraGUI:
             self._refresh_recent_logs()
             self._refresh_history_cache(preserve_record_id=int(record_id))
             assistant_context = self._assistant_context_for(fingerprint)
-            assessment = self.shanway_engine.detect_asymmetry(
+            assessment = self.assistant_engine.detect_asymmetry(
                 self._browser_probe_text(probe),
                 coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
                 anchor_details=list(assistant_context.ae_anchor_details or []),
@@ -2941,11 +2941,11 @@ class VeiraGUI:
                     "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
                     "browser_probe_analysis": self._serialize_browser_probe_payload(probe),
                 },
-                **self._shanway_visual_payloads(fingerprint),
+                **self._assistant_visual_payloads(fingerprint),
             )
-            shanway_text = self.shanway_engine.render_response(assessment, assistant_text=assistant_text)
-            self.chat_status_var.set(f"Shanway URL-Pruefung | {risk_label} | lokal")
-            self.chat_reply_var.set(f"Shanway: {shanway_text}")
+            assistant_text = self.assistant_engine.render_response(assessment, assistant_text=assistant_text)
+            self.chat_status_var.set(f"Assistant URL-Pruefung | {risk_label} | lokal")
+            self.chat_reply_var.set(f"Assistant: {assistant_text}")
             self.chat_semantic_var.set(
                 f"Semantik: {assessment.classification} | Risiko {float(probe.get('risk_score', 0.0) or 0.0) * 100.0:.0f}% | Boundary: {assessment.boundary}"
             )
@@ -2954,14 +2954,14 @@ class VeiraGUI:
                     int(record_id),
                     {
                         "browser_probe_analysis": self._serialize_browser_probe_payload(probe),
-                        "shanway_assessment": assessment.to_payload(),
+                        "assistant_assessment": assessment.to_payload(),
                     },
                 )
             except Exception:
                 pass
         else:
-            self.chat_status_var.set(f"Shanway URL-Pruefung | {risk_label} | ohne Fingerprint")
-            self.chat_reply_var.set(f"Shanway: {assistant_text}")
+            self.chat_status_var.set(f"Assistant URL-Pruefung | {risk_label} | ohne Fingerprint")
+            self.chat_reply_var.set(f"Assistant: {assistant_text}")
             self.chat_semantic_var.set(
                 f"Semantik: URL-Probe | Risiko {float(probe.get('risk_score', 0.0) or 0.0) * 100.0:.0f}%"
             )
@@ -3009,7 +3009,7 @@ class VeiraGUI:
                 f"Netz nutzen fuer {reason}?\n\n"
                 f"Abfrage: {str(query or '--')[:180]}\n"
                 f"Ziel: {str(url or '--')[:180]}\n\n"
-                "Ohne Freigabe bleibt Shanway rein lokal."
+                "Ohne Freigabe bleibt Assistant rein lokal."
             )
             try:
                 allowed = bool(
@@ -3047,27 +3047,27 @@ class VeiraGUI:
         self,
         text: str,
         descriptor: dict[str, object] | None,
-        assessment: ShanwayAssessment,
+        assessment: AssistantAssessment,
         assistant_intent: str = "",
         force_network: bool = False,
     ) -> dict[str, object]:
-        """Laedt nach Consent einen kompakten Suchkontext fuer freie Shanway-Fragen."""
-        network_mode = bool(self.shanway_network_mode_var.get())
+        """Laedt nach Consent einen kompakten Suchkontext fuer freie Assistant-Fragen."""
+        network_mode = bool(self.assistant_network_mode_var.get())
         if not force_network and not network_mode:
             return {}
-        if not force_network and not self.shanway_engine.should_request_web_context(text, assistant_intent=assistant_intent):
+        if not force_network and not self.assistant_engine.should_request_web_context(text, assistant_intent=assistant_intent):
             return {}
         query = self._browser_search_query_from_text(text)
         if not query:
             return {}
         preview_url = BrowserEngine.build_search_url(query)
         if not self._confirm_network_access(
-            reason="Shanway-Kontextsuche",
+            reason="Assistant-Kontextsuche",
             query=query,
             url=preview_url,
             scope="chat_web_context",
         ):
-            self.chat_status_var.set("Netzfreigabe abgelehnt | Shanway bleibt lokal")
+            self.chat_status_var.set("Netzfreigabe abgelehnt | Assistant bleibt lokal")
             return {
                 "declined": True,
                 "provider": "duckduckgo",
@@ -3077,7 +3077,7 @@ class VeiraGUI:
         result = BrowserEngine.fetch_search_context(query, provider="duckduckgo")
         if bool(result.get("ok", False)):
             try:
-                if bool(self.shanway_browser_mode_var.get()) or bool(self.browser_dock_var.get()) or self._browser_tab_active():
+                if bool(self.assistant_browser_mode_var.get()) or bool(self.browser_dock_var.get()) or self._browser_tab_active():
                     if self._ensure_browser_running():
                         self.browser_engine.navigate(str(result.get("search_url", preview_url) or preview_url))
                         self.browser_url_var.set(str(result.get("search_url", preview_url) or preview_url))
@@ -3085,7 +3085,7 @@ class VeiraGUI:
                 pass
             summary = str(result.get("summary", "") or "")
             self.chat_status_var.set("Netzkontext geladen | DuckDuckGo | lokal verdichtet")
-            self.browser_status_var.set("Netzkontext geladen | Shanway bleibt lokal, nur Suchtext wurde verdichtet.")
+            self.browser_status_var.set("Netzkontext geladen | Assistant bleibt lokal, nur Suchtext wurde verdichtet.")
             self.loading_var.set(f"Netzkontext aktiv: {query[:72]}")
             return {
                 "ok": True,
@@ -3096,7 +3096,7 @@ class VeiraGUI:
                 "channel": str(descriptor.get("channel", "global") if descriptor else "global"),
                 "classification": str(getattr(assessment, "classification", "") or ""),
             }
-        self.chat_status_var.set("Netzkontext fehlgeschlagen | Shanway bleibt lokal")
+        self.chat_status_var.set("Netzkontext fehlgeschlagen | Assistant bleibt lokal")
         self.browser_status_var.set(
             f"Netzkontext fehlgeschlagen: {str(result.get('error', 'unbekannter Fehler') or 'unbekannter Fehler')}"
         )
@@ -3131,14 +3131,14 @@ class VeiraGUI:
 
     def _message_input_text(self, source: str = "auto") -> str:
         """Liefert den sichtbaren Nachrichtentext passend zur aktiven Eingabeflaeche."""
-        if source == "shanway":
-            candidates = [getattr(self, "shanway_input_text", None), getattr(self, "chat_compose_text", None)]
+        if source == "assistant":
+            candidates = [getattr(self, "assistant_input_text", None), getattr(self, "chat_compose_text", None)]
         elif source == "chat":
-            candidates = [getattr(self, "chat_compose_text", None), getattr(self, "shanway_input_text", None)]
-        elif self._current_right_tab_label() == "SHANWAY":
-            candidates = [getattr(self, "shanway_input_text", None), getattr(self, "chat_compose_text", None)]
+            candidates = [getattr(self, "chat_compose_text", None), getattr(self, "assistant_input_text", None)]
+        elif self._current_right_tab_label() == "ASSISTANT":
+            candidates = [getattr(self, "assistant_input_text", None), getattr(self, "chat_compose_text", None)]
         else:
-            candidates = [getattr(self, "chat_compose_text", None), getattr(self, "shanway_input_text", None)]
+            candidates = [getattr(self, "chat_compose_text", None), getattr(self, "assistant_input_text", None)]
         for widget in candidates:
             text = self._text_widget_value(widget)
             if text:
@@ -3147,19 +3147,19 @@ class VeiraGUI:
 
     def _clear_message_input(self, source: str = "auto") -> None:
         """Leert die zugehoerige Eingabeflaeche nach dem Senden."""
-        if source == "shanway":
-            self._clear_text_widget(getattr(self, "shanway_input_text", None))
+        if source == "assistant":
+            self._clear_text_widget(getattr(self, "assistant_input_text", None))
         elif source == "chat":
             self._clear_text_widget(getattr(self, "chat_compose_text", None))
-        elif self._current_right_tab_label() == "SHANWAY":
-            self._clear_text_widget(getattr(self, "shanway_input_text", None))
+        elif self._current_right_tab_label() == "ASSISTANT":
+            self._clear_text_widget(getattr(self, "assistant_input_text", None))
         else:
             self._clear_text_widget(getattr(self, "chat_compose_text", None))
         self.chat_input_var.set("")
 
-    def _shanway_corpus_root(self) -> Path:
-        """Liefert den lokalen Shanway-Korpusordner."""
-        return Path("data") / "shanway_corpus"
+    def _assistant_corpus_root(self) -> Path:
+        """Liefert den lokalen Assistant-Korpusordner."""
+        return Path("data") / "assistant_corpus"
 
     def _infer_text_language_hint(self, path: Path) -> str:
         """Leitet aus Dateiname und Ordnern einen groben Sprachhinweis fuer Textdateien ab."""
@@ -3175,14 +3175,14 @@ class VeiraGUI:
             return "en"
         return ""
 
-    def _refresh_shanway_corpus_status(self) -> None:
+    def _refresh_assistant_corpus_status(self) -> None:
         """Aktualisiert die sichtbare Uebersicht zum lokal gelernten Textkorpus."""
-        summary = self.shanway_engine.corpus_summary()
-        self.shanway_corpus_var.set(f"Corpus: {int(summary.get('de', 0))} de | {int(summary.get('en', 0))} en")
+        summary = self.assistant_engine.corpus_summary()
+        self.assistant_corpus_var.set(f"Corpus: {int(summary.get('de', 0))} de | {int(summary.get('en', 0))} en")
 
-    def _open_shanway_corpus_dir(self) -> None:
-        """Oeffnet den lokalen Shanway-Korpusordner im Systembrowser."""
-        root = self._shanway_corpus_root()
+    def _open_assistant_corpus_dir(self) -> None:
+        """Oeffnet den lokalen Assistant-Korpusordner im Systembrowser."""
+        root = self._assistant_corpus_root()
         root.mkdir(parents=True, exist_ok=True)
         (root / "de").mkdir(parents=True, exist_ok=True)
         (root / "en").mkdir(parents=True, exist_ok=True)
@@ -3191,21 +3191,21 @@ class VeiraGUI:
         except Exception as exc:
             messagebox.showerror("Corpus", f"Der Corpus-Ordner konnte nicht geoeffnet werden:\n{exc}", parent=self.root)
 
-    def _import_shanway_corpus(self) -> None:
-        """Liest lokale DE/EN-Textdateien ein und spiegelt sie in Shanway und Registry."""
-        if self.shanway_corpus_thread is not None and self.shanway_corpus_thread.is_alive():
-            self.loading_var.set("Shanway-Corpus wird bereits eingelesen ...")
+    def _import_assistant_corpus(self) -> None:
+        """Liest lokale DE/EN-Textdateien ein und spiegelt sie in Assistant und Registry."""
+        if self.assistant_corpus_thread is not None and self.assistant_corpus_thread.is_alive():
+            self.loading_var.set("Assistant-Corpus wird bereits eingelesen ...")
             return
-        root = self._shanway_corpus_root()
+        root = self._assistant_corpus_root()
         root.mkdir(parents=True, exist_ok=True)
         (root / "de").mkdir(parents=True, exist_ok=True)
         (root / "en").mkdir(parents=True, exist_ok=True)
-        self.loading_var.set("Shanway-Corpus wird eingelesen ...")
-        self.shanway_corpus_thread = threading.Thread(target=self._shanway_corpus_worker, args=(root,), daemon=True)
-        self.shanway_corpus_thread.start()
+        self.loading_var.set("Assistant-Corpus wird eingelesen ...")
+        self.assistant_corpus_thread = threading.Thread(target=self._assistant_corpus_worker, args=(root,), daemon=True)
+        self.assistant_corpus_thread.start()
 
-    def _shanway_corpus_worker(self, root: Path) -> None:
-        """Verarbeitet lokale Textdateien fuer Shanway-Lexikon und Analysehistorie."""
+    def _assistant_corpus_worker(self, root: Path) -> None:
+        """Verarbeitet lokale Textdateien fuer Assistant-Lexikon und Analysehistorie."""
         imported = 0
         failed = 0
         learned_tokens = 0
@@ -3220,7 +3220,7 @@ class VeiraGUI:
                     text = file_path.read_text(encoding="utf-8", errors="replace")
                     if not text.strip():
                         continue
-                    learned_tokens += int(self.shanway_engine.learn_from_corpus_text(text, language_hint=language))
+                    learned_tokens += int(self.assistant_engine.learn_from_corpus_text(text, language_hint=language))
                     fingerprint = self.analysis_engine.analyze_bytes(
                         text.encode("utf-8", errors="replace"),
                         source_label=str(file_path),
@@ -3230,7 +3230,7 @@ class VeiraGUI:
                         fingerprint,
                         self.session_context,
                         payload_update={
-                            "shanway_corpus": True,
+                            "assistant_corpus": True,
                             "corpus_language": language,
                             "corpus_path": str(file_path.relative_to(root)),
                         },
@@ -3240,22 +3240,22 @@ class VeiraGUI:
                     failed += 1
         self.root.after(
             0,
-            lambda: self._finish_shanway_corpus_import(
+            lambda: self._finish_assistant_corpus_import(
                 imported=int(imported),
                 failed=int(failed),
                 learned_tokens=int(learned_tokens),
             ),
         )
 
-    def _finish_shanway_corpus_import(self, imported: int, failed: int, learned_tokens: int) -> None:
-        """Schliesst den sichtbaren Shanway-Corpus-Import ab."""
-        self._refresh_shanway_corpus_status()
+    def _finish_assistant_corpus_import(self, imported: int, failed: int, learned_tokens: int) -> None:
+        """Schliesst den sichtbaren Assistant-Corpus-Import ab."""
+        self._refresh_assistant_corpus_status()
         self._refresh_history_cache()
         self.loading_var.set(
-            f"Shanway-Corpus eingelesen | Dateien {imported} | Token {learned_tokens} | Fehler {failed}"
+            f"Assistant-Corpus eingelesen | Dateien {imported} | Token {learned_tokens} | Fehler {failed}"
         )
         self.chat_status_var.set(
-            f"Shanway-Corpus aktiv | Dateien {imported} | gelernte Token {learned_tokens}"
+            f"Assistant-Corpus aktiv | Dateien {imported} | gelernte Token {learned_tokens}"
         )
 
     def _browser_tab_active(self) -> bool:
@@ -3315,8 +3315,8 @@ class VeiraGUI:
             self.browser_status_var.set("Browser deaktiviert: pywebview ist nicht installiert.")
             return False
         if self.browser_engine.start():
-            if bool(self.shanway_browser_mode_var.get()):
-                self.browser_status_var.set("Browser aktiv. Shanway darf lokale Folgeanalysen ohne Audio ausfuehren.")
+            if bool(self.assistant_browser_mode_var.get()):
+                self.browser_status_var.set("Browser aktiv. Assistant darf lokale Folgeanalysen ohne Audio ausfuehren.")
             else:
                 self.browser_status_var.set("Browser aktiv. Nur visuell, ohne Audio und ohne Aether-Liveanalyse.")
             if self.browser_poll_job is None:
@@ -3406,7 +3406,7 @@ class VeiraGUI:
             return
         try:
             webbrowser.open(url)
-            self.browser_status_var.set("Seite im klassischen Systembrowser geoeffnet. Shanway bleibt lokal isoliert.")
+            self.browser_status_var.set("Seite im klassischen Systembrowser geoeffnet. Assistant bleibt lokal isoliert.")
         except Exception as exc:
             messagebox.showerror("Browserfehler", f"Die Seite konnte extern nicht geoeffnet werden:\n{exc}")
 
@@ -3439,7 +3439,7 @@ class VeiraGUI:
 
     def _start_browser_snapshot_analysis(self, snapshot: BrowserSnapshot, origin: str = "loaded") -> None:
         """Analysiert geladene Browserseiten lokal als eigenen Aether-Datensatz."""
-        if not bool(self.shanway_browser_mode_var.get()):
+        if not bool(self.assistant_browser_mode_var.get()):
             return
         if self.browser_analysis_thread is not None and self.browser_analysis_thread.is_alive():
             self.browser_status_var.set("Browseranalyse laeuft bereits. Neuer Snapshot wird uebersprungen.")
@@ -3504,8 +3504,8 @@ class VeiraGUI:
             if kind == "ready":
                 self.browser_url_var.set(str(event.get("url", self.browser_url_var.get())))
                 self._set_browser_lock(bool(event.get("secure", False)))
-                if bool(self.shanway_browser_mode_var.get()):
-                    self.browser_status_var.set("Browser bereit. Shanway-Browser-Liveanalyse ist aktiviert.")
+                if bool(self.assistant_browser_mode_var.get()):
+                    self.browser_status_var.set("Browser bereit. Assistant-Browser-Liveanalyse ist aktiviert.")
                 else:
                     self.browser_status_var.set("Browser bereit. Keine Audio- oder Liveanalyse aktiv.")
                 self._apply_browser_surface()
@@ -3531,11 +3531,11 @@ class VeiraGUI:
         self.browser_url_var.set(snapshot.url)
         self.browser_title_var.set(snapshot.title or "Ohne Seitentitel")
         self._set_browser_lock(snapshot.secure)
-        if bool(self.shanway_browser_mode_var.get()):
-            self.browser_status_var.set("Seite geladen. Shanway startet die lokale Browser-Folgeanalyse.")
+        if bool(self.assistant_browser_mode_var.get()):
+            self.browser_status_var.set("Seite geladen. Assistant startet die lokale Browser-Folgeanalyse.")
             self._start_browser_snapshot_analysis(snapshot, origin="loaded")
             return
-        self.browser_status_var.set("Seite geladen. Browser bleibt vom Shanway- und Raster-Livepfad getrennt.")
+        self.browser_status_var.set("Seite geladen. Browser bleibt vom Assistant- und Raster-Livepfad getrennt.")
 
     def _on_browser_analysis_complete(
         self,
@@ -3564,26 +3564,26 @@ class VeiraGUI:
         self.loading_var.set(f"Browseranalyse abgeschlossen: {Path(log_path).name}")
         self._refresh_recent_logs()
         self._refresh_history_cache(preserve_record_id=int(record_id))
-        assessment = self._apply_shanway_browser_assessment(snapshot, fingerprint, int(record_id))
+        assessment = self._apply_assistant_browser_assessment(snapshot, fingerprint, int(record_id))
         if assessment is not None:
             self._maybe_execute_browser_followup(snapshot, fingerprint, assessment)
 
         if sce_d < 1.08 or sce_d > 1.92:
             self._flash_browser_alarm(play_sound=False)
 
-    def _apply_shanway_browser_assessment(
+    def _apply_assistant_browser_assessment(
         self,
         snapshot: BrowserSnapshot,
         fingerprint: AetherFingerprint,
         record_id: int,
-    ) -> ShanwayAssessment | None:
-        """Bewertet Browsertext explizit nur im aktivierten Shanway-Browsermodus."""
-        if not bool(self.shanway_browser_mode_var.get()):
-            self._set_shanway_guard("Shanway Guard: Browser-Modus aus")
+    ) -> AssistantAssessment | None:
+        """Bewertet Browsertext explizit nur im aktivierten Assistant-Browsermodus."""
+        if not bool(self.assistant_browser_mode_var.get()):
+            self._set_assistant_guard("Assistant Guard: Browser-Modus aus")
             return None
         context = self._assistant_context_for(fingerprint)
-        browser_text = self.shanway_engine.strip_browser_text(snapshot.html)
-        assessment = self.shanway_engine.detect_asymmetry(
+        browser_text = self.assistant_engine.strip_browser_text(snapshot.html)
+        assessment = self.assistant_engine.detect_asymmetry(
             browser_text,
             coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
             anchor_details=list(context.ae_anchor_details or []),
@@ -3611,12 +3611,12 @@ class VeiraGUI:
                 "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
                 "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
             },
-            **self._shanway_visual_payloads(fingerprint),
+            **self._assistant_visual_payloads(fingerprint),
         )
         try:
             self.registry.update_fingerprint_payload(
                 int(record_id),
-                {"shanway_assessment": assessment.to_payload()},
+                {"assistant_assessment": assessment.to_payload()},
             )
         except Exception:
             pass
@@ -3625,21 +3625,21 @@ class VeiraGUI:
             self._sync_ae_vault_registry()
         except Exception:
             pass
-        self._set_shanway_guard(assessment.message)
+        self._set_assistant_guard(assessment.message)
         if assessment.sensitive:
             self.browser_status_var.set(
                 f"{snapshot.title or snapshot.url} geladen | Sensible Inhalte erkannt - Analyse gestoppt"
             )
             return assessment
         self.browser_status_var.set(
-            f"{snapshot.title or snapshot.url} analysiert | Shanway {assessment.classification} | "
+            f"{snapshot.title or snapshot.url} analysiert | Assistant {assessment.classification} | "
             f"Noether {assessment.noether_symmetry * 100.0:.0f}% | tox {assessment.toxicity_score * 100.0:.0f}%"
         )
         if assessment.classification == "toxic":
             self._flash_browser_alarm(play_sound=False)
         return assessment
 
-    def _maybe_execute_file_followup(self, fingerprint: AetherFingerprint, assessment: ShanwayAssessment | None) -> None:
+    def _maybe_execute_file_followup(self, fingerprint: AetherFingerprint, assessment: AssistantAssessment | None) -> None:
         """Startet bei offenen Dateibefunden optional einen lokalen Browser-Kontextlauf."""
         if assessment is None:
             return
@@ -3650,7 +3650,7 @@ class VeiraGUI:
             h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
             observer_state=str(getattr(fingerprint, "observer_state", "") or "OFFEN"),
             assessment_payload=assessment.to_payload(),
-            browser_enabled=bool(self.shanway_browser_mode_var.get()),
+            browser_enabled=bool(self.assistant_browser_mode_var.get()),
             browser_available=bool(self.browser_engine.available),
             current_url=str(self.browser_url_var.get() or ""),
         )
@@ -3664,25 +3664,25 @@ class VeiraGUI:
             return
         target_url = BrowserEngine.build_search_url(query)
         if not self._confirm_network_access(
-            reason="Shanway-Folgeanalyse fuer Datei",
+            reason="Assistant-Folgeanalyse fuer Datei",
             query=query,
             url=target_url,
             scope="browser_followup_file",
         ):
-            self.browser_status_var.set("Shanway-Folgeanalyse abgelehnt | Netzwerk bleibt gesperrt")
+            self.browser_status_var.set("Assistant-Folgeanalyse abgelehnt | Netzwerk bleibt gesperrt")
             return
         url = self.browser_engine.search(query)
         self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
         self._browser_followup_source_key = str(directive.loop_source)
         self.browser_url_var.set(url)
-        self.browser_status_var.set(f"Shanway-Folgeanalyse gestartet | {directive.rationale}")
-        self.loading_var.set(f"Shanway-Loop aktiv: {query}")
+        self.browser_status_var.set(f"Assistant-Folgeanalyse gestartet | {directive.rationale}")
+        self.loading_var.set(f"Assistant-Loop aktiv: {query}")
 
     def _maybe_execute_browser_followup(
         self,
         snapshot: BrowserSnapshot,
         fingerprint: AetherFingerprint,
-        assessment: ShanwayAssessment,
+        assessment: AssistantAssessment,
     ) -> None:
         """Faehrt maximal wenige Browser-Kontextspruenge aus, falls die Struktur offen bleibt."""
         directive = self.agent_loop.plan_browser_followup(
@@ -3692,7 +3692,7 @@ class VeiraGUI:
             h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
             observer_state=str(getattr(fingerprint, "observer_state", "") or "OFFEN"),
             assessment_payload=assessment.to_payload(),
-            browser_enabled=bool(self.shanway_browser_mode_var.get()),
+            browser_enabled=bool(self.assistant_browser_mode_var.get()),
             browser_available=bool(self.browser_engine.available),
             current_url=str(snapshot.url or ""),
         )
@@ -3718,7 +3718,7 @@ class VeiraGUI:
         self.agent_loop.note_browser_navigation(str(directive.loop_source), url)
         self._browser_followup_source_key = str(directive.loop_source)
         self.browser_url_var.set(url)
-        self.browser_status_var.set(f"Shanway rekursiver Kontextlauf {directive.loop_iteration}: {directive.rationale}")
+        self.browser_status_var.set(f"Assistant rekursiver Kontextlauf {directive.loop_iteration}: {directive.rationale}")
 
     def _set_browser_lock(self, secure: bool) -> None:
         """Aktualisiert Symbol und Farbe des Browser-Locks."""
@@ -3762,19 +3762,19 @@ class VeiraGUI:
         kind = str(descriptor.get("kind", "public"))
         mode = str(descriptor.get("analysis_mode", self.chat_analysis_mode_var.get() or "shared") or "shared")
         if kind == "public":
-            return f"Kanal: global | oeffentlich | Modus {mode} | Shanway antwortet direkt"
-        if kind == "private_shanway":
-            return f"Kanal: privat | lokal verschluesselt | Modus {mode} | nur du und Shanway"
+            return f"Kanal: global | oeffentlich | Modus {mode} | Assistant antwortet direkt"
+        if kind == "private_assistant":
+            return f"Kanal: privat | lokal verschluesselt | Modus {mode} | nur du und Assistant"
         if kind == "private":
             return (
                 f"Kanal: direkt mit {descriptor.get('recipient_username', '')} | "
-                f"lokal verschluesselt | Modus {mode} | ohne Gruppen-Shanway"
+                f"lokal verschluesselt | Modus {mode} | ohne Gruppen-Assistant"
             )
         if kind == "group":
-            shanway_text = "an" if bool(descriptor.get("shanway_enabled", False)) else "aus"
+            assistant_text = "an" if bool(descriptor.get("assistant_enabled", False)) else "aus"
             return (
                 f"Gruppe: {descriptor.get('title', '')} | lokal verschluesselt | "
-                f"Shanway {shanway_text} | Modus {mode} | Rolle {descriptor.get('current_role', '')}"
+                f"Assistant {assistant_text} | Modus {mode} | Rolle {descriptor.get('current_role', '')}"
             )
         return "Kanal: lokal"
 
@@ -3806,7 +3806,7 @@ class VeiraGUI:
         return self.chat_channel_map.get(self.chat_channel_var.get())
 
     def _on_chat_scope_changed(self, _event=None) -> None:
-        """Filtert den Chat sichtbar nach Privat, Gruppe oder Shanway."""
+        """Filtert den Chat sichtbar nach Privat, Gruppe oder Assistant."""
         notebook = getattr(self, "chat_scope_notebook", None)
         if notebook is None:
             return
@@ -3834,8 +3834,8 @@ class VeiraGUI:
                 channels.append(dict(extra_descriptor))
 
         if selected_channel:
-            if str(selected_channel).startswith("private:shanway"):
-                self.chat_scope_var.set("shanway")
+            if str(selected_channel).startswith("private:assistant"):
+                self.chat_scope_var.set("assistant")
             elif str(selected_channel).startswith("private:"):
                 self.chat_scope_var.set("private")
             else:
@@ -3914,8 +3914,8 @@ class VeiraGUI:
         if normalized == str(getattr(self.session_context, "username", "")):
             messagebox.showwarning("Hinweis", "Eine Direktnachricht an dich selbst ist nicht sinnvoll.", parent=self.root)
             return
-        if normalized == "shanway":
-            self._refresh_chat_channels(selected_channel="private:shanway")
+        if normalized == "assistant":
+            self._refresh_chat_channels(selected_channel="private:assistant")
             self._refresh_chat_view()
             return
         record = self.registry.get_user_by_username(normalized)
@@ -3930,7 +3930,7 @@ class VeiraGUI:
                 "label": f"@ {normalized}",
                 "title": f"Direkt mit {normalized}",
                 "encrypted": True,
-                "shanway_enabled": False,
+                "assistant_enabled": False,
                 "recipient_username": normalized,
                 "analysis_mode": "individual",
             },
@@ -3950,9 +3950,9 @@ class VeiraGUI:
         if members_raw is None:
             return
         members = [item.strip() for item in str(members_raw).split(",") if item.strip()]
-        invite_shanway = messagebox.askyesno(
-            "Shanway einladen",
-            "Shanway fuer diese Gruppe aktivieren?",
+        invite_assistant = messagebox.askyesno(
+            "Assistant einladen",
+            "Assistant fuer diese Gruppe aktivieren?",
             parent=self.root,
         )
         try:
@@ -3961,7 +3961,7 @@ class VeiraGUI:
                 creator_username=str(getattr(self.session_context, "username", "")),
                 group_name=str(group_name),
                 member_usernames=members,
-                shanway_enabled=bool(invite_shanway),
+                assistant_enabled=bool(invite_assistant),
             )
         except Exception as exc:
             messagebox.showerror("Gruppe", str(exc), parent=self.root)
@@ -4017,15 +4017,15 @@ class VeiraGUI:
         self._refresh_chat_channels(selected_channel=str(descriptor.get("channel", "")))
         self._refresh_chat_view()
 
-    def _chat_toggle_group_shanway(self) -> None:
-        """Schaltet Shanway fuer den aktuell gewaehlten Gruppenkanal um."""
+    def _chat_toggle_group_assistant(self) -> None:
+        """Schaltet Assistant fuer den aktuell gewaehlten Gruppenkanal um."""
         descriptor = self._chat_current_descriptor()
         if not descriptor or str(descriptor.get("kind", "")) != "group":
             messagebox.showinfo("Gruppe", "Waehle zuerst einen Gruppenkanal aus.", parent=self.root)
             return
-        enabled = not bool(descriptor.get("shanway_enabled", False))
+        enabled = not bool(descriptor.get("assistant_enabled", False))
         try:
-            self.registry.toggle_group_shanway(
+            self.registry.toggle_group_assistant(
                 str(descriptor.get("group_id", "")),
                 str(getattr(self.session_context, "username", "")),
                 enabled=enabled,
@@ -4105,8 +4105,8 @@ class VeiraGUI:
         """Liefert das eingegebene Relay-Secret."""
         return str(self.chat_sync_secret_var.get()).strip()
 
-    def _persist_shanway_preferences(self) -> None:
-        """Speichert die globalen Shanway-Schalter im Nutzerprofil."""
+    def _persist_assistant_preferences(self) -> None:
+        """Speichert die globalen Assistant-Schalter im Nutzerprofil."""
         user_id = int(getattr(self.session_context, "user_id", 0) or 0)
         if user_id <= 0:
             return
@@ -4114,75 +4114,75 @@ class VeiraGUI:
             settings = self.registry.update_user_settings(
                 user_id,
                 {
-                    "shanway_enabled": bool(self.shanway_enabled_var.get()),
-                    "shanway_browser_mode": bool(self.shanway_browser_mode_var.get()),
-                    "shanway_network_mode": bool(self.shanway_network_mode_var.get()),
+                    "assistant_enabled": bool(self.assistant_enabled_var.get()),
+                    "assistant_browser_mode": bool(self.assistant_browser_mode_var.get()),
+                    "assistant_network_mode": bool(self.assistant_network_mode_var.get()),
                     "ttd_auto_share": bool(self.ttd_auto_share_var.get()),
-                    "shanway_raster_insight": bool(self.shanway_raster_insight_var.get()),
+                    "assistant_raster_insight": bool(self.assistant_raster_insight_var.get()),
                 },
             )
             self.session_context.user_settings = dict(settings)
         except Exception as exc:
-            self.loading_var.set(f"Shanway-Einstellungen konnten nicht gespeichert werden: {exc}")
+            self.loading_var.set(f"Assistant-Einstellungen konnten nicht gespeichert werden: {exc}")
 
-    def _on_shanway_toggle(self) -> None:
-        """Aktiviert oder deaktiviert Shanway fuer offene Kanaele."""
-        enabled = bool(self.shanway_enabled_var.get())
-        self._persist_shanway_preferences()
+    def _on_assistant_toggle(self) -> None:
+        """Aktiviert oder deaktiviert Assistant fuer offene Kanaele."""
+        enabled = bool(self.assistant_enabled_var.get())
+        self._persist_assistant_preferences()
         state_text = "aktiv" if enabled else "inaktiv"
-        self._set_shanway_guard(f"Shanway Guard: {state_text}")
-        self.chat_status_var.set(f"Shanway {state_text} | globale Kanaele")
+        self._set_assistant_guard(f"Assistant Guard: {state_text}")
+        self.chat_status_var.set(f"Assistant {state_text} | globale Kanaele")
 
-    def _set_shanway_browser_mode_label(self) -> None:
+    def _set_assistant_browser_mode_label(self) -> None:
         """Haelt den Browser-Liveanalyse-Schalter textlich konsistent."""
-        self.shanway_browser_mode_label_var.set(
-            "Browser-Liveanalyse an" if bool(self.shanway_browser_mode_var.get()) else "Browser-Liveanalyse aus"
+        self.assistant_browser_mode_label_var.set(
+            "Browser-Liveanalyse an" if bool(self.assistant_browser_mode_var.get()) else "Browser-Liveanalyse aus"
         )
 
-    def _set_shanway_network_mode_label(self) -> None:
+    def _set_assistant_network_mode_label(self) -> None:
         """Haelt den Netz-Kontext-Schalter textlich konsistent."""
-        self.shanway_network_mode_label_var.set(
-            "Netz-Kontext an" if bool(self.shanway_network_mode_var.get()) else "Netz-Kontext aus"
+        self.assistant_network_mode_label_var.set(
+            "Netz-Kontext an" if bool(self.assistant_network_mode_var.get()) else "Netz-Kontext aus"
         )
 
-    def _on_shanway_browser_toggle(self) -> None:
-        """Aktiviert einen begrenzten lokalen Browser-Folgepfad fuer offene Shanway-Befunde."""
-        enabled = bool(self.shanway_browser_mode_var.get())
+    def _on_assistant_browser_toggle(self) -> None:
+        """Aktiviert einen begrenzten lokalen Browser-Folgepfad fuer offene Assistant-Befunde."""
+        enabled = bool(self.assistant_browser_mode_var.get())
         if enabled and not self._ensure_browser_running():
-            self.shanway_browser_mode_var.set(False)
+            self.assistant_browser_mode_var.set(False)
             enabled = False
-        self._set_shanway_browser_mode_label()
-        self._persist_shanway_preferences()
+        self._set_assistant_browser_mode_label()
+        self._persist_assistant_preferences()
         if enabled:
-            self.browser_status_var.set("Browser-Liveanalyse aktiv. Shanway darf lokale Folgeanalysen im Companion-Browser ausloesen.")
-            self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse an")
+            self.browser_status_var.set("Browser-Liveanalyse aktiv. Assistant darf lokale Folgeanalysen im Companion-Browser ausloesen.")
+            self._set_assistant_guard("Assistant Guard: Browser-Liveanalyse an")
         else:
-            self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Shanway bleibt lokal ohne Web-Folgeschritt.")
-            self._set_shanway_guard("Shanway Guard: Browser-Liveanalyse aus")
+            self.browser_status_var.set("Browser-Liveanalyse ist deaktiviert. Assistant bleibt lokal ohne Web-Folgeschritt.")
+            self._set_assistant_guard("Assistant Guard: Browser-Liveanalyse aus")
 
-    def _on_shanway_network_toggle(self) -> None:
-        """Aktiviert oder deaktiviert optionale Netz-Kontexte fuer Shanway-Antworten."""
-        enabled = bool(self.shanway_network_mode_var.get())
-        self._set_shanway_network_mode_label()
-        self._persist_shanway_preferences()
+    def _on_assistant_network_toggle(self) -> None:
+        """Aktiviert oder deaktiviert optionale Netz-Kontexte fuer Assistant-Antworten."""
+        enabled = bool(self.assistant_network_mode_var.get())
+        self._set_assistant_network_mode_label()
+        self._persist_assistant_preferences()
         if enabled:
-            self.chat_status_var.set("Shanway darf nach Consent optional Netz-Kontext nutzen.")
+            self.chat_status_var.set("Assistant darf nach Consent optional Netz-Kontext nutzen.")
         else:
-            self.chat_status_var.set("Shanway bleibt fuer Antworten rein lokal ohne Netz-Kontext.")
+            self.chat_status_var.set("Assistant bleibt fuer Antworten rein lokal ohne Netz-Kontext.")
 
-    def _on_shanway_raster_toggle(self) -> None:
-        """Aktualisiert die optionale Datei-/Screen-Einsicht fuer Shanway."""
-        enabled = bool(self.shanway_raster_insight_var.get())
-        self._persist_shanway_preferences()
+    def _on_assistant_raster_toggle(self) -> None:
+        """Aktualisiert die optionale Datei-/Screen-Einsicht fuer Assistant."""
+        enabled = bool(self.assistant_raster_insight_var.get())
+        self._persist_assistant_preferences()
         if enabled:
-            self.chat_status_var.set("Shanway aktiv | Datei-/Screen-Einsicht lokal zugeschaltet")
+            self.chat_status_var.set("Assistant aktiv | Datei-/Screen-Einsicht lokal zugeschaltet")
         else:
-            self.chat_status_var.set("Shanway aktiv | Datei-/Screen-Einsicht aus")
+            self.chat_status_var.set("Assistant aktiv | Datei-/Screen-Einsicht aus")
 
     def _on_ttd_auto_share_toggle(self) -> None:
         """Persistiert den lokalen TTD-Auto-Share-Schalter fail-closed."""
         enabled = bool(self.ttd_auto_share_var.get())
-        self._persist_shanway_preferences()
+        self._persist_assistant_preferences()
         if enabled:
             self.public_ttd_status_var.set(
                 "TTD-Pool: Vorschlag aktiv | stabile Anker fragen lokal vor Metrics-Only-Freigabe"
@@ -4190,14 +4190,14 @@ class VeiraGUI:
         else:
             self.public_ttd_status_var.set("TTD-Pool: lokal | keine oeffentliche Freigabe")
 
-    def _set_shanway_guard(self, message: str) -> None:
-        """Aktualisiert die sichtbare Shanway-Schutzmeldung."""
-        text = str(message or "Shanway Guard: bereit")
-        self.shanway_sensitive_var.set(text)
-        self._draw_shanway_face(text)
+    def _set_assistant_guard(self, message: str) -> None:
+        """Aktualisiert die sichtbare Assistant-Schutzmeldung."""
+        text = str(message or "Assistant Guard: bereit")
+        self.assistant_sensitive_var.set(text)
+        self._draw_assistant_face(text)
 
-    def _shanway_visual_payloads(self, fingerprint: AetherFingerprint | None = None) -> dict[str, Any]:
-        """Sammelt Miniatur-, Raster- und Self-Reflection-Zusatzdaten fuer Shanway."""
+    def _assistant_visual_payloads(self, fingerprint: AetherFingerprint | None = None) -> dict[str, Any]:
+        """Sammelt Miniatur-, Raster- und Self-Reflection-Zusatzdaten fuer Assistant."""
         active = fingerprint if fingerprint is not None else self.current_fingerprint
         self_reflection = dict(getattr(active, "self_reflection_delta", {}) or {}) if active is not None else {}
         miniature = dict(getattr(active, "miniature_reflection", {}) or self_reflection.get("miniature_reflection", {}) or {})
@@ -4209,22 +4209,22 @@ class VeiraGUI:
         }
 
     def _update_miniature_preview(self, fingerprint: AetherFingerprint | None) -> None:
-        """Aktualisiert die sichtbare Miniaturvorschau im Shanway-Tab."""
-        if getattr(self, "shanway_miniature_label", None) is None:
+        """Aktualisiert die sichtbare Miniaturvorschau im Assistant-Tab."""
+        if getattr(self, "assistant_miniature_label", None) is None:
             return
         miniature_rgb = getattr(fingerprint, "_miniature_rgb", None) if fingerprint is not None else None
         if miniature_rgb is None:
-            self.shanway_miniature_label.configure(image="", text="Keine Miniatur")
+            self.assistant_miniature_label.configure(image="", text="Keine Miniatur")
             self.miniature_image_ref = None
             return
         try:
             image = Image.fromarray(np.asarray(miniature_rgb, dtype=np.uint8), mode="RGB")
             image = image.resize((128, 128), Image.Resampling.NEAREST)
             photo = ImageTk.PhotoImage(image=image)
-            self.shanway_miniature_label.configure(image=photo, text="")
+            self.assistant_miniature_label.configure(image=photo, text="")
             self.miniature_image_ref = photo
         except Exception:
-            self.shanway_miniature_label.configure(image="", text="Miniatur konnte nicht angezeigt werden")
+            self.assistant_miniature_label.configure(image="", text="Miniatur konnte nicht angezeigt werden")
             self.miniature_image_ref = None
 
     def _ask_self_reflection_share_scope(self, title: str, prompt: str) -> str:
@@ -4379,7 +4379,7 @@ class VeiraGUI:
                     f"TTD-Pool: vertrauenswuerdig | {status_hash}... | Quorum {validation_count}/{quorum_threshold}"
                 )
                 self.chat_status_var.set(
-                    "Shanway: stabiler TTD-Anker ist jetzt vertrauenswuerdig und fuer globales Lernen freigegeben"
+                    "Assistant: stabiler TTD-Anker ist jetzt vertrauenswuerdig und fuer globales Lernen freigegeben"
                 )
                 self.chat_reply_var.set(
                     f"Stabiler TTD-Anker detektiert ({status_hash}...). Hash+Metriken wurden freigegeben und als vertrauenswuerdig markiert."
@@ -4388,7 +4388,7 @@ class VeiraGUI:
                 self.public_ttd_status_var.set(
                     f"TTD-Pool: Quorum offen | {status_hash}... | Validierungen {validation_count}/{quorum_threshold}"
                 )
-                self.chat_status_var.set("Shanway: TTD-Anker als Kandidat geteilt, wartet auf unabhaengige Validierungen")
+                self.chat_status_var.set("Assistant: TTD-Anker als Kandidat geteilt, wartet auf unabhaengige Validierungen")
                 self.chat_reply_var.set(
                     f"Stabiler TTD-Anker detektiert ({status_hash}...). Hash+Metriken wurden geteilt, "
                     f"aber globales Lernen startet erst nach {quorum_threshold} Validierungen."
@@ -4704,26 +4704,26 @@ class VeiraGUI:
         )
 
     @staticmethod
-    def _is_direct_shanway_invocation(text: str) -> bool:
+    def _is_direct_assistant_invocation(text: str) -> bool:
         lowered = str(text or "").strip().lower()
-        return "@shanway" in lowered or lowered.startswith("/shanway")
+        return "@assistant" in lowered or lowered.startswith("/assistant")
 
-    def _handle_shanway_toggle_command(self, text: str) -> bool:
-        """Schaltet Shanway per Chatkommando lokal um."""
+    def _handle_assistant_toggle_command(self, text: str) -> bool:
+        """Schaltet Assistant per Chatkommando lokal um."""
         lowered = str(text or "").strip().lower()
-        if lowered in {"/shanway on", "@shanway start", "shanway on"}:
-            self.shanway_enabled_var.set(True)
-            self._on_shanway_toggle()
-            self.chat_reply_var.set("Shanway: Aktiviert. Ich antworte jetzt in offenen Kanaelen.")
-            self.chat_status_var.set("Shanway aktiv | per Kommando zugeschaltet")
-            self.chat_semantic_var.set("Semantik: -- | Shanway manuell aktiviert")
+        if lowered in {"/assistant on", "@assistant start", "assistant on"}:
+            self.assistant_enabled_var.set(True)
+            self._on_assistant_toggle()
+            self.chat_reply_var.set("Assistant: Aktiviert. Ich antworte jetzt in offenen Kanaelen.")
+            self.chat_status_var.set("Assistant aktiv | per Kommando zugeschaltet")
+            self.chat_semantic_var.set("Semantik: -- | Assistant manuell aktiviert")
             return True
-        if lowered in {"/shanway off", "@shanway stop", "shanway off"}:
-            self.shanway_enabled_var.set(False)
-            self._on_shanway_toggle()
-            self.chat_reply_var.set("Shanway: Deaktiviert. Ich bleibe still, bis du mich wieder zuschaltest.")
-            self.chat_status_var.set("Shanway inaktiv | per Kommando abgeschaltet")
-            self.chat_semantic_var.set("Semantik: -- | Shanway manuell deaktiviert")
+        if lowered in {"/assistant off", "@assistant stop", "assistant off"}:
+            self.assistant_enabled_var.set(False)
+            self._on_assistant_toggle()
+            self.chat_reply_var.set("Assistant: Deaktiviert. Ich bleibe still, bis du mich wieder zuschaltest.")
+            self.chat_status_var.set("Assistant inaktiv | per Kommando abgeschaltet")
+            self.chat_semantic_var.set("Semantik: -- | Assistant manuell deaktiviert")
             return True
         return False
 
@@ -4954,7 +4954,7 @@ class VeiraGUI:
         threading.Thread(target=worker, daemon=True).start()
 
     def _refresh_chat_view(self) -> None:
-        """Aktualisiert den lokalen Mehrnutzer-Chat samt Shanway-Antworten."""
+        """Aktualisiert den lokalen Mehrnutzer-Chat samt Assistant-Antworten."""
         if not hasattr(self, "chat_text"):
             return
         if not self.chat_channel_map:
@@ -4984,23 +4984,23 @@ class VeiraGUI:
             if kind == "public":
                 text = (
                     "Noch keine lokalen Chatnachrichten vorhanden.\n"
-                    "Jede oeffentliche Nachricht wird sofort durch die AETHER-Pipeline analysiert und von Shanway beantwortet.\n"
+                    "Jede oeffentliche Nachricht wird sofort durch die AETHER-Pipeline analysiert und von Assistant beantwortet.\n"
                     "Beispiele: status, graph, browser, historie, muster, sicherheit, vergleich, hilfe.\n"
                 )
-            elif kind == "private_shanway":
+            elif kind == "private_assistant":
                 text = (
-                    "Noch kein privater Verlauf mit Shanway vorhanden.\n"
+                    "Noch kein privater Verlauf mit Assistant vorhanden.\n"
                     "Dieser Kanal bleibt lokal verschluesselt und fliesst nicht in Vault, Chain oder Export.\n"
                 )
             elif kind == "private":
                 text = (
                     "Noch keine Direktnachrichten vorhanden.\n"
-                    "Direktnachrichten bleiben lokal verschluesselt und werden nicht von Shanway gelernt.\n"
+                    "Direktnachrichten bleiben lokal verschluesselt und werden nicht von Assistant gelernt.\n"
                 )
             else:
                 text = (
                     "Noch keine Gruppennachrichten vorhanden.\n"
-                    "Gruppen bleiben lokal verschluesselt. Shanway reagiert hier nur auf @shanway.\n"
+                    "Gruppen bleiben lokal verschluesselt. Assistant reagiert hier nur auf @assistant.\n"
                 )
             self.chat_text.insert("1.0", text)
         else:
@@ -5015,7 +5015,7 @@ class VeiraGUI:
                 if str(item.get("reply_text", "")).strip():
                     self.chat_text.insert(
                         tk.END,
-                        f"Shanway: {item.get('reply_text', '')}\n",
+                        f"Assistant: {item.get('reply_text', '')}\n",
                     )
                 if payload:
                     self.chat_text.insert(
@@ -5055,7 +5055,7 @@ class VeiraGUI:
                 self.chat_text.insert(tk.END, "\n")
         self.chat_text.configure(state="disabled")
         self.chat_text.see(tk.END)
-        self._refresh_shanway_view()
+        self._refresh_assistant_view()
 
     def _chat_analysis_attachment_payload(self, descriptor: dict[str, object] | None) -> dict[str, object]:
         """Leitet aus dem aktuellen Datensatz eine kleine Chat-Analysebeilage ab."""
@@ -5119,17 +5119,17 @@ class VeiraGUI:
         }
 
     def _send_chat_message(self, source: str = "auto", force_network: bool = False) -> None:
-        """Analysiert eine lokale Chatnachricht und laesst Shanway deterministisch antworten."""
+        """Analysiert eine lokale Chatnachricht und laesst Assistant deterministisch antworten."""
         text = self._message_input_text(source)
         if not text:
             return
-        if self._handle_shanway_toggle_command(text):
+        if self._handle_assistant_toggle_command(text):
             self._clear_message_input(source)
             return
         if not self.chat_channel_map:
             self._refresh_chat_channels()
-        if source == "shanway":
-            self._refresh_chat_channels(selected_channel="private:shanway")
+        if source == "assistant":
+            self._refresh_chat_channels(selected_channel="private:assistant")
         descriptor = self._chat_current_descriptor()
         if descriptor is None:
             messagebox.showwarning("Chat", "Es ist kein gueltiger Kanal ausgewaehlt.", parent=self.root)
@@ -5144,10 +5144,10 @@ class VeiraGUI:
         partner_user_id = int(partner_record["id"]) if isinstance(partner_record, dict) else 0
         group_id = str(descriptor.get("group_id", ""))
 
-        if kind in {"private", "private_shanway"} and text.casefold() == "vergiss das":
-            other_name = "shanway" if kind == "private_shanway" else partner_name
+        if kind in {"private", "private_assistant"} and text.casefold() == "vergiss das":
+            other_name = "assistant" if kind == "private_assistant" else partner_name
             deleted = self.registry.delete_private_conversation(current_username, other_name)
-            self.chat_reply_var.set("Shanway: --")
+            self.chat_reply_var.set("Assistant: --")
             self.chat_status_var.set(f"Privater Verlauf geloescht | {deleted} Nachrichten")
             self.chat_semantic_var.set("Semantik: -- | privater Verlauf geloescht")
             self.loading_var.set(f"Privater Verlauf geloescht: {deleted} Nachrichten")
@@ -5158,27 +5158,27 @@ class VeiraGUI:
         try:
             should_reply = False
             blocked_sensitive = False
-            mention_requested = self._is_direct_shanway_invocation(text)
+            mention_requested = self._is_direct_assistant_invocation(text)
             persist_public_analysis = False
             source_type = "chat"
             source_label = f"chat://global/{current_username}"
-            if kind == "private_shanway":
+            if kind == "private_assistant":
                 should_reply = True
                 persist_public_analysis = False
                 source_type = "chat_private"
-                source_label = f"chat://private/{current_username}/shanway"
+                source_label = f"chat://private/{current_username}/assistant"
             elif kind == "private":
                 should_reply = False
                 persist_public_analysis = False
                 source_type = "chat_private"
                 source_label = f"chat://private/{current_username}/{partner_name}"
             elif kind == "group":
-                should_reply = bool(descriptor.get("shanway_enabled", False)) and (mention_requested or bool(force_network))
+                should_reply = bool(descriptor.get("assistant_enabled", False)) and (mention_requested or bool(force_network))
                 persist_public_analysis = False
                 source_type = "chat_group"
                 source_label = f"chat://group/{group_id}/{current_username}"
             else:
-                should_reply = bool(self.shanway_enabled_var.get()) or mention_requested or bool(force_network)
+                should_reply = bool(self.assistant_enabled_var.get()) or mention_requested or bool(force_network)
 
             if kind == "group":
                 self.registry.register_group_consensus_vote(
@@ -5196,9 +5196,9 @@ class VeiraGUI:
             fingerprint = None
             record_id = 0
             full_reply = ""
-            shanway_assessment: ShanwayAssessment | None = None
-            shanway_self_assessment: ShanwayAssessment | None = None
-            shanway_interface_result: ShanwayInterfaceResult | None = None
+            assistant_assessment: AssistantAssessment | None = None
+            assistant_self_assessment: AssistantAssessment | None = None
+            assistant_interface_result: AssistantInterfaceResult | None = None
             self_learned_tokens = 0
             detector_dna_path = ""
             history_excerpt = self._chat_recent_history_excerpt(descriptor)
@@ -5206,7 +5206,7 @@ class VeiraGUI:
 
             if should_reply:
                 assistant_context = self._assistant_context_for()
-                shanway_interface_result = self.shanway_interface.analyze_and_route(
+                assistant_interface_result = self.assistant_interface.analyze_and_route(
                     text,
                     coherence_score=float(getattr(self.current_fingerprint, "coherence_score", 0.0) or 0.0)
                     if self.current_fingerprint is not None else 0.0,
@@ -5242,14 +5242,14 @@ class VeiraGUI:
                         "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
                         "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
                     } if self.current_fingerprint is not None else {},
-                    **self._shanway_visual_payloads(self.current_fingerprint),
+                    **self._assistant_visual_payloads(self.current_fingerprint),
                 )
-                shanway_assessment = shanway_interface_result.assessment
-                if shanway_assessment.sensitive:
+                assistant_assessment = assistant_interface_result.assessment
+                if assistant_assessment.sensitive:
                     blocked_sensitive = True
                     should_reply = False
-                    full_reply = self.shanway_engine.render_response(shanway_assessment)
-                    self._set_shanway_guard(full_reply)
+                    full_reply = self.assistant_engine.render_response(assistant_assessment)
+                    self._set_assistant_guard(full_reply)
 
             if should_reply:
                 reply = StructuralReply(
@@ -5258,48 +5258,48 @@ class VeiraGUI:
                         "uncertain": "AMBIVALENT_DIALOG",
                         "toxic": "BLOCKED_DIALOG",
                         "sensitive": "BLOCKED_DIALOG",
-                    }.get(str(shanway_assessment.classification), "DIRECT_DIALOG"),
-                    sce_score=float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
+                    }.get(str(assistant_assessment.classification), "DIRECT_DIALOG"),
+                    sce_score=float(max(0.0, min(100.0, assistant_assessment.noether_symmetry * 100.0))),
                     sce_label=(
                         "harmonisch"
-                        if shanway_assessment.classification == "harmonic"
-                        else ("vorsichtig" if shanway_assessment.classification == "uncertain" else "blockiert")
+                        if assistant_assessment.classification == "harmonic"
+                        else ("vorsichtig" if assistant_assessment.classification == "uncertain" else "blockiert")
                     ),
-                    response_text=str(shanway_assessment.message),
+                    response_text=str(assistant_assessment.message),
                 )
                 assistant_response = self.dialog_engine.assist(
                     user_text=text,
                     structural_reply=reply,
                     context=assistant_context,
                 )
-                sce_d = float(shanway_assessment.noether_symmetry)
+                sce_d = float(assistant_assessment.noether_symmetry)
                 anchors = list(assistant_context.ae_anchor_details or [])
-                web_context = dict(getattr(shanway_interface_result, "web_context", {}) or {})
+                web_context = dict(getattr(assistant_interface_result, "web_context", {}) or {})
                 if not web_context.get("ok"):
                     web_context = self._maybe_fetch_chat_web_context(
                         text,
                         descriptor,
-                        shanway_assessment,
+                        assistant_assessment,
                         assistant_intent=str(getattr(assistant_response, "intent", "") or ""),
                         force_network=bool(force_network),
                     )
-                partner_text = self.shanway_engine.compose_chat_partner_reply(
+                partner_text = self.assistant_engine.compose_chat_partner_reply(
                     text,
-                    shanway_assessment,
+                    assistant_assessment,
                     assistant_text=assistant_response.text,
                     history_excerpt=history_excerpt,
                     web_context=web_context,
                     channel_kind=kind,
                 )
 
-                full_reply = self.shanway_engine.render_response(
-                    shanway_assessment,
+                full_reply = self.assistant_engine.render_response(
+                    assistant_assessment,
                     assistant_text=partner_text,
                 )
 
-                if kind == "private_shanway" and shanway_assessment.classification != "toxic":
+                if kind == "private_assistant" and assistant_assessment.classification != "toxic":
                     full_reply = f"{full_reply} Dieses Gespraech bleibt zwischen uns."
-                elif kind == "group" and shanway_assessment.classification != "toxic":
+                elif kind == "group" and assistant_assessment.classification != "toxic":
                     consensus_hits = self.registry.get_group_consensus_knowledge(
                         group_id=group_id,
                         query_text=text,
@@ -5312,9 +5312,9 @@ class VeiraGUI:
                         )
                         full_reply = f"{consensus_prefix}. {full_reply}"
                     full_reply = f"{full_reply} Gruppeninformation bleibt in dieser Gruppe."
-                shanway_self_assessment = self.shanway_engine.detect_asymmetry(
+                assistant_self_assessment = self.assistant_engine.detect_asymmetry(
                     full_reply,
-                    coherence_score=float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
+                    coherence_score=float(max(0.0, min(100.0, assistant_assessment.noether_symmetry * 100.0))),
                     anchor_details=list(anchors),
                     browser_mode=False,
                     active=True,
@@ -5348,13 +5348,13 @@ class VeiraGUI:
                         "verdict_reconstruction_reason": str(getattr(self.current_fingerprint, "verdict_reconstruction_reason", "") or ""),
                         "delta_session_seed": int(getattr(self.current_fingerprint, "delta_session_seed", 0) or 0),
                     } if self.current_fingerprint is not None else {},
-                    **self._shanway_visual_payloads(self.current_fingerprint),
+                    **self._assistant_visual_payloads(self.current_fingerprint),
                 )
-                if not shanway_self_assessment.sensitive and shanway_self_assessment.classification != "toxic":
+                if not assistant_self_assessment.sensitive and assistant_self_assessment.classification != "toxic":
                     self_learned_tokens = int(
-                        self.shanway_engine.learn_from_corpus_text(
+                        self.assistant_engine.learn_from_corpus_text(
                             full_reply,
-                            language_hint=str(shanway_assessment.language or ""),
+                            language_hint=str(assistant_assessment.language or ""),
                         )
                     )
 
@@ -5369,8 +5369,8 @@ class VeiraGUI:
                     "assistant_intent": assistant_response.intent,
                     "assistant_knowledge_layer": int(getattr(assistant_response, "knowledge_layer", 0) or 0),
                     "assistant_knowledge_key": str(getattr(assistant_response, "knowledge_key", "")),
-                    "integrity_text": str(shanway_assessment.message),
-                    "ethics_score": float(max(0.0, min(100.0, shanway_assessment.noether_symmetry * 100.0))),
+                    "integrity_text": str(assistant_assessment.message),
+                    "ethics_score": float(max(0.0, min(100.0, assistant_assessment.noether_symmetry * 100.0))),
                     "graph_phase_state": "",
                     "graph_region": "",
                     "graph_attractor_score": 0.0,
@@ -5399,9 +5399,9 @@ class VeiraGUI:
                     "ae_lab": {},
                     "ae_anchor_details": [dict(item) for item in list(assistant_context.ae_anchor_details or [])[:16]],
                 }
-                if shanway_assessment is not None:
-                    payload["shanway_assessment"] = shanway_assessment.to_payload()
-                    payload["shanway_detector_dna"] = ""
+                if assistant_assessment is not None:
+                    payload["assistant_assessment"] = assistant_assessment.to_payload()
+                    payload["assistant_detector_dna"] = ""
                 if web_context:
                     payload["web_context"] = dict(web_context)
                 if self.current_fingerprint is not None:
@@ -5409,13 +5409,13 @@ class VeiraGUI:
                     payload["file_profile"] = dict(getattr(self.current_fingerprint, "file_profile", {}) or {})
                     payload["observer_payload"] = dict(getattr(self.current_fingerprint, "observer_payload", {}) or {})
                     payload["emergence_layers"] = [dict(item) for item in list(getattr(self.current_fingerprint, "emergence_layers", []) or [])]
-                if shanway_self_assessment is not None:
-                    payload["shanway_self_assessment"] = shanway_self_assessment.to_payload()
-                    payload["shanway_self_learned_tokens"] = int(self_learned_tokens)
-            elif blocked_sensitive and shanway_assessment is not None:
+                if assistant_self_assessment is not None:
+                    payload["assistant_self_assessment"] = assistant_self_assessment.to_payload()
+                    payload["assistant_self_learned_tokens"] = int(self_learned_tokens)
+            elif blocked_sensitive and assistant_assessment is not None:
                 payload = {
-                    "shanway_assessment": shanway_assessment.to_payload(),
-                    "shanway_blocked": True,
+                    "assistant_assessment": assistant_assessment.to_payload(),
+                    "assistant_blocked": True,
                 }
             analysis_attachment = self._chat_analysis_attachment_payload(descriptor)
             if analysis_attachment:
@@ -5428,7 +5428,7 @@ class VeiraGUI:
                 payload["delta_share"] = delta_share
             if kind == "group":
                 payload["group_id"] = group_id
-                payload["group_shanway_enabled"] = bool(descriptor.get("shanway_enabled", False))
+                payload["group_assistant_enabled"] = bool(descriptor.get("assistant_enabled", False))
                 payload["group_analysis_mode"] = self._chat_active_analysis_mode(descriptor)
             if kind.startswith("private"):
                 payload["private_scope"] = True
@@ -5445,20 +5445,20 @@ class VeiraGUI:
                 reply_text=full_reply,
                 channel=channel_name,
                 payload=payload,
-                is_private=kind in {"private", "private_shanway"},
+                is_private=kind in {"private", "private_assistant"},
                 recipient_user_id=partner_user_id if kind == "private" else 0,
-                recipient_username=partner_name if kind == "private" else ("shanway" if kind == "private_shanway" else ""),
+                recipient_username=partner_name if kind == "private" else ("assistant" if kind == "private_assistant" else ""),
                 group_id=group_id if kind == "group" else "",
-                visible_to_shanway=bool(should_reply or blocked_sensitive or kind == "private_shanway"),
+                visible_to_assistant=bool(should_reply or blocked_sensitive or kind == "private_assistant"),
             )
-            if kind != "private_shanway":
+            if kind != "private_assistant":
                 self._chat_sync_publish_message(int(message_id))
 
-            if blocked_sensitive and shanway_assessment is not None:
-                structured = self._build_structured_shanway_output(
-                    shanway_assessment,
-                    shanway_interface_result or ShanwayInterfaceResult(
-                        assessment=shanway_assessment,
+            if blocked_sensitive and assistant_assessment is not None:
+                structured = self._build_structured_assistant_output(
+                    assistant_assessment,
+                    assistant_interface_result or AssistantInterfaceResult(
+                        assessment=assistant_assessment,
                         preload_recommendations=[],
                         web_context={},
                         library_context={},
@@ -5471,12 +5471,12 @@ class VeiraGUI:
                 )
                 self.chat_semantic_var.set(f"Semantik: BLOCKED | Ende {structured.endbewertung}")
                 self.chat_status_var.set("Sensible Inhalte erkannt | Analyse gestoppt")
-                self.loading_var.set("Sensible Inhalte erkannt | Shanway hat nicht analysiert")
-            elif should_reply and reply is not None and assistant_response is not None and shanway_assessment is not None:
-                structured = self._build_structured_shanway_output(
-                    shanway_assessment,
-                    shanway_interface_result or ShanwayInterfaceResult(
-                        assessment=shanway_assessment,
+                self.loading_var.set("Sensible Inhalte erkannt | Assistant hat nicht analysiert")
+            elif should_reply and reply is not None and assistant_response is not None and assistant_assessment is not None:
+                structured = self._build_structured_assistant_output(
+                    assistant_assessment,
+                    assistant_interface_result or AssistantInterfaceResult(
+                        assessment=assistant_assessment,
                         preload_recommendations=[],
                         web_context=dict(web_context),
                         library_context={},
@@ -5489,60 +5489,60 @@ class VeiraGUI:
                 )
                 self.chat_semantic_var.set(
                     f"Semantik: {reply.semantics_label} | Intent: {assistant_response.intent} | "
-                    f"Noether {shanway_assessment.noether_symmetry * 100.0:.0f}% | Ende {structured.endbewertung}"
+                    f"Noether {assistant_assessment.noether_symmetry * 100.0:.0f}% | Ende {structured.endbewertung}"
                 )
-                if shanway_assessment.classification == "toxic":
+                if assistant_assessment.classification == "toxic":
                     self.chat_status_var.set(
-                        f"Shanway aktiv | Kanal {channel_name} | asymmetrische Struktur blockiert"
+                        f"Assistant aktiv | Kanal {channel_name} | asymmetrische Struktur blockiert"
                     )
                 else:
                     self.chat_status_var.set(
-                        f"Shanway aktiv | Kanal {channel_name} | Intent {assistant_response.intent} | "
+                        f"Assistant aktiv | Kanal {channel_name} | Intent {assistant_response.intent} | "
                         f"Self-Learn {self_learned_tokens}"
                     )
                 self.loading_var.set("Chatnachricht lokal verarbeitet | kein Einfluss auf Raster oder Browser")
-                self._set_shanway_guard(shanway_assessment.message)
+                self._set_assistant_guard(assistant_assessment.message)
             else:
-                self.chat_reply_var.set("Shanway: --")
+                self.chat_reply_var.set("Assistant: --")
                 if kind == "group":
-                    if bool(descriptor.get("shanway_enabled", False)):
-                        self.chat_status_var.set("Gruppennachricht gespeichert | Shanway reagiert nur auf @shanway")
+                    if bool(descriptor.get("assistant_enabled", False)):
+                        self.chat_status_var.set("Gruppennachricht gespeichert | Assistant reagiert nur auf @assistant")
                     else:
-                        self.chat_status_var.set("Gruppennachricht gespeichert | Shanway in dieser Gruppe deaktiviert")
+                        self.chat_status_var.set("Gruppennachricht gespeichert | Assistant in dieser Gruppe deaktiviert")
                 elif kind == "private":
                     self.chat_status_var.set(f"Direktnachricht an {partner_name} lokal verschluesselt gespeichert")
                 else:
-                    self.chat_status_var.set("Chatnachricht gespeichert | Shanway aus")
-                self.chat_semantic_var.set("Semantik: -- | keine Shanway-Antwort fuer diesen Kanal")
+                    self.chat_status_var.set("Chatnachricht gespeichert | Assistant aus")
+                self.chat_semantic_var.set("Semantik: -- | keine Assistant-Antwort fuer diesen Kanal")
                 self.loading_var.set("Verschluesselte Chatnachricht gespeichert")
-                self._set_shanway_guard("Shanway Guard: bereit")
+                self._set_assistant_guard("Assistant Guard: bereit")
 
             self._refresh_chat_channels(selected_channel=channel_name)
             self._refresh_chat_view()
         except Exception as exc:
-            self.chat_status_var.set("Shanway-Analyse fehlgeschlagen")
+            self.chat_status_var.set("Assistant-Analyse fehlgeschlagen")
             messagebox.showerror("Chatfehler", f"Die Chatnachricht konnte nicht analysiert werden:\n{exc}")
 
-    def _refresh_shanway_view(self) -> None:
-        """Zeigt den privaten Verlauf mit Shanway als eigenen klaren Verlauf an."""
-        if not hasattr(self, "shanway_text"):
+    def _refresh_assistant_view(self) -> None:
+        """Zeigt den privaten Verlauf mit Assistant als eigenen klaren Verlauf an."""
+        if not hasattr(self, "assistant_text"):
             return
         messages = list(
             reversed(
                 self.registry.get_chat_messages(
                     limit=160,
-                    channel="private:shanway",
+                    channel="private:assistant",
                     current_user_id=int(getattr(self.session_context, "user_id", 0) or 0),
                     current_username=str(getattr(self.session_context, "username", "")),
                 )
             )
         )
-        self.shanway_text.configure(state="normal")
-        self.shanway_text.delete("1.0", tk.END)
+        self.assistant_text.configure(state="normal")
+        self.assistant_text.delete("1.0", tk.END)
         if not messages:
-            self.shanway_text.insert(
+            self.assistant_text.insert(
                 "1.0",
-                "Noch kein privater Verlauf mit Shanway vorhanden.\n\n"
+                "Noch kein privater Verlauf mit Assistant vorhanden.\n\n"
                 "Hier bleibt das Gespraech lokal verschluesselt und getrennt von oeffentlichen Kanaelen.\n",
             )
         else:
@@ -5551,10 +5551,10 @@ class VeiraGUI:
                 timestamp = str(item.get("timestamp", ""))
                 stamp = timestamp[11:19] if len(timestamp) >= 19 else timestamp
                 if bool(payload.get("system_notice", False)) and str(item.get("reply_text", "")).strip():
-                    self.shanway_text.insert(tk.END, f"[{stamp}] AELAB Update\n")
-                    self.shanway_text.insert(tk.END, f"Shanway: {item.get('reply_text', '')}\n")
+                    self.assistant_text.insert(tk.END, f"[{stamp}] AELAB Update\n")
+                    self.assistant_text.insert(tk.END, f"Assistant: {item.get('reply_text', '')}\n")
                     update_box = dict(payload.get("ae_vault_update", {}) or {})
-                    self.shanway_text.insert(
+                    self.assistant_text.insert(
                         tk.END,
                         "  "
                         f"MAIN {int(update_box.get('main_vault_size', 0) or 0)} | "
@@ -5563,13 +5563,13 @@ class VeiraGUI:
                         f"{str(update_box.get('guard_preview', '--'))}\n\n",
                     )
                     continue
-                self.shanway_text.insert(tk.END, f"[{stamp}] Du: {item.get('message_text', '')}\n")
+                self.assistant_text.insert(tk.END, f"[{stamp}] Du: {item.get('message_text', '')}\n")
                 if str(item.get("reply_text", "")).strip():
-                    self.shanway_text.insert(tk.END, f"Shanway: {item.get('reply_text', '')}\n")
+                    self.assistant_text.insert(tk.END, f"Assistant: {item.get('reply_text', '')}\n")
                 if payload:
-                    assessment = dict(payload.get("shanway_assessment", {}) or {})
+                    assessment = dict(payload.get("assistant_assessment", {}) or {})
                     language = str(assessment.get("language", payload.get("language", "--")))
-                    self.shanway_text.insert(
+                    self.assistant_text.insert(
                         tk.END,
                         "  "
                         f"Sprache {language} | "
@@ -5578,9 +5578,9 @@ class VeiraGUI:
                         f"H_lambda {float(payload.get('h_lambda', 0.0)):.2f} | "
                         f"Noether {float(assessment.get('noether_symmetry', 0.0)) * 100.0:.0f}%\n",
                     )
-                self.shanway_text.insert(tk.END, "\n")
-        self.shanway_text.configure(state="disabled")
-        self.shanway_text.see(tk.END)
+                self.assistant_text.insert(tk.END, "\n")
+        self.assistant_text.configure(state="disabled")
+        self.assistant_text.see(tk.END)
 
     def _base_loop_delay_ms(self, loop_name: str) -> int:
         """Liefert die Basistakte aus dem statischen Geraeteprofil."""
@@ -5784,8 +5784,8 @@ class VeiraGUI:
         self._last_ontology_complete = ontology_complete
 
     def _build_left_panel(self) -> None:
-        """Baut den linken Bereich mit Shanway-Fokus, Drag-and-Drop-Hinweis und Loganzeige."""
-        tk.Label(self.left_frame, text="Shanway", bg=APP_SURFACE, fg=APP_TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
+        """Baut den linken Bereich mit Assistant-Fokus, Drag-and-Drop-Hinweis und Loganzeige."""
+        tk.Label(self.left_frame, text="Assistant", bg=APP_SURFACE, fg=APP_TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=12, pady=(12, 8))
         tk.Label(
             self.left_frame,
             text="Freundlicher lokaler Begleiter statt Schlafparalyse-Maske.",
@@ -5796,12 +5796,12 @@ class VeiraGUI:
 
         face_card = tk.Frame(self.left_frame, bg=APP_SURFACE_ALT, bd=0, relief="flat", highlightthickness=1, highlightbackground=APP_BORDER)
         face_card.pack(fill="x", padx=12, pady=(0, 8))
-        self.shanway_face_canvas = tk.Canvas(face_card, width=316, height=176, bg=APP_EDITOR, highlightthickness=0, bd=0)
-        self.shanway_face_canvas.pack(fill="x", padx=10, pady=(10, 6))
-        self._draw_shanway_face("bereit")
+        self.assistant_face_canvas = tk.Canvas(face_card, width=316, height=176, bg=APP_EDITOR, highlightthickness=0, bd=0)
+        self.assistant_face_canvas.pack(fill="x", padx=10, pady=(10, 6))
+        self._draw_assistant_face("bereit")
         tk.Label(
             face_card,
-            textvariable=self.shanway_sensitive_var,
+            textvariable=self.assistant_sensitive_var,
             bg=APP_SURFACE_ALT,
             fg=APP_WARN,
             wraplength=316,
@@ -5811,7 +5811,7 @@ class VeiraGUI:
 
         tk.Label(
             self.left_frame,
-            text="Dateien kommen nur noch per Drag & Drop in das Hauptfenster. So bleibt die Oberflaeche sauber und Shanway arbeitet immer auf dem sichtbaren Datensatz.",
+            text="Dateien kommen nur noch per Drag & Drop in das Hauptfenster. So bleibt die Oberflaeche sauber und Assistant arbeitet immer auf dem sichtbaren Datensatz.",
             bg=APP_SURFACE,
             fg=APP_TEXT_MUTED,
             wraplength=345,
@@ -5932,7 +5932,7 @@ class VeiraGUI:
 
         tk.Label(
             self.left_frame,
-            text="Shanway schreibt nach abgeschlossenen Iterationen direkt, was stabil ist, was fehlt und wie Datei-, Screen- und Prozesskontext zusammenhaengen.",
+            text="Assistant schreibt nach abgeschlossenen Iterationen direkt, was stabil ist, was fehlt und wie Datei-, Screen- und Prozesskontext zusammenhaengen.",
             bg="#111A4A",
             fg="#C7D7FF",
             wraplength=345,
@@ -5968,9 +5968,9 @@ class VeiraGUI:
         """Der rechte Bereich wird spaeter komplett als eingebettetes Modul-Notebook aufgebaut."""
         return
 
-    def _draw_shanway_face(self, mood: str = "bereit") -> None:
+    def _draw_assistant_face(self, mood: str = "bereit") -> None:
         """Zeichnet ein reduziertes Roboterzeichen im ruhigen Dark-Mode-Stil."""
-        canvas = getattr(self, "shanway_face_canvas", None)
+        canvas = getattr(self, "assistant_face_canvas", None)
         if canvas is None:
             return
         normalized = str(mood or "bereit").strip().lower()
@@ -6028,12 +6028,12 @@ class VeiraGUI:
         return str(getattr(self, "chat_scope_var", tk.StringVar(value="private")).get() or "private").strip().lower()
 
     def _chat_descriptor_matches_scope(self, descriptor: dict[str, object], scope: str) -> bool:
-        """Filtert Kanaele fuer Privat-, Gruppen- und Shanway-Tabs."""
+        """Filtert Kanaele fuer Privat-, Gruppen- und Assistant-Tabs."""
         kind = str(descriptor.get("kind", "public") or "public").strip().lower()
-        if scope == "shanway":
-            return kind == "private_shanway"
+        if scope == "assistant":
+            return kind == "private_assistant"
         if scope == "private":
-            return kind in {"private", "private_shanway"}
+            return kind in {"private", "private_assistant"}
         return kind in {"public", "group"}
 
     def _select_chat_scope(self, scope: str) -> None:
@@ -6158,7 +6158,7 @@ class VeiraGUI:
         self._aether_vision_state = dict(payload or {})
         title = str(self._aether_vision_state.get("window_title", "") or "")
         if title:
-            self.shanway_vault_watch_var.set(f"AELAB Watch: Vision aktiv | {title}")
+            self.assistant_vault_watch_var.set(f"AELAB Watch: Vision aktiv | {title}")
             if self.current_fingerprint is None:
                 self.preview_relation_var.set(f"Aether Vision aktiv | Fenster {title}")
 
@@ -8771,10 +8771,10 @@ class VeiraGUI:
             verify_counts=verify_counts,
         )
 
-    def _update_semantic_status(self, fingerprint: AetherFingerprint, source_text: str = "") -> ShanwayAssessment | None:
+    def _update_semantic_status(self, fingerprint: AetherFingerprint, source_text: str = "") -> AssistantAssessment | None:
         """Aktualisiert die sichtbare strukturelle Semantik fuer den aktuellen Datensatz."""
         reply, sce_d, anchors = self._structural_reply_for(fingerprint, source_text=source_text)
-        shanway_assessment: ShanwayAssessment | None = None
+        assistant_assessment: AssistantAssessment | None = None
         security_prefix = ""
         if not self.session_context.security_allows("allow_semantic_promotion", True):
             security_prefix = (
@@ -8814,7 +8814,7 @@ class VeiraGUI:
         )
         try:
             assistant_context = self._assistant_context_for(fingerprint)
-            shanway_interface_result = self.shanway_interface.analyze_and_route(
+            assistant_interface_result = self.assistant_interface.analyze_and_route(
                 f"{getattr(fingerprint, 'source_label', '')} {getattr(fingerprint, 'integrity_text', '')}",
                 coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
                 anchor_details=list(assistant_context.ae_anchor_details or []),
@@ -8842,36 +8842,36 @@ class VeiraGUI:
                     "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
                     "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
                 },
-                **self._shanway_visual_payloads(fingerprint),
+                **self._assistant_visual_payloads(fingerprint),
             )
-            shanway_assessment = shanway_interface_result.assessment
-            shanway_text = self.shanway_engine.render_response(shanway_assessment, assistant_text=reply.response_text)
-            fingerprint.emergence_layers = [dict(item) for item in list(shanway_assessment.emergence_layers or [])]
-            setattr(fingerprint, "_shanway_assessment_payload", shanway_assessment.to_payload())
+            assistant_assessment = assistant_interface_result.assessment
+            assistant_text = self.assistant_engine.render_response(assistant_assessment, assistant_text=reply.response_text)
+            fingerprint.emergence_layers = [dict(item) for item in list(assistant_assessment.emergence_layers or [])]
+            setattr(fingerprint, "_assistant_assessment_payload", assistant_assessment.to_payload())
             latest_record_id = int(getattr(self, "_latest_file_record_id", 0) or 0)
             if latest_record_id > 0 and self.current_fingerprint is fingerprint:
                 self.registry.update_fingerprint_payload(
                     latest_record_id,
                     {
-                        "emergence_layers": [dict(item) for item in list(shanway_assessment.emergence_layers or [])],
-                        "shanway_assessment": shanway_assessment.to_payload(),
+                        "emergence_layers": [dict(item) for item in list(assistant_assessment.emergence_layers or [])],
+                        "assistant_assessment": assistant_assessment.to_payload(),
                     },
                 )
-            structured = self._build_structured_shanway_output(
-                shanway_assessment,
-                shanway_interface_result,
-                shanway_text,
+            structured = self._build_structured_assistant_output(
+                assistant_assessment,
+                assistant_interface_result,
+                assistant_text,
             )
             self.chat_semantic_var.set(
-                f"Semantik: {reply.semantics_label} | Boundary: {shanway_assessment.boundary} | Ende {structured.endbewertung}"
+                f"Semantik: {reply.semantics_label} | Boundary: {assistant_assessment.boundary} | Ende {structured.endbewertung}"
             )
             if self.current_fingerprint is fingerprint:
                 self._refresh_center_detail_panels(fingerprint)
         except Exception:
-            shanway_assessment = None
+            assistant_assessment = None
         self._update_graph_field(fingerprint)
         self._update_bayes_layer(fingerprint, anchors=anchors)
-        return shanway_assessment
+        return assistant_assessment
 
     def _update_integrity_monitor(self, fingerprint: AetherFingerprint) -> None:
         """Aktualisiert den Integritaets-Monitor fuer aktuelle Analysewerte."""
@@ -9397,17 +9397,17 @@ class VeiraGUI:
                 try:
                     raw_bytes = source_path.read_bytes()
                     text_content = raw_bytes.decode("utf-8", errors="ignore")
-                    learned_tokens = self.shanway_engine.learn_from_corpus_text(
+                    learned_tokens = self.assistant_engine.learn_from_corpus_text(
                         text_content,
                         language_hint=self._infer_text_language_hint(source_path),
                     )
                     text_learning_info = {
-                        "shanway_text_corpus": True,
+                        "assistant_text_corpus": True,
                         "learned_tokens": int(learned_tokens),
                     }
                 except Exception:
                     text_learning_info = {
-                        "shanway_text_corpus": False,
+                        "assistant_text_corpus": False,
                         "learned_tokens": 0,
                     }
             fingerprint = self.analysis_engine.analyze(
@@ -9434,13 +9434,13 @@ class VeiraGUI:
             )
             miniature_payload = self.renderer.summarize_miniature(miniature_rgb, fingerprint=fingerprint)
             raster_payload: dict[str, Any] = {}
-            if bool(self.shanway_raster_insight_var.get()):
+            if bool(self.assistant_raster_insight_var.get()):
                 raster_payload = self.renderer.get_current_grid_data(fingerprint=fingerprint)
             self_reflection_delta = self.observer_engine.summarize_reflection_state(
                 miniature_payload=miniature_payload,
                 raster_payload=raster_payload,
                 fingerprint=fingerprint,
-                enable_raster_insight=bool(self.shanway_raster_insight_var.get()),
+                enable_raster_insight=bool(self.assistant_raster_insight_var.get()),
                 max_depth=5,
             )
             learning_state = self.observer_engine.update_learning_state(
@@ -9569,8 +9569,8 @@ class VeiraGUI:
                     log_path=str(log_path),
                 ),
             )
-            if bool(text_learning_info.get("shanway_text_corpus", False)):
-                self.root.after(0, self._refresh_shanway_corpus_status)
+            if bool(text_learning_info.get("assistant_text_corpus", False)):
+                self.root.after(0, self._refresh_assistant_corpus_status)
         except Exception as exc:
             self.root.after(0, lambda: self._on_analysis_error(str(exc)))
 
@@ -9933,7 +9933,7 @@ class VeiraGUI:
         )
 
     def _load_local_register_entry(self) -> None:
-        """Laedt den markierten Registereintrag zurueck in Szene und Shanway."""
+        """Laedt den markierten Registereintrag zurueck in Szene und Assistant."""
         entry = self._selected_local_register_entry()
         if entry is None:
             messagebox.showwarning("Hinweis", "Bitte zuerst einen Registereintrag auswaehlen.")
@@ -9967,7 +9967,7 @@ class VeiraGUI:
             messagebox.showinfo(
                 "Registereintrag",
                 "Dieser Eintrag ist lokal analysierbar, aber nicht als rekonstruierbare Datei vorhanden. "
-                "Er wurde stattdessen in Szene und Shanway geladen.",
+                "Er wurde stattdessen in Szene und Assistant geladen.",
             )
             return
         self._open_resolved_record(record)
@@ -10330,7 +10330,7 @@ class VeiraGUI:
                     )
                     self._cd_listbox.insert("end", line)
                 lang = get_language()
-                notif = engine.shanway_notification(lang=lang)
+                notif = engine.assistant_notification(lang=lang)
                 self._cd_status_var.set(
                     f"{len(clusters)} Cluster gefunden."
                     + (f"\n{notif}" if notif else "")

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Aether Cross-Domain Pattern Engine
 -----------------------------------
 Erkennt domaenenuebergreifende Muster durch DBSCAN-Clustering von Ankern aus
@@ -629,7 +629,7 @@ class CrossDomainEngine:
         return None
 
     def summary_text(self, lang: str = "de", top_n: int = 5) -> str:
-        """Kurze Zusammenfassung der Top-Cluster fuer Shanway (kein GUI erforderlich)."""
+        """Kurze Zusammenfassung der Top-Cluster fuer Assistant (kein GUI erforderlich)."""
         disclaimer = self.DISCLAIMER_DE if lang == "de" else self.DISCLAIMER_EN
 
         if not self._clusters:
@@ -662,9 +662,9 @@ class CrossDomainEngine:
         )
         return prefix + "\n".join(lines) + "\n\n" + disclaimer
 
-    def shanway_notification(self, lang: str = "de", threshold: float = 70.0) -> Optional[str]:
+    def assistant_notification(self, lang: str = "de", threshold: float = 70.0) -> Optional[str]:
         """
-        Optional: Shanway-Benachrichtigung bei neuem hochrelevantem Cluster (Score >= threshold).
+        Optional: Assistant-Benachrichtigung bei neuem hochrelevantem Cluster (Score >= threshold).
         Gibt None zurueck, wenn kein relevantes Cluster vorhanden.
         """
         high = [c for c in self._clusters if c.relevance_score >= threshold]

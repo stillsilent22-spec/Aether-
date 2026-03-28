@@ -1,4 +1,4 @@
-"""2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
+﻿"""2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
 
 from __future__ import annotations
 
@@ -353,7 +353,7 @@ class AetherSceneRenderer:
         miniature_rgb: np.ndarray,
         fingerprint: AetherFingerprint | None = None,
     ) -> dict[str, Any]:
-        """Verdichtet eine Miniatur auf stabile lokale Metriken fuer Shanway."""
+        """Verdichtet eine Miniatur auf stabile lokale Metriken fuer Assistant."""
         image = self._resize_rgb(np.asarray(miniature_rgb, dtype=np.uint8), max(32, int(np.asarray(miniature_rgb).shape[0] or 64)))
         gray = np.mean(image[:, :, :3].astype(np.float64), axis=2)
         max_value = max(1.0, float(np.max(gray)))

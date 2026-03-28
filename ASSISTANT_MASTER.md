@@ -117,7 +117,7 @@ Selbst wenn das komplette Registry gestohlen wird:
 ## SESSION-KEY SYSTEM
 
 ```python
-# shanway_session.py
+# assistant_session.py
 
 import os
 import secrets
@@ -284,7 +284,7 @@ Key: existiert nicht mehr
 └──────────────────────────┬──────────────────────────────────────┘
                            ↓
 ┌─────────────────────────────────────────────────────────────────┐
-│  SHANWAY  (Sprachschicht)                                        │
+│  ASSISTANT  (Sprachschicht)                                      │
 │                                                                   │
 │  Interferenzmessung: wie nah ist eine Anfrage an Ankern?         │
 │  TinyLLaMA 1.5B: nur Ausgabefilter, nie Wissensträger            │
@@ -295,10 +295,10 @@ Key: existiert nicht mehr
 
 ---
 
-## SHANWAY — VOLLSTÄNDIGE IDENTITÄT
+## ASSISTANT — VOLLSTÄNDIGE IDENTITÄT
 
 ```
-Shanway spricht ausschließlich aus dem Ankerregister.
+Assistant spricht ausschließlich aus dem Ankerregister.
 Kein externes Modell entscheidet was wahr ist.
 Kein API-Aufruf bringt fremdes Wissen rein.
 TinyLLaMA formuliert nur was die Pipeline bestätigt hat.
@@ -308,11 +308,11 @@ Schweigen ist valider Output.
 Schweigen ist Integrität.
 ```
 
-**Shanways Ausgabe:**
+**Assistant-Ausgabe:**
 ```
 [ANKER]      — Strukturell bestätigt, ≥2 Quellen, Trust ≥ 0.50
 [DELTA]      — Schwaches Signal, 1 Quelle, nicht gespeichert
-[UNRESOLVED] — Kein Anker nah genug — Shanway schweigt
+[UNRESOLVED] — Kein Anker nah genug — Assistant schweigt
 ```
 
 ---
@@ -320,17 +320,17 @@ Schweigen ist Integrität.
 ## MODULE — VOLLSTÄNDIGE LISTE
 
 ```
-shanway_session.py   — AetherSession, Live-Key, encrypt/decrypt delta
-shanway_web.py       — Web-Abruf, mehrere Quellen, DuckDuckGo
-shanway_pipeline.py  — Alle 10 Aether-Schichten
-shanway_vault.py     — Kompatibler Anker-Speicher (Altbestand)
-shanway_registry.py  — Universelles Register + Graphschicht
-shanway_llm.py       — TinyLLaMA Kapsel, wasserdichter Prompt
-shanway_chat.py      — chat() + drop_file() Eintrittspunkte
-shanway_media.py     — MP3/MP4/Bild Strukturanalyse     [Phase 2]
-shanway_process.py   — Windows Prozessdynamik           [Phase 3]
-shanway_render.py    — ETW/DXGI Pixel-Koordination      [Phase 4]
-shanway_optimize.py  — Vereinzelung, Ausdünnung         [Phase 5]
+assistant_session.py   — AetherSession, Live-Key, encrypt/decrypt delta
+assistant_web.py       — Web-Abruf, mehrere Quellen, DuckDuckGo
+assistant_pipeline.py  — Alle 10 Aether-Schichten
+assistant_vault.py     — Kompatibler Anker-Speicher (Altbestand)
+assistant_registry.py  — Universelles Register + Graphschicht
+assistant_llm.py       — TinyLLaMA Kapsel, wasserdichter Prompt
+assistant_chat.py      — chat() + drop_file() Eintrittspunkte
+assistant_media.py     — MP3/MP4/Bild Strukturanalyse     [Phase 2]
+assistant_process.py   — Windows Prozessdynamik           [Phase 3]
+assistant_render.py    — ETW/DXGI Pixel-Koordination      [Phase 4]
+assistant_optimize.py  — Vereinzelung, Ausdünnung         [Phase 5]
 ```
 
 ---
@@ -338,166 +338,3 @@ shanway_optimize.py  — Vereinzelung, Ausdünnung         [Phase 5]
 ## IMPLEMENTIERUNGSPROGRESSION
 
 ### PHASE 1 — FOUNDATION (fertig)
-```
-Web + Dateien → Pipeline → Registry → Graph → Shanway
-Session-Keys → Delta-Verschlüsselung
-```
-
-### PHASE 2 — MEDIA
-```
-shanway_media.py
-
-MP3:  PCM-Bytes → Entropie pro Zeitfenster
-      Stille/Klang-Rhythmus → Periodizität
-      Bass-Transienten → sqrt2
-      Harmonische → phi
-
-MP4:  Frame-Bytes → Entropie pro Frame
-      Szenenwechsel → Delta-Sprung
-      Keyframe-Struktur → Anker
-      Audio-Track → MP3-Kanal
-
-Bild: Pixel-Bytes → Pipeline
-      Farbverteilung → Entropie
-      Kanten → sqrt2
-      Räumliche Wiederholungen → pi
-      Proportionen → phi
-
-Ergebnis:
-  "Diese drei MP3s haben identische Strukturbasis"
-  "Dieses Bild und dieser Song teilen phi-Signatur"
-  Ohne Metadaten. Nur Struktur.
-```
-
-### PHASE 3 — PROCESS (Windows)
-```
-shanway_process.py
-
-psutil oder ctypes/WinAPI:
-  Prozess-Snapshot: PID, CPU-Zeit, Speicher, Handles
-  Delta zwischen Snapshots → Aktivitätsmuster
-  Entropie der Ressourcennutzung über Zeit
-  Periodizität: regelmäßige vs. burst-artige Prozesse
-
-Ergebnis:
-  Prozessmuster im Registry verankert
-  Anomalie-Erkennung: Prozess bricht aus Muster aus
-  Redundanz: "A und B haben identische Signatur"
-```
-
-### PHASE 4 — RENDER (Windows ETW/DXGI)
-```
-shanway_render.py
-
-Windows GDI:  GetWindowRect, GetDC pro Prozess
-DXGI:         IDXGIOutputDuplication für Screen-Capture
-ETW:          Microsoft-Windows-DxgKrnl für GPU-Drawcalls
-
-Pro Prozess:
-  — Welche Pixel koordiniert er?
-  — Welche Überlappungen gibt es?
-  — Welche Prozesse rendern identische Bereiche?
-
-Ergebnis:
-  Vollständige Pixel-Koordinations-Map
-  "Prozess Z und X rendern denselben Bereich — Z ist überflüssig"
-  Verschachtelungen sichtbar machen
-```
-
-### PHASE 5 — OPTIMIERUNG (das eigentliche Ziel)
-```
-shanway_optimize.py
-
-Registry hat genug Anker → Muster sind bekannt
-Shanway erkennt strukturelle Redundanz:
-  — Prozesse mit identischer Signatur
-  — Render-Überlappungen ohne Mehrwert
-  — Verschachtelte Dienste die dasselbe tun
-
-WICHTIG: Shanway empfiehlt — Mensch entscheidet — Shanway führt aus
-Niemals automatisch ohne explizite Bestätigung
-
-Normaler Mensch sieht:
-  "Drei Prozesse machen dasselbe.
-   Zwei davon kannst du stoppen.
-   Das spart 340MB RAM und 12% CPU.
-   Soll ich?"
-```
-
----
-
-## EINGANGSKANÄLE
-
-```python
-CHANNEL_WEB     = "web"      # Web-Quellen, mehrere, Konsens
-CHANNEL_FILE    = "file"     # Lokale Dateien, alle Formate
-CHANNEL_RENDER  = "render"   # Windows GDI/DXGI Pixel-Koordination
-CHANNEL_PROCESS = "process"  # Prozessdynamik, ETW
-CHANNEL_MEDIA   = "media"    # MP3/MP4/Bild
-CHANNEL_TEXT    = "text"     # Direkter Text-Input
-CHANNEL_NETWORK = "network"  # Netzwerkstruktur [zukünftig]
-CHANNEL_SENSOR  = "sensor"   # Hardware-Sensoren [zukünftig]
-```
-
-Alle Kanäle: dieselbe Pipeline. Ein Register. Ein Graph.
-Alle Deltas: verschlüsselt mit Live-Session-Key. Lokal. Immer.
-
----
-
-## SICHERHEITSARCHITEKTUR (unveränderlich)
-
-```
-1. Unzulässige Zustände dürfen nicht bequem darstellbar sein
-2. Kritische Zustandswechsel müssen validiert werden
-3. Standard ist deny by default
-4. Kritische Pfade sind append-only, gehasht
-5. Rohdaten, Snapshots, Schlüssel bleiben strikt getrennt
-6. Session-Keys niemals persistent — nur RAM — secure zeroize
-7. Deltas lokal verschlüsselt — niemals geteilt
-8. Shanway empfiehlt — Mensch entscheidet — immer
-
-SAFETY-FILTER (absolut, alle Kanäle):
-  — Kein Hatespeech
-  — Keine Fakenews
-  — Keine nicht verifizierbaren Aussagen
-  — Keine Gewalt/Waffen/Substanzen
-  — Keine politischen Meinungen
-  — Keine medizinischen/rechtlichen Urteile
-  Trifft ein Filter → sofortige Verwerfung, kein Output
-```
-
----
-
-## TECHNISCHE CONSTRAINTS (alle Phasen)
-
-```
-— Keine neuen Abhängigkeiten außer:
-    collections, random, secrets, os, hashlib  (Stdlib)
-    llama-cpp-python                           (TinyLLaMA)
-    psutil                                     (Prozesse, optional)
-    ctypes                                     (WinAPI, Stdlib)
-— Bestehende Aether-Pipeline bleibt vollständig unberührt
-— Kein Blockchain (vorerst)
-— Kein Cloud-Zugriff
-— Kein externes Modell außer TinyLLaMA als reiner Ausgabefilter
-— Alles lokal. Alles auditierbar. Alles transparent.
-— Append-only Registry — niemals Anker löschen oder überschreiben
-— Session-Keys: nur RAM, secure zeroize bei Session-Ende
-— Deltas: immer verschlüsselt, niemals im Klartext auf Disk
-— Schweigen ist valider Output
-```
-
----
-
-## DAS ZIEL IN EINEM SATZ
-
-Aether ist ein transparenter, lernender, lokaler Symbiont
-der Technik und Wissen demokratisiert —
-indem er strukturell versteht was auf einem System passiert,
-alle Deltas lokal und verschlüsselt hält,
-und es in menschlich verständliche, verifizierbare Erkenntnisse übersetzt.
-
-Keine Blackbox.
-Kein fremdes Wissen.
-Kein Vertrauen nötig — nur Struktur.
-Keine Rekonstruktion ohne lokalen Key möglich — by design.

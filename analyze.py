@@ -1,5 +1,5 @@
-"""
-analyze.py — Shanway Datei- und Text-Analyse (lokal, ohne Netzwerk/LLM)
+﻿"""
+analyze.py — Assistant Datei- und Text-Analyse (lokal, ohne Netzwerk/LLM)
 
 Aufruf:
     python analyze.py path/to/datei.txt
@@ -26,10 +26,10 @@ sys.path.insert(0, str(BASE_DIR))
 # Imports
 # ---------------------------------------------------------------------------
 try:
-    from modules.shanway_safety import get_safety_filter, ShanwaySafetyFilter
+    from modules.assistant_safety import get_safety_filter, AssistantSafetyFilter
     SAFETY_OK = True
 except Exception as e:
-    print(f"[WARN] shanway_safety nicht ladbar: {e}")
+    print(f"[WARN] assistant_safety nicht ladbar: {e}")
     SAFETY_OK = False
 
 # ---------------------------------------------------------------------------
@@ -86,7 +86,7 @@ def _file_hash(data: bytes) -> str:
 
 
 def analyze_text(text: str, source_label: str = "direkte Eingabe") -> dict:
-    """Analysiert beliebigen Text mit Shanway-Sicherheitsfilter."""
+    """Analysiert beliebigen Text mit Assistant-Sicherheitsfilter."""
     result = {
         "source": source_label,
         "length": len(text),
@@ -100,7 +100,7 @@ def analyze_text(text: str, source_label: str = "direkte Eingabe") -> dict:
     }
 
     if SAFETY_OK:
-        sf: ShanwaySafetyFilter = get_safety_filter()
+        sf: AssistantSafetyFilter = get_safety_filter()
 
         # Einzelfilter
         med   = sf.check_medical(text)
@@ -185,7 +185,7 @@ def _print_result(r: dict) -> None:
     """Gibt das Analyse-Ergebnis formatiert aus."""
     print()
     print("=" * 64)
-    print("  SHANWAY ANALYSE")
+    print("  ASSISTANT ANALYSE")
     print("=" * 64)
 
     if "error" in r:
@@ -235,11 +235,11 @@ def _print_result(r: dict) -> None:
 
 def interactive_mode() -> None:
     """Interaktiver Analyse-Modus."""
-    print("\nSHANWAY ANALYSE — Interaktiver Modus")
+    print("\nASSISTANT ANALYSE — Interaktiver Modus")
     print("Eingabe: Text oder Dateipfad. 'exit' zum Beenden.\n")
     while True:
         try:
-            inp = input("Shanway> ").strip()
+            inp = input("Assistant> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBeendet.")
             break

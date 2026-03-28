@@ -1,4 +1,4 @@
-import sys as _cc_sys
+﻿import sys as _cc_sys
 import time as _cc_time
 
 class EphemeralKey:
@@ -35,7 +35,7 @@ class EphemeralKey:
 
 
 # ---------------------------------------------------------------------------
-# Cryptographic helpers — required by shanway_vault, shanway_chat, etc.
+# Cryptographic helpers — required by assistant_vault, assistant_chat, etc.
 # ---------------------------------------------------------------------------
 try:
     from cryptography.fernet import Fernet, InvalidToken

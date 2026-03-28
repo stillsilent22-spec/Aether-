@@ -10,20 +10,17 @@ use crate::chat_sync::{ChatRelayClient, ChatRelayConfig, ChatRelayEnvelope, Chat
 use crate::gfx::{AetherGfx, GfxTraceMode};
 use crate::inter_layer_bus::{BusEvent, BusPublisher, InterLayerBus, PackInstalledEvent};
 use crate::offline_cache::{CacheTarget, OfflineCacheManager, OfflinePrepRequest};
-use crate::pack::{AutoPackGenerator, PackManager, PackRegistry, ShanwayPackAdvisor, UsageProfile};
+use crate::pack::{AutoPackGenerator, PackManager, PackRegistry, PackAdvisor, UsageProfile};
 use crate::public_ttd::{
     pseudonymous_network_identity, validate_public_ttd_candidate, PublicTtdCandidateValidation,
     PublicTtdMetrics, PublicTtdPoolStore, PublicTtdSubmission, PublicTtdTransport,
 };
 use crate::security::{SecurityAuditEvent, SecurityMonitor, SecuritySnapshot};
-use crate::shanway::{
-    render_reply as render_shanway_reply, ShanwayBrowserContext, ShanwayInput,
-    ShanwayObserverContext, ShanwayPackHint,
-};
+
 use crate::state::{ChatMessage, RegisterEntry, StateStore};
 use crate::theory_of_mind::{
     ComprehensionDetector, ComprehensionSignal, MindModelEngine, ObserverModelScope,
-    ProcessedSignal, ToMOutputAdapter,
+    ProcessedSignal,
 };
 use crate::vault_access::VaultAccessLayer;
 use crate::workflow_anchor::WorkflowSignalCollector;
@@ -63,7 +60,6 @@ enum TopTab {
 enum ChatTab {
     Private,
     Group,
-    Shanway,
 }
 
 #[derive(Debug, Clone)]
@@ -156,14 +152,14 @@ pub struct AetherRustShell {
     selected_group_name: String,
     group_name_input: String,
     group_message_input: String,
-    shanway_message_input: String,
     last_drop_token: Option<String>,
     observer_id: Uuid,
     mind_model: MindModelEngine,
     vault_access: Arc<VaultAccessLayer>,
     pack_registry: Arc<RwLock<PackRegistry>>,
     pack_manager: PackManager,
-    pack_advisor: ShanwayPackAdvisor,
+    #[allow(dead_code)]
+    pack_advisor: PackAdvisor,
     pack_generator: AutoPackGenerator,
     offline_cache_manager: OfflineCacheManager,
     workflow_collector: WorkflowSignalCollector,
@@ -234,7 +230,7 @@ impl AetherRustShell {
         ));
         let pack_manager = PackManager::new(Arc::clone(&vault_access), Arc::clone(&pack_registry));
         let pack_advisor =
-            ShanwayPackAdvisor::with_bus(Arc::clone(&pack_registry), bus_publisher.clone());
+            PackAdvisor::with_bus(Arc::clone(&pack_registry), bus_publisher.clone());
         let pack_generator = AutoPackGenerator::new(Arc::clone(&vault_access));
         let offline_cache_manager = OfflineCacheManager::new(
             Arc::clone(&vault_access),
@@ -270,7 +266,7 @@ impl AetherRustShell {
             status_line: "Bitte anmelden oder registrieren.".to_owned(),
             activity_log: vec!["Rust-Shell bereit. Dateien kommen nur per Drag and Drop herein.".to_owned()],
             top_tab: TopTab::Analyse,
-            chat_tab: ChatTab::Shanway,
+            chat_tab: ChatTab::Private,
             browser_address: "https://".to_owned(),
             browser_note: "Browser-Probe arbeitet lokal und fail-closed. Netzschritte laufen nur nach explizitem Consent.".to_owned(),
             browser_probe: None,
@@ -289,7 +285,6 @@ impl AetherRustShell {
             selected_group_name: "Team".to_owned(),
             group_name_input: String::new(),
             group_message_input: String::new(),
-            shanway_message_input: String::new(),
             last_drop_token: None,
             observer_id,
             mind_model,
@@ -407,103 +402,6 @@ impl AetherRustShell {
             .ok()
         });
         self.last_aef_projection = projection;
-    }
-
-    fn current_shanway_input(&mut self) -> Option<ShanwayInput> {
-        let synthetic_browser_file = self.current_file.is_none() && self.browser_probe.is_some();
-        let file = if let Some(file) = self.current_file.as_ref() {
-            file.clone()
-        } else {
-            build_browser_processed_file(self.browser_probe.as_ref()?)
-        };
-        let signal = build_processed_signal(&file);
-        let observer_delta = self
-            .mind_model
-            .calculate_observer_delta(&signal, self.observer_id);
-        let usage_profile = build_usage_profile(&file, self.current_hit_rate());
-        let pack_hints = self
-            .pack_advisor
-            .evaluate_and_recommend(&usage_profile)
-            .into_iter()
-            .take(2)
-            .map(|hint| ShanwayPackHint {
-                title: hint.title,
-                message: hint.message,
-                estimated_hit_rate_improvement: hint.estimated_hit_rate_improvement,
-                estimated_compression_improvement: hint.estimated_compression_improvement,
-            })
-            .collect::<Vec<_>>();
-        let browser_context = self
-            .browser_probe
-            .as_ref()
-            .map(|probe| ShanwayBrowserContext {
-                url: probe.final_url.clone(),
-                risk_label: probe.risk_label.clone(),
-                risk_score: probe.risk_score,
-                reasons: probe.risk_reasons.clone(),
-                frontend_summary: probe.frontend_summary.clone(),
-                backend_summary: probe.backend_summary.clone(),
-                search_context_summary: self
-                    .browser_search_context
-                    .as_ref()
-                    .map(|context| trimmed_at_boundary(&context.summary, 240))
-                    .unwrap_or_default(),
-            });
-        Some(ShanwayInput {
-            file_name: file.file_name,
-            file_type: if synthetic_browser_file {
-                format!("browser_{}", file.source_kind)
-            } else {
-                file.source_kind
-            },
-            entropy_mean: file.entropy,
-            knowledge_ratio: (1.0 - file.drift / 255.0).clamp(0.0, 1.0),
-            symmetry_gini: (1.0 - file.symmetry).clamp(0.0, 1.0),
-            delta_paths: ((file.drift / 8.0).round() as i32).max(1) as u32,
-            bayes_priors: format!(
-                "symmetry={:.3}, entropy={:.3}, gain={:.3}",
-                file.symmetry,
-                file.entropy,
-                (file.compression_gain_percent / 100.0).clamp(0.0, 1.0)
-            ),
-            residual_ratio: (file.delta_size as f32 / file.original_size.max(1) as f32)
-                .clamp(0.0, 1.0),
-            observer_mutual_info: (file.symmetry * (1.0 - (file.drift / 255.0).clamp(0.0, 1.0)))
-                .clamp(0.0, 1.0),
-            h_lambda: (file.entropy * (1.0 - file.symmetry).clamp(0.0, 1.0)).max(0.0),
-            e_lambda: {
-                let sym_break = (1.0_f32 - file.symmetry).clamp(0.0, 1.0);
-                let ent_norm = (file.entropy / 8.0_f32).clamp(0.0, 1.0);
-                ((0.50 * sym_break) + (0.50 * ent_norm * file.symmetry)).clamp(0.0, 1.0)
-            },
-            e_lambda_label: {
-                let v = (1.0_f32 - file.symmetry).clamp(0.0, 1.0);
-                if v < 0.15 { "LATENT".to_owned() }
-                else if v < 0.35 { "EMERGING".to_owned() }
-                else if v < 0.60 { "ACTIVE".to_owned() }
-                else { "CRITICAL".to_owned() }
-            },
-            boundary: if file.symmetry < 0.58 {
-                "GOEDEL_LIMIT".to_owned()
-            } else if file.symmetry < 0.76 {
-                "STRUCTURAL_HYPOTHESIS".to_owned()
-            } else {
-                "RECONSTRUCTABLE".to_owned()
-            },
-            anchor_summary: file.anchor_summary,
-            process_summary: file.process_summary,
-            observer_context: Some(ShanwayObserverContext {
-                o1_knowledge: observer_delta.o1_knowledge,
-                o2_estimated_knowledge: observer_delta.o2_estimated_knowledge,
-                delta: observer_delta.delta,
-                confidence: observer_delta.confidence,
-                recommended_depth: observer_delta.recommended_depth,
-                bridge_anchor_count: observer_delta.recommended_anchors.len(),
-            }),
-            pack_hints,
-            browser_context,
-            public_ttd_status: Some(self.public_ttd_pool.summary_line()),
-        })
     }
 
     fn current_hit_rate(&self) -> f32 {
@@ -999,15 +897,6 @@ impl AetherRustShell {
                 let room = self.state_store.group_room(&username, &room_name);
                 push_message_if_new(&mut room.messages, envelope.author, envelope.body);
             }
-            "shanway" => {
-                let room_name = if envelope.room_name.trim().is_empty() {
-                    "Shanway Mesh".to_owned()
-                } else {
-                    envelope.room_name.clone()
-                };
-                let room = self.state_store.group_room(&username, &room_name);
-                push_message_if_new(&mut room.messages, envelope.author, envelope.body);
-            }
             _ => {}
         }
         let _ = self.state_store.save();
@@ -1084,10 +973,6 @@ impl AetherRustShell {
                     payload.cache_size_mb
                 );
                 self.append_log(self.status_line.clone());
-            }
-            BusEvent::ShanwayUserMessage(payload) => {
-                self.status_line = payload.message.clone();
-                self.append_log(payload.message);
             }
             BusEvent::WorkflowAnchorHit(payload) => {
                 self.append_log(format!(
@@ -1205,134 +1090,6 @@ impl AetherRustShell {
         self.append_log(format!("Workflow erfasst: {file_name} | {program_id}"));
     }
 
-    fn draw_shanway_face(&self, ui: &mut egui::Ui) {
-        let (rect, _) = ui.allocate_exact_size(Vec2::new(236.0, 220.0), Sense::hover());
-        let painter = ui.painter_at(rect);
-        let center = rect.center();
-        painter.circle_filled(
-            egui::pos2(center.x + 6.0, center.y + 10.0),
-            88.0,
-            Color32::from_rgba_unmultiplied(4, 8, 16, 64),
-        );
-        painter.circle_filled(center, 92.0, Color32::from_rgb(12, 20, 34));
-
-        let antenna_top = egui::pos2(center.x, center.y - 92.0);
-        let antenna_base = egui::pos2(center.x, center.y - 70.0);
-        painter.line_segment(
-            [antenna_top, antenna_base],
-            Stroke::new(3.0, Color32::from_rgb(110, 214, 232)),
-        );
-        painter.circle_filled(antenna_top, 8.0, Color32::from_rgb(255, 196, 92));
-
-        let head = Rect::from_center_size(
-            egui::pos2(center.x, center.y - 18.0),
-            Vec2::new(132.0, 102.0),
-        );
-        painter.rect_filled(head, 26.0, Color32::from_rgb(54, 92, 132));
-        painter.rect_filled(
-            head.shrink2(Vec2::new(6.0, 6.0)),
-            22.0,
-            Color32::from_rgb(74, 122, 170),
-        );
-
-        let visor =
-            Rect::from_center_size(egui::pos2(center.x, center.y - 18.0), Vec2::new(92.0, 40.0));
-        painter.rect_filled(visor, 18.0, Color32::from_rgb(16, 32, 54));
-        painter.rect_filled(
-            Rect::from_center_size(egui::pos2(center.x, center.y - 26.0), Vec2::new(80.0, 12.0)),
-            8.0,
-            Color32::from_rgba_unmultiplied(180, 240, 255, 28),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x - 22.0, center.y - 16.0),
-            9.0,
-            Color32::from_rgb(148, 240, 255),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x + 22.0, center.y - 16.0),
-            9.0,
-            Color32::from_rgb(148, 240, 255),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x - 22.0, center.y - 16.0),
-            3.0,
-            Color32::from_rgb(238, 250, 255),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x + 22.0, center.y - 16.0),
-            3.0,
-            Color32::from_rgb(238, 250, 255),
-        );
-
-        let mouth_left = egui::pos2(center.x - 24.0, center.y + 10.0);
-        let mouth_mid = egui::pos2(center.x, center.y + 20.0);
-        let mouth_right = egui::pos2(center.x + 24.0, center.y + 10.0);
-        painter.line_segment(
-            [mouth_left, mouth_mid],
-            Stroke::new(3.0, Color32::from_rgb(214, 242, 255)),
-        );
-        painter.line_segment(
-            [mouth_mid, mouth_right],
-            Stroke::new(3.0, Color32::from_rgb(214, 242, 255)),
-        );
-
-        let body = Rect::from_center_size(
-            egui::pos2(center.x, center.y + 70.0),
-            Vec2::new(102.0, 56.0),
-        );
-        painter.rect_filled(body, 22.0, Color32::from_rgb(36, 66, 100));
-        painter.rect_filled(
-            Rect::from_center_size(egui::pos2(center.x, center.y + 70.0), Vec2::new(46.0, 16.0)),
-            8.0,
-            Color32::from_rgb(255, 196, 92),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x - 18.0, center.y + 70.0),
-            3.0,
-            Color32::from_rgb(36, 66, 100),
-        );
-        painter.circle_filled(
-            egui::pos2(center.x + 18.0, center.y + 70.0),
-            3.0,
-            Color32::from_rgb(36, 66, 100),
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center.x - 50.0, center.y + 62.0),
-                egui::pos2(center.x - 78.0, center.y + 86.0),
-            ],
-            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center.x + 50.0, center.y + 62.0),
-                egui::pos2(center.x + 78.0, center.y + 86.0),
-            ],
-            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center.x - 24.0, center.y + 94.0),
-                egui::pos2(center.x - 34.0, center.y + 112.0),
-            ],
-            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
-        );
-        painter.line_segment(
-            [
-                egui::pos2(center.x + 24.0, center.y + 94.0),
-                egui::pos2(center.x + 34.0, center.y + 112.0),
-            ],
-            Stroke::new(4.0, Color32::from_rgb(96, 152, 212)),
-        );
-        painter.text(
-            egui::pos2(center.x, rect.bottom() - 8.0),
-            Align2::CENTER_BOTTOM,
-            "friendly local robot",
-            FontId::proportional(12.0),
-            Color32::from_rgb(166, 196, 224),
-        );
-    }
-
     fn ui_auth(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             paint_aether_backdrop(ui.painter(), ui.max_rect());
@@ -1409,15 +1166,14 @@ impl AetherRustShell {
     }
 
     fn ui_left_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("shanway_left").resizable(false).default_width(356.0).show(ctx, |ui| {
-            self.draw_shanway_face(ui);
+        egui::SidePanel::left("sidebar_left").resizable(false).default_width(356.0).show(ctx, |ui| {
             ui.label(
                 RichText::new("LOCAL COMPANION")
                     .size(11.0)
                     .strong()
                     .color(Color32::from_rgb(128, 204, 220)),
             );
-            ui.heading("Shanway");
+            ui.heading("Lokaler Beobachter");
             ui.label("Struktureller Beobachter. Dateien kommen lokal hinein, Antworten bleiben klarer und weniger unheimlich.");
             ui.horizontal_wrapped(|ui| {
                 let trust_color = match self.security_snapshot.trust_state.as_str() {
@@ -1520,9 +1276,9 @@ impl AetherRustShell {
                 self.last_aef_projection = None;
                 self.refresh_security_snapshot(false, "preview_cleared");
             }
-            if ui.button("Shanway-Chat oeffnen").clicked() {
+            if ui.button("Chat oeffnen").clicked() {
                 self.top_tab = TopTab::Chats;
-                self.chat_tab = ChatTab::Shanway;
+                self.chat_tab = ChatTab::Private;
             }
             if ui.button("Security-Tab oeffnen").clicked() {
                 self.top_tab = TopTab::Security;
@@ -1579,7 +1335,7 @@ impl AetherRustShell {
                         self.status_line = "Kein relevanter Pack ueber der Empfehlungsschwelle gefunden.".to_owned();
                     }
                 } else {
-                    self.status_line = "Fuer Pack-Empfehlungen braucht Shanway zuerst eine aktive Datei.".to_owned();
+                    self.status_line = "Fuer Pack-Empfehlungen muss zuerst eine aktive Datei geladen sein.".to_owned();
                 }
             }
             if ui.button("Pack aus aktiver Domaene generieren").clicked() {
@@ -2225,16 +1981,11 @@ impl AetherRustShell {
                 if ui.button("Suchkontext holen").clicked() {
                     self.queue_consent(
                         "Web-Suchkontext laden",
-                        "Ein kurzer Suchkontext wird fuer Shanway geladen. Keine Rohdatenpersistenz, nur lokaler Kurzkontext. Default bleibt Nein.",
+                        "Ein kurzer Suchkontext wird lokal geladen. Keine Rohdatenpersistenz, nur lokaler Kurzkontext. Default bleibt Nein.",
                         ConsentAction::BrowserSearch {
                             query: self.browser_address.clone(),
                         },
                     );
-                }
-                if ui.button("An Shanway uebergeben").clicked() {
-                    self.top_tab = TopTab::Chats;
-                    self.chat_tab = ChatTab::Shanway;
-                    self.shanway_message_input = format!("Bitte Browser-Kontext strukturell pruefen: {}", self.browser_address);
                 }
             });
             ui.add_space(8.0);
@@ -2353,7 +2104,6 @@ impl AetherRustShell {
             for (tab, label) in [
                 (ChatTab::Private, "Einzelchat"),
                 (ChatTab::Group, "Gruppenchat"),
-                (ChatTab::Shanway, "Shanway"),
             ] {
                 if ui.selectable_label(self.chat_tab == tab, label).clicked() {
                     self.chat_tab = tab;
@@ -2364,7 +2114,6 @@ impl AetherRustShell {
         match self.chat_tab {
             ChatTab::Private => self.ui_private_chat(ui),
             ChatTab::Group => self.ui_group_chat(ui),
-            ChatTab::Shanway => self.ui_shanway_chat(ui),
         }
     }
 
@@ -2555,114 +2304,6 @@ impl AetherRustShell {
                 }
             }
         });
-    }
-
-    fn ui_shanway_chat(&mut self, ui: &mut egui::Ui) {
-        let Some(username) = self.current_username() else {
-            return;
-        };
-        let messages = self
-            .state_store
-            .private_threads_for(&username)
-            .into_iter()
-            .find(|thread| thread.partner_name == "Shanway")
-            .map(|thread| thread.messages)
-            .unwrap_or_default();
-        egui::ScrollArea::vertical()
-            .max_height(300.0)
-            .show(ui, |ui| {
-                for message in &messages {
-                    ui.label(format!("{}: {}", message.author, message.body));
-                }
-            });
-        ui.add(
-            TextEdit::multiline(&mut self.shanway_message_input)
-                .desired_rows(4)
-                .hint_text("Frage an Shanway"),
-        );
-        let mut send_local = false;
-        let mut send_relay = false;
-        ui.horizontal(|ui| {
-            send_local = ui.button("An Shanway senden").clicked();
-            send_relay = ui.button("An Shanway senden + Relay").clicked();
-        });
-        if send_local || send_relay {
-            let prompt = self.shanway_message_input.trim().to_owned();
-            if !prompt.is_empty() {
-                let active_signal = self
-                    .current_file
-                    .as_ref()
-                    .cloned()
-                    .or_else(|| {
-                        self.browser_probe
-                            .as_ref()
-                            .map(build_browser_processed_file)
-                    })
-                    .map(|file| build_processed_signal(&file));
-                if let Some(signal) = active_signal.as_ref() {
-                    self.mind_model
-                        .learn_from_user_prompt(self.observer_id, signal, &prompt);
-                }
-                let shanway_input = self.current_shanway_input();
-                let raw_reply = render_shanway_reply(shanway_input.as_ref(), &prompt);
-                let reply = if let Some(signal) = active_signal.as_ref() {
-                    let observer_delta = self
-                        .mind_model
-                        .calculate_observer_delta(signal, self.observer_id);
-                    let adapted = ToMOutputAdapter::adapt_output(
-                        &raw_reply,
-                        &observer_delta,
-                        self.mind_model.observer_model(self.observer_id),
-                    );
-                    self.mind_model.record_interaction(
-                        self.observer_id,
-                        signal.signal_hash,
-                        adapted.depth_used,
-                        map_text_signal_to_comprehension(&prompt),
-                    );
-                    if let Some(bridge_note) = adapted.bridge_note {
-                        format!("{}\n[Observer Bridge] {}", adapted.content, bridge_note)
-                    } else {
-                        adapted.content
-                    }
-                } else {
-                    raw_reply
-                };
-                let shanway_thread = self.state_store.private_thread(&username, "Shanway");
-                shanway_thread.messages.push(ChatMessage {
-                    author: username.clone(),
-                    body: prompt.clone(),
-                });
-                shanway_thread.messages.push(ChatMessage {
-                    author: "Shanway".to_owned(),
-                    body: reply.clone(),
-                });
-                let _ = self.state_store.save();
-                if send_relay {
-                    self.queue_consent(
-                        "Shanway-Dialog ins Relay geben",
-                        "Prompt und strukturelle Shanway-Antwort werden verschluesselt in den Shanway-Raum gelegt. Default bleibt Nein.",
-                        ConsentAction::ChatRelayPublishBatch {
-                            envelopes: vec![
-                                QueuedRelayEnvelope {
-                                    room_kind: "shanway".to_owned(),
-                                    room_name: "Shanway".to_owned(),
-                                    author: username.clone(),
-                                    body: prompt,
-                                },
-                                QueuedRelayEnvelope {
-                                    room_kind: "shanway".to_owned(),
-                                    room_name: "Shanway".to_owned(),
-                                    author: "Shanway".to_owned(),
-                                    body: reply,
-                                },
-                            ],
-                        },
-                    );
-                }
-                self.shanway_message_input.clear();
-            }
-        }
     }
 
     fn preview_existing_file(
@@ -3010,6 +2651,7 @@ impl eframe::App for AetherRustShell {
     }
 }
 
+#[allow(dead_code)]
 fn build_processed_signal(file: &ProcessedFile) -> ProcessedSignal {
     ProcessedSignal::from_summary(
         format!(
@@ -3100,6 +2742,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
         .collect()
 }
 
+#[allow(dead_code)]
 fn map_text_signal_to_comprehension(prompt: &str) -> ComprehensionSignal {
     match ComprehensionDetector::detect_text_signal(prompt) {
         crate::theory_of_mind::TextSignal::Confusion => ComprehensionSignal::NotUnderstood,

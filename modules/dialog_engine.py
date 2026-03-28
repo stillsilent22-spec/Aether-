@@ -1,4 +1,4 @@
-"""Strukturelle Dialogantworten ohne externes Sprachmodell."""
+﻿"""Strukturelle Dialogantworten ohne externes Sprachmodell."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ class StructuralReply:
 
 @dataclass
 class AssistantContext:
-    """Verdichteter Laufzeitkontext fuer deterministische Shanway-Antworten."""
+    """Verdichteter Laufzeitkontext fuer deterministische Assistant-Antworten."""
 
     username: str
     role: str
@@ -97,7 +97,7 @@ class AssistantResponse:
 
 
 class StructuralDialogEngine:
-    """Leitet assistentenaehnliche Antworten nur aus Shanway-Metriken ab."""
+    """Leitet assistentenaehnliche Antworten nur aus Assistant-Metriken ab."""
 
     LAYER0_DEFAULT = "Ich habe noch kein Muster dafür gesehen. Zeig es mir."
 
@@ -161,7 +161,7 @@ class StructuralDialogEngine:
 
     @classmethod
     def _anchor_summary_text(cls, anchors: list[dict[str, Any]] | None, limit: int = 2) -> str:
-        """Verdichtet AE-Anker fuer knappe Shanway-Antworten."""
+        """Verdichtet AE-Anker fuer knappe Assistant-Antworten."""
         parts: list[str] = []
         for anchor in list(anchors or [])[: max(1, int(limit))]:
             value = float(anchor.get("value", 0.0) or 0.0)
@@ -228,7 +228,7 @@ class StructuralDialogEngine:
         if self._contains_any(lowered, self.domain_keywords["biology"]):
             loaded["biology"] = {
                 "title": "Biologie",
-                "summary": "Biologisch liest Shanway Muster als Selbstorganisation, Selektion, Immungedächtnis, Wachstum und stabile Rückkopplung statt als reine Semantik.",
+                "summary": "Biologisch liest Assistant Muster als Selbstorganisation, Selektion, Immungedächtnis, Wachstum und stabile Rückkopplung statt als reine Semantik.",
                 "keywords": self.domain_keywords["biology"],
             }
         if self._contains_any(lowered, self.domain_keywords["music"]):
@@ -252,7 +252,7 @@ class StructuralDialogEngine:
         if not query_tokens:
             return None
         try:
-            entries = self.registry.get_shanway_registry_knowledge(limit=48)
+            entries = self.registry.get_assistant_registry_knowledge(limit=48)
         except Exception:
             return None
         best_entry: dict[str, Any] | None = None
@@ -372,7 +372,7 @@ class StructuralDialogEngine:
 
             tone_hint = "fragend" if "?" in str(source_text) else "aussagend"
             response_text = (
-                f"Shanway sieht {semantics_label}: Symmetrie {symmetry:.1f}, "
+                f"Assistant sieht {semantics_label}: Symmetrie {symmetry:.1f}, "
                 f"Kohaerenz {coherence:.1f}, Resonanz {resonance:.1f}, D {float(sce_d):.2f}, "
                 f"Tonlage {tone_hint}."
             )
@@ -436,12 +436,12 @@ class StructuralDialogEngine:
 
         if intent == "help":
             text = (
-                "Ich arbeite ohne LLM und antworte nur aus den laufenden Shanway-Daten. "
+                "Ich arbeite ohne LLM und antworte nur aus den laufenden Assistant-Daten. "
                 "Frag mich nach Status, Graph, Browser, Historie, Muster, Sicherheit oder Vergleich."
             )
         elif intent == "identity":
             text = (
-                "Ich bin Shanway, keine Sprachmodell-Instanz, sondern eine lokale Assistenz im AETHER-Feld. "
+                "Ich bin Assistant, keine Sprachmodell-Instanz, sondern eine lokale Assistenz im AETHER-Feld. "
                 "Ich leite Antworten deterministisch aus Entropie, Symmetrie, Kohaerenz, Resonanz, Graph-Feld, Historie, Lernkurve, Trust-Zustand, Vault und dem internen AELAB-Hintergrundpfad ab."
             )
         elif intent == "browser":

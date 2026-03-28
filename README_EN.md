@@ -1,4 +1,4 @@
-# Aether
+﻿# Aether
 
 > **We are burning the future to simulate intelligence. Aether is the alternative: a local, deterministic, mathematically grounded instrument for measuring structure, not generating guesses. No labels. No training. No cloud. No hallucinations. Only information theory, executed locally, with privacy as an architectural principle.**
 
@@ -70,7 +70,7 @@ classifier, without training data, without content interpretation.
 **Aether is:**
 - A local anomaly detection tool based on measurable structural metrics
 - A symbiotic operating system layer with integrated privacy guarantees and cryptographically non-invertible fingerprints
-- A deterministic output filter (Shanway) for pipeline-verified structural findings
+- A deterministic output filter (Assistant) for pipeline-verified structural findings
 - A system optimization tool based on process structural profiles
 
 ---
@@ -179,9 +179,9 @@ cryptographic hash: it identifies without revealing anything.
 
 ---
 
-## Shanway: Deterministic Output Filter
+## Assistant: Deterministic Output Filter
 
-Shanway is not a language model that independently generates content. It is a **deterministic
+Assistant is not a language model that independently generates content. It is a **deterministic
 renderer**: it translates exclusively pipeline-verified structural findings into language.
 
 - **Input:** only data that has passed through the full Aether analysis pipeline
@@ -213,7 +213,7 @@ reconstruction_engine  --> D(Snapshot, Residual) = Original
    v
 registry (SQLite, local) --> Vault, audit log, append-only
    |
-   +-> shanway          --> Language output (verified data only)
+   +-> assistant          --> Language output (verified data only)
    +-> aethernet        --> Anchor path (optional, consent-bound)
 ```
 

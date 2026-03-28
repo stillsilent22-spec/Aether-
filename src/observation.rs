@@ -1,5 +1,5 @@
 use crate::inter_layer_bus::{
-    BusEvent, BusPublisher, ObservationBlockEvent, ObservationLearnEvent, ShanwayUserMessageEvent,
+    BusEvent, BusPublisher, ObservationBlockEvent, ObservationLearnEvent,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -456,16 +456,7 @@ impl ObservationOnlyEngine {
         confidence: f32,
     ) {
         signal.zero_memory();
-        self.bus.publish(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-            process_id: None,
-            message: format!(
-                "MALWARE-STRUKTUR ERKANNT | Kategorie: {:?} | Konfidenz: {:.0}% | Signal wurde aus dem Arbeitsspeicher entfernt.",
-                category,
-                confidence * 100.0
-            ),
-            trust_score: confidence,
-            action_available: false,
-        }));
+        eprintln!("[MALWARE-BLOCK] Kategorie: {:?} | Konfidenz: {:.0}%", category, confidence * 100.0);
     }
 
     pub fn status(&self) -> Result<QuarantineStatus, ObservationError> {

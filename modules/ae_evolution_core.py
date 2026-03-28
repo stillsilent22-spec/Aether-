@@ -1,4 +1,4 @@
-"""AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
+﻿"""AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
 
 from __future__ import annotations
 
@@ -909,7 +909,7 @@ class AEAlgorithmVault:
                 )
             detector_bonus = 0.0
             residual_bonus = 0.0
-            if str(candidate.source_kind) == "shanway_detector" and isinstance(result, dict):
+            if str(candidate.source_kind) == "assistant_detector" and isinstance(result, dict):
                 toxicity_score = float(result.get("toxicity_score", 0.0) or 0.0)
                 asymmetry_score = float(result.get("asymmetry_score", 0.0) or 0.0)
                 noether_symmetry = float(result.get("noether_symmetry", 0.0) or 0.0)
@@ -1179,11 +1179,11 @@ class AEAlgorithmVault:
         return candidate
 
     def integrate_asymmetry_detector(self, detector_payload: dict[str, Any], bucket: str = "sub") -> dict[str, Any]:
-        """Uebernimmt einen Shanway-Asymmetriedetektor als AE-Kandidaten und spiegelt ihn als DNA."""
+        """Uebernimmt einen Assistant-Asymmetriedetektor als AE-Kandidaten und spiegelt ihn als DNA."""
         payload = dict(detector_payload or {})
         params = {
             "classification": str(payload.get("classification", "")),
-            "source_kind": "shanway_detector",
+            "source_kind": "assistant_detector",
             "bucket": str(bucket),
             "usage_count": 0,
             "promotion_count": 0,
@@ -1197,12 +1197,12 @@ class AEAlgorithmVault:
         }
         candidate = AlgorithmCandidate(
             logic=None,
-            origin=f"shanway_detector:{params['classification'] or 'unknown'}",
+            origin=f"assistant_detector:{params['classification'] or 'unknown'}",
             params=params,
             spec=spec,
         )
-        candidate.type = "shanway_detector"
-        candidate.source_kind = "shanway_detector"
+        candidate.type = "assistant_detector"
+        candidate.source_kind = "assistant_detector"
         candidate.bucket = str(bucket)
         candidate.params["bucket"] = str(bucket)
         candidate.anchor_points = [_json_safe(payload)]
@@ -1484,7 +1484,7 @@ class AEAlgorithmVault:
         }
 
     def _export_detector_dna(self, detector_payload: dict[str, Any]) -> str:
-        """Serialisiert einen Shanway-Asymmetriedetektor als lesbare DNA-Datei."""
+        """Serialisiert einen Assistant-Asymmetriedetektor als lesbare DNA-Datei."""
         payload = dict(detector_payload or {})
         metrics = [
             ("toxicity_score", float(payload.get("toxicity_score", 0.0) or 0.0)),
@@ -1497,9 +1497,9 @@ class AEAlgorithmVault:
             ("anchor_alignment", float(payload.get("anchor_alignment", 0.0) or 0.0)),
         ]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        file_path = self.export_dir / f"shanway_detector_{timestamp}.dna"
+        file_path = self.export_dir / f"assistant_detector_{timestamp}.dna"
         lines = [
-            f"AETHER_SHANWAY_DNA 1 {timestamp} {str(payload.get('classification', 'unknown')).upper()} {len(metrics)}"
+            f"AETHER_ASSISTANT_DNA 1 {timestamp} {str(payload.get('classification', 'unknown')).upper()} {len(metrics)}"
         ]
         for index, (label, value) in enumerate(metrics):
             lines.append(f"{index} {float(value):.12f} {label.upper()}")

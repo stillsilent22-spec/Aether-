@@ -1,4 +1,4 @@
-/// Logarithmische Prioritaetsfunktion fuer dynamische Shanway-Entscheidungen.
+﻿/// Logarithmische Prioritaetsfunktion fuer dynamische Assistant-Entscheidungen.
 pub struct LogarithmicPriority;
 
 impl LogarithmicPriority {

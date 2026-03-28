@@ -5,11 +5,25 @@ AetherPipeline: Zentrale, deterministische, auditierbare Analyse-Kaskade
 - Lokal: Deltas verschlüsselt, Anker öffentlich
 - Mathematische Invarianten als Anker
 """
+try:
+    from modules import aelab_engine as _aelab
+    _aelab.initialize("data/aelab_vault")
+except Exception:
+    _aelab = None
 import hashlib
 import json
 import time
+import zlib
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
+from modules.analysis_capsule import AnalysisCapsuleEngine
+from modules.structure_map_engine import StructureMapEngine
+
+try:
+    from reconstruction_engine import reconstruction_engine as _reconstruction_engine
+except Exception:
+    _reconstruction_engine = None
 
 class AetherPipeline:
     def learn_structural_patterns(self) -> dict:
@@ -114,37 +128,124 @@ class AetherPipeline:
             return redundant
     def __init__(self):
         self.audit_log: List[Dict[str, Any]] = []
+        self.capsule_engine = AnalysisCapsuleEngine()
+        self.structure_map_engine = StructureMapEngine()
+
+    def _build_result(self, source_label: str, raw: bytes, capsule: Any) -> Dict[str, Any]:
+        structure_map = self.structure_map_engine.build_from_capsule(capsule).to_dict()
+        return {
+            "file": str(source_label),
+            "size_bytes": int(len(raw)),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "capsule": capsule.to_dict(),
+            "structure_map": structure_map,
+            "entropy": float(capsule.metrics.entropy),
+            "h_lambda": float(capsule.metrics.h_lambda),
+            "anchors": [item.get("anchor_hash", "") for item in capsule.shared_anchor_pack.get("anchors", [])],
+            "symmetry": float(capsule.metrics.symmetry),
+            "xor_delta": str(capsule.local_delta.get("delta_hash", "")),
+            "periodicity": float(capsule.metrics.periodicity),
+            "sce": dict(capsule.sce),
+            "sce_score": float(capsule.metrics.sce_score),
+            "invariants": dict(capsule.invariants),
+            "bayes": float(capsule.metrics.bayes_confidence),
+            "trust": float(capsule.metrics.trust_score),
+            "katz_dimension": float(capsule.metrics.katz_dimension),
+            "zipf_alpha": float(capsule.metrics.zipf_alpha),
+            "benford_score": float(capsule.metrics.benford_score),
+            "delta_ratio": float(capsule.metrics.delta_ratio),
+            "noether_consistency": float(capsule.metrics.noether_consistency),
+            "godel_loop": dict(capsule.godel_loop),
+            "anomaly_flags": list(capsule.anomaly_flags),
+        }
+
+    def _augment_result(self, result: Dict[str, Any], raw: bytes) -> None:
+        result["compression"] = self._build_compression_summary(raw)
+        result["reconstruction"] = self._build_reconstruction_summary(result)
+        if _aelab is not None:
+            result["aelab"] = _aelab.analyze(raw)
+
+    def _build_compression_summary(self, raw: bytes) -> Dict[str, Any]:
+        compressed = zlib.compress(raw, level=9)
+        original_bytes = int(len(raw))
+        compressed_bytes = int(len(compressed))
+        ratio = (compressed_bytes / float(original_bytes)) if original_bytes else 1.0
+        gain_percent = (1.0 - ratio) * 100.0 if original_bytes else 0.0
+        return {
+            "format": "zlib",
+            "original_bytes": original_bytes,
+            "compressed_bytes": compressed_bytes,
+            "ratio": round(ratio, 6),
+            "gain_percent": round(gain_percent, 4),
+        }
+
+    def _build_reconstruction_summary(self, result: Dict[str, Any]) -> Dict[str, Any]:
+        anchors = list(result.get("anchors", []) or [])
+        reconstruction_input = {
+            "entropy": float(result.get("entropy", 0.0)),
+            "symmetry": float(result.get("symmetry", 0.0)),
+            "sce_score": float(result.get("sce_score", 0.0)),
+            "anchor_coverage": min(1.0, len(anchors) / 8.0),
+            "trust_score": float(result.get("trust", 0.0)),
+            "bayes_posterior": float(result.get("bayes", 0.0)),
+            "delta_score": float(1.0 - min(max(result.get("delta_ratio", 0.0), 0.0), 1.0)),
+            "periodicity_score": float(result.get("periodicity", 0.0)),
+        }
+        if _reconstruction_engine is None:
+            return {
+                "quality_score": 0.0,
+                "verified": False,
+                "error_count": 1,
+                "error_fields": ["reconstruction_engine_unavailable"],
+                "path": [
+                    "capsule.metrics",
+                    "capsule.local_delta",
+                    "structure_map.snapshot",
+                ],
+                "compressibility": round(1.0 - reconstruction_input["entropy"] / 8.0, 4),
+                "anchor_coverage": round(reconstruction_input["anchor_coverage"], 4),
+            }
+
+        reconstruction = _reconstruction_engine(reconstruction_input)
+        error_map = dict(reconstruction.get("error_map", {}) or {})
+        return {
+            "quality_score": float(reconstruction.get("quality_score", 0.0)),
+            "verified": not error_map,
+            "error_count": len(error_map),
+            "error_fields": sorted(error_map.keys()),
+            "path": [
+                "capsule.metrics",
+                "capsule.local_delta",
+                "structure_map.snapshot",
+                "aelab.vault_seed" if "aelab" in result else "aelab.unavailable",
+            ],
+            "compressibility": round(1.0 - reconstruction_input["entropy"] / 8.0, 4),
+            "anchor_coverage": round(reconstruction_input["anchor_coverage"], 4),
+        }
 
     def process(self, file_path: Path, session_key: bytes = b"default_session_key") -> Dict[str, Any]:
         raw = file_path.read_bytes()
-        result = {
-            "file": str(file_path),
-            "size_bytes": len(raw),
-            "sha256": hashlib.sha256(raw).hexdigest(),
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-        # 1. Security Layer (optional)
-        # 2. Shannon Entropy
-        result["entropy"] = self.compute_entropy(raw)
-        # 3. H_lambda (Restunsicherheit)
-        result["h_lambda"] = self.compute_h_lambda(raw)
-        # 4. Anchor-Detektion (verschlüsselt, Puzzle-Teile)
-        result["anchors"] = self.detect_anchors(raw, session_key=session_key)
-        # 5. Symmetrie
-        result["symmetry"] = self.compute_symmetry(raw)
-        # 6. Delta (individuelles Bild, verschlüsselt)
-        result["xor_delta"] = self.compute_xor_delta(raw, session_key=session_key)
-        # 7. Periodizität
-        result["periodicity"] = self.compute_periodicity(raw)
-        # 8. SCE (diagnostische Signatur)
-        result["sce"] = self.compute_sce(raw)
-        # 9. Invarianten (Fourier, Benford, Zipf, Mandelbrot)
-        result["invariants"] = self.compute_invariants(raw)
-        # 10. Bayes (Posterior)
-        result["bayes"] = self.compute_bayes(raw)
-        # 11. Trust
-        result["trust"] = self.compute_trust(result)
+        capsule = self.capsule_engine.from_file(file_path)
+        result = self._build_result(str(file_path), raw, capsule)
+        self._augment_result(result, raw)
         # Audit-Log
+        self.append_audit(result)
+        return result
+
+    def process_live_signal(
+        self,
+        raw: bytes,
+        source_label: str = "live_render",
+        previous_signal: Optional[bytes] = None,
+    ) -> Dict[str, Any]:
+        capsule = self.capsule_engine.from_live_signal(
+            raw,
+            source_label=source_label,
+            previous_signal=previous_signal,
+        )
+        result = self._build_result(str(source_label), raw, capsule)
+        self._augment_result(result, raw)
         self.append_audit(result)
         return result
 

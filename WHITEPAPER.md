@@ -1,4 +1,4 @@
-# Aether Whitepaper
+﻿# Aether Whitepaper
 
 Stand: März 2026
 Autor: Kevin Hannemann
@@ -26,7 +26,7 @@ Aether behandelt Dateien, Byteströme und Systemprozesse als lokale Zustände, d
 - **Rekonstruktionsschicht**: Snapshots, Deltas, verlustfreie Rekonstruktion
 - **Persistenzschicht**: lokale SQLite-Datenbank, append-only Audit-Log
 - **Governance-Schicht**: fail-closed Zugriffsregeln, consent-gebundene Freigaben
-- **Shanway**: lokaler Sprachpfad — formuliert ausschließlich verifizierte Strukturbefunde
+- **Assistant**: lokaler Sprachpfad — formuliert ausschließlich verifizierte Strukturbefunde
 - **Aethernet**: optionaler dezentraler Ankerpfad (consent-bound, kein Rohdaten-Export)
 
 ---
@@ -203,7 +203,7 @@ Aether gibt nur Stufe 1 aus. Stufe 2 entsteht durch Akkumulation im lokalen Vaul
 
 - StrukturÄhnlichkeit als Kausalit??t ausgeben
 - Domänenübergreifende Muster als Befunde formulieren
-- Unvalidierte Beobachtungen als Ergebnis darstellen (Shanway-Schutz)
+- Unvalidierte Beobachtungen als Ergebnis darstellen (Assistant-Schutz)
 - R??ckschl??sse auf den Inhalt der verglichenen Daten ziehen
 
 ### 4.3 Wann dom??nenübergreifende Vergleiche relevant werden
@@ -240,8 +240,8 @@ Gegeben: $\varepsilon > 0$ (max. Distanz), $m_{\min}$ (Mindestpunkte im Cluster)
 - Rauschpunkte werden explizit als Rauschen markiert (kein Label erzwungen)
 - Implementierung: `ProcessAnchorStore.cluster_consensus_anchors()`, `ProcessAnchorStore._dbscan()`
 
-**Shanway-Integration:** Die Cluster werden über `AnchorQuery.describe_clusters()` als
-Fließtext für Shanway bereitgestellt — ohne rohe Prozessdetails.
+**Assistant-Integration:** Die Cluster werden über `AnchorQuery.describe_clusters()` als
+Fließtext für Assistant bereitgestellt — ohne rohe Prozessdetails.
 
 ---
 
@@ -298,14 +298,14 @@ Aus `anchor_hash` lassen sich weder der Chunk noch der Inhalt der analysierten D
 
 ---
 
-## 7. Nicht-halluzinierende Architektur: Shanway
+## 7. Nicht-halluzinierende Architektur: Assistant
 
-Shanway empfängt ausschließlich strukturell verifizierte Daten aus der Pipeline. Der System-Prompt verhindert Spekulation. Bei Unsicherheit wird keine Ausgabe erzeugt.
+Assistant empfängt ausschließlich strukturell verifizierte Daten aus der Pipeline. Der System-Prompt verhindert Spekulation. Bei Unsicherheit wird keine Ausgabe erzeugt.
 
 **Was das in der Praxis bedeutet:**
-- Wenn `H_lambda` hoch ist (viel Restunsicherheit): Shanway schweigt oder kennzeichnet die Ausgabe entsprechend
-- Wenn Rekonstruktionsbedingung `D(S_t, R_t) = X_t` nicht erfüllt: Shanway gibt keine Vollständigkeitsaussage aus
-- Wenn Governance-Bedingungen brechen: Shanway gibt keine Ausgabe
+- Wenn `H_lambda` hoch ist (viel Restunsicherheit): Assistant schweigt oder kennzeichnet die Ausgabe entsprechend
+- Wenn Rekonstruktionsbedingung `D(S_t, R_t) = X_t` nicht erfüllt: Assistant gibt keine Vollständigkeitsaussage aus
+- Wenn Governance-Bedingungen brechen: Assistant gibt keine Ausgabe
 
 ---
 

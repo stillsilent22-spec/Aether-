@@ -1,4 +1,4 @@
-"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Shanway-Ausgabe."""
+﻿"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Assistant-Ausgabe."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
 from modules.analysis_engine import AnalysisEngine
 from modules.efficiency_monitor import EfficiencyMonitor
 from modules.session_engine import SessionContext
-from modules.shanway import ShanwayEngine
+from modules.assistant import AssistantEngine
 
 
 def _write_pdf(path: Path) -> None:
@@ -63,7 +63,7 @@ def _write_samples(root: Path) -> dict[str, Path]:
 def _run_case(
     engine: AnalysisEngine,
     monitor: EfficiencyMonitor,
-    shanway: ShanwayEngine,
+    assistant: AssistantEngine,
     sample_path: Path,
     low_power: bool,
 ) -> dict[str, object]:
@@ -76,7 +76,7 @@ def _run_case(
     )
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     snapshot = monitor.sample(status=f"selftest {'low' if low_power else 'full'} {sample_path.name}")
-    assessment = shanway.detect_asymmetry(
+    assessment = assistant.detect_asymmetry(
         f"{sample_path.name} {getattr(fingerprint, 'integrity_text', '')}",
         coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
         browser_mode=False,
@@ -94,7 +94,7 @@ def _run_case(
             "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
         },
     )
-    response = shanway.render_response(assessment)
+    response = assistant.render_response(assessment)
     return {
         "path": str(sample_path),
         "mode": "low_power" if low_power else "full",
@@ -116,7 +116,7 @@ def _run_case(
 def main() -> None:
     engine = AnalysisEngine(SessionContext(seed=7))
     monitor = EfficiencyMonitor()
-    shanway = ShanwayEngine()
+    assistant = AssistantEngine()
     expected_categories = {
         ".txt": "document",
         ".jpg": "image",
@@ -129,7 +129,7 @@ def main() -> None:
         samples = _write_samples(root)
         for sample in samples.values():
             for low_power in (False, True):
-                result = _run_case(engine, monitor, shanway, sample, low_power=low_power)
+                result = _run_case(engine, monitor, assistant, sample, low_power=low_power)
                 results.append(result)
                 assert result["category"] == expected_categories[sample.suffix.lower()], (
                     f"Kategorie falsch fuer {sample.name}: {result['category']}"
@@ -142,11 +142,11 @@ def main() -> None:
                 response = str(result["response"])
                 if result["missing_dependencies"]:
                     assert response.startswith("MISSING_DEPENDENCIES:"), (
-                        f"Missing-Dependencies nicht zuerst in Shanway fuer {sample.name}"
+                        f"Missing-Dependencies nicht zuerst in Assistant fuer {sample.name}"
                     )
                 elif result["missing_data"]:
                     assert response.startswith("MISSING_DATA:") or response.startswith("MISSING_DEPENDENCIES:"), (
-                        f"Missing-Data nicht zuerst in Shanway fuer {sample.name}"
+                        f"Missing-Data nicht zuerst in Assistant fuer {sample.name}"
                     )
                 assert bool(result["reconstruction_verified"]), (
                     f"Rekonstruktion nicht bestaetigt fuer {sample.name}"

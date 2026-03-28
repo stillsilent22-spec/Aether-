@@ -1,4 +1,4 @@
-"""Pytest-kompatible End-to-End-Checks fuer konditional lossless Roundtrips."""
+﻿"""Pytest-kompatible End-to-End-Checks fuer konditional lossless Roundtrips."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from modules.public_ttd_transport import PublicTTDTransport
 from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine, VaultMissError
 from modules.screen_vision_engine import is_private_context as is_private_screen_context
 from modules.session_engine import SessionContext
-from modules.shanway import ShanwayEngine
+from modules.assistant import AssistantEngine
 from modules.vault_chain import AetherAugmentor
 
 
@@ -53,7 +53,7 @@ def _reconstruct_from_delta(delta: bytes, session_seed: int) -> bytes:
 
 
 def _fingerprint_payload(fingerprint: Any) -> dict[str, Any]:
-    """Verdichtet die Rekonstruktionsfelder fuer Shanway-Checks."""
+    """Verdichtet die Rekonstruktionsfelder fuer Assistant-Checks."""
     return {
         "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
         "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
@@ -84,8 +84,8 @@ def run_roundtrip_smoke_test() -> dict[str, Any]:
     reconstructed_bytes = _reconstruct_from_delta(bytes(getattr(fingerprint, "delta", b"")), reloaded_seed)
     replay_verification = reconstruction_engine.verify_lossless(original_bytes, reconstructed_bytes)
 
-    shanway = ShanwayEngine()
-    assessment = shanway.detect_asymmetry(
+    assistant = AssistantEngine()
+    assessment = assistant.detect_asymmetry(
         "lossless roundtrip smoke test",
         coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
         browser_mode=False,
@@ -98,7 +98,7 @@ def run_roundtrip_smoke_test() -> dict[str, Any]:
         sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
         fingerprint_payload=_fingerprint_payload(fingerprint),
     )
-    response = shanway.render_response(assessment)
+    response = assistant.render_response(assessment)
 
     return {
         "fingerprint": fingerprint,
@@ -130,8 +130,8 @@ def run_roundtrip_failure_smoke_test() -> dict[str, Any]:
     verification = dict(reconstruction_engine.verify_lossless(original_bytes, reconstructed_bytes))
     verification["session_seed_match"] = False
 
-    shanway = ShanwayEngine()
-    assessment = shanway.detect_asymmetry(
+    assistant = AssistantEngine()
+    assessment = assistant.detect_asymmetry(
         "lossless roundtrip failure smoke test",
         coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
         browser_mode=False,
@@ -149,7 +149,7 @@ def run_roundtrip_failure_smoke_test() -> dict[str, Any]:
             "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
         },
     )
-    response = shanway.render_response(assessment)
+    response = assistant.render_response(assessment)
     return {
         "verification": verification,
         "response": str(response),
@@ -280,8 +280,8 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
     learning_state = observer.update_learning_state(context, reflection)
     reflection["learned_insight"] = str(list(learning_state.get("learned_insights", []) or [""])[-1] or "")
 
-    shanway = ShanwayEngine()
-    assessment = shanway.detect_asymmetry(
+    assistant = AssistantEngine()
+    assessment = assistant.detect_asymmetry(
         "recursive raster reflection roundtrip",
         coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
         browser_mode=False,
@@ -297,7 +297,7 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
         raster_payload=raster_payload,
         self_reflection_payload=reflection,
     )
-    response = shanway.render_response(assessment)
+    response = assistant.render_response(assessment)
 
     assert bool(dict(getattr(fingerprint, "reconstruction_verification", {}) or {}).get("verified", False)) is True
     assert "[Miniatur-Reflexion]" in response
@@ -687,7 +687,7 @@ def test_public_ttd_transport_http_mirror_roundtrip() -> None:
 
 
 def test_agent_loop_plans_browser_followup_for_open_state() -> None:
-    """Offene Shanway-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
+    """Offene Assistant-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
     loop = AgentLoopEngine()
     assessment_payload = {
         "classification": "uncertain",
@@ -808,9 +808,9 @@ def test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns() -> Non
     assert bool(result.get("open_recommended", True)) is False
 
 
-def test_shanway_partner_reply_includes_history_and_web_context() -> None:
-    """Shanway soll lokalen Verlauf und optionalen Netzkontext lesbar zusammenziehen."""
-    engine = ShanwayEngine()
+def test_assistant_partner_reply_includes_history_and_web_context() -> None:
+    """Assistant soll lokalen Verlauf und optionalen Netzkontext lesbar zusammenziehen."""
+    engine = AssistantEngine()
     assessment = engine.detect_asymmetry(
         "Was ist AGI?",
         coherence_score=91.0,
@@ -818,7 +818,7 @@ def test_shanway_partner_reply_includes_history_and_web_context() -> None:
         active=True,
         h_lambda=1.1,
         observer_mutual_info=2.4,
-        source_label="chat://private/local/shanway",
+        source_label="chat://private/local/assistant",
         observer_knowledge_ratio=0.93,
         history_factor=4.0,
         fingerprint_payload={
@@ -837,13 +837,13 @@ def test_shanway_partner_reply_includes_history_and_web_context() -> None:
         "Was ist AGI?",
         assessment,
         assistant_text="AGI lese ich hier als lokalen Analyse- und Reflexionskreis.",
-        history_excerpt="Du: Erklaere Aether | Shanway: Aether bleibt lokal und strukturell.",
+        history_excerpt="Du: Erklaere Aether | Assistant: Aether bleibt lokal und strukturell.",
         web_context={
             "ok": True,
             "provider": "duckduckgo",
             "summary": "AGI bezeichnet ein allgemeineres, flexibel lernendes System; Aether bleibt dabei bewusst lokal.",
         },
-        channel_kind="private_shanway",
+        channel_kind="private_assistant",
     )
 
     assert "Kontext gehalten:" in reply
@@ -863,7 +863,7 @@ def main() -> None:
     test_agent_loop_plans_browser_followup_for_open_state()
     test_browser_engine_fetch_search_context_is_parsed_without_real_network()
     test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns()
-    test_shanway_partner_reply_includes_history_and_web_context()
+    test_assistant_partner_reply_includes_history_and_web_context()
     gain = max(
         0.0,
         min(

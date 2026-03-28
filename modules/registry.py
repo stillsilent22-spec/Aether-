@@ -1,4 +1,4 @@
-"""Persistente SQLite-Registry fuer Aether."""
+﻿"""Persistente SQLite-Registry fuer Aether."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ GENESIS_TIMESTAMP = 1741219200
 GENESIS_CONTENT = "Aether self-organizes. Structure is not imposed — it emerges."
 DELTA_PACK_PREFIX = b"AETHZ1:"
 DELTA_PACK_ENC_PREFIX = b"AETHZ2E:"  # AES-256-GCM verschluesseltes Delta
-SHANWAY_MEMBER_NAME = "shanway"
+ASSISTANT_MEMBER_NAME = "assistant"
 UNREADABLE_CHAT_TEXT = "[nachricht nicht lesbar]"
 HIDDEN_CHAT_TEXT = "[verschluesselt]"
 RAW_STORAGE_CIPHER = "AES-256-GCM"
@@ -591,7 +591,7 @@ class AetherRegistry:
                 encrypted_payload TEXT NOT NULL DEFAULT '',
                 reply_text TEXT NOT NULL DEFAULT '',
                 encrypted_reply_text TEXT NOT NULL DEFAULT '',
-                visible_to_shanway INTEGER NOT NULL DEFAULT 1,
+                visible_to_assistant INTEGER NOT NULL DEFAULT 1,
                 payload_json TEXT NOT NULL DEFAULT '{}'
             )
             """
@@ -605,7 +605,7 @@ class AetherRegistry:
                 created_by_user_id INTEGER NOT NULL,
                 created_by_username TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                shanway_enabled INTEGER NOT NULL DEFAULT 0,
+                assistant_enabled INTEGER NOT NULL DEFAULT 0,
                 key_version INTEGER NOT NULL DEFAULT 1,
                 payload_json TEXT NOT NULL DEFAULT '{}'
             )
@@ -828,7 +828,7 @@ class AetherRegistry:
         self._ensure_column("chat_messages", "key_version", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("chat_messages", "encrypted_payload", "TEXT NOT NULL DEFAULT ''")
         self._ensure_column("chat_messages", "encrypted_reply_text", "TEXT NOT NULL DEFAULT ''")
-        self._ensure_column("chat_messages", "visible_to_shanway", "INTEGER NOT NULL DEFAULT 1")
+        self._ensure_column("chat_messages", "visible_to_assistant", "INTEGER NOT NULL DEFAULT 1")
 
     def _genesis_payload(self) -> dict[str, Any]:
         """Erzeugt den weltweit geteilten Genesis-Payload."""
@@ -1030,14 +1030,14 @@ class AetherRegistry:
     def _user_secret_record(self, username: str) -> dict[str, Any]:
         """Liefert den stabilen lokalen Geheimnis-Kontext fuer einen Nutzer."""
         normalized = str(username).strip()
-        if normalized == SHANWAY_MEMBER_NAME:
+        if normalized == ASSISTANT_MEMBER_NAME:
             return {
-                "username": SHANWAY_MEMBER_NAME,
+                "username": ASSISTANT_MEMBER_NAME,
                 "sync_identity": hashlib.sha256(
-                    f"{GENESIS_HASH}|{SHANWAY_MEMBER_NAME}|sync".encode("utf-8")
+                    f"{GENESIS_HASH}|{ASSISTANT_MEMBER_NAME}|sync".encode("utf-8")
                 ).hexdigest()[:24],
                 "sync_secret": hashlib.blake2b(
-                    f"{GENESIS_SEED}|{SHANWAY_MEMBER_NAME}|sync".encode("utf-8"),
+                    f"{GENESIS_SEED}|{ASSISTANT_MEMBER_NAME}|sync".encode("utf-8"),
                     digest_size=32,
                 ).hexdigest(),
             }
@@ -1080,7 +1080,7 @@ class AetherRegistry:
         return self.connection.execute(
             """
             SELECT id, group_id, group_name, created_by_user_id, created_by_username,
-                   created_at, shanway_enabled, key_version, payload_json
+                   created_at, assistant_enabled, key_version, payload_json
             FROM chat_groups
             WHERE group_id = ?
             LIMIT 1
@@ -1147,7 +1147,7 @@ class AetherRegistry:
         if group_row is None:
             raise ValueError("Gruppe nicht gefunden.")
         active_members = self._active_group_member_rows(group_id)
-        human_members = [row for row in active_members if str(row["username"]) != SHANWAY_MEMBER_NAME]
+        human_members = [row for row in active_members if str(row["username"]) != ASSISTANT_MEMBER_NAME]
         if not human_members:
             raise ValueError("Es muss mindestens ein aktives Gruppenmitglied verbleiben.")
 
@@ -1718,8 +1718,8 @@ class AetherRegistry:
             signature=signature,
         )
 
-    def get_shanway_registry_knowledge(self, limit: int = 48) -> list[dict[str, Any]]:
-        """Leitet bestaetigtes Shanway-Wissen aus CONFIRMED LOSSLESS-Blocks ab."""
+    def get_assistant_registry_knowledge(self, limit: int = 48) -> list[dict[str, Any]]:
+        """Leitet bestaetigtes Assistant-Wissen aus CONFIRMED LOSSLESS-Blocks ab."""
         rows = self.connection.execute(
             """
             SELECT id, timestamp, payload_json
@@ -2584,7 +2584,7 @@ class AetherRegistry:
             SELECT id, session_id, user_id, username, channel, timestamp, message_text,
                    fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                    group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                   visible_to_shanway, payload_json
+                   visible_to_assistant, payload_json
             FROM chat_messages
             WHERE id = ?
             LIMIT 1
@@ -2616,7 +2616,7 @@ class AetherRegistry:
             "encrypted_payload": str(row["encrypted_payload"]),
             "reply_text": str(row["reply_text"]),
             "encrypted_reply_text": str(row["encrypted_reply_text"]),
-            "visible_to_shanway": bool(int(row["visible_to_shanway"])),
+            "visible_to_assistant": bool(int(row["visible_to_assistant"])),
             "payload_json": payload,
         }
 
@@ -2635,7 +2635,7 @@ class AetherRegistry:
         recipient_username: str = "",
         group_id: str = "",
         key_version: int = 0,
-        visible_to_shanway: bool = True,
+        visible_to_assistant: bool = True,
     ) -> int:
         """Persistiert eine lokale Chatnachricht samt struktureller Antwort."""
         payload_box = dict(payload or {})
@@ -2692,7 +2692,7 @@ class AetherRegistry:
                 session_id, user_id, username, channel, timestamp, message_text,
                 fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                 group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                visible_to_shanway, payload_json
+                visible_to_assistant, payload_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -2712,7 +2712,7 @@ class AetherRegistry:
                 encrypted_payload,
                 stored_reply_text,
                 encrypted_reply_text,
-                int(bool(visible_to_shanway)),
+                int(bool(visible_to_assistant)),
                 json.dumps(clean_payload, ensure_ascii=False),
             ),
         )
@@ -2737,7 +2737,7 @@ class AetherRegistry:
                     SELECT id, session_id, user_id, username, channel, timestamp, message_text,
                            fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                            group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                           visible_to_shanway, payload_json
+                           visible_to_assistant, payload_json
                     FROM chat_messages
                     WHERE is_private = 1
                       AND is_group = 0
@@ -2768,7 +2768,7 @@ class AetherRegistry:
                     SELECT id, session_id, user_id, username, channel, timestamp, message_text,
                            fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                            group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                           visible_to_shanway, payload_json
+                           visible_to_assistant, payload_json
                     FROM chat_messages
                     WHERE group_id = ? AND is_group = 1
                     ORDER BY id DESC
@@ -2784,7 +2784,7 @@ class AetherRegistry:
                     SELECT id, session_id, user_id, username, channel, timestamp, message_text,
                            fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                            group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                           visible_to_shanway, payload_json
+                           visible_to_assistant, payload_json
                     FROM chat_messages
                     WHERE channel = ? AND is_private = 0 AND is_group = 0
                     ORDER BY id DESC
@@ -2844,7 +2844,7 @@ class AetherRegistry:
                     "recipient_username": str(row["recipient_username"]),
                     "group_id": str(row["group_id"]),
                     "key_version": int(row["key_version"]),
-                    "visible_to_shanway": bool(int(row["visible_to_shanway"])),
+                    "visible_to_assistant": bool(int(row["visible_to_assistant"])),
                     "payload_json": payload,
                 }
             )
@@ -2863,7 +2863,7 @@ class AetherRegistry:
                 session_id, user_id, username, channel, timestamp, message_text,
                 fingerprint_id, is_private, is_group, recipient_user_id, recipient_username,
                 group_id, key_version, encrypted_payload, reply_text, encrypted_reply_text,
-                visible_to_shanway, payload_json
+                visible_to_assistant, payload_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -2883,7 +2883,7 @@ class AetherRegistry:
                 str(payload.get("encrypted_payload", "")),
                 str(payload.get("reply_text", "")),
                 str(payload.get("encrypted_reply_text", "")),
-                int(bool(payload.get("visible_to_shanway", True))),
+                int(bool(payload.get("visible_to_assistant", True))),
                 json.dumps(payload.get("payload_json", {}) or {}, ensure_ascii=False),
             ),
         )
@@ -2935,7 +2935,7 @@ class AetherRegistry:
             "created_by_user_id": int(group_row["created_by_user_id"]),
             "created_by_username": str(group_row["created_by_username"]),
             "created_at": str(group_row["created_at"]),
-            "shanway_enabled": bool(int(group_row["shanway_enabled"])),
+            "assistant_enabled": bool(int(group_row["assistant_enabled"])),
             "key_version": int(group_row["key_version"]),
             "payload_json": group_payload,
             "members": snapshot_members,
@@ -2953,14 +2953,14 @@ class AetherRegistry:
             """
             INSERT INTO chat_groups (
                 group_id, group_name, created_by_user_id, created_by_username,
-                created_at, shanway_enabled, key_version, payload_json
+                created_at, assistant_enabled, key_version, payload_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(group_id) DO UPDATE SET
                 group_name = excluded.group_name,
                 created_by_user_id = excluded.created_by_user_id,
                 created_by_username = excluded.created_by_username,
                 created_at = excluded.created_at,
-                shanway_enabled = excluded.shanway_enabled,
+                assistant_enabled = excluded.assistant_enabled,
                 key_version = excluded.key_version,
                 payload_json = excluded.payload_json
             """,
@@ -2970,7 +2970,7 @@ class AetherRegistry:
                 int(creator_record["id"]) if isinstance(creator_record, dict) else int(payload.get("created_by_user_id", 0) or 0),
                 creator_name,
                 str(payload.get("created_at", "") or self._now_iso()),
-                int(bool(payload.get("shanway_enabled", False))),
+                int(bool(payload.get("assistant_enabled", False))),
                 int(payload.get("key_version", 1) or 1),
                 json.dumps(payload.get("payload_json", {}) or {}, ensure_ascii=False),
             ),
@@ -3032,7 +3032,7 @@ class AetherRegistry:
         creator_username: str,
         group_name: str,
         member_usernames: list[str],
-        shanway_enabled: bool = False,
+        assistant_enabled: bool = False,
     ) -> dict[str, Any]:
         """Legt eine lokale verschluesselte Chat-Gruppe an."""
         if not crypto_available():
@@ -3053,7 +3053,7 @@ class AetherRegistry:
         members_map: dict[str, dict[str, Any]] = {normalized_creator: creator_record}
         for raw_name in member_usernames:
             normalized = str(raw_name).strip()
-            if not normalized or normalized == SHANWAY_MEMBER_NAME:
+            if not normalized or normalized == ASSISTANT_MEMBER_NAME:
                 continue
             record = self.get_user_by_username(normalized)
             if record is None or bool(record.get("disabled", False)):
@@ -3067,7 +3067,7 @@ class AetherRegistry:
             """
             INSERT INTO chat_groups (
                 group_id, group_name, created_by_user_id, created_by_username,
-                created_at, shanway_enabled, key_version, payload_json
+                created_at, assistant_enabled, key_version, payload_json
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -3076,7 +3076,7 @@ class AetherRegistry:
                 int(creator_user_id),
                 normalized_creator,
                 created_at,
-                int(bool(shanway_enabled)),
+                int(bool(assistant_enabled)),
                 1,
                 json.dumps(
                     {
@@ -3109,7 +3109,7 @@ class AetherRegistry:
                     json.dumps({}, ensure_ascii=False),
                 ),
             )
-        if bool(shanway_enabled):
+        if bool(assistant_enabled):
             self.connection.execute(
                 """
                 INSERT INTO chat_group_members (
@@ -3120,11 +3120,11 @@ class AetherRegistry:
                 (
                     group_id,
                     0,
-                    SHANWAY_MEMBER_NAME,
+                    ASSISTANT_MEMBER_NAME,
                     "assistant",
                     created_at,
                     1,
-                    self._encrypt_group_key_for_member(group_key, SHANWAY_MEMBER_NAME),
+                    self._encrypt_group_key_for_member(group_key, ASSISTANT_MEMBER_NAME),
                     1,
                     json.dumps({"assistant": True}, ensure_ascii=False),
                 ),
@@ -3133,7 +3133,7 @@ class AetherRegistry:
         return self.get_chat_group(group_id, current_username=normalized_creator) or {
             "group_id": group_id,
             "group_name": normalized_name,
-            "shanway_enabled": bool(shanway_enabled),
+            "assistant_enabled": bool(assistant_enabled),
         }
 
     def get_chat_group(self, group_id: str, current_username: str = "") -> dict[str, Any] | None:
@@ -3148,7 +3148,7 @@ class AetherRegistry:
             FROM chat_group_members
             WHERE group_id = ? AND active = 1 AND username != ?
             """,
-            (str(group_id), SHANWAY_MEMBER_NAME),
+            (str(group_id), ASSISTANT_MEMBER_NAME),
         ).fetchone()
         payload_raw = str(row["payload_json"]).strip()
         try:
@@ -3161,7 +3161,7 @@ class AetherRegistry:
             "created_by_user_id": int(row["created_by_user_id"]),
             "created_by_username": str(row["created_by_username"]),
             "created_at": str(row["created_at"]),
-            "shanway_enabled": bool(int(row["shanway_enabled"])),
+            "assistant_enabled": bool(int(row["assistant_enabled"])),
             "key_version": int(row["key_version"]),
             "member_count": int(count_row["member_count"]) if count_row is not None else 0,
             "current_role": str(member_row["role"]) if member_row is not None else "",
@@ -3242,8 +3242,8 @@ class AetherRegistry:
     def remove_group_member(self, group_id: str, actor_username: str, target_username: str) -> bool:
         """Entfernt ein Mitglied aus der Gruppe und rotiert danach den Schluessel."""
         normalized_target = str(target_username).strip()
-        if normalized_target == SHANWAY_MEMBER_NAME:
-            return self.toggle_group_shanway(group_id, actor_username, enabled=False)
+        if normalized_target == ASSISTANT_MEMBER_NAME:
+            return self.toggle_group_assistant(group_id, actor_username, enabled=False)
         if not self._is_group_admin(group_id, actor_username):
             raise PermissionError("Nur Gruppen-Admins duerfen Mitglieder entfernen.")
         target_row = self._group_member_row(group_id, normalized_target)
@@ -3254,7 +3254,7 @@ class AetherRegistry:
         remaining_humans = [
             row
             for row in active_members
-            if str(row["username"]) not in (normalized_target, SHANWAY_MEMBER_NAME)
+            if str(row["username"]) not in (normalized_target, ASSISTANT_MEMBER_NAME)
         ]
         self.connection.execute(
             """
@@ -3298,7 +3298,7 @@ class AetherRegistry:
         remaining_humans = [
             row
             for row in active_members
-            if str(row["username"]) not in (normalized, SHANWAY_MEMBER_NAME)
+            if str(row["username"]) not in (normalized, ASSISTANT_MEMBER_NAME)
         ]
         self.connection.execute(
             """
@@ -3332,19 +3332,19 @@ class AetherRegistry:
         self.connection.commit()
         return True
 
-    def toggle_group_shanway(self, group_id: str, actor_username: str, enabled: bool) -> bool:
-        """Aktiviert oder deaktiviert Shanway fuer eine Gruppe."""
+    def toggle_group_assistant(self, group_id: str, actor_username: str, enabled: bool) -> bool:
+        """Aktiviert oder deaktiviert Assistant fuer eine Gruppe."""
         if not self._is_group_admin(group_id, actor_username):
-            raise PermissionError("Nur Gruppen-Admins duerfen Shanway umschalten.")
+            raise PermissionError("Nur Gruppen-Admins duerfen Assistant umschalten.")
         group_row = self._group_row(group_id)
         if group_row is None:
             raise ValueError("Gruppe nicht gefunden.")
-        currently_enabled = bool(int(group_row["shanway_enabled"]))
+        currently_enabled = bool(int(group_row["assistant_enabled"]))
         if currently_enabled == bool(enabled):
             return True
         if enabled:
             group_key, key_version = self._resolve_group_key_for_user(group_id, actor_username)
-            current = self._group_member_row(group_id, SHANWAY_MEMBER_NAME)
+            current = self._group_member_row(group_id, ASSISTANT_MEMBER_NAME)
             if current is None:
                 self.connection.execute(
                     """
@@ -3356,11 +3356,11 @@ class AetherRegistry:
                     (
                         str(group_id),
                         0,
-                        SHANWAY_MEMBER_NAME,
+                        ASSISTANT_MEMBER_NAME,
                         "assistant",
                         self._now_iso(),
                         1,
-                        self._encrypt_group_key_for_member(group_key, SHANWAY_MEMBER_NAME),
+                        self._encrypt_group_key_for_member(group_key, ASSISTANT_MEMBER_NAME),
                         int(key_version),
                         json.dumps({"assistant": True}, ensure_ascii=False),
                     ),
@@ -3373,23 +3373,23 @@ class AetherRegistry:
                     WHERE group_id = ? AND username = ?
                     """,
                     (
-                        self._encrypt_group_key_for_member(group_key, SHANWAY_MEMBER_NAME),
+                        self._encrypt_group_key_for_member(group_key, ASSISTANT_MEMBER_NAME),
                         int(key_version),
                         str(group_id),
-                        SHANWAY_MEMBER_NAME,
+                        ASSISTANT_MEMBER_NAME,
                     ),
                 )
             self.connection.execute(
-                "UPDATE chat_groups SET shanway_enabled = 1 WHERE group_id = ?",
+                "UPDATE chat_groups SET assistant_enabled = 1 WHERE group_id = ?",
                 (str(group_id),),
             )
         else:
             self.connection.execute(
                 "UPDATE chat_group_members SET active = 0 WHERE group_id = ? AND username = ?",
-                (str(group_id), SHANWAY_MEMBER_NAME),
+                (str(group_id), ASSISTANT_MEMBER_NAME),
             )
             self.connection.execute(
-                "UPDATE chat_groups SET shanway_enabled = 0 WHERE group_id = ?",
+                "UPDATE chat_groups SET assistant_enabled = 0 WHERE group_id = ?",
                 (str(group_id),),
             )
             self._delete_group_consensus(group_id)
@@ -3429,16 +3429,16 @@ class AetherRegistry:
                 "label": "# global",
                 "title": "Global",
                 "encrypted": False,
-                "shanway_enabled": True,
+                "assistant_enabled": True,
                 "analysis_mode": "shared",
             },
             {
-                "kind": "private_shanway",
-                "channel": f"private:{SHANWAY_MEMBER_NAME}",
-                "label": "[privat] Shanway",
-                "title": "Shanway privat",
+                "kind": "private_assistant",
+                "channel": f"private:{ASSISTANT_MEMBER_NAME}",
+                "label": "[privat] Assistant",
+                "title": "Assistant privat",
                 "encrypted": True,
-                "shanway_enabled": True,
+                "assistant_enabled": True,
                 "analysis_mode": "individual",
             },
         ]
@@ -3458,14 +3458,14 @@ class AetherRegistry:
             (
                 normalized_username,
                 normalized_username,
-                SHANWAY_MEMBER_NAME,
+                ASSISTANT_MEMBER_NAME,
                 normalized_username,
-                SHANWAY_MEMBER_NAME,
+                ASSISTANT_MEMBER_NAME,
             ),
         ).fetchall()
         for row in private_rows:
             partner = str(row["partner"]).strip()
-            if not partner or partner == SHANWAY_MEMBER_NAME:
+            if not partner or partner == ASSISTANT_MEMBER_NAME:
                 continue
             channels.append(
                 {
@@ -3474,7 +3474,7 @@ class AetherRegistry:
                     "label": f"@ {partner}",
                     "title": f"Direkt mit {partner}",
                     "encrypted": True,
-                    "shanway_enabled": False,
+                    "assistant_enabled": False,
                     "recipient_username": partner,
                     "analysis_mode": "individual",
                 }
@@ -3482,17 +3482,17 @@ class AetherRegistry:
 
         group_rows = self.connection.execute(
             """
-            SELECT g.group_id, g.group_name, g.shanway_enabled, g.key_version, g.payload_json, m.role,
+            SELECT g.group_id, g.group_name, g.assistant_enabled, g.key_version, g.payload_json, m.role,
                    COUNT(CASE WHEN m2.active = 1 AND m2.username != ? THEN 1 END) AS member_count
             FROM chat_groups AS g
             JOIN chat_group_members AS m
               ON m.group_id = g.group_id AND m.username = ? AND m.active = 1
             LEFT JOIN chat_group_members AS m2
               ON m2.group_id = g.group_id
-            GROUP BY g.group_id, g.group_name, g.shanway_enabled, g.key_version, g.payload_json, m.role
+            GROUP BY g.group_id, g.group_name, g.assistant_enabled, g.key_version, g.payload_json, m.role
             ORDER BY g.group_name COLLATE NOCASE ASC
             """,
-            (SHANWAY_MEMBER_NAME, normalized_username),
+            (ASSISTANT_MEMBER_NAME, normalized_username),
         ).fetchall()
         for row in group_rows:
             member_count = int(row["member_count"]) if row["member_count"] is not None else 0
@@ -3507,7 +3507,7 @@ class AetherRegistry:
                     "label": f"[gruppe] {row['group_name']} ({member_count})",
                     "title": str(row["group_name"]),
                     "encrypted": True,
-                    "shanway_enabled": bool(int(row["shanway_enabled"])),
+                    "assistant_enabled": bool(int(row["assistant_enabled"])),
                     "group_id": str(row["group_id"]),
                     "current_role": str(row["role"]),
                     "member_count": member_count,
@@ -3521,7 +3521,7 @@ class AetherRegistry:
     def _normalize_consensus_text(message_text: str) -> str:
         """Verdichtet Gruppenbotschaften fuer einfachen Konsensvergleich."""
         lowered = str(message_text).lower()
-        lowered = re.sub(r"@shanway\b", "", lowered)
+        lowered = re.sub(r"@assistant\b", "", lowered)
         lowered = re.sub(r"\s+", " ", lowered).strip()
         return lowered
 
@@ -3534,9 +3534,9 @@ class AetherRegistry:
     ) -> dict[str, Any] | None:
         """Verdichtet Gruppenbotschaften zu lokalem Konsenswissen ab drei Stimmen."""
         group_row = self._group_row(group_id)
-        if group_row is None or not bool(int(group_row["shanway_enabled"])):
+        if group_row is None or not bool(int(group_row["assistant_enabled"])):
             return None
-        if str(username).strip() == SHANWAY_MEMBER_NAME:
+        if str(username).strip() == ASSISTANT_MEMBER_NAME:
             return None
         canonical_text = self._normalize_consensus_text(message_text)
         if len(canonical_text) < 12 or "?" in canonical_text:
@@ -3984,9 +3984,9 @@ class AetherRegistry:
         return {key: float(value / total) for key, value in options.items()}
 
     @staticmethod
-    def _shanway_allows_dna_share(payload: dict[str, Any]) -> bool:
-        """Blockiert DNA-Share fuer sensible oder explizit toxische Shanway-Befunde."""
-        assessment = payload.get("shanway_assessment", {})
+    def _assistant_allows_dna_share(payload: dict[str, Any]) -> bool:
+        """Blockiert DNA-Share fuer sensible oder explizit toxische Assistant-Befunde."""
+        assessment = payload.get("assistant_assessment", {})
         if not isinstance(assessment, dict):
             return True
         if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
@@ -4031,7 +4031,7 @@ class AetherRegistry:
         score += 0.06 * bayes_confidence
         score += 0.05 * noether_confidence
         score += 0.03 * min(1.0, len(anchor_list) / 4.0)
-        assessment = dict(normalized.get("shanway_assessment", {}) or {})
+        assessment = dict(normalized.get("assistant_assessment", {}) or {})
         if assessment:
             if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
                 return 0.0
@@ -4054,7 +4054,7 @@ class AetherRegistry:
         source_type = str(payload.get("source_type", "") or "").strip().lower()
         confirmed_lossless = bool(payload.get("confirmed_lossless", False))
         reconstruction_verified = bool(payload.get("reconstruction_verified", False))
-        assessment = payload.get("shanway_assessment", {})
+        assessment = payload.get("assistant_assessment", {})
         if not confirmed_lossless:
             if source_type and source_type != "file":
                 return "source_not_lossless"
@@ -4065,10 +4065,10 @@ class AetherRegistry:
             return "not_confirmed"
         if isinstance(assessment, dict):
             if bool(assessment.get("sensitive", False)) or bool(assessment.get("blacklisted", False)):
-                return "shanway_sensitive"
+                return "assistant_sensitive"
             classification = str(assessment.get("classification", "")).strip().lower()
             if classification in {"toxic", "blocked"}:
-                return "shanway_toxic"
+                return "assistant_toxic"
         if AetherRegistry._dna_share_trust_score(payload) < TRUSTED_ANCHOR_UPLOAD_MIN_SCORE:
             return "trust_score_failed"
         return ""
@@ -4084,8 +4084,8 @@ class AetherRegistry:
             "coverage_failed": "Anker-Abdeckung reicht fuer CONFIRMED lossless noch nicht aus",
             "not_confirmed": "Datensatz ist noch nicht als CONFIRMED lossless markiert",
             "not_chained": "Datensatz ist lokal vorhanden, aber noch nicht ueber die Chain bestaetigt",
-            "shanway_sensitive": "Shanway-/Ethikfilter blockiert sensible oder blacklisted Inhalte",
-            "shanway_toxic": "Shanway-/Ethikfilter blockiert toxische Inhalte",
+            "assistant_sensitive": "Assistant-/Ethikfilter blockiert sensible oder blacklisted Inhalte",
+            "assistant_toxic": "Assistant-/Ethikfilter blockiert toxische Inhalte",
             "trust_score_failed": "Aether-Trust-Score fuer sicheren Anchor-Upload ist noch zu niedrig",
         }
         return mapping.get(str(reason_code), "unbekannter Filtergrund")
@@ -5045,7 +5045,7 @@ class AetherRegistry:
                 },
                 "sharing_policy": {
                     "source_confirmed_lossless_local": True,
-                    "shanway_filter": True,
+                    "assistant_filter": True,
                     "shared_anchor_assistance_only": True,
                     "lossless_reconstruction_shared": False,
                     "raw_files_leave_machine": False,
@@ -5096,7 +5096,7 @@ class AetherRegistry:
                 "records": dna_records[:64],
                 "sharing_policy": {
                     "source_confirmed_lossless_local_only": True,
-                    "shanway_trust_filter": True,
+                    "assistant_trust_filter": True,
                     "shared_anchor_assistance_only": True,
                     "lossless_reconstruction_shared": False,
                     "raw_files_leave_machine": False,

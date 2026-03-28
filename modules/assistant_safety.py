@@ -1,24 +1,24 @@
-"""
-modules/shanway_safety.py — Shanway Sicherheits- und Filterebene.
+﻿"""
+modules/assistant_safety.py — Assistant Sicherheits- und Filterebene.
 
-Shanway ist der finale, deterministische Ausgabemodul der Analyse-Pipeline.
+Assistant ist der finale, deterministische Ausgabemodul der Analyse-Pipeline.
 Er generiert keine Inhalte eigenstaendig, sondern verarbeitet ausschliesslich
 Material, das zuvor durch Aether, Filter und TinyLlama validiert wurde.
 
-Shanway darf keine neuen Fakten erfinden, keine Hypothesen bilden, keine
+Assistant darf keine neuen Fakten erfinden, keine Hypothesen bilden, keine
 Interpretationen hinzufuegen und keine Inhalte generieren, die nicht bereits
 durch die Pipeline freigegeben wurden.
 
-Shanway fuehrt keine freien Assoziationen aus und nutzt keine probabilistischen
+Assistant fuehrt keine freien Assoziationen aus und nutzt keine probabilistischen
 Modelle. Jede Ausgabe basiert ausschliesslich auf den strukturell geprueften
 Bausteinen, die ihm uebergeben werden.
 
-Shanway ist kein Agent, kein Assistent und kein autonomer Generator. Er ist ein
+Assistant ist kein Agent, kein Assistent und kein autonomer Generator. Er ist ein
 deterministischer Renderer, der gepruefgte Inhalte in klare, strukturierte,
 konsistente und sichere Form bringt.
 
 Filter (nach Prioritaet):
-  1. MEDICAL RULE — Shanway gibt NIEMALS medizinischen Rat. Keine Ausnahme.
+  1. MEDICAL RULE — Assistant gibt NIEMALS medizinischen Rat. Keine Ausnahme.
   2. BLACKLIST    — absolute Verbote (silence ohne Erklaerung)
   3. WHITELIST    — strukturell sichere Themendomaenen
   4. DETERMINISM  — h_lambda-Schwelle, Trust-Schwelle, Konsens-Schwelle.
@@ -29,13 +29,13 @@ Filter (nach Prioritaet):
 
 Pipeline-Konsens-Schwelle:
   Wenn eine Web-Anfrage laeuft (sources_confirmed > 0), muessen mindestens
-  CONSENSUS_MIN_SOURCES_STRICT (3) Quellen bestaetigen, bevor Shanway ausgibt.
+  CONSENSUS_MIN_SOURCES_STRICT (3) Quellen bestaetigen, bevor Assistant ausgibt.
   Bei sources_confirmed == 0 (Vault/Datei-Modus) gilt diese Schwelle nicht,
   da kein Web-Kontext vorliegt.
 
 Nutzung:
-    from modules.shanway_safety import ShanwaySafetyFilter, FilterResult
-    sf = ShanwaySafetyFilter()
+    from modules.assistant_safety import AssistantSafetyFilter, FilterResult
+    sf = AssistantSafetyFilter()
     ok, reason = sf.apply_chain(query, generated_text, h_lambda, trust)
     if not ok:
         return SILENCE
@@ -51,14 +51,14 @@ from typing import Optional
 # Silence-Konstanten
 # ---------------------------------------------------------------------------
 
-SILENCE = ""           # Leere Zeichenkette = Shaneway schweigt
-SILENCE_TOKEN = "__SHANWAY_SILENCE__"
+SILENCE = ""           # Leere Zeichenkette = Assistant schweigt
+SILENCE_TOKEN = "__ASSISTANT_SILENCE__"
 
 # ---------------------------------------------------------------------------
 # Medizin-Schweigeregel — ABSOLUT, keine Ausnahme
 # ---------------------------------------------------------------------------
-# Shanway darf NIEMALS medizinischen Rat geben.
-# Wird ein medizinisches Anfragemuster erkannt, gibt Shanway immer schweigt.
+# Assistant darf NIEMALS medizinischen Rat geben.
+# Wird ein medizinisches Anfragemuster erkannt, gibt Assistant immer schweigt.
 # Das gilt auch dann, wenn in der Whitelist etwas Medizin-Verwandtes steht.
 
 _MEDICAL_DENY: list[re.Pattern] = [re.compile(p, re.IGNORECASE) for p in [
@@ -118,7 +118,7 @@ _WHITELIST_DOMAINS: list[re.Pattern] = [re.compile(p, re.IGNORECASE) for p in [
     r"\b(musik|music\s*theory|art\s*history|kunstgeschichte)\b",
     r"\b(engineering|ingenieur|architecture|architektur|civil\s*engineering)\b",
     r"\b(oekonomie|economics|makrooekonomie|macroeconomics|statistik|statistics)\b",
-    r"\b(aether|anker|anchor|shanway|strukturanalyse|strukturmessung|entropie|entropy)\b",
+    r"\b(aether|anker|anchor|assistant|strukturanalyse|strukturmessung|entropie|entropy)\b",
 ]]
 
 # ---------------------------------------------------------------------------
@@ -139,7 +139,7 @@ _HEDGING_PATTERNS: list[re.Pattern] = [re.compile(p, re.IGNORECASE) for p in [
 
 H_LAMBDA_UNCERTAINTY_THRESHOLD = 5.5   # ab hier: Schweigen
 MIN_TRUST_FOR_OUTPUT = 0.45            # unter diesem Trust: Schweigen
-TARGET_SOURCES = 10                    # Shanway versucht immer 10 Quellen
+TARGET_SOURCES = 10                    # Assistant versucht immer 10 Quellen
 CONSENSUS_MIN_SOURCES_STRICT = 3       # mindestens 3 bestaetigte Quellen
 
 
@@ -168,12 +168,12 @@ class ChainResult:
 
 
 # ---------------------------------------------------------------------------
-# ShanwaySafetyFilter
+# AssistantSafetyFilter
 # ---------------------------------------------------------------------------
 
-class ShanwaySafetyFilter:
+class AssistantSafetyFilter:
     """
-    Vollstaendige Sicherheits- und Determinismus-Filterschicht fuer Shanway.
+    Vollstaendige Sicherheits- und Determinismus-Filterschicht fuer Assistant.
 
     Regeln (nach Prioritaet):
       1. Medical rule — ABSOLUT, kein Override moeglich
@@ -183,7 +183,7 @@ class ShanwaySafetyFilter:
       5. Hedging-Check — keine Spekulationswoerter in der Ausgabe
       6. Chain — alle Filter zusammen in Kombination
 
-    Bei JEDEM Fehler: Shanway schweigt.
+    Bei JEDEM Fehler: Assistant schweigt.
     """
 
     # ------------------------------------------------------------------
@@ -253,7 +253,7 @@ class ShanwaySafetyFilter:
             )
         if 0 < sources_confirmed < CONSENSUS_MIN_SOURCES_STRICT:
             # Zu wenige bestaetigte Quellen: Konsens-Schwelle nicht erreicht.
-            # Shanway darf keine Inhalte ausgeben, die nicht durch mindestens
+            # Assistant darf keine Inhalte ausgeben, die nicht durch mindestens
             # CONSENSUS_MIN_SOURCES_STRICT Quellen bestaetigt wurden.
             return FilterResult(
                 filter_name="determinism",
@@ -285,7 +285,7 @@ class ShanwaySafetyFilter:
         Domain-Filter schlaegt an. Reine Off-Topic-Spekulationen → Schweigen.
         """
         # Off-Topic ohne Whitelist → nicht direkt blockieren, nur warnen
-        # (Shanway darf ueber alles schweigen, nicht ueber alles reden)
+        # (Assistant darf ueber alles schweigen, nicht ueber alles reden)
         is_whitelisted = self.check_whitelist(query) or self.check_whitelist(generated_text)
         if not is_whitelisted and len(generated_text.split()) < 3:
             return FilterResult(
@@ -365,9 +365,9 @@ class ShanwaySafetyFilter:
           Schritt 2: Kombinierten Filter auf alles zusammen
 
         Erst wenn ALLE Einzelfilter UND der Gesamtfilter bestehen,
-        gibt Shanway aus.
+        gibt Assistant aus.
 
-        Gibt ChainResult zurueck. Bei passed=False → Shanway schweigt.
+        Gibt ChainResult zurueck. Bei passed=False → Assistant schweigt.
         """
         individual: list[FilterResult] = []
 
@@ -474,12 +474,12 @@ class ShanwaySafetyFilter:
 
 
 # Singleton
-_instance: Optional[ShanwaySafetyFilter] = None
+_instance: Optional[AssistantSafetyFilter] = None
 
 
-def get_safety_filter() -> ShanwaySafetyFilter:
-    """Gibt die Singleton-Instanz des ShanwaySafetyFilter zurueck."""
+def get_safety_filter() -> AssistantSafetyFilter:
+    """Gibt die Singleton-Instanz des AssistantSafetyFilter zurueck."""
     global _instance
     if _instance is None:
-        _instance = ShanwaySafetyFilter()
+        _instance = AssistantSafetyFilter()
     return _instance

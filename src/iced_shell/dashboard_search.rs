@@ -41,7 +41,7 @@ impl AetherIcedShell {
             "Symbiont" => "Hinweis: Mehrzeilige Eingaben im Symbiont-Tab erzeugen Razor-Listen (eine Zeile = ein Signal).",
             _ => match self.active_tab {
                 Tab::Control => "Control: Suche filtert KPIs, Metriken und Status-Labels im Ueberblick-Dashboard.",
-                Tab::Chat => "Chat/Shanway: Frage oder Befehl eingeben - Shanway antwortet nur auf Basis validierter Vault-Anker.",
+                Tab::Chat => "Chat: Nachricht eingeben.",
                 Tab::Logs => "Logs: Suche filtert nach Aktion, Kandidaten-ID, Regel-ID oder Zeitstempel.",
                 Tab::Settings => "Settings: Suche filtert Konfigurationsoptionen nach Stichwort.",
                 Tab::Anchors => "Anchors: Suche filtert nach Ankernamen, UUID oder Vault-Klassifikation.",

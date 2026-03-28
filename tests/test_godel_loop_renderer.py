@@ -1,5 +1,5 @@
-from modules.godel_loop_renderer import GoedelLoopRenderer
-from modules.shanway import ShanwayEngine
+﻿from modules.godel_loop_renderer import GoedelLoopRenderer
+from modules.assistant import AssistantEngine
 
 
 def test_godel_loop_is_deterministic_for_same_input() -> None:
@@ -20,8 +20,8 @@ def test_godel_loop_stops_with_message() -> None:
     assert len(list(result.get("levels", []))) >= 1
 
 
-def test_shanway_engine_godel_integration() -> None:
-    engine = ShanwayEngine(enable_godel_loop=True)
+def test_assistant_engine_godel_integration() -> None:
+    engine = AssistantEngine(enable_godel_loop=True)
     assessment = engine.detect_asymmetry(
         "Conway glider pattern sample",
         enable_godel_loop=True,

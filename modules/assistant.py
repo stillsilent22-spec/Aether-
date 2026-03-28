@@ -1,4 +1,4 @@
-"""Strukturelle Shanway-Textanalyse fuer Chat- und Browsertexte."""
+﻿"""Strukturelle Assistant-Textanalyse fuer Chat- und Browsertexte."""
 
 from __future__ import annotations
 
@@ -13,10 +13,10 @@ from typing import Any, Optional
 
 REFERENCE_ALIGNMENT_TOLERANCE = 0.0001
 TEMPLATE_PROMPT = """
-Du bist Shanway, eine strukturorientierte Analyse-Engine.
+Du bist Assistant, eine strukturorientierte Analyse-Engine.
 Du arbeitest nicht semantisch, sondern ueber Muster, Invarianten und Strukturen.
 
-Du nutzt folgende 10 integrierten Filter (SHANWAY_MASTER):
+Du nutzt folgende 10 integrierten Filter (ASSISTANT_MASTER):
 - [0] Security:    fail-closed Basis — kein Output bei Sicherheitsverletzung.
 - [1] Shannon:     H(X) klassische Entropie — Basis aller Strukturmessungen.
 - [2] H_lambda:    H(X|M_t) beobachterrelative Restunsicherheit — Heisenberg-Grenze.
@@ -116,7 +116,7 @@ def _luhn_valid(number_text: str) -> bool:
 
 
 @dataclass
-class ShanwayAssessment:
+class AssistantAssessment:
     """Verdichteter Befund fuer strukturelle Textsymmetrie."""
 
     active: bool
@@ -318,7 +318,7 @@ class ShanwayAssessment:
         }
 
 
-class ShanwayEngine:
+class AssistantEngine:
     """Deterministische Textanalyse ohne ML-Stack."""
 
     LANGUAGE_HINTS = {
@@ -479,7 +479,7 @@ class ShanwayEngine:
     }
 
     def __init__(self, state_path: str | None = None, enable_godel_loop: bool = False) -> None:
-        self.state_path = Path(state_path or (Path("data") / "shanway_lexicon.json"))
+        self.state_path = Path(state_path or (Path("data") / "assistant_lexicon.json"))
         self.learned_tokens: dict[str, dict[str, int]] = {"de": {}, "en": {}}
         self._vault_analysis_cache_path = ""
         self._vault_analysis_cache_mtime = 0.0
@@ -900,8 +900,8 @@ class ShanwayEngine:
         return " | ".join(parts[: max(1, int(limit))])
 
     @staticmethod
-    def _conversation_fallback(user_text: str, assessment: ShanwayAssessment) -> str:
-        """Liefert eine kurze, lokale Shanway-Antwort fuer freie Fragen ohne Web-Kontext."""
+    def _conversation_fallback(user_text: str, assessment: AssistantAssessment) -> str:
+        """Liefert eine kurze, lokale Assistant-Antwort fuer freie Fragen ohne Web-Kontext."""
         lowered = _normalize_text(user_text)
         if "agi" in lowered:
             return (
@@ -928,13 +928,13 @@ class ShanwayEngine:
     def compose_chat_partner_reply(
         self,
         user_text: str,
-        assessment: ShanwayAssessment,
+        assessment: AssistantAssessment,
         assistant_text: str = "",
         history_excerpt: str = "",
         web_context: dict[str, Any] | None = None,
         channel_kind: str = "public",
     ) -> str:
-        """Formt eine lesbare Shanway-Partnerantwort aus Verlauf, Struktur und optionalem Web-Kontext."""
+        """Formt eine lesbare Assistant-Partnerantwort aus Verlauf, Struktur und optionalem Web-Kontext."""
         parts: list[str] = []
         cleaned_assistant = " ".join(str(assistant_text or "").split()).strip()
         if history_excerpt:
@@ -1053,7 +1053,7 @@ class ShanwayEngine:
             parts.append(f"overall={overall:.3f}")
         return ", ".join(parts) if parts else "prior=0.000"
 
-    def _visual_simulation(self, assessment: ShanwayAssessment) -> str:
+    def _visual_simulation(self, assessment: AssistantAssessment) -> str:
         file_type = str(assessment.file_type or "").lower()
         if any(file_type.endswith(suffix) for suffix in (".ttf", ".otf")) or "font" in file_type:
             return (
@@ -1076,7 +1076,7 @@ class ShanwayEngine:
             "ASCII-Approx: [..##..] / [.####.] / [..##..]."
         )
 
-    def _source_collection_summary(self, assessment: ShanwayAssessment) -> str:
+    def _source_collection_summary(self, assessment: AssistantAssessment) -> str:
         """Verdichtet, welche Beobachtungsquellen aktuell in die Strukturmenge einfliessen."""
         sources = ["Datei"]
         miniature = dict(getattr(assessment, "miniature_reflection", {}) or {})
@@ -1093,7 +1093,7 @@ class ShanwayEngine:
             sources.append("Vault")
         return f"Quellenmenge: {', '.join(sources)} | Gesamtquellen {len(sources)}."
 
-    def _filter_trace(self, assessment: ShanwayAssessment) -> dict[str, str]:
+    def _filter_trace(self, assessment: AssistantAssessment) -> dict[str, str]:
         """Leitet pro Filter eine knappe, auditierbare Strukturspur ab."""
         miniature = dict(getattr(assessment, "miniature_reflection", {}) or {})
         raster = dict(getattr(assessment, "raster_self_perception", {}) or {})
@@ -1147,7 +1147,7 @@ class ShanwayEngine:
             "bayes": " | ".join(bayes_parts),
         }
 
-    def _anchor_map_summary(self, assessment: ShanwayAssessment) -> str:
+    def _anchor_map_summary(self, assessment: AssistantAssessment) -> str:
         """Verdichtet Ankerpunkte, Drifts und strukturelle Verbindungslinien."""
         anchor_parts = [
             f"Ankerzahl {int(getattr(assessment, 'anchor_count', 0) or 0)}",
@@ -1175,15 +1175,15 @@ class ShanwayEngine:
             )
         return " | ".join(anchor_parts)
 
-    def _final_insight(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+    def _final_insight(self, assessment: AssistantAssessment, assistant_text: str = "") -> str:
         if self._structural_break(assessment):
             return self._anomaly_reply(assessment)
         if self._good_coherence(assessment):
             return self._narrative_summary_reply(assessment, assistant_text=assistant_text)
         return self._harmonic_reply(assessment, assistant_text=assistant_text)
 
-    def generate_output(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
-        """Erzeugt den strukturierten Shanway-Ausgabeblock anhand des festen Templates."""
+    def generate_output(self, assessment: AssistantAssessment, assistant_text: str = "") -> str:
+        """Erzeugt den strukturierten Assistant-Ausgabeblock anhand des festen Templates."""
         verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})
         residual_threshold = 0.15
         anchor_threshold = 0.85
@@ -1327,7 +1327,7 @@ class ShanwayEngine:
         self_reflection_payload: dict[str, Any] | None = None,
         enable_godel_loop: Optional[bool] = None,
         max_godel_depth: int = 3,
-    ) -> ShanwayAssessment:
+    ) -> AssistantAssessment:
         """Analysiert Text strukturell auf Harmonie, Asymmetrie und sensible Inhalte."""
         raw_text = self.strip_browser_text(text) if browser_mode else str(text or "")
         tokens = self._tokenize(raw_text)
@@ -1548,7 +1548,7 @@ class ShanwayEngine:
 
         if not active:
             classification = "inactive"
-            message = "Shanway ist in diesem Kanal nicht aktiv." if language == "de" else "Shanway is not active in this channel."
+            message = "Assistant ist in diesem Kanal nicht aktiv." if language == "de" else "Assistant is not active in this channel."
         elif sensitive_hits:
             classification = "sensitive"
             message = "Sensible Inhalte erkannt - Analyse gestoppt" if language == "de" else "Sensitive content detected - analysis stopped"
@@ -1580,7 +1580,7 @@ class ShanwayEngine:
                 else "The text structure remains mostly reversible and resonant."
             )
 
-        return ShanwayAssessment(
+        return AssistantAssessment(
             active=bool(active),
             browser_mode=bool(browser_mode),
             language=str(language),
@@ -1657,7 +1657,7 @@ class ShanwayEngine:
             learned_insight=str(learned_insight),
         )
 
-    def _harmonic_reply(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+    def _harmonic_reply(self, assessment: AssistantAssessment, assistant_text: str = "") -> str:
         base = str(assistant_text or "").strip()
         language = str(getattr(assessment, "language", "de") or "de")
         if not base:
@@ -1683,12 +1683,12 @@ class ShanwayEngine:
         return f"{prefix} {base}{anchor_text}".strip()
 
     @staticmethod
-    def _good_coherence(assessment: ShanwayAssessment) -> bool:
+    def _good_coherence(assessment: AssistantAssessment) -> bool:
         """Kennzeichnet sauber rekonstruierbare, koharente Strukturzustaende."""
         return bool(float(assessment.noether_symmetry) >= 0.80 and float(assessment.h_lambda) < 1.5)
 
     @staticmethod
-    def _structural_break(assessment: ShanwayAssessment) -> bool:
+    def _structural_break(assessment: AssistantAssessment) -> bool:
         """Markiert auffaellige Datei-/Observer-Brueche fuer klare Warntexte."""
         return bool(
             float(assessment.noether_symmetry) < 0.72
@@ -1696,7 +1696,7 @@ class ShanwayEngine:
             or str(assessment.boundary).upper() == "GOEDEL_LIMIT"
         )
 
-    def _narrative_summary_reply(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
+    def _narrative_summary_reply(self, assessment: AssistantAssessment, assistant_text: str = "") -> str:
         """Formt bei guter Koharenz eine kurze, lesbare Verdichtung statt Metrikflut."""
         language = str(getattr(assessment, "language", "de") or "de")
         if language == "de":
@@ -1717,7 +1717,7 @@ class ShanwayEngine:
             return lead + " The condensation stays short and consistent."
         return lead
 
-    def _anomaly_reply(self, assessment: ShanwayAssessment) -> str:
+    def _anomaly_reply(self, assessment: AssistantAssessment) -> str:
         """Leitet bei Strukturbruch einen expliziten Malware-/Manipulationshinweis ab."""
         language = str(getattr(assessment, "language", "de") or "de")
         if language == "de":
@@ -1732,7 +1732,7 @@ class ShanwayEngine:
         )
 
     def compose_browser_probe_reply(self, probe_payload: dict[str, Any] | None) -> str:
-        """Verdichtet eine lokale URL-/Linkpruefung zu einem auditierbaren Shanway-Hinweis."""
+        """Verdichtet eine lokale URL-/Linkpruefung zu einem auditierbaren Assistant-Hinweis."""
         probe = dict(probe_payload or {})
         if not probe or not bool(probe.get("ok", False)):
             error_text = str(probe.get("error", "") or "kein verwertbarer Netzbefund")
@@ -1751,7 +1751,7 @@ class ShanwayEngine:
             f"Bewertung: {reasons_text}. Oeffnen trotzdem: {open_hint}."
         )
 
-    def _reconstruction_reply(self, assessment: ShanwayAssessment) -> str:
+    def _reconstruction_reply(self, assessment: AssistantAssessment) -> str:
         """Formuliert additive Rekonstruktionshinweise aus dem Fingerprint-Payload."""
         verification = dict(getattr(assessment, "reconstruction_verification", {}) or {})
         verdict = str(getattr(assessment, "verdict_reconstruction", "") or "")
@@ -1793,7 +1793,7 @@ class ShanwayEngine:
                 issues.append(reason)
         return "Für vollständige Rekonstruktion fehlt noch: " + "; ".join(issues or ["weitere Diagnosewerte"])
 
-    def _noise_reply(self, assessment: ShanwayAssessment) -> str:
+    def _noise_reply(self, assessment: AssistantAssessment) -> str:
         """Liefert bewusst eine ruhige schriftliche Sperrantwort statt Rauschtext."""
         language = str(getattr(assessment, "language", "de") or "de")
         if language == "de":
@@ -1802,24 +1802,24 @@ class ShanwayEngine:
                 f"Noether {assessment.noether_symmetry * 100.0:.0f}% | "
                 f"Toxizitaet {assessment.toxicity_score * 100.0:.0f}% | "
                 f"Asymmetrie {assessment.asymmetry_score * 100.0:.0f}%. "
-                "Shanway antwortet hier bewusst nicht weiterfuehrend."
+                "Assistant antwortet hier bewusst nicht weiterfuehrend."
             )
         return (
             "Analysis blocked. "
             f"Noether {assessment.noether_symmetry * 100.0:.0f}% | "
             f"toxicity {assessment.toxicity_score * 100.0:.0f}% | "
             f"asymmetry {assessment.asymmetry_score * 100.0:.0f}%. "
-            "Shanway intentionally avoids a constructive continuation here."
+            "Assistant intentionally avoids a constructive continuation here."
         )
 
-    def render_response(self, assessment: ShanwayAssessment, assistant_text: str = "") -> str:
-        """Leitet die rein textuelle Shanway-Antwort aus dem Befund ab."""
+    def render_response(self, assessment: AssistantAssessment, assistant_text: str = "") -> str:
+        """Leitet die rein textuelle Assistant-Antwort aus dem Befund ab."""
         language = str(getattr(assessment, "language", "de") or "de")
         if assessment.classification == "inactive":
             response = (
-                "Shanway bleibt still, bis er explizit zugeschaltet wird."
+                "Assistant bleibt still, bis er explizit zugeschaltet wird."
                 if language == "de"
-                else "Shanway stays silent until it is explicitly enabled."
+                else "Assistant stays silent until it is explicitly enabled."
             )
             return self._append_structural_notes(response, assessment)
         if assessment.sensitive or assessment.classification == "sensitive":
@@ -1836,7 +1836,7 @@ class ShanwayEngine:
             assessment,
         )
 
-    def _append_structural_notes(self, response: str, assessment: ShanwayAssessment) -> str:
+    def _append_structural_notes(self, response: str, assessment: AssistantAssessment) -> str:
         notes: list[str] = []
         filter_trace = self._filter_trace(assessment)
         if assessment.missing_dependencies:

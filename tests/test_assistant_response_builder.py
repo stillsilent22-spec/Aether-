@@ -1,6 +1,6 @@
-from types import SimpleNamespace
+﻿from types import SimpleNamespace
 
-from modules.shanway_response_builder import ShanwayResponseBuilder
+from modules.assistant_response_builder import AssistantResponseBuilder
 
 
 def _assessment(symmetry: float = 0.9, classification: str = "harmonic"):
@@ -19,13 +19,13 @@ def _interface_result(web_context: dict):
 
 
 def test_empty_web_data_sets_keine_datenlage() -> None:
-    builder = ShanwayResponseBuilder()
+    builder = AssistantResponseBuilder()
     response = builder.build(_assessment(), _interface_result({"ok": False, "reason": "empty"}), raw_answer="")
     assert response.keine_datenlage is True
 
 
 def test_low_symmetry_marks_widerspruch() -> None:
-    builder = ShanwayResponseBuilder()
+    builder = AssistantResponseBuilder()
     response = builder.build(
         _assessment(),
         _interface_result({"ok": True, "consistency": "low", "source_symmetry": 0.1}),
@@ -35,7 +35,7 @@ def test_low_symmetry_marks_widerspruch() -> None:
 
 
 def test_render_contains_all_fields() -> None:
-    builder = ShanwayResponseBuilder()
+    builder = AssistantResponseBuilder()
     response = builder.build(
         _assessment(),
         _interface_result({"ok": True, "consistency": "high", "source_symmetry": 0.8}),

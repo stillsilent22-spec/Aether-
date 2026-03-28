@@ -1,4 +1,4 @@
-"""metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
+﻿"""metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
 
 Führt alle MetaLayer-Subsysteme in einem adaptiven Tick-Loop zusammen.
 Takt-Intervalle (konfiguierbar):
@@ -6,7 +6,7 @@ Takt-Intervalle (konfiguierbar):
   5s   → Pixel-Mapping
   30s  → Thinning-Analyse
   300s → Pfad-Optimierung
-  3600s → Vault-Commit + Shanway-Report
+  3600s → Vault-Commit + Assistant-Report
 
 Alle Aktionen sind nicht-blockierend (asyncio).
 """
@@ -50,7 +50,7 @@ class MetaLayerStatus:
     last_thinning_run: float = 0.0
     last_optimization_run: float = 0.0
     vault_committed_at: float = 0.0
-    last_shanway_report: str = ""
+    last_assistant_report: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -60,7 +60,7 @@ class MetaLayerStatus:
             "last_thinning_run":     self.last_thinning_run,
             "last_optimization_run": self.last_optimization_run,
             "vault_committed_at":    self.vault_committed_at,
-            "last_shanway_report":   self.last_shanway_report,
+            "last_assistant_report":   self.last_assistant_report,
         }
 
 
@@ -74,8 +74,8 @@ class MetaLayerOS:
     ----------
     consent_callback:
         Wird für Thinning-Proposals aufgerufen; muss True/False zurückgeben.
-    shanway:
-        Optionale Shanway-Pipeline (aus shanway_pipeline.py).
+    assistant:
+        Optionale Assistant-Pipeline (aus assistant_pipeline.py).
     vault:
         Optionaler Vault-Orchestrator zum periodischen Commit.
     hardware_profiler:
@@ -87,13 +87,13 @@ class MetaLayerOS:
     def __init__(
         self,
         consent_callback: Optional[Callable[[ThinningProposal], bool]] = None,
-        shanway: Optional[Any] = None,
+        assistant: Optional[Any] = None,
         vault: Optional[Any] = None,
         hardware_profiler: Optional[Any] = None,
         tick_overrides: Optional[dict] = None,
     ) -> None:
         self._consent  = consent_callback or (lambda _: False)
-        self._shanway  = shanway
+        self._assistant  = assistant
         self._vault    = vault
         self._hw       = hardware_profiler
 
@@ -263,7 +263,7 @@ class MetaLayerOS:
             log.debug("path_opt tick error: %s", exc)
 
     async def _tick_vault_report(self) -> None:
-        """3600s-Tick: Vault-Commit und Shanway-Strukturbericht."""
+        """3600s-Tick: Vault-Commit und Assistant-Strukturbericht."""
         try:
             # Vault-Commit (wenn verfügbar)
             if self._vault is not None:
@@ -276,8 +276,8 @@ class MetaLayerOS:
                 except Exception as exc:
                     log.debug("vault commit error: %s", exc)
 
-            # Shanway-Bericht (wenn verfügbar)
-            if self._shanway is not None:
+            # Assistant-Bericht (wenn verfügbar)
+            if self._assistant is not None:
                 try:
                     query = (
                         f"MetaLayer OS Stundenbericht: "
@@ -285,14 +285,14 @@ class MetaLayerOS:
                         f"{self._status.active_proposals} aktive Vorschläge, "
                         f"Engpässe={getattr(self._latest_coord_matrix, 'global_bottlenecks', [])}"
                     )
-                    measure = getattr(self._shanway, "measure_consensus", None)
+                    measure = getattr(self._assistant, "measure_consensus", None)
                     if callable(measure):
                         result = measure(query, [])
                         summary = getattr(result, "summary", str(result))
-                        self._status.last_shanway_report = str(summary)[:400]
-                        log.info("Shanway-Report: %s", self._status.last_shanway_report)
+                        self._status.last_assistant_report = str(summary)[:400]
+                        log.info("Assistant-Report: %s", self._status.last_assistant_report)
                 except Exception as exc:
-                    log.debug("shanway report error: %s", exc)
+                    log.debug("assistant report error: %s", exc)
         except Exception as exc:
             log.debug("vault_report tick error: %s", exc)
 

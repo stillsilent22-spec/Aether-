@@ -1,7 +1,7 @@
 use crate::inter_layer_bus::{
     BusEvent, BusPublisher, OptimizationType, ProcessStartedEvent, RuntimeAnomalyEvent,
     RuntimeOptimizationEvent, RuntimeSignalFrameEvent, SemanticClusterEvent,
-    ShanwayOptimizationEvent, ShanwayUserMessageEvent, VaultGapEvent, VaultWriteEvent,
+    VaultGapEvent, VaultWriteEvent,
 };
 use crate::vault_access::VaultAccessLayer;
 use sha2::{Digest, Sha256};
@@ -389,11 +389,11 @@ pub struct ProcessContext {
     pub known_anchors: Vec<Uuid>,
     pub unknown_patterns: Vec<RawPattern>,
     pub current_trust_score: f32,
-    pub optimization_history: Vec<ShanwayOptimizationEvent>,
+    pub optimization_history: Vec<RuntimeOptimizationEvent>,
     pub frame_count: u64,
 }
 
-pub struct ShanwayCoordinator {
+pub struct RuntimeCoordinator {
     bus_publisher: BusPublisher,
     pub active_processes: HashMap<u32, ProcessContext>,
     pub pending_optimizations: Vec<RuntimeOptimizationEvent>,
@@ -401,7 +401,7 @@ pub struct ShanwayCoordinator {
     pub gap_queue: Vec<VaultGapEvent>,
 }
 
-impl ShanwayCoordinator {
+impl RuntimeCoordinator {
     pub fn new(bus_publisher: BusPublisher) -> Self {
         Self {
             bus_publisher,
@@ -433,26 +433,14 @@ impl ShanwayCoordinator {
             }
             BusEvent::RuntimeOptimizationAvailable(opt) => {
                 if opt.confidence >= 0.65 {
-                    let applied = ShanwayOptimizationEvent {
-                        process_id: opt.process_id,
-                        optimization_type: opt.optimization_type,
-                        applied: true,
-                        confidence: opt.confidence,
-                        note: format!("Optimierung fuer Prozess {} freigegeben", opt.process_id),
-                    };
                     if let Some(context) = self.active_processes.get_mut(&opt.process_id) {
-                        context.optimization_history.push(applied.clone());
+                        context.optimization_history.push(opt.clone());
                     }
-                    outputs.push(BusEvent::ShanwayOptimizationApplied(applied.clone()));
-                    outputs.push(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-                        process_id: Some(opt.process_id),
-                        message: format!(
-                            "Shanway erkennt eine Laufzeitoptimierung: {:?} mit {:.1}% Gewinn.",
-                            opt.optimization_type, opt.estimated_gain_percent
-                        ),
-                        trust_score: opt.confidence,
-                        action_available: true,
-                    }));
+                    eprintln!(
+                        "[RUNTIME-OPT] Prozess {} | {:?} | Gewinn {:.1}% | Konfidenz {:.0}%",
+                        opt.process_id, opt.optimization_type,
+                        opt.estimated_gain_percent, opt.confidence * 100.0
+                    );
                 } else {
                     self.pending_optimizations.push(opt);
                 }
@@ -467,15 +455,10 @@ impl ShanwayCoordinator {
             }
             BusEvent::RuntimeAnomalyDetected(anomaly) => {
                 if anomaly.severity > 0.8 {
-                    outputs.push(BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-                        process_id: Some(anomaly.process_id),
-                        message: format!(
-                            "Kritische Laufzeitanomalie in {} erkannt: {}",
-                            anomaly.process_name, anomaly.reason
-                        ),
-                        trust_score: anomaly.severity,
-                        action_available: false,
-                    }));
+                    eprintln!(
+                        "[RUNTIME-ANOMALY] Kritisch | Prozess {} '{}': {}",
+                        anomaly.process_id, anomaly.process_name, anomaly.reason
+                    );
                 }
             }
             _ => {}
@@ -536,20 +519,13 @@ impl ShanwayCoordinator {
     }
 
     fn correlate_language_with_runtime(&self, cluster: &SemanticClusterEvent) -> Vec<BusEvent> {
-        self.active_processes
-            .iter()
-            .map(|(pid, context)| {
-                BusEvent::ShanwayUserMessage(ShanwayUserMessageEvent {
-                    process_id: Some(*pid),
-                    message: format!(
-                        "Prozess '{}' korreliert mit Sprach-Cluster '{}' (Confidence {:.2}).",
-                        context.name, cluster.label_hint, cluster.confidence
-                    ),
-                    trust_score: cluster.confidence,
-                    action_available: cluster.confidence >= 0.65,
-                })
-            })
-            .collect()
+        for (_, context) in &self.active_processes {
+            eprintln!(
+                "[LANG-RUNTIME] Prozess '{}' korreliert mit Cluster '{}' ({:.2})",
+                context.name, cluster.label_hint, cluster.confidence
+            );
+        }
+        Vec::new()
     }
 }
 
@@ -640,7 +616,7 @@ mod tests {
     #[test]
     fn coordinator_promotes_runtime_gap() {
         let bus = InterLayerBus::new(32);
-        let mut coordinator = ShanwayCoordinator::new(bus.publisher());
+        let mut coordinator = RuntimeCoordinator::new(bus.publisher());
         let outputs =
             coordinator.handle_event(BusEvent::RuntimeSignalFrame(RuntimeSignalFrameEvent {
                 process_id: 9,

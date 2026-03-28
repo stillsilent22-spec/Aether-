@@ -39,7 +39,7 @@ pub struct AepHeader {
     pub aether_version: String,
     pub curator: String,
     pub description: String,
-    pub shanway_signature: String,
+    pub engine_signature: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,7 +67,7 @@ pub struct PackRegistryEntry {
     pub avg_trust_score: f32,
     pub estimated_hit_rate_improvement: f32,
     pub estimated_compression_improvement: f32,
-    pub shanway_verified: bool,
+    pub pack_verified: bool,
     pub created_at: u64,
     pub tags: Vec<String>,
 }
@@ -159,7 +159,7 @@ pub struct PackManager {
     engine: EnginePipeline,
 }
 
-pub struct ShanwayPackAdvisor {
+pub struct PackAdvisor {
     registry: Arc<RwLock<PackRegistry>>,
     last_recommendation: HashMap<Uuid, u64>,
     cooldown_secs: u64,
@@ -195,7 +195,7 @@ impl AepPack {
                 aether_version: "vera_aether_core_rust_shell".to_owned(),
                 curator: curator.into(),
                 description: description.into(),
-                shanway_signature: String::new(),
+                engine_signature: String::new(),
             },
             stats: derive_stats(&anchors),
             anchors,
@@ -206,11 +206,11 @@ impl AepPack {
     pub fn sign(&mut self, engine: &EnginePipeline) {
         self.stats = derive_stats(&self.anchors);
         let mut header = self.header.clone();
-        header.shanway_signature.clear();
+        header.engine_signature.clear();
         let payload =
             serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors))
                 .unwrap_or_default();
-        self.header.shanway_signature = BASE64.encode(engine.sign(&payload));
+        self.header.engine_signature = BASE64.encode(engine.sign(&payload));
     }
 
     pub fn verify(&self, engine: &EnginePipeline) -> Result<(), PackError> {
@@ -223,7 +223,7 @@ impl AepPack {
             ));
         }
         let decoded = BASE64
-            .decode(self.header.shanway_signature.as_bytes())
+            .decode(self.header.engine_signature.as_bytes())
             .map_err(|err| {
                 PackError::Signature(format!(
                     "Pack-Signatur konnte nicht dekodiert werden: {err}"
@@ -237,7 +237,7 @@ impl AepPack {
         let mut signature = [0u8; 64];
         signature.copy_from_slice(&decoded);
         let mut header = self.header.clone();
-        header.shanway_signature.clear();
+        header.engine_signature.clear();
         let payload =
             serde_json::to_vec(&(self.magic, self.version, header, &self.stats, &self.anchors))
                 .unwrap_or_default();
@@ -327,7 +327,7 @@ impl PackRegistry {
             avg_trust_score: pack.stats.avg_trust_score,
             estimated_hit_rate_improvement: pack.stats.estimated_hit_rate_improvement,
             estimated_compression_improvement: pack.stats.estimated_compression_improvement,
-            shanway_verified: true,
+            pack_verified: true,
             created_at: pack.header.created_at,
             tags: vec![pack.header.domain.clone()],
         });
@@ -581,7 +581,7 @@ impl PackManager {
     }
 }
 
-impl ShanwayPackAdvisor {
+impl PackAdvisor {
     pub fn new(registry: Arc<RwLock<PackRegistry>>) -> Self {
         Self::with_bus(registry, BusPublisher::noop())
     }
@@ -784,7 +784,7 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             avg_trust_score: 0.82,
             estimated_hit_rate_improvement: 0.12,
             estimated_compression_improvement: 0.08,
-            shanway_verified: true,
+            pack_verified: true,
             created_at: Utc::now().timestamp() as u64,
             tags: vec![
                 "Text / Code".to_owned(),
@@ -806,7 +806,7 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             avg_trust_score: 0.79,
             estimated_hit_rate_improvement: 0.10,
             estimated_compression_improvement: 0.06,
-            shanway_verified: true,
+            pack_verified: true,
             created_at: Utc::now().timestamp() as u64,
             tags: vec!["Bild".to_owned(), "Unknown".to_owned()],
         },
@@ -825,7 +825,7 @@ fn seed_entries() -> Vec<PackRegistryEntry> {
             avg_trust_score: 0.85,
             estimated_hit_rate_improvement: 0.15,
             estimated_compression_improvement: 0.10,
-            shanway_verified: true,
+            pack_verified: true,
             created_at: Utc::now().timestamp() as u64,
             tags: vec!["Binaer".to_owned(), "runtime".to_owned()],
         },

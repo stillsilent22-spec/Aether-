@@ -1,4 +1,4 @@
-"""
+﻿"""
 Tests fuer CrossDomainEngine und i18n-Erststart-Texte.
 
 Abgedeckte Klassen / Funktionen:
@@ -229,7 +229,7 @@ class TestCrossDomainEngine:
         # Leere DB -> no-data-Meldung
         assert "No cross-domain" in text or "no confirmed" in text or isinstance(text, str)
 
-    def test_shanway_notification_none_when_low_relevance(self):
+    def test_assistant_notification_none_when_low_relevance(self):
         engine = self._engine("_notif_none")
         # Zu wenige Anker -> Relevanz gering
         anchors = (
@@ -238,10 +238,10 @@ class TestCrossDomainEngine:
         )
         engine.ingest_anchors(anchors)
         engine.cluster(eps=0.5, min_samples=2)
-        notif = engine.shanway_notification(threshold=1000.0)  # unmoeglich hoch
+        notif = engine.assistant_notification(threshold=1000.0)  # unmoeglich hoch
         assert notif is None
 
-    def test_shanway_notification_returned_when_high(self):
+    def test_assistant_notification_returned_when_high(self):
         engine = self._engine("_notif_high")
         # Viele Anker aus mehreren Domaenen -> hohe Relevanz
         anchors = (
@@ -251,7 +251,7 @@ class TestCrossDomainEngine:
         )
         engine.ingest_anchors(anchors)
         clusters = engine.cluster(eps=0.5, min_samples=3)
-        notif = engine.shanway_notification(threshold=0.0)  # immer
+        notif = engine.assistant_notification(threshold=0.0)  # immer
         if clusters:
             assert notif is not None
             assert isinstance(notif, str)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 Erweiterte Tests für EthicsEngine — verschiedene Textarten und Integrationstests.
 
 Getestete Metriken:
@@ -544,7 +544,7 @@ class TestAnchorQuery:
         import time
         db = self._tmpdir() / f"aq_full_{time.time_ns()}.db"
         q = self._store_and_query(db)
-        report = q.full_report_for_shanway()
+        report = q.full_report_for_assistant()
         assert "Aether" in report
         assert "Basis-Snapshots" in report
 

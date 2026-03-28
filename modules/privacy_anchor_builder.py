@@ -63,7 +63,7 @@ class PrivacyAnchorBuilder:
             f"2 {float(fingerprint.h_lambda):.12f} H_LAMBDA",
         ]
         header = (
-            f"AETHER_SHANWAY_DNA 1 {timestamp} "
+            f"AETHER_ASSISTANT_DNA 1 {timestamp} "
             f"source_type={fingerprint.source_type} "
             f"source_label={_sanitize_label(str(fingerprint.source_label))} "
             f"file_hash={fingerprint.file_hash}"

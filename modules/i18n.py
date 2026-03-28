@@ -1,4 +1,4 @@
-"""
+﻿"""
 Aether Internationalisierung (i18n) — Deutsch / English.
 
 Verwendung:
@@ -167,7 +167,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "de": "Grafikkarte",
         "en": "GPU",
     },
-    # --- Shanway Vorschläge ---
+    # --- Assistant Vorschläge ---
     "suggestion_disable_services": {
         "de": "Ich habe {n} Dienste gefunden, die Speicher belegen, aber nicht benötigt werden. Soll ich sie deaktivieren?",
         "en": "I found {n} services consuming memory but not needed. Should I disable them?",

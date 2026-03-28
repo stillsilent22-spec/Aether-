@@ -1,4 +1,4 @@
-"""Bidirectional Shanway interface for preload, web context and privacy analysis."""
+﻿"""Bidirectional Assistant interface for preload, web context and privacy analysis."""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ from .browser_engine import BrowserEngine
 from .bus_bridge import BusBridgeEvent, RustBusBridge
 from .preload_optimizer import PreloadOptimizer
 from .privacy_anchor_builder import PrivacyAnchorBuilder
-from .shanway import ShanwayEngine
-from .shanway_response_builder import ShanwayResponseBuilder, ShanwayStructuredResponse
+from .assistant import AssistantEngine
+from .assistant_response_builder import AssistantResponseBuilder, AssistantStructuredResponse
 from .telemetry_classifier import TelemetryClassifier, TelemetryVerdict
 
 SCIENTIFIC_WHITELIST = {
@@ -94,7 +94,7 @@ def _token_set(text: str) -> set[str]:
 
 
 @dataclass
-class ShanwayInterfaceResult:
+class AssistantInterfaceResult:
     assessment: Any
     preload_recommendations: list[dict[str, Any]]
     web_context: dict[str, Any]
@@ -118,7 +118,7 @@ class ShanwayInterfaceResult:
 
     def summary(self) -> str:
         return (
-            f"Shanway {getattr(self.assessment, 'classification', 'unknown')} | "
+            f"Assistant {getattr(self.assessment, 'classification', 'unknown')} | "
             f"preloads {len(self.preload_recommendations)} | "
             f"web {self.web_context.get('consistency', 'none')} | "
             f"bus {len(self.bus_events_received)}"
@@ -132,18 +132,18 @@ class PrivacyAnalysisResult:
     suspected_count: int
     top_threat: TelemetryVerdict | None
     vault_anchors_saved: list[str]
-    shanway_assessment: Any
-    structured_response: ShanwayStructuredResponse
+    assistant_assessment: Any
+    structured_response: AssistantStructuredResponse
     log_weight_total: float
     snapshot_ts: str
 
 
-class ShanwayInterface:
-    """Routes Shanway analysis through preload, bus and privacy helpers."""
+class AssistantInterface:
+    """Routes Assistant analysis through preload, bus and privacy helpers."""
 
     def __init__(
         self,
-        shanway_engine: ShanwayEngine,
+        assistant_engine: AssistantEngine,
         preload_optimizer: PreloadOptimizer,
         browser_engine: BrowserEngine | None = None,
         bus_bridge: RustBusBridge | None = None,
@@ -154,9 +154,9 @@ class ShanwayInterface:
         auto_push_ttd: bool = False,
         telemetry_classifier: TelemetryClassifier | None = None,
         privacy_anchor_builder: PrivacyAnchorBuilder | None = None,
-        response_builder: ShanwayResponseBuilder | None = None,
+        response_builder: AssistantResponseBuilder | None = None,
     ) -> None:
-        self.shanway_engine = shanway_engine
+        self.assistant_engine = assistant_engine
         self.preload_optimizer = preload_optimizer
         self.browser_engine = browser_engine
         self.bus_bridge = bus_bridge
@@ -167,13 +167,13 @@ class ShanwayInterface:
         self.auto_push_ttd = bool(auto_push_ttd)
         self.telemetry_classifier = telemetry_classifier or TelemetryClassifier()
         self.privacy_anchor_builder = privacy_anchor_builder or PrivacyAnchorBuilder()
-        self.response_builder = response_builder or ShanwayResponseBuilder()
+        self.response_builder = response_builder or AssistantResponseBuilder()
         self._interface_log: list[str] = []
         self._analysis_engine: Any | None = None
         self._analysis_lock = threading.RLock()
 
-    def analyze_and_route(self, text: str, **kwargs: Any) -> ShanwayInterfaceResult:
-        assessment = self.shanway_engine.detect_asymmetry(text, **kwargs)
+    def analyze_and_route(self, text: str, **kwargs: Any) -> AssistantInterfaceResult:
+        assessment = self.assistant_engine.detect_asymmetry(text, **kwargs)
         ttd_push_status = "disabled"
         ttd_push_count = 0
         candidates = [dict(item) for item in list(getattr(assessment, "ttd_candidates", []) or []) if isinstance(item, dict)]
@@ -185,7 +185,7 @@ class ShanwayInterface:
                 holder["status"] = status
                 holder["count"] = count
 
-            thread = threading.Thread(target=_runner, daemon=True, name="ShanwayTTDPush")
+            thread = threading.Thread(target=_runner, daemon=True, name="AssistantTTDPush")
             thread.start()
             thread.join(timeout=2.0)
             ttd_push_status = str(holder.get("status", "error"))
@@ -207,7 +207,7 @@ class ShanwayInterface:
                 "vault_abgleich": "unbekannt",
                 "vault_detail": "Nur Vault-Analyse aktiv, Browser-Abfragen uebersprungen",
             }
-        elif self.browser_engine is not None and self.shanway_engine.should_request_web_context(text):
+        elif self.browser_engine is not None and self.assistant_engine.should_request_web_context(text):
             web_context = self._fetch_multi_source_web_context(text, assessment=assessment)
         else:
             web_context = {
@@ -224,7 +224,7 @@ class ShanwayInterface:
                 "vault_detail": "Kein zusaetzlicher Web-Kontext angefordert",
             }
         if bool(web_context.get("ok", False)) and str(web_context.get("summary", "") or "").strip():
-            assessment = self.shanway_engine.detect_asymmetry(
+            assessment = self.assistant_engine.detect_asymmetry(
                 str(web_context.get("summary", "") or ""),
                 coherence_score=float(web_context.get("source_symmetry", 0.0) or 0.0) * 100.0,
                 source_label=f"web://{web_context.get('query_route', 'general')}",
@@ -233,7 +233,7 @@ class ShanwayInterface:
         bus_events_received: list[dict[str, Any]] = []
         if self.bus_bridge is not None and self.bus_bridge.available():
             bus_events_received = self.bus_bridge.recent_events(seconds=60.0)
-        return ShanwayInterfaceResult(
+        return AssistantInterfaceResult(
             assessment=assessment,
             preload_recommendations=preload_recs,
             web_context=web_context,
@@ -244,8 +244,8 @@ class ShanwayInterface:
             interface_log=list(self._interface_log[-24:]),
         )
 
-    def analyze(self, text: str, **kwargs: Any) -> ShanwayInterfaceResult:
-        """Alias fuer den Shanway-Backend-Einstieg aus CLI und GUI."""
+    def analyze(self, text: str, **kwargs: Any) -> AssistantInterfaceResult:
+        """Alias fuer den Assistant-Backend-Einstieg aus CLI und GUI."""
         return self.analyze_and_route(text, **kwargs)
 
     def _get_analysis_engine(self) -> Any:
@@ -261,7 +261,7 @@ class ShanwayInterface:
 
             self._analysis_engine = AnalysisEngine(
                 session_context=SessionContext(),
-                chain=AetherChain(endpoint="local://shanway-web"),
+                chain=AetherChain(endpoint="local://assistant-web"),
             )
         return self._analysis_engine
 
@@ -272,8 +272,8 @@ class ShanwayInterface:
             for item in verdicts[:12]
         ]
         summary = " | ".join(lines) or "privacy snapshot clean"
-        assessment = self.shanway_engine.detect_asymmetry(summary, source_label="privacy_snapshot")
-        interface_result = ShanwayInterfaceResult(
+        assessment = self.assistant_engine.detect_asymmetry(summary, source_label="privacy_snapshot")
+        interface_result = AssistantInterfaceResult(
             assessment=assessment,
             preload_recommendations=self.preload_optimizer.recommend_preloads(top_n=3),
             web_context={"ok": False, "reason": "privacy_local_only", "consistency": "none", "source_symmetry": 0.0},
@@ -286,7 +286,7 @@ class ShanwayInterface:
         structured = self.response_builder.build(
             assessment,
             interface_result,
-            raw_answer=self.shanway_engine.render_response(assessment),
+            raw_answer=self.assistant_engine.render_response(assessment),
         )
         session_id = str(snapshot.get("session_id", getattr(self.privacy_anchor_builder.session_engine, "session_id", "privacy_local")) or "privacy_local")
         saved = self.privacy_anchor_builder.build_and_save_all(verdicts, session_id=session_id)
@@ -302,7 +302,7 @@ class ShanwayInterface:
             suspected_count=suspected,
             top_threat=top_threat,
             vault_anchors_saved=saved,
-            shanway_assessment=assessment,
+            assistant_assessment=assessment,
             structured_response=structured,
             log_weight_total=round(float(log_weight_total), 12),
             snapshot_ts=str(snapshot.get("snapshot_ts", "")),
@@ -535,7 +535,7 @@ class ShanwayInterface:
                 target=_runner,
                 args=(index, dict(candidate)),
                 daemon=True,
-                name=f"ShanwayPageFetch-{index}",
+                name=f"AssistantPageFetch-{index}",
             )
             thread.start()
             threads.append(thread)
@@ -751,7 +751,7 @@ class ShanwayInterface:
                 str(payload.get("anchor_hash", "") or ""),
                 float(payload.get("confidence", 0.0) or 0.0),
             )
-        elif event_type == "ShanwayUserMessage":
+        elif event_type == "AssistantUserMessage":
             self._interface_log.append(str(payload.get("message", "") or ""))
         elif event_type == "OfflineCachePrepared":
             self.preload_optimizer.record_history(

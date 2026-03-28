@@ -1,7 +1,7 @@
 use crate::inter_layer_bus::{
     BusEvent, CrossProgramReuseEvent, MediaTraceEvent, OfflineCacheEvent,
     OptimizationDecisionEvent, PackInstalledEvent, PackRecommendedEvent, ShaderCacheHitEvent,
-    ShanwayUserMessageEvent, TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent,
+    TextureUploadResultEvent, VramOptimizedEvent, VramPressureEvent,
     WorkflowHitEvent, WorkflowLearnedEvent,
 };
 use chrono::Utc;
@@ -152,7 +152,6 @@ pub fn event_type_name(event: &BusEvent) -> &'static str {
         BusEvent::MediaTraceRecorded(_) => "MediaTraceRecorded",
         BusEvent::ShaderCacheHit(_) => "ShaderCacheHit",
         BusEvent::OptimizationDecision(_) => "OptimizationDecision",
-        BusEvent::ShanwayUserMessage(_) => "ShanwayUserMessage",
         _ => "Unsupported",
     }
 }
@@ -203,12 +202,6 @@ fn serialize_payload(event: &BusEvent) -> Value {
         BusEvent::OptimizationDecision(payload) => {
             serde_json::to_value(payload).unwrap_or_else(|_| json!({}))
         }
-        BusEvent::ShanwayUserMessage(payload) => json!({
-            "process_id": payload.process_id,
-            "message": payload.message,
-            "trust_score": payload.trust_score,
-            "action_available": payload.action_available,
-        }),
         _ => json!({}),
     }
 }
@@ -251,33 +244,8 @@ fn parse_event(event_type: &str, payload: Value) -> Result<BusEvent, String> {
         "OptimizationDecision" => serde_json::from_value::<OptimizationDecisionEvent>(payload)
             .map(BusEvent::OptimizationDecision)
             .map_err(|err| err.to_string()),
-        "ShanwayUserMessage" => {
-            parse_shanway_user_message(payload).map(BusEvent::ShanwayUserMessage)
-        }
         other => Err(format!("unsupported event type: {other}")),
     }
-}
-
-fn parse_shanway_user_message(payload: Value) -> Result<ShanwayUserMessageEvent, String> {
-    Ok(ShanwayUserMessageEvent {
-        process_id: payload
-            .get("process_id")
-            .and_then(Value::as_u64)
-            .map(|value| value as u32),
-        message: payload
-            .get("message")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        trust_score: payload
-            .get("trust_score")
-            .and_then(Value::as_f64)
-            .unwrap_or_default() as f32,
-        action_available: payload
-            .get("action_available")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-    })
 }
 
 fn transport_dir() -> PathBuf {

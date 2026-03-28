@@ -1,4 +1,4 @@
-# AE Evolution Core
+﻿# AE Evolution Core
 
 `ae_evolution_core.py` ist kein loses Experiment mehr, sondern ein interner AETHER-Dienst.
 
@@ -16,7 +16,7 @@ Der AE-Core erzeugt aus echten Laufzeitdaten einen kleinen evolutiven Nebenpfad:
 - `start.py` erzeugt `AEAlgorithmVault` und `AetherAnchorInterpreter` beim Bootstrap.
 - `modules/gui.py` fuehrt AELAB intern ueber `_run_ae_lab(...)` aus.
 - `_register_final_modules(...)` ruft diesen Pfad nach der normalen Analysepipeline auf.
-- Die Ergebnisse landen als `ae_lab_summary` am Fingerprint und laufen in Vault-, Chain- und Shanway-Kontext mit.
+- Die Ergebnisse landen als `ae_lab_summary` am Fingerprint und laufen in Vault-, Chain- und Assistant-Kontext mit.
 
 ## Was AELAB heute nicht ist
 
@@ -31,7 +31,7 @@ AELAB dient aktuell als interner Evolutions- und Ankerverdichter. Es erweitert:
 
 - Strukturhinweise
 - Anker-Typisierung
-- interne Zusatzsemantik fuer Shanway
+- interne Zusatzsemantik fuer Assistant
 - Fingerprint-Metadaten fuer Persistenz und Nachverfolgung
 
 Kurz: Der AE-Core ist aktiv, aber bewusst begrenzt und dem Hauptsystem untergeordnet.

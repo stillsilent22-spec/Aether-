@@ -1,4 +1,4 @@
-# Aether Roadmap
+﻿# Aether Roadmap
 
 ## 30/60/90 Execution Track (Operationalized)
 
@@ -81,7 +81,7 @@ Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 
 ## Phase 1 — Foundation ✓
 
-- Shanway v1–v4 Integration
+- Assistant v1–v4 Integration
 - Session-Key Management + Secure Zeroize
 - Registry + Graph-Engine (lokale Wissensstruktur)
 - Web-Analyse + Dateianalyse
@@ -101,7 +101,7 @@ Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
 - Multi-Modalität: Kamera, Audio, Dateien
 - ReconstructionEngine: Snapshots, Residuals, lossless-Rekonstruktion
 - Attractor-Tracking: Attraktor-Detektion aus Prozessdynamik
-- Integration mit Shanway, Vault, Rust-Shell
+- Integration mit Assistant, Vault, Rust-Shell
 - Security: Session-Isolation, Consent-gebundener Relay-Pfad
 
 ## Phase 4 — Render ✓
@@ -203,7 +203,7 @@ Aether ist ein lokales, datenschutzzentriertes Framework für strukturelle Daten
 
 ### Erststart & Nutzerführung (Phase A.1) ✓ Implementiert
 
-- **Shanway-Erststart-Hinweis (DE/EN)**: Beim allerersten Start erscheint ein klarer Hinweis:
+- **Assistant-Erststart-Hinweis (DE/EN)**: Beim allerersten Start erscheint ein klarer Hinweis:
   - Konto existiert nur lokal; privater Schlüssel wird auf dem Gerät erzeugt
   - Keine Passwort-Wiederherstellung, kein Support
   - Zero-Knowledge-Sicherheitsphilosophie (kein Bug)
@@ -219,7 +219,7 @@ Aether ist ein lokales, datenschutzzentriertes Framework für strukturelle Daten
   - Relevanzbewertung: `relevance = (n^α · m^β · (1+g)) / (d + ε)`
   - Wachstumsrate (letzte 7 Tage), Multi-Domänen-Filter
   - SQLite-Persistenz: `cd_anchors`, `cd_clusters`, `cd_cluster_members`
-  - Shanway-Benachrichtigung bei Relevanz ≥ 70
+  - Assistant-Benachrichtigung bei Relevanz ≥ 70
   - Meta-Anker-Export (kein Rohdaten-Austausch)
 - **GUI-Tab „DOMÄNEN"** in `modules/gui.py`:
   - Persistenter Disclaimer (⚠️) immer sichtbar
@@ -236,12 +236,12 @@ Aether ist ein lokales, datenschutzzentriertes Framework für strukturelle Daten
 
 ### Phase A — Kurzfristig (1–2 Monate)
 
-- [x] Erststart-Hinweis (keine Kontowiederherstellung) — Shanway DE/EN
+- [x] Erststart-Hinweis (keine Kontowiederherstellung) — Assistant DE/EN
 - [x] Domänenübergreifende Muster-Engine (CrossDomainEngine)
 - [x] GUI-Tab „DOMÄNEN" mit Disclaimer
 - [ ] Automatische Ordnerüberwachung + Anker-Generierung (watchdog-Bibliothek)
 - [ ] Live-Session-Keys und widerrufbare Freigaben (PrivacyRegistry-Integration)
-- [ ] Tutorial-Modus (einfache Version: Datei-Analyse mit Shanway-Führung)
+- [ ] Tutorial-Modus (einfache Version: Datei-Analyse mit Assistant-Führung)
 
 ### Phase B — Mittelfristig (3–6 Monate)
 
