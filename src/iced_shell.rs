@@ -485,6 +485,7 @@ enum Message {
     FlowSphereRotateRight,
     FlowSphereResetView,
     FlowSphereToggleViewMode,
+    FlowSphereExplain(String),
     FlowSphereNodeClicked(usize),
     FlowSphereExportPressed,
     OpenFullTab(Tab),
@@ -577,6 +578,7 @@ pub struct AetherIcedShell {
     flow_sphere_zoom: f32,
     flow_sphere_rotation_offset: f32,
     flow_sphere_view_mode: bool, // true=Local (Attraktoren), false=Global (Swarm)
+    flow_sphere_focus_key: String,
     // --- YouTube ---
     youtube_address: String,
     // --- Rekonstruktion ---
@@ -750,6 +752,7 @@ impl AetherIcedShell {
             flow_sphere_zoom: 1.0,
             flow_sphere_rotation_offset: 0.0,
             flow_sphere_view_mode: true, // Default: Local mode (Attraktoren)
+            flow_sphere_focus_key: "internal_core".to_owned(),
             youtube_address: "https://www.youtube.com/".to_owned(),
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
@@ -870,6 +873,130 @@ impl AetherIcedShell {
             UiLanguage::German => de,
             UiLanguage::English => en,
         }
+    }
+
+    fn flow_sphere_focus_details(&self, key: &str) -> (String, String, String, Color) {
+        let entropy = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.entropy as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.entropy))
+            .unwrap_or(self.structure_map_compression / 100.0);
+        let stability = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.attractor_stability as f32)
+            .unwrap_or_else(|| if self.structure_map_locked { 1.0 } else { self.structure_map_compression / 100.0 });
+        let noether = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.noether_consistency as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.noether_consistency))
+            .unwrap_or(stability);
+        let trust = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.trust_score as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.trust_score))
+            .unwrap_or(stability);
+        let katz = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.katz_dimension as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.katz_dimension))
+            .unwrap_or(0.0);
+        let bayes = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.bayes_confidence)
+            .unwrap_or(0.0);
+        let anomaly_flags = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.anomaly_flags.clone())
+            .unwrap_or_default();
+        let external_link_strength = if self.backend_swarm_node_count == 0 {
+            0.0
+        } else {
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
+                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+                .clamp(0.0, 1.0)
+        };
+
+        match key {
+            "internal_core" => (
+                "Kernmuster".to_owned(),
+                format!("Innenruhe {:.0}% bei Shannon {:.2} bit", stability * 100.0, entropy * 7.83),
+                format!(
+                    "Der violette Kern steht fuer den Bereich, in dem sich das Muster trotz Bewegung noch sammelt. Hohe Stabilitaet und starke Noether-Werte bedeuten, dass dieselben Grundformen wiederkehren statt auseinanderzufallen. Aktuell: Noether {:.0}%, Katz FD {:.2}.",
+                    noether * 100.0,
+                    katz
+                ),
+                Color::from_rgb8(0x9A, 0x67, 0xFF),
+            ),
+            "overlay" => (
+                "Ueberlagerungen".to_owned(),
+                format!("Delta-Pulse zeigen Versatz und Takt bei {:.0}% Delta", self.cascade_metrics.as_ref().map(|metrics| metrics.delta_convergence as f32).unwrap_or(0.0) * 100.0),
+                "Die goldenen Pulse markieren Stellen, an denen mehrere Bewegungen gleichzeitig sichtbar werden. Wenn Linien, Wellen und Pulse dicht zusammenlaufen, ueberlagern sich verschiedene Muster oder Veraenderungsphasen. Dort lohnt sich ein zweiter Blick auf Ursache, Reihenfolge und Drift.".to_owned(),
+                Color::from_rgb8(0xFF, 0xC8, 0x3A),
+            ),
+            "anomaly" => (
+                "Auffaelligkeiten".to_owned(),
+                if anomaly_flags.is_empty() {
+                    format!("Kein harter Bruch sichtbar, Trust {:.0}%", trust * 100.0)
+                } else {
+                    format!("{} Marker aktiv: {}", anomaly_flags.len(), anomaly_flags.join(", "))
+                },
+                "Rote Marker zeigen Punkte, an denen das aktuelle Bild nicht mehr sauber zu den uebrigen Signalen passt. Das kann ein echter Ausreisser, ein Bruch in der Reihenfolge oder eine untypische Verteilung sein. Benford, Bayes und Trust helfen dabei zu trennen, ob nur Rauschen oder ein relevanter Wechsel vorliegt.".to_owned(),
+                Color::from_rgb8(0xE0, 0x5A, 0x5A),
+            ),
+            "external_links" => (
+                "Aussenbezug".to_owned(),
+                if self.backend_swarm_node_count == 0 {
+                    "Noch keine externen Knoten sichtbar".to_owned()
+                } else {
+                    format!("{} Knoten, {:.0}% Kopplung nach aussen", self.backend_swarm_node_count, external_link_strength * 100.0)
+                },
+                "Die cyanfarbenen Knoten und Leitungen zeigen, wie stark der aktuelle Bereich nach aussen verbunden ist. Dichte, ruhige Linien sprechen fuer gemeinsame Bewegung ueber Domaenengrenzen hinweg. Lockere oder rot kipppende Verbindungen deuten eher auf Drift, geringe Uebereinstimmung oder instabile Kopplung hin.".to_owned(),
+                Color::from_rgb8(0x59, 0xD5, 0xE9),
+            ),
+            _ if key.starts_with("attractor_") => {
+                let idx = key.trim_start_matches("attractor_").parse::<usize>().unwrap_or(0);
+                (
+                    format!("Attraktor {}", idx + 1),
+                    format!("Musterkern {} von {}", idx + 1, self.structure_map_anchor_count.max(1)),
+                    format!("Dieser gruene Knoten ist ein stabiler Sammelpunkt im Innenbild. Er steht fuer einen wiederkehrenden Zustand oder eine Form, zu der der Verlauf immer wieder zurueckfindet. Je ruhiger die Umgebung und je hoeher Noether/Bayes stehen, desto belastbarer ist dieser Knoten als Erklaerungskern."),
+                    Color::from_rgb8(0x4C, 0xD9, 0x6E),
+                )
+            }
+            _ if key.starts_with("swarm_") => {
+                let idx = key.trim_start_matches("swarm_").parse::<usize>().unwrap_or(0);
+                let label = self
+                    .backend_swarm_summary
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("Swarm");
+                (
+                    format!("Swarm-Knoten {}", idx + 1),
+                    format!("Externer Bezug im Netzkontext {}", label),
+                    format!("Dieser Knoten repraesentiert einen externen Vergleichspunkt. Die Linie dorthin zeigt, ob die lokale Bewegung auch ausserhalb des aktuellen Bereichs wieder auftaucht. Hohe Kopplung und ein ruhiger Bayes-Wert sprechen eher fuer geteilte Struktur als fuer Zufall oder isolierte Spitzen. Bayes aktuell {:.0}%.", bayes * 100.0),
+                    Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                )
+            }
+            _ => (
+                "FlowSphere Fokus".to_owned(),
+                "Musterbereich ausgewaehlt".to_owned(),
+                "Waehle einen farbigen Fokus oder klicke direkt auf Knoten in der Sphere, um zu sehen, wie der Bereich zu lesen ist.".to_owned(),
+                Color::from_rgb8(0x9A, 0x67, 0xFF),
+            ),
+        }
+    }
+
+    fn set_flow_sphere_focus(&mut self, key: impl Into<String>) {
+        let key = key.into();
+        let (title, summary, _, _) = self.flow_sphere_focus_details(&key);
+        self.flow_sphere_focus_key = key;
+        self.status_line = format!("FlowSphere: {} - {}", title, summary);
     }
 
     fn poll_backend_state(&mut self) {
@@ -3178,8 +3305,12 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
         let cyan       = Color::from_rgb8(0x9A, 0x67, 0xFF);
         let dim        = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let soft       = Color::from_rgb8(0x8F, 0xA7, 0xBA);
         let surf_bg    = Color::from_rgb8(0x03, 0x09, 0x12);
         let panel_bg   = Color::from_rgb8(0x05, 0x0F, 0x1C);
+        let green      = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let amber      = Color::from_rgb8(0xFF, 0xD7, 0x00);
+        let red        = Color::from_rgb8(0xD9, 0x50, 0x50);
 
         // Derived metrics from live data
         let entropy = self
@@ -3230,6 +3361,162 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             })
             .unwrap_or_else(|| "capsule.metrics -> structure_map.snapshot".to_owned());
 
+        let zipf_alpha = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.zipf_alpha as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.zipf_alpha))
+            .unwrap_or(0.0);
+        let benford_score = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.benford_score as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.benford_score))
+            .unwrap_or(0.0);
+        let katz_dimension = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.katz_dimension as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.katz_dimension))
+            .unwrap_or(0.0);
+        let noether_consistency = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.noether_consistency as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.noether_consistency))
+            .unwrap_or(stability);
+        let trust_score = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.trust_score as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.trust_score))
+            .unwrap_or(stability);
+        let fourier_period = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.fourier_period as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.periodicity))
+            .unwrap_or(0.0);
+        let bayes_confidence = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.bayes_confidence)
+            .unwrap_or(0.0);
+        let anomaly_flags = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.anomaly_flags.clone())
+            .unwrap_or_default();
+        let anomaly_level = (
+            (anomaly_flags.len() as f32 / 4.0).clamp(0.0, 1.0) * 0.55
+                + (1.0 - trust_score).clamp(0.0, 1.0) * 0.25
+                + (1.0 - noether_consistency).clamp(0.0, 1.0) * 0.20
+        )
+        .clamp(0.0, 1.0);
+        let external_link_strength = if self.backend_swarm_node_count == 0 {
+            0.0
+        } else {
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
+                + (self.backend_swarm_candidate_count as f32 / (self.backend_swarm_node_count.max(1) as f32)).min(1.0) * 0.3)
+                .clamp(0.0, 1.0)
+        };
+        let internal_headline = if stability > 0.78 && delta_convergence > 0.68 {
+            "Innen bleibt das Muster ruhig und gut gebuendelt."
+        } else if entropy > 0.68 && stability < 0.52 {
+            "Im Inneren ist viel Bewegung; das Muster streut sichtbar."
+        } else {
+            "Im Inneren gibt es Bewegung, aber noch klare Musterkerne."
+        };
+        let external_headline = if self.backend_swarm_node_count == 0 {
+            "Aktuell liegen keine externen Verbindungen fuer den Vergleich vor."
+        } else if external_link_strength > 0.7 {
+            "Nach aussen ist das Bild gut verbunden; Aussenmuster lassen sich sinnvoll vergleichen."
+        } else {
+            "Nach aussen gibt es nur lockere Verbindungen; Unterschiede sind wichtiger als Gleichlauf."
+        };
+        let anomaly_headline = if anomaly_flags.is_empty() {
+            "Derzeit sticht nichts stark aus dem Gesamtbild heraus."
+        } else {
+            format!("Auffaellig sind vor allem: {}.", anomaly_flags.join(", "))
+        };
+        let (focus_title, focus_summary, focus_detail, focus_accent) =
+            self.flow_sphere_focus_details(&self.flow_sphere_focus_key);
+        let view_accent = if self.flow_sphere_view_mode {
+            Color::from_rgb8(0x9A, 0x67, 0xFF)
+        } else {
+            Color::from_rgb8(0x59, 0xD5, 0xE9)
+        };
+
+        let summary_card = |title: &'static str, headline: String, detail: String, accent: Color| {
+            container(
+                column![
+                    text(title).size(10).color(soft),
+                    text(headline).size(14).color(c(TEXT_H())),
+                    text(detail).size(11).color(dim),
+                ]
+                .spacing(4),
+            )
+            .padding([10, 12])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.10, 0.14, 0.22, 0.86))),
+                border: Border { color: accent, width: 1.0, radius: 10.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let metric_hint = |title: &'static str, value: String, accent: Color, meaning: &'static str, detail: String| {
+            container(
+                column![
+                    text(title).size(10).color(soft),
+                    text(value).size(15).color(accent),
+                    text(meaning).size(11).color(c(TEXT_H())),
+                    text(detail).size(10).color(dim),
+                ]
+                .spacing(4),
+            )
+            .padding([9, 11])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.08, 0.12, 0.18, 0.90))),
+                border: Border { color: Color::from_rgba(accent.r, accent.g, accent.b, 0.75), width: 1.0, radius: 9.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let focus_button = |label: &'static str, key: &'static str, accent: Color| {
+            let is_active = self.flow_sphere_focus_key == key;
+            button(
+                column![
+                    text(label).size(12).color(if is_active { c(TEXT_H()) } else { accent }),
+                    text(match key {
+                        "internal_core" => "Kern lesen",
+                        "overlay" => "Ueberlagerung lesen",
+                        "anomaly" => "Bruchstellen lesen",
+                        "external_links" => "Aussenbezug lesen",
+                        _ => "Details",
+                    })
+                    .size(10)
+                    .color(if is_active { c(TEXT_H()) } else { soft }),
+                ]
+                .spacing(2)
+            )
+            .on_press(Message::FlowSphereExplain(key.to_owned()))
+            .padding([9, 12])
+            .style(move |_: &Theme, _| button::Style {
+                background: Some(Background::Color(if is_active {
+                    Color::from_rgba(accent.r, accent.g, accent.b, 0.26)
+                } else {
+                    Color::from_rgba(0.08, 0.11, 0.16, 0.96)
+                })),
+                border: Border {
+                    color: accent,
+                    width: if is_active { 1.6 } else { 1.0 },
+                    radius: 10.0.into(),
+                },
+                text_color: if is_active { c(TEXT_H()) } else { accent },
+                ..Default::default()
+            })
+        };
+
         let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
 
         // Generate mock swarm nodes for Global mode (realistic Swarm visualization)
@@ -3276,37 +3563,115 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             container(
                 scrollable(
                     column![
-                        text("h\u{209c} INSPECTOR").size(11).color(cyan),
+                        text("FLOWSPHERE LESEHILFE").size(11).color(cyan),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
-                        text("ENTROPIE").size(10).color(dim),
-                        text(format!("{:.4} bit", entropy * 7.83)).size(16).color(Color::from_rgb8(0xAF, 0x86, 0xFF)),
+                        summary_card(
+                            "IM INNEREN",
+                            internal_headline.to_owned(),
+                            format!("Shannon {:.2} bit | Noether {:.0}% | Delta {:.0}%", entropy * 7.83, noether_consistency * 100.0, delta_convergence * 100.0),
+                            cyan,
+                        ),
+                        summary_card(
+                            "NACH AUSSEN",
+                            external_headline.to_owned(),
+                            if self.backend_swarm_node_count == 0 {
+                                "Ohne externe Knoten bleibt die Ansicht auf dem aktuellen Bereich.".to_owned()
+                            } else {
+                                format!("{} erreichbare Knoten | Verbindung {:.0}%", self.backend_swarm_reachable_node_count, external_link_strength * 100.0)
+                            },
+                            Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                        ),
+                        summary_card(
+                            "AUFFAELLIGKEITEN",
+                            anomaly_headline.clone(),
+                            if anomaly_flags.is_empty() {
+                                format!("Auffaelligkeitsdruck {:.0}%", anomaly_level * 100.0)
+                            } else {
+                                format!("Druck {:.0}% | {} Marker", anomaly_level * 100.0, anomaly_flags.len())
+                            },
+                            if anomaly_level > 0.65 { red } else { amber },
+                        ),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        metric_hint(
+                            "SHANNON-ENTROPIE",
+                            format!("{:.4} bit", entropy * 7.83),
+                            Color::from_rgb8(0xAF, 0x86, 0xFF),
+                            "zeigt, wie ruhig oder verstreut das Muster wirkt",
+                            "Hohe Werte sprechen eher fuer viel Mischung; niedrigere Werte eher fuer klare Ordnung.".to_owned(),
+                        ),
                         progress_bar(0.0..=1.0, entropy).height(5),
+                        metric_hint(
+                            "KATZ FD",
+                            format!("{:.4}", katz_dimension),
+                            amber,
+                            "zeigt, wie verschlungen ein Verlauf ist",
+                            "Hoeher kann bedeuten, dass Wege, Konturen oder Signale viele Richtungswechsel haben.".to_owned(),
+                        ),
+                        metric_hint(
+                            "NOETHER-INVARIANTE",
+                            format!("{:.1}%", noether_consistency * 100.0),
+                            green,
+                            "zeigt, wie stabil Grundmuster trotz Veraenderung bleiben",
+                            "Hohe Werte sprechen fuer wiederkehrende Ordnung; niedrige Werte eher fuer Bruch oder Umordnung.".to_owned(),
+                        ),
+                        metric_hint(
+                            "ZIPF ALPHA",
+                            format!("{:.4}", zipf_alpha),
+                            Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                            "zeigt, ob Haeufigkeiten einem natuerlichen Rhythmus folgen",
+                            "Das ist oft interessant bei Texten, Ereignissen oder wiederkehrenden Mustern im Ablauf.".to_owned(),
+                        ),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
-                        text("ATTRAKTOR-PARAM").size(10).color(dim),
-                        text(format!("{} stabile Knoten", anchor_count)).size(14).color(Color::WHITE),
-                        text(format!("\u{03c4}/4  \u{00d7}  {}", anchor_count)).size(11).color(dim),
+                        metric_hint(
+                            "BENFORD",
+                            format!("{:.4}", benford_score),
+                            Color::from_rgb8(0xC0, 0x8D, 0xFF),
+                            "zeigt, ob fuehrende Zahlen natuerlich verteilt wirken",
+                            "Das kann helfen zu sehen, ob Zahlen eher gewachsen wirken oder ungewoehnlich haeufig kippen.".to_owned(),
+                        ),
+                        metric_hint(
+                            "BAYES",
+                            format!("{:.4}", bayes_confidence),
+                            cyan,
+                            "zeigt, wie gut neue Hinweise zum bisherigen Bild passen",
+                            "Hohe Werte heissen nicht automatisch richtig, aber sie sprechen fuer ein stimmiges Gesamtbild.".to_owned(),
+                        ),
+                        metric_hint(
+                            "FOURIER-PERIODE",
+                            format!("{:.4}", fourier_period),
+                            amber,
+                            "zeigt, ob sich ein Takt oder eine Wiederholung abzeichnet",
+                            "Das ist nuetzlich, wenn etwas in Wellen, Schleifen oder festen Abstaenden wiederkommt.".to_owned(),
+                        ),
+                        metric_hint(
+                            "TRUST SCORE",
+                            format!("{:.1}%", trust_score * 100.0),
+                            if trust_score > 0.65 { green } else if trust_score > 0.4 { amber } else { red },
+                            "fasst zusammen, wie tragfaehig das aktuelle Gesamtbild wirkt",
+                            "Er steigt, wenn mehrere Werte in dieselbe Richtung deuten und wenig dagegen spricht.".to_owned(),
+                        ),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
-                        text("DELTA-STATISTIK").size(10).color(dim),
-                        text(format!("\u{0394} {:.3}", delta_phases[0].sin().abs())).size(14).color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
-                        text(format!("\u{03c3} {:.3}", delta_phases[1].sin().abs())).size(12).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text("DYNAMIK UND SPUREN").size(10).color(dim),
+                        text(format!("Musterkerne: {} | Innenruhe {:.0}%", anchor_count, stability * 100.0)).size(13).color(Color::WHITE),
+                        text(format!("Veraenderung \u{0394}: {:.0}% | Rekonstruktion {:.0}%", delta_convergence * 100.0, reconstruction_quality * 100.0)).size(12).color(soft),
                         text(anchor_spark).size(10).color(Color::from_rgb8(0x9B, 0xD4, 0xFF)),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("I(h\u{209c})").size(10).color(dim),
                         text(format!("{:.4}", i_ht)).size(18).color(Color::from_rgb8(0xC0, 0xF0, 0xFF)),
                         text(make_sparkline(i_ht)).size(9).color(Color::from_rgb8(0x7B, 0x8F, 0xB3)),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
-                        text("STABILIT\u{c4}T").size(10).color(dim),
+                        text("STABILITAET").size(10).color(dim),
                         text(format!("{:.1}%", stability * 100.0)).size(16).color(
-                            if stability > 0.8 { Color::from_rgb8(0x4C, 0xD9, 0x6E) }
-                            else if stability > 0.5 { Color::from_rgb8(0xFF, 0xD7, 0x00) }
-                            else { Color::from_rgb8(0xD9, 0x50, 0x50) }
+                            if stability > 0.8 { green }
+                            else if stability > 0.5 { amber }
+                            else { red }
                         ),
                         progress_bar(0.0..=1.0, stability).height(5),
-                        text(if self.structure_map_locked { "\u{25cf} KONVERGIERT" } else { "\u{25cc} Laufend..." })
+                        text(if self.structure_map_locked { "\u{25cf} Muster hat sich eingependelt" } else { "\u{25cc} Muster ist noch in Bewegung" })
                             .size(10)
-                            .color(if self.structure_map_locked { Color::from_rgb8(0x4C, 0xD9, 0x6E) } else { dim }),
+                            .color(if self.structure_map_locked { green } else { dim }),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
-                        text("MUTATIONS-HIST").size(10).color(dim),
+                        text("VERLAUF").size(10).color(dim),
                         text(mut_spark).size(10).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         button(text("EXPORT JSON").size(11))
@@ -3389,6 +3754,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             manual_rotation_offset: self.flow_sphere_rotation_offset,
             view_mode: self.flow_sphere_view_mode,
             swarm_nodes,
+            anomaly_level,
+            external_link_strength,
+            noether_consistency,
+            active_focus_key: self.flow_sphere_focus_key.clone(),
         };
 
         let sphere_canvas = canvas::Canvas::new(sphere_scene)
@@ -3397,12 +3766,12 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
         // Main layout
         let header = Row::new()
-            .push(text("\u{25ce} AETHER FLOW SPHERE").size(13).color(cyan))
-            .push(text("  \u{00b7}  visuelle Musterhilfe  \u{00b7}  Attraktor-Dynamik  \u{00b7}  Ueberlagerungen erkennen  \u{00b7}  h\u{209c} Observer").size(10).color(dim))
+            .push(text("\u{25ce} FLOWSPHERE").size(13).color(view_accent))
+            .push(text("  \u{00b7}  Muster sehen  \u{00b7}  Bewegung lesen  \u{00b7}  Auffaelligkeiten frueh erkennen").size(10).color(dim))
             .spacing(0);
 
         let interaction_bar = Row::new()
-            .push(text("Interaktion:").size(11).color(dim))
+            .push(text("Ansicht:").size(11).color(dim))
             .push(button(text("Zoom +").size(11))
                 .on_press(Message::FlowSphereZoomIn)
                 .padding([5, 10])
@@ -3423,7 +3792,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .on_press(Message::FlowSphereResetView)
                 .padding([5, 10])
                 .style(primary_button_style))
-            .push(button(text(if self.flow_sphere_view_mode { "📍 Lokal" } else { "🌐 Global" }).size(11))
+            .push(button(text(if self.flow_sphere_view_mode { "Innenansicht" } else { "Aussenansicht" }).size(11))
                 .on_press(Message::FlowSphereToggleViewMode)
                 .padding([5, 10])
                 .style(secondary_button_style))
@@ -3455,17 +3824,94 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .push(audit_chip("AELAB-KOPPLUNG", format!("{:.1}%", aelab_coupling * 100.0), Color::from_rgb8(0xC0, 0x8D, 0xFF)))
             .spacing(8);
 
+        let overview_row = Row::new()
+            .push(
+                container(summary_card(
+                    "IM INNEREN",
+                    internal_headline.to_owned(),
+                    format!("Shannon {:.2} bit | Katz FD {:.2}", entropy * 7.83, katz_dimension),
+                    cyan,
+                ))
+                .width(Length::FillPortion(1))
+            )
+            .push(
+                container(summary_card(
+                    "NACH AUSSEN",
+                    external_headline.to_owned(),
+                    if self.backend_swarm_node_count == 0 {
+                        "Noch keine Aussenknoten fuer einen Vergleich sichtbar.".to_owned()
+                    } else {
+                        format!("{} Knoten | Verbindung {:.0}%", self.backend_swarm_node_count, external_link_strength * 100.0)
+                    },
+                    Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                ))
+                .width(Length::FillPortion(1))
+            )
+            .push(
+                container(summary_card(
+                    "AUFFAELLIGKEITEN",
+                    if anomaly_flags.is_empty() {
+                        "Im Moment kein harter Bruch im Musterbild.".to_owned()
+                    } else {
+                        format!("{} Marker springen gerade ins Auge.", anomaly_flags.len())
+                    },
+                    if anomaly_flags.is_empty() {
+                        format!("Benford {:.2} | Trust {:.0}%", benford_score, trust_score * 100.0)
+                    } else {
+                        anomaly_flags.join(", ")
+                    },
+                    if anomaly_level > 0.65 { red } else { amber },
+                ))
+                .width(Length::FillPortion(1))
+            )
+            .spacing(8);
+
+        let focus_row = Row::new()
+            .push(focus_button("Kernmuster", "internal_core", Color::from_rgb8(0x9A, 0x67, 0xFF)))
+            .push(focus_button("Ueberlagerung", "overlay", Color::from_rgb8(0xFF, 0xC8, 0x3A)))
+            .push(focus_button("Auffaelligkeit", "anomaly", Color::from_rgb8(0xE0, 0x5A, 0x5A)))
+            .push(focus_button("Aussenbezug", "external_links", Color::from_rgb8(0x59, 0xD5, 0xE9)))
+            .spacing(8);
+
+        let focus_panel = container(
+            Row::new()
+                .push(
+                    container(text("\u{25cf}").size(26).color(focus_accent))
+                        .width(Length::Fixed(24.0))
+                )
+                .push(
+                    column![
+                        text(format!("ANGEKLICKT: {}", focus_title)).size(11).color(soft),
+                        text(focus_summary).size(15).color(c(TEXT_H())),
+                        text(focus_detail).size(11).color(dim),
+                        text("Tipp: Farbchips oder Knoten direkt anklicken, um den Fokus zu wechseln.").size(10).color(soft),
+                    ]
+                    .spacing(4)
+                )
+                .spacing(10)
+                .align_y(Alignment::Start),
+        )
+        .padding([10, 12])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.07, 0.11, 0.17, 0.95))),
+            border: Border { color: focus_accent, width: 1.2, radius: 10.0.into() },
+            ..Default::default()
+        });
+
         container(
             Column::new()
                 .push(header)
                 .push(interaction_bar)
+                .push(overview_row)
+                .push(focus_row)
+                .push(focus_panel)
                 .push(audit_row)
                 .push(
                     text(format!(
-                        "Musterpfad: {}{}",
+                        "Sichtbarer Pfad: {}{}",
                         reconstruction_path,
                         if self.live_render_mode {
-                            " | Live Render aktualisiert nur die Grafik, nicht die Analysefenster."
+                            " | Live Render bewegt nur die Ansicht, nicht die Wertekarte."
                         } else {
                             ""
                         }
@@ -3473,13 +3919,16 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     .size(11)
                     .color(dim)
                 )
-                .push(text("Nutzen: grafische Hilfe zum Erkennen sich ueberlagernder Muster. Suchleiste oben versteht z.B. anchor, delta, entropy, node.")
+                .push(text(if self.flow_sphere_view_mode {
+                    "Innenansicht: zeigt Verdichtung, Takt, Bruchstellen und Musterkerne im aktuellen Bereich."
+                } else {
+                    "Aussenansicht: zeigt Verbindungen ueber Bereichsgrenzen hinweg, gemeinsame Bewegung und schwache Kopplungen."
+                })
                     .size(11)
                     .color(dim))
                 .push(Row::new()
                     .push(sphere_canvas)
                     .push(ht_panel)
-                    .spacing(0)
                     .height(Length::Fill))
                 .push(timeline_row)
                 .spacing(8)
@@ -3487,7 +3936,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         )
         .padding(10)
         .width(Length::Fill)
-        .height(Length::Fill)
         .style(move |_: &Theme| container::Style {
             background: Some(Background::Color(surf_bg)),
             ..Default::default()
@@ -5240,12 +5688,20 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             }
             Message::FlowSphereToggleViewMode => {
                 self.flow_sphere_view_mode = !self.flow_sphere_view_mode;
+                self.set_flow_sphere_focus(if self.flow_sphere_view_mode {
+                    "internal_core"
+                } else {
+                    "external_links"
+                });
+            }
+            Message::FlowSphereExplain(key) => {
+                self.set_flow_sphere_focus(key);
             }
             Message::FlowSphereNodeClicked(idx) => {
                 if self.flow_sphere_view_mode {
-                    self.status_line = format!("Attractor {} selected", idx);
+                    self.set_flow_sphere_focus(format!("attractor_{}", idx));
                 } else {
-                    self.status_line = format!("Swarm Node {} clicked", idx);
+                    self.set_flow_sphere_focus(format!("swarm_{}", idx));
                 }
             }
             Message::FlowSphereExportPressed => {
@@ -6972,6 +7428,74 @@ struct FlowSphereScene {
     manual_rotation_offset: f32,
     view_mode: bool, // true=Local (Attraktoren), false=Global (Swarm nodes)
     swarm_nodes: Vec<(String, f32, f32, f32)>, // (name, lat, lon, coherence_score)
+    anomaly_level: f32,
+    external_link_strength: f32,
+    noether_consistency: f32,
+    active_focus_key: String,
+}
+
+impl FlowSphereScene {
+    fn scene_geometry(&self, bounds: Rectangle) -> (Point, f32, f32) {
+        (
+            Point::new(bounds.width * 0.5, bounds.height * 0.53),
+            bounds.width.min(bounds.height) * 0.28 * self.zoom.clamp(0.7, 1.7),
+            self.manual_rotation_offset + self.tick as f32 * 0.0075,
+        )
+    }
+
+    fn project(&self, bounds: Rectangle, lat: f32, lon: f32) -> (Point, f32) {
+        let (center, sphere_radius, rotation) = self.scene_geometry(bounds);
+        let lon = lon + rotation;
+        let x = lat.cos() * lon.cos();
+        let y = lat.sin();
+        let z = lat.cos() * lon.sin();
+        let depth = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
+        let scale = 0.72 + depth * 0.28;
+        (
+            Point::new(center.x + x * sphere_radius * scale, center.y + y * sphere_radius),
+            depth,
+        )
+    }
+
+    fn attractor_point(&self, bounds: Rectangle, idx: usize) -> (Point, f32) {
+        let lon = self.attractor_lons.get(idx).copied().unwrap_or(0.0);
+        let lat = ((idx as f32 * 0.63) + self.info_growth * 0.05).sin() * 0.58 * (0.35 + self.stability * 0.55);
+        self.project(bounds, lat, lon)
+    }
+
+    fn swarm_point(&self, bounds: Rectangle, idx: usize) -> Option<Point> {
+        let (_, orbit_radius, rotation) = self.scene_geometry(bounds);
+        let orbit_radius = orbit_radius * (1.42 + self.external_link_strength * 0.14);
+        self.swarm_nodes.get(idx).map(|(_, _, lon, _)| {
+            let (center, _, _) = self.scene_geometry(bounds);
+            let angle = *lon + rotation * 0.35;
+            Point::new(
+                center.x + angle.cos() * orbit_radius,
+                center.y + angle.sin() * orbit_radius * 0.58,
+            )
+        })
+    }
+
+    fn hit_index(&self, bounds: Rectangle, cursor: Point) -> Option<usize> {
+        if self.view_mode {
+            (0..self.attractor_lons.len()).find(|idx| {
+                let (point, _) = self.attractor_point(bounds, *idx);
+                let dx = cursor.x - point.x;
+                let dy = cursor.y - point.y;
+                (dx * dx + dy * dy).sqrt() <= 18.0
+            })
+        } else {
+            (0..self.swarm_nodes.len()).find(|idx| {
+                self.swarm_point(bounds, *idx)
+                    .map(|point| {
+                        let dx = cursor.x - point.x;
+                        let dy = cursor.y - point.y;
+                        (dx * dx + dy * dy).sqrt() <= 18.0
+                    })
+                    .unwrap_or(false)
+            })
+        }
+    }
 }
 
 impl canvas::Program<Message> for FlowSphereScene {
@@ -6980,14 +7504,363 @@ impl canvas::Program<Message> for FlowSphereScene {
     fn draw(
         &self,
         _state: &(),
-        _renderer: &iced::Renderer,
+        renderer: &iced::Renderer,
         _theme: &Theme,
         bounds: Rectangle,
         _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry<iced::Renderer>> {
-        // Placeholder: just return an empty frame for now
-        let frame = canvas::Frame::new(_renderer, bounds.size());
+        use std::f32::consts::{FRAC_PI_2, PI, TAU};
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let width = bounds.width;
+        let height = bounds.height;
+        let center = Point::new(width * 0.5, height * 0.53);
+        let sphere_radius = width.min(height) * 0.28 * self.zoom.clamp(0.7, 1.7);
+        let rotation = self.manual_rotation_offset + self.tick as f32 * 0.0075;
+
+        let background_top = Color::from_rgb8(0x03, 0x09, 0x12);
+        let background_bottom = Color::from_rgb8(0x09, 0x15, 0x22);
+        let local_shell = Color::from_rgba(0.45, 0.25, 0.86, if self.view_mode { 0.25 } else { 0.08 });
+        let global_shell = Color::from_rgba(0.16, 0.74, 0.76, if self.view_mode { 0.08 } else { 0.25 });
+        let grid_color = Color::from_rgba(0.45, 0.67, 0.82, 0.18);
+        let internal_color = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let external_color = Color::from_rgb8(0x7F, 0xD9, 0xFF);
+        let stable_color = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let anomaly_color = Color::from_rgb8(0xD9, 0x50, 0x50);
+        let pulse_color = Color::from_rgb8(0xFF, 0xD7, 0x00);
+        let focus_is_internal = self.active_focus_key == "internal_core";
+        let focus_is_overlay = self.active_focus_key == "overlay";
+        let focus_is_anomaly = self.active_focus_key == "anomaly";
+        let focus_is_external = self.active_focus_key == "external_links";
+
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), background_top);
+        frame.fill(
+            &canvas::Path::rectangle(Point::new(0.0, height * 0.58), Size::new(width, height * 0.42)),
+            background_bottom,
+        );
+
+        let project = |lat: f32, lon: f32| -> (Point, f32) {
+            let lon = lon + rotation;
+            let x = lat.cos() * lon.cos();
+            let y = lat.sin();
+            let z = lat.cos() * lon.sin();
+            let depth = ((z + 1.0) * 0.5).clamp(0.0, 1.0);
+            let scale = 0.72 + depth * 0.28;
+            (
+                Point::new(
+                    center.x + x * sphere_radius * scale,
+                    center.y + y * sphere_radius,
+                ),
+                depth,
+            )
+        };
+
+        let shell_color = if self.view_mode { local_shell } else { global_shell };
+        frame.fill(&canvas::Path::circle(center, sphere_radius * 1.03), shell_color);
+        frame.stroke(
+            &canvas::Path::circle(center, sphere_radius),
+            canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.65, 0.82, 0.95, 0.30)),
+                width: 1.2,
+                ..canvas::Stroke::default()
+            },
+        );
+
+        for lat_idx in -2..=2 {
+            let lat = lat_idx as f32 * FRAC_PI_2 / 3.4;
+            let path = canvas::Path::new(|builder| {
+                for step in 0..=48 {
+                    let lon = -PI + TAU * step as f32 / 48.0;
+                    let (point, _) = project(lat, lon);
+                    if step == 0 {
+                        builder.move_to(point);
+                    } else {
+                        builder.line_to(point);
+                    }
+                }
+            });
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(grid_color),
+                    width: 1.0,
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        for lon_idx in 0..8 {
+            let lon = lon_idx as f32 * TAU / 8.0;
+            let path = canvas::Path::new(|builder| {
+                for step in 0..=36 {
+                    let lat = -FRAC_PI_2 * 0.94 + PI * 0.94 * step as f32 / 36.0;
+                    let (point, _) = project(lat, lon);
+                    if step == 0 {
+                        builder.move_to(point);
+                    } else {
+                        builder.line_to(point);
+                    }
+                }
+            });
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(0.40, 0.58, 0.72, 0.12)),
+                    width: 0.9,
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        let core_radius = sphere_radius * (0.18 + self.stability * 0.10);
+        frame.fill(
+            &canvas::Path::circle(center, core_radius),
+            Color::from_rgba(stable_color.r, stable_color.g, stable_color.b, 0.22 + self.stability * 0.16 + if focus_is_internal { 0.12 } else { 0.0 }),
+        );
+        frame.stroke(
+            &canvas::Path::circle(center, core_radius * 1.35),
+            canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(internal_color.r, internal_color.g, internal_color.b, if focus_is_internal { 0.58 } else { 0.28 })),
+                width: if focus_is_internal { 2.4 } else { 1.0 },
+                ..canvas::Stroke::default()
+            },
+        );
+
+        for wave_idx in 0..3 {
+            let path = canvas::Path::new(|builder| {
+                for step in 0..=64 {
+                    let lon = -PI + TAU * step as f32 / 64.0;
+                    let lat = ((lon * (wave_idx as f32 + 1.35) + rotation * 1.2).sin() * 0.12)
+                        + (wave_idx as f32 - 1.0) * 0.18 * self.entropy;
+                    let (point, _) = project(lat.clamp(-1.1, 1.1), lon);
+                    if step == 0 {
+                        builder.move_to(point);
+                    } else {
+                        builder.line_to(point);
+                    }
+                }
+            });
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(internal_color.r, internal_color.g, internal_color.b, 0.22 + wave_idx as f32 * 0.05 + if focus_is_overlay { 0.12 } else { 0.0 })),
+                    width: if focus_is_overlay { 2.0 } else { 1.3 },
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        for (idx, lon) in self.attractor_lons.iter().enumerate() {
+            let lat = ((idx as f32 * 0.63) + self.info_growth * 0.05).sin() * 0.58 * (0.35 + self.stability * 0.55);
+            let (point, depth) = project(lat, *lon);
+            let radius = 5.5 + depth * 4.0;
+            let is_selected = self.active_focus_key == format!("attractor_{}", idx);
+            let color = Color::from_rgba(stable_color.r, stable_color.g, stable_color.b, 0.45 + depth * 0.35);
+            frame.fill(&canvas::Path::circle(point, radius), color);
+            frame.stroke(
+                &canvas::Path::circle(point, radius + 4.0 + self.entropy * 4.0),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(external_color.r, external_color.g, external_color.b, 0.16 + depth * 0.15 + if is_selected { 0.28 } else { 0.0 })),
+                    width: if is_selected { 2.4 } else { 1.0 },
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        for (idx, phase) in self.delta_phases.iter().enumerate() {
+            let lon = rotation * 0.6 + idx as f32 * TAU / self.delta_phases.len() as f32;
+            let lat = (phase * 0.18).sin() * 0.72;
+            let (point, depth) = project(lat, lon);
+            let pulse_radius = 3.5 + (phase.sin().abs() * 4.0) + depth * 2.0;
+            frame.fill(
+                &canvas::Path::circle(point, pulse_radius),
+                Color::from_rgba(pulse_color.r, pulse_color.g, pulse_color.b, 0.32 + depth * 0.26 + if focus_is_overlay { 0.18 } else { 0.0 }),
+            );
+            frame.stroke(
+                &canvas::Path::circle(point, pulse_radius + 4.0),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(pulse_color.r, pulse_color.g, pulse_color.b, 0.18 + if focus_is_overlay { 0.24 } else { 0.0 })),
+                    width: if focus_is_overlay { 2.0 } else { 1.0 },
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        let anomaly_count = if self.anomaly_level > 0.15 {
+            1 + (self.anomaly_level * 3.0).floor() as usize
+        } else {
+            0
+        };
+        for idx in 0..anomaly_count {
+            let lon = rotation + idx as f32 * TAU / (anomaly_count.max(1) as f32) + 0.45;
+            let lat = ((idx as f32 * 1.4) + self.entropy * PI).sin() * 0.62;
+            let (point, depth) = project(lat, lon);
+            let spike = Point::new(point.x + 18.0 + depth * 12.0, point.y - 12.0);
+            let marker = canvas::Path::new(|builder| {
+                builder.move_to(Point::new(point.x - 6.0, point.y));
+                builder.line_to(Point::new(point.x + 6.0, point.y));
+                builder.move_to(Point::new(point.x, point.y - 6.0));
+                builder.line_to(Point::new(point.x, point.y + 6.0));
+                builder.move_to(point);
+                builder.line_to(spike);
+            });
+            frame.stroke(
+                &marker,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(anomaly_color.r, anomaly_color.g, anomaly_color.b, 0.65 + if focus_is_anomaly { 0.18 } else { 0.0 })),
+                    width: if focus_is_anomaly { 2.2 } else { 1.4 },
+                    ..canvas::Stroke::default()
+                },
+            );
+            frame.stroke(
+                &canvas::Path::circle(point, 9.0 + depth * 4.0),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(anomaly_color.r, anomaly_color.g, anomaly_color.b, 0.42 + if focus_is_anomaly { 0.16 } else { 0.0 })),
+                    width: if focus_is_anomaly { 2.0 } else { 1.2 },
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
+
+        if !self.view_mode {
+            let orbit_radius = sphere_radius * (1.42 + self.external_link_strength * 0.14);
+            frame.stroke(
+                &canvas::Path::circle(center, orbit_radius),
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(external_color.r, external_color.g, external_color.b, 0.18 + if focus_is_external { 0.18 } else { 0.0 })),
+                    width: if focus_is_external { 1.8 } else { 1.0 },
+                    line_dash: canvas::LineDash { segments: &[7.0, 5.0], offset: 0 },
+                    ..canvas::Stroke::default()
+                },
+            );
+
+            for (idx, (name, lat, lon, coherence)) in self.swarm_nodes.iter().enumerate() {
+                let (anchor, _) = project(*lat * 0.55, *lon);
+                let angle = *lon + rotation * 0.35;
+                let node_point = Point::new(
+                    center.x + angle.cos() * orbit_radius,
+                    center.y + angle.sin() * orbit_radius * 0.58,
+                );
+                let node_color = if *coherence > 0.72 {
+                    stable_color
+                } else if *coherence > 0.45 {
+                    pulse_color
+                } else {
+                    anomaly_color
+                };
+                let is_selected = self.active_focus_key == format!("swarm_{}", idx);
+                let bridge = canvas::Path::new(|builder| {
+                    builder.move_to(anchor);
+                    builder.line_to(node_point);
+                });
+                frame.stroke(
+                    &bridge,
+                    canvas::Stroke {
+                        style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.20 + self.external_link_strength * 0.22 + if is_selected || focus_is_external { 0.16 } else { 0.0 })),
+                        width: if is_selected { 2.4 } else if focus_is_external { 1.6 } else { 1.1 },
+                        ..canvas::Stroke::default()
+                    },
+                );
+                frame.fill(&canvas::Path::circle(node_point, 5.0 + *coherence * 4.0), node_color);
+                frame.stroke(
+                    &canvas::Path::circle(node_point, 9.0 + (1.0 - *coherence) * 4.0),
+                    canvas::Stroke {
+                        style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.18 + if is_selected { 0.22 } else { 0.0 })),
+                        width: if is_selected { 2.2 } else { 1.0 },
+                        ..canvas::Stroke::default()
+                    },
+                );
+                if idx < 4 {
+                    frame.fill_text(canvas::Text {
+                        content: name.clone(),
+                        position: Point::new(node_point.x + 10.0, node_point.y - 4.0),
+                        color: Color::from_rgba(0.76, 0.88, 0.96, 0.82),
+                        size: iced::Pixels(10.0),
+                        horizontal_alignment: iced::alignment::Horizontal::Left,
+                        vertical_alignment: iced::alignment::Vertical::Center,
+                        ..canvas::Text::default()
+                    });
+                }
+            }
+        }
+
+        frame.fill_text(canvas::Text {
+            content: if self.view_mode {
+                "Innenmuster: Kerne, Takt und Bruchstellen".to_owned()
+            } else {
+                "Aussenmuster: Knoten, Kopplungen und Drift".to_owned()
+            },
+            position: Point::new(18.0, 22.0),
+            color: Color::from_rgb8(0xD8, 0xE6, 0xF2),
+            size: iced::Pixels(13.0),
+            horizontal_alignment: iced::alignment::Horizontal::Left,
+            vertical_alignment: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+        frame.fill_text(canvas::Text {
+            content: format!(
+                "Shannon {:.2} bit | Noether {:.0}% | externe Kopplung {:.0}% | Anomalie {:.0}%",
+                self.entropy * 7.83,
+                self.noether_consistency * 100.0,
+                self.external_link_strength * 100.0,
+                self.anomaly_level * 100.0
+            ),
+            position: Point::new(18.0, 40.0),
+            color: Color::from_rgb8(0x7B, 0x97, 0xAA),
+            size: iced::Pixels(10.0),
+            horizontal_alignment: iced::alignment::Horizontal::Left,
+            vertical_alignment: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+        frame.fill_text(canvas::Text {
+            content: if self.view_mode {
+                "Klick auf gruene Kerne fuer Details, oder auf die Fokus-Chips fuer Ueberlagerungen und Anomalien.".to_owned()
+            } else {
+                "Klick auf cyanfarbene Aussenknoten fuer Erklaerungen zu Kopplung und Drift.".to_owned()
+            },
+            position: Point::new(18.0, 56.0),
+            color: Color::from_rgb8(0x90, 0xA8, 0xB8),
+            size: iced::Pixels(10.0),
+            horizontal_alignment: iced::alignment::Horizontal::Left,
+            vertical_alignment: iced::alignment::Vertical::Center,
+            ..canvas::Text::default()
+        });
+
         vec![frame.into_geometry()]
+    }
+
+    fn update(
+        &self,
+        _state: &mut Self::State,
+        event: canvas::Event,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> (event::Status, Option<Message>) {
+        match event {
+            canvas::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                if let Some(position) = cursor.position_in(bounds) {
+                    if let Some(idx) = self.hit_index(bounds, position) {
+                        return (event::Status::Captured, Some(Message::FlowSphereNodeClicked(idx)));
+                    }
+                }
+                (event::Status::Ignored, None)
+            }
+            _ => (event::Status::Ignored, None),
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Self::State,
+        bounds: Rectangle,
+        cursor: mouse::Cursor,
+    ) -> mouse::Interaction {
+        if let Some(position) = cursor.position_in(bounds) {
+            if self.hit_index(bounds, position).is_some() {
+                return mouse::Interaction::Pointer;
+            }
+        }
+        mouse::Interaction::default()
     }
 }
 
