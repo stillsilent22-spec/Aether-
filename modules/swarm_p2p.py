@@ -29,6 +29,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from modules.yggdrasil_install import is_yggdrasil_managed_running, start_yggdrasil_subprocess, stop_yggdrasil_subprocess
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -36,6 +38,8 @@ if str(ROOT) not in sys.path:
 SETTINGS_PATH = ROOT / "data" / "settings.json"
 INTERBUS_DIR = ROOT / "data" / "interbus"
 P2P_GOSSIP_PATH = INTERBUS_DIR / "p2p_gossip.json"
+LOCAL_NODE_JSON_PATH = ROOT / "data" / "swarm" / "node.json"
+NODE_DISCOVERY_DIR = ROOT / "data" / "swarm" / "nodes"
 
 DEFAULT_P2P: Dict[str, Any] = {
     "enabled": False,              # opt-in, default OFF
@@ -43,6 +47,9 @@ DEFAULT_P2P: Dict[str, Any] = {
     "max_fingerprints_per_gossip": 20,
     "leader_election_enabled": True,
     "peer_ttl_seconds": 120.0,
+    "discovery_nodes_dir": "data/swarm/nodes",
+    "auto_manage_yggdrasil": True,
+    "yggdrasil_config_path": "data/yggdrasil.conf",
 }
 
 
@@ -158,6 +165,9 @@ class P2PLayer:
         self._gossip_thread: Optional[threading.Thread] = None
         self._received_gossip: List[Dict[str, Any]] = []
         self._received_lock = threading.Lock()
+        self._discovered_peer_addrs: List[str] = []
+        self._discovered_relay_addrs: List[str] = []
+        self._started_yggdrasil = False
 
     @property
     def enabled(self) -> bool:
@@ -171,17 +181,27 @@ class P2PLayer:
         if not self.enabled:
             print("[P2P] Disabled (opt-in). Set swarm_p2p.enabled=true to activate.")
             return
+        self._ensure_yggdrasil_runtime()
+        discovery_dir = str(self._config.get("discovery_nodes_dir", "data/swarm/nodes") or "data/swarm/nodes")
+        self._discovered_peer_addrs = self.discover_from_nodes_dir(discovery_dir)
+        self._bootstrap_known_peers(self._discovered_peer_addrs)
         self._stop_event.clear()
         self._gossip_thread = threading.Thread(
             target=self._gossip_loop, daemon=True, name="swarm-p2p-gossip"
         )
         self._gossip_thread.start()
-        print(f"[P2P] Layer started. PeerID={self._peer_id[:16]}…")
+        print(
+            f"[P2P] Layer started. PeerID={self._peer_id[:16]}… "
+            f"Discovery={len(self._discovered_peer_addrs)} peers"
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._gossip_thread:
             self._gossip_thread.join(timeout=3.0)
+        if self._started_yggdrasil:
+            stop_yggdrasil_subprocess()
+            self._started_yggdrasil = False
 
     def is_leader(self) -> bool:
         return self._leader_election.is_leader()
@@ -260,7 +280,84 @@ class P2PLayer:
             "leader": self.current_leader(),
             "peer_count": self._leader_election.peer_count(),
             "received_gossip_count": len(self._received_gossip),
+            "discovered_peer_count": len(self._discovered_peer_addrs),
+            "discovered_relay_count": len(self._discovered_relay_addrs),
         }
+
+    def discover_from_nodes_dir(self, nodes_dir: str = "data/swarm/nodes") -> List[str]:
+        """Liest alle node.json und gibt Relay-Nodes zuerst zurueck."""
+        path = Path(nodes_dir)
+        if not path.is_absolute():
+            path = ROOT / path
+        if not path.is_dir():
+            self._discovered_relay_addrs = []
+            return []
+
+        own_node_id = str(self._node_id or "")
+        try:
+            if LOCAL_NODE_JSON_PATH.is_file():
+                local_payload = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
+                if isinstance(local_payload, dict):
+                    own_node_id = str(local_payload.get("node_id", own_node_id) or own_node_id)
+        except Exception:
+            pass
+
+        relay_addrs: List[str] = []
+        peer_addrs: List[str] = []
+        seen: set[str] = set()
+        for node_path in sorted(path.glob("*.json")):
+            try:
+                payload = json.loads(node_path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            node_id = str(payload.get("node_id", "") or "")
+            if own_node_id and node_id == own_node_id:
+                continue
+            address = payload.get("yggdrasil_addr")
+            if address is None:
+                continue
+            address_str = str(address).strip()
+            if not address_str or address_str in seen:
+                continue
+            seen.add(address_str)
+            if bool(payload.get("relay", False)):
+                relay_addrs.append(address_str)
+            else:
+                peer_addrs.append(address_str)
+
+        self._discovered_relay_addrs = list(relay_addrs)
+        return relay_addrs + peer_addrs
+
+    def _bootstrap_known_peers(self, addresses: List[str]) -> None:
+        if not addresses or self._transport is None:
+            return
+        try:
+            bootstrap = getattr(self._transport, "bootstrap_peers", None)
+            if callable(bootstrap):
+                bootstrap(list(addresses))
+                return
+            connect_peers = getattr(self._transport, "connect_peers", None)
+            if callable(connect_peers):
+                connect_peers(list(addresses))
+                return
+            connect_peer = getattr(self._transport, "connect_peer", None)
+            if callable(connect_peer):
+                for address in addresses:
+                    connect_peer(address)
+        except Exception as err:
+            print(f"[P2P] discovery bootstrap failed: {err}")
+
+    def _ensure_yggdrasil_runtime(self) -> None:
+        if not bool(self._config.get("auto_manage_yggdrasil", True)):
+            return
+        if is_yggdrasil_managed_running():
+            self._started_yggdrasil = False
+            return
+        config_path = str(self._config.get("yggdrasil_config_path", "data/yggdrasil.conf") or "data/yggdrasil.conf")
+        start_yggdrasil_subprocess(config_path=config_path)
+        self._started_yggdrasil = True
 
     def _gossip_loop(self) -> None:
         interval = float(self._config.get("gossip_interval_seconds", 30.0))

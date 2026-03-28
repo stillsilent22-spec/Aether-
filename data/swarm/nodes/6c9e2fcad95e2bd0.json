@@ -3,5 +3,8 @@
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAc0h6oECH6XrYNxZJDqjxfRmr/jGp0n/w6adqQjnqTso=\n-----END PUBLIC KEY-----\n",
   "role": "genesis",
   "registered_at": "2026-03-21T20:24:51.417669+00:00",
-  "aether_version": "master-v13"
+  "aether_version": "master-v13",
+  "schema": "aether.swarm.node.v2",
+  "yggdrasil_addr": null,
+  "relay": false
 }

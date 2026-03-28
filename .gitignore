@@ -1,4 +1,4 @@
-aether_repo/
+﻿aether_repo/
 aether-symbiont/node_modules/
 aether-symbiont/out/
 build/
@@ -14,6 +14,8 @@ deltas/
 keys/
 keys/*.key
 keys/*.pem
+bin/yggdrasil
+bin/yggdrasil.exe
 *.delta
 *.delta.enc
 *.key
@@ -42,6 +44,8 @@ data/device_identity.json
 data/*.log
 data/*.bin
 data/*.bak
+data/yggdrasil.conf
+data/yggdrasil.pid
 data/logs/
 data/swarm/nodes/private/
 data/observer_learning/
@@ -51,21 +55,21 @@ data/sync_smoke/
 data/tmp*/
 data/tmpr*/
 data/test_privacy_anchor_builder/
-data/shanway_lexicon.json
+data/assistant_lexicon.json
 data/fingerprint_chain*
 data/*rejects*
 data/public_anchor_library/mirror_*.json
 data/public_anchor_library/trust_log.json
-data/shanway_corpus/de/*
-data/shanway_corpus/en/*
+data/assistant_corpus/de/*
+data/assistant_corpus/en/*
 data/aelab_vault/*.dna
 data/aelab_vault/vault_analysis.json
 gcm-diagnose.log
 
-!data/shanway_corpus/
-!data/shanway_corpus/README.txt
-!data/shanway_corpus/de/.gitkeep
-!data/shanway_corpus/en/.gitkeep
+!data/assistant_corpus/
+!data/assistant_corpus/README.txt
+!data/assistant_corpus/de/.gitkeep
+!data/assistant_corpus/en/.gitkeep
 !data/trusted_publishers.json
 !data/swarm/
 !data/swarm/nodes/
