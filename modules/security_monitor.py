@@ -56,7 +56,6 @@ class AetherSecurityMonitor:
         "entrypoint": "start.py",
         "analysis_engine": "modules/analysis_engine.py",
         "observer_engine": "modules/observer_engine.py",
-        "evolved_language": "modules/evolved_language.py",
         "registry": "modules/registry.py",
         "security_engine": "modules/security_engine.py",
         "session_engine": "modules/session_engine.py",
@@ -72,7 +71,6 @@ class AetherSecurityMonitor:
     def __init__(self, project_root: str | Path, registry) -> None:
         self.project_root = Path(project_root)
         self.registry = registry
-        self.language_state_path = self.project_root / "data" / "evolved_language.json"
 
     @staticmethod
     def _now_iso() -> str:

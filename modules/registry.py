@@ -13,7 +13,7 @@ import sqlite3
 import zlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, TYPE_CHECKING
+from typing import Any
 from urllib.error import URLError
 from urllib.request import urlopen
 from uuid import uuid4
@@ -49,9 +49,8 @@ except Exception:  # pragma: no cover - defensive fallback
     Ed25519PublicKey = None  # type: ignore[assignment]
     trusted_publisher_crypto_available = False
 
-if TYPE_CHECKING:
+if False:  # pragma: no cover - type-only compatibility without optional modules
     from .spectrum_engine import SpectrumFingerprint
-    from .theremin_engine import ThereminFrameState
 
 
 GENESIS_SEED = "AETHER_GENESIS_2026_HANNEMANN"
@@ -135,7 +134,7 @@ def trusted_publisher_slug(publisher_id: str) -> str:
 
 
 class AetherRegistry:
-    """Verwaltet Fingerprints und Spektrum-/Theremin-Daten in einer SQLite-Datenbank."""
+    """Verwaltet Fingerprints, Spektraldaten und strukturierte Sitzungsdaten in SQLite."""
 
     def __init__(self, db_path: str) -> None:
         """
@@ -169,7 +168,7 @@ class AetherRegistry:
         self.delta_repository = DeltaRepository(self.connection)
 
     def _create_tables(self) -> None:
-        """Erstellt alle benoetigten Tabellen fuer Datei-, Spektrum- und Theremin-Analysen."""
+        """Erstellt alle benoetigten Tabellen fuer Datei-, Spektrum- und Sitzungsanalysen."""
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS fingerprints (
@@ -259,54 +258,6 @@ class AetherRegistry:
                 delta_ratio REAL NOT NULL,
                 noise_seed INTEGER NOT NULL,
                 verdict TEXT NOT NULL,
-                payload_json TEXT NOT NULL
-            )
-            """
-        )
-        self.connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS theremin_frames (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                timestamp TEXT NOT NULL,
-                frame_index INTEGER NOT NULL,
-                entropy_red REAL NOT NULL,
-                entropy_green REAL NOT NULL,
-                entropy_blue REAL NOT NULL,
-                entropy_total REAL NOT NULL,
-                dominant_wavelength_nm REAL NOT NULL,
-                dominant_color_r INTEGER NOT NULL,
-                dominant_color_g INTEGER NOT NULL,
-                dominant_color_b INTEGER NOT NULL,
-                bass_freq REAL NOT NULL,
-                mid_freq REAL NOT NULL,
-                high_freq REAL NOT NULL,
-                volume REAL NOT NULL,
-                dissonance REAL NOT NULL,
-                hand_detected INTEGER NOT NULL,
-                hand_proximity REAL NOT NULL,
-                recursive_state INTEGER NOT NULL,
-                recursion_collapsed INTEGER NOT NULL,
-                anomaly_detected INTEGER NOT NULL,
-                delta BLOB NOT NULL,
-                delta_ratio REAL NOT NULL,
-                noise_seed INTEGER NOT NULL,
-                verdict TEXT NOT NULL,
-                mic_peak_freq REAL NOT NULL DEFAULT 0.0,
-                mic_peak_level REAL NOT NULL DEFAULT 0.0,
-                scene_x REAL NOT NULL DEFAULT 0.0,
-                scene_y REAL NOT NULL DEFAULT 0.0,
-                scene_depth REAL NOT NULL DEFAULT 0.0,
-                scene_time_ms REAL NOT NULL DEFAULT 0.0,
-                scene_delta REAL NOT NULL DEFAULT 0.0,
-                scene_frequency REAL NOT NULL DEFAULT 0.0,
-                scene_amplitude REAL NOT NULL DEFAULT 0.0,
-                symmetry_score REAL NOT NULL DEFAULT 0.0,
-                coherence_score REAL NOT NULL DEFAULT 0.0,
-                resonance_score REAL NOT NULL DEFAULT 0.0,
-                ethics_score REAL NOT NULL DEFAULT 0.0,
-                integrity_state TEXT NOT NULL DEFAULT 'STRUCTURAL_TENSION',
-                integrity_text TEXT NOT NULL DEFAULT 'Strukturelle Spannung erkannt',
                 payload_json TEXT NOT NULL
             )
             """
@@ -703,7 +654,7 @@ class AetherRegistry:
         return column_name in self._table_columns(table_name)
 
     def _migrate_schema(self) -> None:
-        """Fuehrt Schema-Migrationen fuer neue Ethikfelder aus."""
+        """Fuehrt Schema-Migrationen fuer neue Struktur- und Ethikfelder aus."""
         self._ensure_column("fingerprints", "coherence_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("fingerprints", "resonance_score", "REAL NOT NULL DEFAULT 0.0")
         self._ensure_column("fingerprints", "ethics_score", "REAL NOT NULL DEFAULT 0.0")
@@ -720,31 +671,6 @@ class AetherRegistry:
             "TEXT NOT NULL DEFAULT 'Strukturelle Spannung erkannt'",
         )
         self._ensure_column("fingerprints", "payload_json", "TEXT NOT NULL DEFAULT '{}'")
-        self._ensure_column("theremin_frames", "mic_peak_freq", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "mic_peak_level", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_x", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_y", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_depth", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_time_ms", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_delta", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_frequency", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "scene_amplitude", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "symmetry_score", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "coherence_score", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "resonance_score", "REAL NOT NULL DEFAULT 0.0")
-        self._ensure_column("theremin_frames", "ethics_score", "REAL NOT NULL DEFAULT 0.0")
-        for scene_column, legacy_column in LEGACY_FRAME_SCENE_COLUMNS.items():
-            self._ensure_column("theremin_frames", legacy_column, "REAL NOT NULL DEFAULT 0.0")
-            if self._column_exists("theremin_frames", scene_column):
-                self.connection.execute(
-                    f"""
-                    UPDATE theremin_frames
-                    SET {scene_column} = CASE
-                        WHEN ABS({scene_column}) > 1e-12 THEN {scene_column}
-                        ELSE {legacy_column}
-                    END
-                    """
-                )
         self.connection.execute(
             """
             CREATE TABLE IF NOT EXISTS scene_events (
@@ -783,16 +709,6 @@ class AetherRegistry:
                     FROM {LEGACY_SCENE_EVENT_TABLE}
                     """
                 )
-        self._ensure_column(
-            "theremin_frames",
-            "integrity_state",
-            "TEXT NOT NULL DEFAULT 'STRUCTURAL_TENSION'",
-        )
-        self._ensure_column(
-            "theremin_frames",
-            "integrity_text",
-            "TEXT NOT NULL DEFAULT 'Strukturelle Spannung erkannt'",
-        )
         self._ensure_column("users", "disabled", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "failed_attempts", "INTEGER NOT NULL DEFAULT 0")
         self._ensure_column("users", "locked_until", "TEXT NOT NULL DEFAULT ''")
@@ -1478,75 +1394,6 @@ class AetherRegistry:
                 spectrum.delta_ratio,
                 int(spectrum.noise_seed),
                 spectrum.verdict,
-                json.dumps(payload),
-            ),
-        )
-        self.connection.commit()
-        return int(cursor.lastrowid)
-
-    def save_theremin_frame(self, frame_state: ThereminFrameState) -> int:
-        """
-        Speichert einen Echtzeit-Theremin-Frame in der Registry.
-
-        Args:
-            frame_state: Zustand eines analysierten Webcam-Frames.
-        """
-        payload = frame_state.to_dict()
-        cursor = self.connection.execute(
-            """
-            INSERT INTO theremin_frames (
-                session_id, timestamp, frame_index,
-                entropy_red, entropy_green, entropy_blue, entropy_total,
-                dominant_wavelength_nm, dominant_color_r, dominant_color_g, dominant_color_b,
-                bass_freq, mid_freq, high_freq, volume, dissonance,
-                hand_detected, hand_proximity, recursive_state, recursion_collapsed, anomaly_detected,
-                delta, delta_ratio, noise_seed, verdict,
-                mic_peak_freq, mic_peak_level, scene_x, scene_y, scene_depth, scene_time_ms, scene_delta, scene_frequency, scene_amplitude,
-                symmetry_score, coherence_score, resonance_score, ethics_score, integrity_state, integrity_text,
-                payload_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                frame_state.session_id,
-                frame_state.timestamp,
-                int(frame_state.frame_index),
-                float(frame_state.entropy_red),
-                float(frame_state.entropy_green),
-                float(frame_state.entropy_blue),
-                float(frame_state.entropy_total),
-                float(frame_state.dominant_wavelength_nm),
-                int(frame_state.dominant_color_rgb[0]),
-                int(frame_state.dominant_color_rgb[1]),
-                int(frame_state.dominant_color_rgb[2]),
-                float(frame_state.bass_freq),
-                float(frame_state.mid_freq),
-                float(frame_state.high_freq),
-                float(frame_state.volume),
-                float(frame_state.dissonance),
-                int(frame_state.hand_detected),
-                float(frame_state.hand_proximity),
-                int(frame_state.recursive_state),
-                int(frame_state.recursion_collapsed),
-                int(frame_state.anomaly_detected),
-                frame_state.delta,
-                float(frame_state.delta_ratio),
-                int(frame_state.noise_seed),
-                frame_state.verdict,
-                float(frame_state.mic_peak_freq),
-                float(frame_state.mic_peak_level),
-                float(frame_state.scene_x),
-                float(frame_state.scene_y),
-                float(frame_state.scene_depth),
-                float(frame_state.scene_time_ms),
-                float(frame_state.scene_delta),
-                float(frame_state.scene_frequency),
-                float(frame_state.scene_amplitude),
-                float(frame_state.symmetry_score),
-                float(frame_state.coherence_score),
-                float(frame_state.resonance_score),
-                float(frame_state.ethics_score),
-                frame_state.integrity_state,
-                frame_state.integrity_text,
                 json.dumps(payload),
             ),
         )
@@ -5841,50 +5688,10 @@ class AetherRegistry:
                     )
         return vectors
 
-    def get_session_entropy_profile(self, session_id: str) -> dict[str, Any]:
-        """
-        Liefert ein akkumuliertes Entropie-Profil fuer die aktuelle Session.
-
-        Args:
-            session_id: Session-ID der laufenden Instanz.
-        """
-        rows = self.connection.execute(
-            """
-            SELECT entropy_total, anomaly_detected
-            FROM theremin_frames
-            WHERE session_id = ?
-            ORDER BY id ASC
-            """,
-            (session_id,),
-        ).fetchall()
-        if not rows:
-            return {
-                "session_id": session_id,
-                "samples": 0,
-                "entropy_mean": 0.0,
-                "entropy_std": 0.0,
-                "entropy_min": 0.0,
-                "entropy_max": 0.0,
-                "anomaly_rate": 0.0,
-            }
-
-        values = np.array([float(row["entropy_total"]) for row in rows], dtype=np.float64)
-        anomalies = np.array([int(row["anomaly_detected"]) for row in rows], dtype=np.float64)
-        return {
-            "session_id": session_id,
-            "samples": int(values.size),
-            "entropy_mean": float(values.mean()),
-            "entropy_std": float(values.std()),
-            "entropy_min": float(values.min()),
-            "entropy_max": float(values.max()),
-            "anomaly_rate": float(anomalies.mean() if anomalies.size else 0.0),
-        }
-
     def export_pattern_report(self) -> dict[str, Any]:
-        """Exportiert einen Gesamtbericht ueber Datei- und Theremin-Analysemuster."""
+        """Exportiert einen Gesamtbericht ueber Datei-, Spektrum- und Szenenmuster."""
         total_files = int(self.connection.execute("SELECT COUNT(*) FROM fingerprints").fetchone()[0])
         total_spectrum = int(self.connection.execute("SELECT COUNT(*) FROM spectrum_records").fetchone()[0])
-        total_frames = int(self.connection.execute("SELECT COUNT(*) FROM theremin_frames").fetchone()[0])
         total_scene_events = int(self.connection.execute("SELECT COUNT(*) FROM scene_events").fetchone()[0])
 
         verdict_rows = self.connection.execute(
@@ -5916,15 +5723,6 @@ class AetherRegistry:
         ).fetchall()
         periodicities = [{"periodicity": int(row["periodicity"]), "count": int(row["count"])} for row in period_rows]
 
-        entropy_profile = self.connection.execute(
-            """
-            SELECT AVG(entropy_total) AS avg_entropy, MAX(entropy_total) AS max_entropy
-            FROM theremin_frames
-            """
-        ).fetchone()
-        theremin_avg_entropy = float(entropy_profile["avg_entropy"]) if entropy_profile["avg_entropy"] is not None else 0.0
-        theremin_max_entropy = float(entropy_profile["max_entropy"]) if entropy_profile["max_entropy"] is not None else 0.0
-
         integrity_rows = self.connection.execute(
             "SELECT integrity_state, COUNT(*) AS count FROM fingerprints GROUP BY integrity_state"
         ).fetchall()
@@ -5933,7 +5731,6 @@ class AetherRegistry:
         return {
             "total_files": total_files,
             "total_spectrum_records": total_spectrum,
-            "total_theremin_frames": total_frames,
             "total_scene_events": total_scene_events,
             "verdict_distribution": verdict_distribution,
             "average_symmetry_score": avg_symmetry,
@@ -5941,8 +5738,6 @@ class AetherRegistry:
             "average_ethics_score": avg_ethics,
             "integrity_distribution": integrity_distribution,
             "top_periodicities": periodicities,
-            "theremin_average_entropy": theremin_avg_entropy,
-            "theremin_max_entropy": theremin_max_entropy,
         }
 
     def close(self) -> None:

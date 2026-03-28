@@ -5,7 +5,7 @@ import hashlib
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -39,6 +39,63 @@ def _dump_json(path: Path, payload: Dict[str, Any], dry_run: bool) -> None:
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def _normalize_public_key(public_key_pem: Any) -> str:
+    return str(public_key_pem or "").strip()
+
+
+def _parse_registered_at(value: Any) -> datetime:
+    raw = str(value or "").strip()
+    if not raw:
+        return datetime.max.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.max.replace(tzinfo=timezone.utc)
+
+
+def _select_canonical_identity(
+    existing_node: Dict[str, Any],
+    nodes_dir: Path,
+    public_key_pem: str,
+) -> Dict[str, Any]:
+    normalized_key = _normalize_public_key(public_key_pem)
+    if not normalized_key:
+        return {}
+
+    candidates = []
+    seen_node_ids = set()
+
+    def _add_candidate(payload: Dict[str, Any]) -> None:
+        if not isinstance(payload, dict):
+            return
+        if _normalize_public_key(payload.get("public_key_pem", "")) != normalized_key:
+            return
+        node_id = str(payload.get("node_id", "") or "").strip()
+        if not node_id or node_id in seen_node_ids:
+            return
+        seen_node_ids.add(node_id)
+        candidates.append(dict(payload))
+
+    _add_candidate(existing_node)
+    if nodes_dir.is_dir():
+        for path in sorted(nodes_dir.glob("*.json")):
+            payload = _load_json(path, default={})
+            _add_candidate(payload)
+
+    if not candidates:
+        return {}
+
+    def _rank(payload: Dict[str, Any]) -> tuple:
+        role = str(payload.get("role", "") or "").strip().lower()
+        return (
+            0 if role == "genesis" else 1,
+            _parse_registered_at(payload.get("registered_at")),
+            str(payload.get("node_id", "") or ""),
+        )
+
+    return min(candidates, key=_rank)
 
 
 def _ensure_keypair(keys_dir: Path, dry_run: bool) -> Dict[str, Any]:
@@ -90,6 +147,7 @@ def _ensure_keypair(keys_dir: Path, dry_run: bool) -> Dict[str, Any]:
         "public_key": str(public_path),
         "private_pem": private_pem,
         "public_pem": public_pem,
+        "public_raw": public_raw,
         "public_key_pem": public_pem.decode("ascii"),
     }
 
@@ -97,13 +155,14 @@ def _ensure_keypair(keys_dir: Path, dry_run: bool) -> Dict[str, Any]:
 def build_node_record(
     node_id: str,
     public_key_pem: str,
-    yggdrasil_addr: str | None,
+    yggdrasil_addr: Optional[str],
     *,
     relay: bool = False,
-    registered_at: str | None = None,
+    registered_at: Optional[str] = None,
     aether_version: str = AETHER_VERSION,
+    role: Optional[str] = None,
 ) -> Dict[str, Any]:
-    return {
+    payload = {
         "schema": NODE_SCHEMA,
         "node_id": str(node_id),
         "public_key_pem": str(public_key_pem),
@@ -112,6 +171,9 @@ def build_node_record(
         "registered_at": str(registered_at or _utc_now()),
         "aether_version": str(aether_version),
     }
+    if role:
+        payload["role"] = str(role)
+    return payload
 
 
 def _ensure_genesis_pack(anchors_dir: Path, node_id: str, dry_run: bool) -> Dict[str, Any]:
@@ -175,6 +237,35 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
     keys_dir = root / "keys"
 
     keypair = _ensure_keypair(keys_dir, dry_run=dry_run)
+    existing_node = _load_json(node_json_path, default={})
+    if existing_node and not keypair["created"]:
+        stored_pubkey = _normalize_public_key(existing_node.get("public_key_pem", ""))
+        actual_pubkey = _normalize_public_key(keypair["public_key_pem"])
+        if stored_pubkey and stored_pubkey != actual_pubkey:
+            print("[BOOTSTRAP] WARNUNG: node.json und keys/ haben verschiedene Public Keys!")
+            print("[BOOTSTRAP] Das deutet auf einen manuellen Key-Austausch hin.")
+            print("[BOOTSTRAP] Bitte data/swarm/nodes/ manuell pruefen.")
+
+    canonical_node = _select_canonical_identity(existing_node, nodes_dir, keypair["public_key_pem"])
+    canonical_node_id = str(canonical_node.get("node_id", "") or "").strip()
+    canonical_registered_at = str(
+        canonical_node.get("registered_at", "")
+        or existing_node.get("registered_at", "")
+        or _utc_now()
+    )
+    canonical_role = str(
+        canonical_node.get("role", "")
+        or existing_node.get("role", "")
+        or ""
+    ).strip() or None
+
+    if canonical_node_id:
+        node_id = canonical_node_id
+        print(f"[BOOTSTRAP] Existierende Node-ID beibehalten: {node_id}")
+    else:
+        node_id = hashlib.sha256(keypair["public_raw"]).hexdigest()[:16]
+        print(f"[BOOTSTRAP] Neue Node-ID: {node_id}")
+
     key_tree = AetherKeyTree(master_key_from_private_pem(keypair["private_pem"]))
     try:
         yggdrasil_addr = yggdrasil_addr_from_key_tree(key_tree)
@@ -190,21 +281,21 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
         else:
             print("[BOOTSTRAP] Yggdrasil bereits vorhanden.")
 
-        existing_node = _load_json(node_json_path, default={})
         node_payload = build_node_record(
-            str(keypair["node_id"]),
+            node_id,
             str(keypair["public_key_pem"]),
             yggdrasil_addr,
             relay=bool(existing_node.get("relay", False)),
-            registered_at=str(existing_node.get("registered_at", "") or _utc_now()),
+            registered_at=canonical_registered_at,
+            role=canonical_role,
         )
-        discovery_path = nodes_dir / f"{keypair['node_id']}.json"
+        discovery_path = nodes_dir / f"{node_id}.json"
         _dump_json(node_json_path, node_payload, dry_run)
         _dump_json(discovery_path, node_payload, dry_run)
 
-        genesis_pack = _ensure_genesis_pack(anchors_dir, node_id=str(keypair["node_id"]), dry_run=dry_run)
+        genesis_pack = _ensure_genesis_pack(anchors_dir, node_id=node_id, dry_run=dry_run)
         seed_pack = _ensure_seed_pack(anchors_dir, dry_run=dry_run)
-        settings = _ensure_settings(settings_path, node_id=str(keypair["node_id"]), dry_run=dry_run)
+        settings = _ensure_settings(settings_path, node_id=node_id, dry_run=dry_run)
         consent = _ensure_consent(consent_path, dry_run=dry_run)
 
         summary = {
@@ -215,15 +306,15 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
             "genesis_pack_created": bool(genesis_pack["created"]),
             "seed_pack_created": bool(seed_pack["created"]),
             "consent_ok": bool(consent.get("consent_ok", False)),
-            "node_id": str(keypair["node_id"]),
+            "node_id": node_id,
             "yggdrasil_addr": yggdrasil_addr,
             "node_json_path": str(node_json_path),
             "discovery_path": str(discovery_path),
         }
 
-        print(f"[BOOTSTRAP] Node ID: {keypair['node_id']}")
+        print(f"[BOOTSTRAP] Node ID: {node_id}")
         print(f"[BOOTSTRAP] Yggdrasil: {yggdrasil_addr}")
-        print(f"[BOOTSTRAP] node.json -> data/swarm/nodes/{keypair['node_id']}.json")
+        print(f"[BOOTSTRAP] node.json -> data/swarm/nodes/{node_id}.json")
         print("[BOOTSTRAP] Naechster Schritt: git add data/swarm/nodes/ && git push")
         return summary
     finally:

@@ -41,6 +41,14 @@ except ImportError:
 from dataclasses import dataclass as _dc, field as _dcfield, dataclass, field
 
 
+class VaultMissError(KeyError):
+    """Signalisiert einen fehlenden Anchor-Eintrag im lokalen Vault."""
+
+    def __init__(self, anchor_hash: str) -> None:
+        self.anchor_hash = str(anchor_hash or "")
+        super().__init__(self.anchor_hash)
+
+
 @_dc
 class StructuralAnchor:
     """Unveraenderlicher Strukturanker fuer einen Byte-Chunk."""

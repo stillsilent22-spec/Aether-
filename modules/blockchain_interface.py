@@ -44,7 +44,7 @@ ALLOWED_SOURCE_TYPES = {
     "memory",
     "scene",
     "camera",
-    "theremin",
+    "sensor_frame",
     "text_file",
     "text_corpus",
 }

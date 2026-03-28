@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
 from modules.ae_evolution_core import AEAlgorithmVault
 from modules.agent_loop import AgentLoopEngine
 from modules.analysis_engine import AnalysisEngine
-from modules.browser_engine import BrowserEngine
 from modules.observer_engine import ObserverEngine
 from modules.public_ttd_transport import PublicTTDTransport
 from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine, VaultMissError
@@ -687,7 +686,7 @@ def test_public_ttd_transport_http_mirror_roundtrip() -> None:
 
 
 def test_agent_loop_plans_browser_followup_for_open_state() -> None:
-    """Offene Assistant-Befunde muessen einen begrenzten lokalen Browser-Folgeschritt planen."""
+    """Offene Assistant-Befunde duerfen hoechstens einen lokalen Suchhinweis planen."""
     loop = AgentLoopEngine()
     assessment_payload = {
         "classification": "uncertain",
@@ -714,8 +713,7 @@ def test_agent_loop_plans_browser_followup_for_open_state() -> None:
     action_payload = dict(directive.action_payload or {})
     query = str(action_payload.get("query", "") or "")
     assert "ttf" in query.lower() or "font" in query.lower()
-    url = BrowserEngine.build_search_url(query)
-    assert url.startswith("https://")
+    url = f"local://search?query={query}"
     loop.note_browser_navigation("filehash-open-state", url)
 
     second = loop.plan_browser_followup(
@@ -730,82 +728,6 @@ def test_agent_loop_plans_browser_followup_for_open_state() -> None:
         current_url=url,
     )
     assert int(second.loop_iteration) <= 2
-
-
-def test_browser_engine_fetch_search_context_is_parsed_without_real_network() -> None:
-    """Die Suchkontext-Verdichtung soll mit stubbed Download robust funktionieren."""
-    original = BrowserEngine._download_text
-
-    def _fake_download(_url: str, timeout: float = 6.0) -> str:
-        return """
-        <html>
-          <body>
-            <main>
-              <h1>Artificial general intelligence</h1>
-              <p>AGI beschreibt ein System, das mehrere Aufgabenbereiche flexibel bearbeiten kann.</p>
-              <p>Aether bleibt lokal, observer-relativ und fail-closed.</p>
-            </main>
-          </body>
-        </html>
-        """
-
-    BrowserEngine._download_text = staticmethod(_fake_download)
-    try:
-        result = BrowserEngine.fetch_search_context("Was ist AGI?", provider="duckduckgo")
-    finally:
-        BrowserEngine._download_text = original
-
-    assert bool(result.get("ok", False)) is True
-    assert "Artificial general intelligence" in str(result.get("summary", ""))
-    assert str(result.get("search_url", "")).startswith("https://")
-
-
-def test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns() -> None:
-    """Die lokale URL-Probe soll HTML-Risiken ohne echten Vollbrowser erkennen."""
-
-    class _ProbeHandler(http.server.BaseHTTPRequestHandler):
-        def do_GET(self) -> None:  # noqa: N802
-            body = """
-            <html>
-              <head>
-                <title>Breaking Truth Mirror</title>
-                <script>eval(atob("YWxlcnQoMSk="));document.write("wallet gift card urgent");</script>
-                <style>body{font-family:monospace;}</style>
-              </head>
-              <body>
-                <main>
-                  <h1>Breaking exclusive leaked news</h1>
-                  <p>Wake up. The media lies. Parasites and vermin must disappear.</p>
-                  <p>Use crypto wallet now. Limited offer.</p>
-                </main>
-              </body>
-            </html>
-            """.encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, _format: str, *_args: Any) -> None:  # noqa: A003
-            return
-
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ProbeHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        url = f"http://127.0.0.1:{server.server_port}/probe"
-        result = BrowserEngine.inspect_url(url, timeout=3.0, max_bytes=65536)
-    finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=2.0)
-
-    assert bool(result.get("ok", False)) is True
-    assert str(result.get("risk_label", "")) in {"SUSPICIOUS", "CRITICAL"}
-    assert float(result.get("obfuscation_score", 0.0) or 0.0) > 0.0
-    assert float(result.get("hate_risk_score", 0.0) or 0.0) > 0.0
-    assert bool(result.get("open_recommended", True)) is False
 
 
 def test_assistant_partner_reply_includes_history_and_web_context() -> None:
@@ -861,8 +783,6 @@ def main() -> None:
     test_public_ttd_pool_admin_anchor_is_trusted_immediately()
     test_public_ttd_transport_http_mirror_roundtrip()
     test_agent_loop_plans_browser_followup_for_open_state()
-    test_browser_engine_fetch_search_context_is_parsed_without_real_network()
-    test_browser_engine_inspect_url_flags_obfuscation_and_hate_patterns()
     test_assistant_partner_reply_includes_history_and_web_context()
     gain = max(
         0.0,

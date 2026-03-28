@@ -2,6 +2,7 @@ import gc as _gc
 import sys as _sys
 import ctypes as _ctypes
 from typing import Any as _Any
+from typing import Optional as _Optional
 
 
 class SecurityManager:
@@ -80,11 +81,13 @@ def secure_zeroize(obj: _Any) -> None:
         if isinstance(obj, bytearray):
             for idx in range(len(obj)):
                 obj[idx] = 0
-        elif isinstance(obj, (bytes, str)):
+        elif isinstance(obj, memoryview):
             try:
-                _ctypes.memset(id(obj), 0, _sys.getsizeof(obj))
+                obj[:] = b"\x00" * len(obj)
             except Exception:
                 pass
+        elif isinstance(obj, (bytes, str)):
+            return
         elif isinstance(obj, dict):
             for value in list(obj.values()):
                 secure_zeroize(value)
@@ -160,3 +163,70 @@ def decrypt_device_scoped_payload(
         return _se_json.loads(raw)
     except Exception:
         return {}
+
+
+def pseudonymous_network_identity(session_like: _Any, purpose: str = "public") -> str:
+    username = str(getattr(session_like, "username", "") or "local")
+    session_id = str(getattr(session_like, "session_id", "") or "")
+    seed = f"{purpose}|{username}|{session_id}".encode("utf-8")
+    return _se_hashlib.sha256(seed).hexdigest()[:24]
+
+
+def public_ttd_share_policy(scope: str = "metrics_only") -> dict:
+    normalized = str(scope or "metrics_only").strip().lower()
+    if normalized == "signed":
+        return {
+            "scope": normalized,
+            "share_public_anchor": True,
+            "share_signature": True,
+            "raw_data_included": False,
+            "deltas_included": False,
+            "internal_only": False,
+        }
+    return {
+        "scope": "metrics_only",
+        "share_public_anchor": True,
+        "share_signature": False,
+        "raw_data_included": False,
+        "deltas_included": False,
+        "internal_only": False,
+    }
+
+
+def public_ttd_quorum_policy(session_like: _Any) -> dict:
+    role = str(getattr(session_like, "user_role", "operator") or "operator").strip().lower()
+    auto_trusted = role == "admin"
+    return {
+        "uploader_role": role or "operator",
+        "quorum_threshold": 1 if auto_trusted else 3,
+        "auto_trusted": auto_trusted,
+    }
+
+
+def validate_public_ttd_candidate(
+    candidate: dict,
+    *,
+    fingerprint_payload: _Optional[dict] = None,
+    reflection_payload: _Optional[dict] = None,
+) -> dict:
+    candidate_payload = dict(candidate or {})
+    public_metrics = dict(candidate_payload.get("public_metrics", {}) or {})
+    residual = float(public_metrics.get("residual", candidate_payload.get("residual", 0.0)) or 0.0)
+    symmetry = float(public_metrics.get("symmetry", candidate_payload.get("symmetry", 0.0)) or 0.0)
+    i_obs_ratio = float(public_metrics.get("i_obs_ratio", 0.0) or 0.0)
+    delta_stability = float(candidate_payload.get("delta_stability", 0.0) or 0.0)
+    recursive_count = int(len(list(dict(reflection_payload or {}).get("recursive_reflections", []) or [])))
+    valid = bool(str(candidate_payload.get("hash", "") or "").strip())
+    valid = valid and residual >= 0.0 and symmetry > 0.0 and delta_stability > 0.0
+    return {
+        "valid": valid,
+        "metrics": {
+            "residual": residual,
+            "symmetry": symmetry,
+            "i_obs_ratio": i_obs_ratio,
+            "delta_stability": delta_stability,
+            "recursive_count": recursive_count,
+            "source_label": str(dict(fingerprint_payload or {}).get("source_label", "") or ""),
+        },
+        "reason": "ok" if valid else "invalid_candidate",
+    }

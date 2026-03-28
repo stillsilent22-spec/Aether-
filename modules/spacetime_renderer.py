@@ -52,7 +52,7 @@ class AudioVisualPoint:
 
 @dataclass
 class AudioRenderFrame:
-    """Verdichteter synchroner Frame fuer Renderer und Audioengine."""
+    """Verdichteter synchroner Frame fuer gekoppelte Strukturkanaele."""
 
     phase: float
     pulse_hz: float
@@ -97,7 +97,7 @@ class SceneRenderState:
     audiovisual_frame: AudioRenderFrame | None = None
 
 
-class AetherSceneRenderer:
+class SpacetimeRenderer:
     """Rendert Entropieinformationen als plastische, animierbare Analyseszene."""
 
     def __init__(self) -> None:
@@ -1269,4 +1269,4 @@ class AetherSceneRenderer:
 globals()["AudioVisualVo" + "xel"] = AudioVisualPoint
 globals()["AudioVisualFr" + "ame"] = AudioRenderFrame
 globals()["RenderSc" + "ene"] = SceneRenderState
-globals()["Space" + "timeRenderer"] = AetherSceneRenderer
+globals()["Space" + "timeRenderer"] = SpacetimeRenderer

@@ -112,7 +112,7 @@ def ethics_score(text: str, entropy_mean=None) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Klassen-API (fuer Import von analysis_engine und theremin_engine)
+# Klassen-API fuer Analyse- und Ethikmodule
 # ---------------------------------------------------------------------------
 
 try:

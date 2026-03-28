@@ -10,13 +10,17 @@ from typing import Any, Dict
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_NODES_DIR = ROOT / "data" / "swarm" / "nodes"
 TARGET_SCHEMA = "aether.swarm.node.v2"
+DEFAULTS_V2 = {
+    "schema": TARGET_SCHEMA,
+    "yggdrasil_addr": None,
+    "relay": False,
+}
 
 
 def migrate_node_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     migrated = dict(payload)
-    migrated["schema"] = TARGET_SCHEMA
-    migrated.setdefault("yggdrasil_addr", None)
-    migrated.setdefault("relay", False)
+    for key, value in DEFAULTS_V2.items():
+        migrated.setdefault(key, value)
     return migrated
 
 

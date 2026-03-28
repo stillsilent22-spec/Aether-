@@ -1,8 +1,10 @@
 import gc as _gc
+import hashlib as _hashlib
 import sys as _sys
 import ctypes as _ctypes
 import secrets as _secrets
 from typing import Any as _Any
+from typing import Optional as _Optional
 
 
 class SecuritySession:
@@ -32,19 +34,38 @@ class SessionContext:
     ``cleanup()`` sicher geloescht.
     """
 
-    def __init__(self, security_session: "SecuritySession | None" = None) -> None:
+    def __init__(self, security_session: "SecuritySession | None" = None, seed: _Optional[int] = None) -> None:
         ss = security_session
         self.username: str = str(getattr(ss, "username", "local") or "local")
         self.user_id: int = int(getattr(ss, "user_id", 0) or 0)
         self.session_id: str = str(getattr(ss, "session_id", "") or _secrets.token_hex(16))
         self.user_role: str = str(getattr(ss, "user_role", "operator") or "operator")
         self.security_mode: str = str(getattr(ss, "security_mode", "PROD") or "PROD")
+        self.seed: _Optional[int] = int(seed) if seed is not None else None
         self.user_settings: dict[str, Any] = {}
         # Ephemere Schluessel — werden bei cleanup() zeroized
         self.live_session_key: str = ""
         self.live_session_fingerprint: str = ""
         self.raw_storage_key_hex: str = ""
         self.raw_storage_key_fingerprint: str = ""
+
+    def get_seed(self) -> int:
+        if self.seed is None:
+            stable = f"{self.username}|{self.user_id}|{self.session_id}".encode("utf-8")
+            self.seed = int.from_bytes(stable[:8].ljust(8, b"0"), "big", signed=False)
+        return int(self.seed)
+
+    @staticmethod
+    def noise_from_seed(seed: int, length: int) -> bytes:
+        seed_value = int(seed or 0) & ((1 << 64) - 1)
+        target_length = max(0, int(length or 0))
+        chunks = bytearray()
+        counter = 0
+        while len(chunks) < target_length:
+            payload = f"{seed_value}:{counter}".encode("utf-8")
+            chunks.extend(_hashlib.sha256(payload).digest())
+            counter += 1
+        return bytes(chunks[:target_length])
 
 
 def secure_zeroize(obj: _Any) -> None:
@@ -55,11 +76,13 @@ def secure_zeroize(obj: _Any) -> None:
         if isinstance(obj, bytearray):
             for idx in range(len(obj)):
                 obj[idx] = 0
-        elif isinstance(obj, (bytes, str)):
+        elif isinstance(obj, memoryview):
             try:
-                _ctypes.memset(id(obj), 0, _sys.getsizeof(obj))
+                obj[:] = b"\x00" * len(obj)
             except Exception:
                 pass
+        elif isinstance(obj, (bytes, str)):
+            return
         elif isinstance(obj, dict):
             for value in list(obj.values()):
                 secure_zeroize(value)

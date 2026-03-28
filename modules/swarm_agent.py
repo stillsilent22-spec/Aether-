@@ -122,30 +122,6 @@ class SwarmAgent:
         self._started_at: Optional[str] = None
         self._cpu_usage: float = 0.0
         self._last_health_check: float = 0.0  # Adaptive FPS: track last health sync
-@@        self._last_invariant_check: float = 0.0  # Invariant analysis every 30s
-@@        self._frame_change_sequence: list = []  # Track delta changes for Fourier
-@@    def _compute_and_persist_invariants(self) -> None:
-@@        """Compute mathematical invariants from swarm delta patterns (every ~30 sec)."""
-@@        try:
-@@            from modules.invariant_detector import compute_invariant_score
-@@            from modules.invariant_consensus_bridge import digest_invariants_to_consensus, persist_invariant_directives
-@@
-@@            # Build invariant input from accumulated metrics
-@@            change_seq = self._frame_change_sequence[-256:] if self._frame_change_sequence else []
-@@            if not change_seq:
-@@                return
-@@
-@@            invariants = compute_invariant_score(
-@@                change_sequence=change_seq,
-@@                anchor_frequencies=self._anchor_frequency_log,
-@@                file_sizes=[],
-@@            )
-@@
-@@            directives = digest_invariants_to_consensus(invariants)
-@@            persist_invariant_directives(directives)
-@@
-@@        except Exception as err:
-@@            print(f"[SWARM-AGENT] invariant analysis err: {err}")
 
     # ---- Lifecycle ---------------------------------------------------------
 
