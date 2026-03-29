@@ -6,6 +6,6 @@ def monitor_anomalies(runtime: dict) -> list:
     tick = int(runtime.get("tick", 0))
     if history_length == 0:
         return ["no_history"]
-    if tick > history_length:
-        return ["tick_history_mismatch"]
+    if tick != history_length:
+        return [f"tick_history_mismatch (tick={tick}, history={history_length})"]
     return []

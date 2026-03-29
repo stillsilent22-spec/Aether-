@@ -276,7 +276,7 @@ class DeepScanEngine:
                     "classification": "STRUCTURAL_SIBLINGS",
                     "left_file": str(left_file),
                     "right_file": str(right_file),
-                    "semantic_distance": round(float(similarity), 12),
+                    "structural_distance": round(float(similarity), 12),
                     "shared_geometry": shared_geometry,
                     "shared_anchor_count": int(len(left_set & right_set)),
                 }
@@ -318,7 +318,7 @@ class DeepScanEngine:
 
         siblings.sort(
             key=lambda item: (
-                -float(item.get("semantic_distance", 0.0) or 0.0),
+                -float(item.get("structural_distance", 0.0) or 0.0),
                 str(item.get("left_file", "")),
                 str(item.get("right_file", "")),
             )

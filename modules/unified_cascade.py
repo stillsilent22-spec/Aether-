@@ -408,17 +408,20 @@ def cascade(
     total_blocks = len(history) or 1
     attractor_stability = len(track.get("attractors", [])) / total_blocks
 
-    # Delta convergence
+    # Delta convergence — all metrics normalized to [0,1] before distance computation
+    def _norm(val: float, lo: float, hi: float) -> float:
+        return max(0.0, min(1.0, (val - lo) / max(hi - lo, 1e-9)))
+
     prev = _prev_results.get(source_id)
     if prev is None:
         delta_convergence = 0.0
     else:
         delta_convergence = math.sqrt(sum([
-            (entropy           - prev.entropy)            ** 2,
-            (zipf_alpha        - prev.zipf_alpha)         ** 2,
-            (benford_score     - prev.benford_score)       ** 2,
-            (katz_dimension    - prev.katz_dimension)      ** 2,
-            (attractor_stability - prev.attractor_stability) ** 2,
+            (_norm(entropy,             0.0, 8.0) - _norm(prev.entropy,             0.0, 8.0)) ** 2,
+            (_norm(zipf_alpha,          0.0, 3.0) - _norm(prev.zipf_alpha,          0.0, 3.0)) ** 2,
+            (_norm(benford_score,       0.0, 1.0) - _norm(prev.benford_score,       0.0, 1.0)) ** 2,
+            (_norm(katz_dimension,      0.0, 2.0) - _norm(prev.katz_dimension,      0.0, 2.0)) ** 2,
+            (_norm(attractor_stability, 0.0, 1.0) - _norm(prev.attractor_stability, 0.0, 1.0)) ** 2,
         ])) / math.sqrt(5)
 
     # Noether consistency

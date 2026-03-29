@@ -237,6 +237,8 @@ class DeltaConvergenceTracker:
         if not pool or not signal:
             return 0.0
         block_size = max(8, len(signal) // 64)
+        # Discretize anchor pool into entropy buckets for structural matching
+        pool_buckets = {round(a % 8.0, 1) for a in pool}
         blocks = [
             signal[i : i + block_size]
             for i in range(0, len(signal), block_size)
@@ -247,7 +249,7 @@ class DeltaConvergenceTracker:
         hits = sum(
             1
             for block in blocks
-            if any(abs(self._shannon_entropy(block) - (a % 8.0)) < 0.15 for a in pool)
+            if round(self._shannon_entropy(block), 1) in pool_buckets
         )
         return min(1.0, hits / len(blocks))
 

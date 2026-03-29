@@ -104,28 +104,25 @@ class AetherPipeline:
         if not self.audit_log:
             print("[OPTIMIZE] Keine Audit-Daten vorhanden.")
             return []
-            # Beispiel: Zähle, wie oft jede Schicht signifikant zum Ergebnis beiträgt
-            stats = {k: 0 for k in [
-                "entropy", "h_lambda", "anchors", "symmetry", "xor_delta", "periodicity", "sce", "bayes", "trust"
-            ]}
-            for entry in self.audit_log:
-                for k in stats:
-                    v = entry.get(k)
-                    # Zähle nur, wenn Wert signifikant (hier: ungleich 0/leer)
-                    if isinstance(v, (float, int)) and abs(v) > 1e-6:
-                        stats[k] += 1
-                    elif isinstance(v, list) and v:
-                        stats[k] += 1
-                    elif isinstance(v, str) and v.strip():
-                        stats[k] += 1
-            # Finde Schichten, die fast nie beitragen
-            total = len(self.audit_log)
-            redundant = [k for k, v in stats.items() if v < max(2, total // 10)]
-            if redundant:
-                print(f"[OPTIMIZE] Folgende Schichten sind meist redundant: {redundant}")
-            else:
-                print("[OPTIMIZE] Keine eindeutig redundanten Schichten gefunden.")
-            return redundant
+        stats = {k: 0 for k in [
+            "entropy", "h_lambda", "anchors", "symmetry", "xor_delta", "periodicity", "sce", "bayes", "trust"
+        ]}
+        for entry in self.audit_log:
+            for k in stats:
+                v = entry.get(k)
+                if isinstance(v, (float, int)) and abs(v) > 1e-6:
+                    stats[k] += 1
+                elif isinstance(v, list) and v:
+                    stats[k] += 1
+                elif isinstance(v, str) and v.strip():
+                    stats[k] += 1
+        total = len(self.audit_log)
+        redundant = [k for k, v in stats.items() if v < max(2, total // 10)]
+        if redundant:
+            print(f"[OPTIMIZE] Folgende Schichten sind meist redundant: {redundant}")
+        else:
+            print("[OPTIMIZE] Keine eindeutig redundanten Schichten gefunden.")
+        return redundant
     def __init__(self):
         self.audit_log: List[Dict[str, Any]] = []
         self.capsule_engine = AnalysisCapsuleEngine()
@@ -173,7 +170,8 @@ class AetherPipeline:
         ratio = (compressed_bytes / float(original_bytes)) if original_bytes else 1.0
         gain_percent = (1.0 - ratio) * 100.0 if original_bytes else 0.0
         return {
-            "format": "zlib",
+            "format": "zlib_interim",  # TODO: replace with anchor-xor-delta once implemented
+            "note": "Aether-Anchor-Delta not yet implemented — zlib used as interim compression",
             "original_bytes": original_bytes,
             "compressed_bytes": compressed_bytes,
             "ratio": round(ratio, 6),

@@ -164,7 +164,7 @@ class AssistantAssessment:
     suggestion_reason: str
     structural_siblings: list[str]
     shared_geometry: list[str]
-    semantic_distance: float
+    structural_distance: float
     screen_vision: str
     screen_source: str
     visual_anchors: list[str]
@@ -242,7 +242,7 @@ class AssistantAssessment:
             "suggestion_reason": str(self.suggestion_reason),
             "structural_siblings": list(self.structural_siblings),
             "shared_geometry": list(self.shared_geometry),
-            "semantic_distance": float(self.semantic_distance),
+            "structural_distance": float(self.structural_distance),
             "screen_vision": str(self.screen_vision),
             "screen_source": str(self.screen_source),
             "visual_anchors": list(self.visual_anchors),
@@ -709,7 +709,7 @@ class AssistantEngine:
 
         siblings: list[str] = []
         shared_geometry: list[str] = []
-        semantic_distance = 0.0
+        structural_distance = 0.0
         source_name = Path(str(source_label or "")).name
         for sibling in list(payload.get("siblings", []) or []):
             entry = dict(sibling or {})
@@ -721,14 +721,14 @@ class AssistantEngine:
             siblings.append(str(other_file))
             if not shared_geometry:
                 shared_geometry = [str(item) for item in list(entry.get("shared_geometry", []) or [])[:12]]
-                semantic_distance = float(entry.get("semantic_distance", 0.0) or 0.0)
+                structural_distance = float(entry.get("structural_distance", 0.0) or 0.0)
         return (
             vault_gap,
             suggested_next,
             suggestion_reason,
             sorted(set(siblings)),
             shared_geometry,
-            semantic_distance,
+            structural_distance,
         )
 
     @staticmethod
@@ -1434,7 +1434,7 @@ class AssistantEngine:
         goedel_signal, boundary = self._goedel_boundary(h_lambda, observer_mutual_info)
         reference_alignment_confirmed = self._reference_alignment_confirmed(anchor_details)
         it_from_bit = bool(goedel_signal < 0.3 and reference_alignment_confirmed)
-        vault_gap, suggested_next, suggestion_reason, structural_siblings, shared_geometry, semantic_distance = (
+        vault_gap, suggested_next, suggestion_reason, structural_siblings, shared_geometry, structural_distance = (
             self._resolve_vault_guidance(source_label=source_label, vault_analysis_path=vault_analysis_path)
         )
         screen_vision, screen_source, visual_anchors, file_anchors, convergence, delta_visual_only, delta_file_only = (
@@ -1626,7 +1626,7 @@ class AssistantEngine:
             suggestion_reason=str(suggestion_reason),
             structural_siblings=list(structural_siblings),
             shared_geometry=list(shared_geometry),
-            semantic_distance=float(semantic_distance),
+            structural_distance=float(structural_distance),
             screen_vision=str(screen_vision),
             screen_source=str(screen_source),
             visual_anchors=list(visual_anchors),
