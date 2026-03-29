@@ -507,6 +507,11 @@ enum Message {
     FlowSphereRotateRight,
     FlowSphereResetView,
     FlowSphereToggleViewMode,
+    FlowSphereToggleInternal,
+    FlowSphereToggleExternal,
+    FlowSphereDomainRename(usize, String),
+    FlowSphereBroadcastNameChanged(String),
+    FlowSphereBroadcastConsentToggled,
     FlowSphereExplain(String),
     FlowSphereNodeClicked(usize),
     FlowSphereExportPressed,
@@ -607,6 +612,11 @@ pub struct AetherIcedShell {
     flow_sphere_rotation_offset: f32,
     flow_sphere_view_mode: bool, // true=Local (Attraktoren), false=Global (Swarm)
     flow_sphere_focus_key: String,
+    flow_sphere_show_internal: bool,  // Schalter: Interne Verbindungen an/aus
+    flow_sphere_show_external: bool,  // Schalter: Externe Verbindungen an/aus
+    flow_sphere_domain_names: Vec<String>, // Benutzerdefinierte Namen fuer interne Domaenen
+    flow_sphere_broadcast_name: String,    // Name, den dieser Knoten nach aussen sendet
+    flow_sphere_broadcast_opt_in: bool,    // Broadcast nur nach ausdruecklicher Zustimmung
     // --- YouTube ---
     youtube_address: String,
     // --- Rekonstruktion ---
@@ -788,6 +798,11 @@ impl AetherIcedShell {
             flow_sphere_rotation_offset: 0.0,
             flow_sphere_view_mode: true, // Default: Local mode (Attraktoren)
             flow_sphere_focus_key: "internal_core".to_owned(),
+            flow_sphere_show_internal: true,
+            flow_sphere_show_external: false,
+            flow_sphere_domain_names: vec![String::new(); 6],
+            flow_sphere_broadcast_name: String::new(),
+            flow_sphere_broadcast_opt_in: false,
             youtube_address: "https://www.youtube.com/".to_owned(),
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
@@ -3835,13 +3850,13 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
         let attractor_lons = [0.0f32, TAU / 6.0, TAU / 3.0, TAU / 2.0, 2.0 * TAU / 3.0, 5.0 * TAU / 6.0];
 
-        // Generate mock swarm nodes for Global mode (realistic Swarm visualization)
-        let swarm_nodes = if !self.flow_sphere_view_mode && self.backend_swarm_node_count > 0 {
+        // Externe Peers bleiben fuer die Aussenebene verfuegbar, auch wenn Lokalmodus aktiv ist.
+        let swarm_nodes = if self.backend_swarm_node_count > 0 {
             (0..(self.backend_swarm_node_count.min(12) as usize))
                 .map(|i| {
                     let angle = (i as f32) * 0.5 + (self.tick_counter as f32) * 0.001;
                     let coherence = 0.4 + 0.6 * ((entropy * (i as f32)).sin().abs());
-                    (format!("Node-{}", i), angle.cos() * 0.6, angle, coherence)
+                    (format!("Peer-{}", i + 1), angle.cos() * 0.6, angle, coherence)
                 })
                 .collect()
         } else {
@@ -4074,6 +4089,11 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             external_link_strength,
             noether_consistency,
             active_focus_key: self.flow_sphere_focus_key.clone(),
+            show_internal: self.flow_sphere_show_internal,
+            show_external: self.flow_sphere_show_external,
+            domain_names: self.flow_sphere_domain_names.clone(),
+            broadcast_name: self.flow_sphere_broadcast_name.clone(),
+            broadcast_opt_in: self.flow_sphere_broadcast_opt_in,
         };
 
         let sphere_canvas = canvas::Canvas::new(sphere_scene)
@@ -4085,6 +4105,19 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .push(text("\u{25ce} FLOWSPHERE").size(13).color(view_accent))
             .push(text("  \u{00b7}  Muster sehen  \u{00b7}  Bewegung lesen  \u{00b7}  Auffaelligkeiten frueh erkennen").size(10).color(dim))
             .spacing(0);
+
+        let anchor_input = |idx: usize| {
+            let current = self
+                .flow_sphere_domain_names
+                .get(idx)
+                .map(String::as_str)
+                .unwrap_or("");
+            text_input("optional: z.B. Word-Dokument oder Genomsequenz", current)
+                .on_input(move |value| Message::FlowSphereDomainRename(idx, value))
+                .padding([6, 8])
+                .size(11)
+                .width(Length::FillPortion(1))
+        };
 
         let interaction_bar = Row::new()
             .push(text("Ansicht:").size(11).color(dim))
@@ -4108,8 +4141,16 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .on_press(Message::FlowSphereResetView)
                 .padding([5, 10])
                 .style(primary_button_style))
-            .push(button(text(if self.flow_sphere_view_mode { "Innenansicht" } else { "Aussenansicht" }).size(11))
+            .push(button(text(if self.flow_sphere_view_mode { "Lokalansicht" } else { "Globalansicht" }).size(11))
                 .on_press(Message::FlowSphereToggleViewMode)
+                .padding([5, 10])
+                .style(secondary_button_style))
+            .push(button(text(if self.flow_sphere_show_internal { "Intern an" } else { "Intern aus" }).size(11))
+                .on_press(Message::FlowSphereToggleInternal)
+                .padding([5, 10])
+                .style(secondary_button_style))
+            .push(button(text(if self.flow_sphere_show_external { "Extern an" } else { "Extern aus" }).size(11))
+                .on_press(Message::FlowSphereToggleExternal)
                 .padding([5, 10])
                 .style(secondary_button_style))
             .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
@@ -4119,6 +4160,46 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .push(text(format!("Zoom {:.0}%", self.flow_sphere_zoom * 100.0)).size(11).color(c(TEXT_M())))
             .spacing(8)
             .align_y(Alignment::Center);
+
+        let classification_panel = container(
+            column![
+                text("Anker haben keine Vorabbezeichnung. Du kannst sie nach einer Analyse nur grob benennen, zum Beispiel als Word-Dokument oder Genomsequenz.")
+                    .size(11)
+                    .color(dim),
+                Row::new()
+                    .push(anchor_input(0))
+                    .push(anchor_input(1))
+                    .push(anchor_input(2))
+                    .spacing(8),
+                Row::new()
+                    .push(anchor_input(3))
+                    .push(anchor_input(4))
+                    .push(anchor_input(5))
+                    .spacing(8),
+                Row::new()
+                    .push(button(text(if self.flow_sphere_broadcast_opt_in { "Broadcast freigegeben" } else { "Broadcast gesperrt" }).size(11))
+                        .on_press(Message::FlowSphereBroadcastConsentToggled)
+                        .padding([6, 10])
+                        .style(secondary_button_style))
+                    .push(text_input("optional: interessanten Aussenbezug als Broadcast-Vorschlag benennen", &self.flow_sphere_broadcast_name)
+                        .on_input(Message::FlowSphereBroadcastNameChanged)
+                        .padding([6, 8])
+                        .size(11)
+                        .width(Length::Fill))
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                text("Lokal oder Global waehlt die Leseperspektive. Intern und Extern schalten die Ebenen sichtbar. Broadcast bleibt bis zur Zustimmung rein lokal.")
+                    .size(10)
+                    .color(soft),
+            ]
+            .spacing(8),
+        )
+        .padding([10, 12])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.08, 0.12, 0.18, 0.92))),
+            border: Border { color: Color::from_rgba(view_accent.r, view_accent.g, view_accent.b, 0.55), width: 1.0, radius: 10.0.into() },
+            ..Default::default()
+        });
 
         let audit_chip = |title: &'static str, value: String, accent: Color| {
             container(
@@ -4224,6 +4305,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .push(overview_row)
                 .push(focus_row)
                 .push(focus_panel)
+                .push(classification_panel)
                 .push(audit_row)
                 .push(
                     text(format!(
@@ -4239,9 +4321,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     .color(dim)
                 )
                 .push(text(if self.flow_sphere_view_mode {
-                    "Innenansicht: zeigt Verdichtung, Takt, Bruchstellen und Musterkerne im aktuellen Bereich."
+                    "Lokalansicht: zeigt Anker, Verdichtung, Musterkerne und Bruchstellen im aktuellen Bereich."
                 } else {
-                    "Aussenansicht: zeigt Verbindungen ueber Bereichsgrenzen hinweg, gemeinsame Bewegung und schwache Kopplungen."
+                    "Globalansicht: zeigt externe Verbindungen, Drift, zustimmbare Broadcast-Hinweise und Beziehungen ueber Bereichsgrenzen hinweg."
                 })
                     .size(11)
                     .color(dim))
@@ -6113,6 +6195,36 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     "external_links"
                 });
             }
+            Message::FlowSphereToggleInternal => {
+                self.flow_sphere_show_internal = !self.flow_sphere_show_internal;
+                if self.flow_sphere_show_internal {
+                    self.flow_sphere_view_mode = true;
+                    self.set_flow_sphere_focus("internal_core");
+                }
+            }
+            Message::FlowSphereToggleExternal => {
+                self.flow_sphere_show_external = !self.flow_sphere_show_external;
+                if self.flow_sphere_show_external {
+                    self.flow_sphere_view_mode = false;
+                    self.set_flow_sphere_focus("external_links");
+                }
+            }
+            Message::FlowSphereDomainRename(idx, value) => {
+                if let Some(name) = self.flow_sphere_domain_names.get_mut(idx) {
+                    *name = value.chars().take(40).collect();
+                }
+            }
+            Message::FlowSphereBroadcastNameChanged(value) => {
+                self.flow_sphere_broadcast_name = value.chars().take(48).collect();
+            }
+            Message::FlowSphereBroadcastConsentToggled => {
+                self.flow_sphere_broadcast_opt_in = !self.flow_sphere_broadcast_opt_in;
+                self.status_line = if self.flow_sphere_broadcast_opt_in {
+                    "FlowSphere: Broadcast-Vorschlag freigegeben. Externe Hinweise werden nur nach Zustimmung sichtbar.".to_owned()
+                } else {
+                    "FlowSphere: Broadcast-Vorschlag gesperrt. Es wird nichts nach aussen markiert.".to_owned()
+                };
+            }
             Message::FlowSphereExplain(key) => {
                 self.set_flow_sphere_focus(key);
             }
@@ -7945,6 +8057,12 @@ struct FlowSphereScene {
     external_link_strength: f32,
     noether_consistency: f32,
     active_focus_key: String,
+    // Unabhaengige Layer-Schalter
+    show_internal: bool,        // Interne Verbindungen (Attractor-Graph + Kanten)
+    show_external: bool,        // Externe Verbindungen (Swarm-Orbit + Bruecken)
+    domain_names: Vec<String>,  // Benutzerdefinierte Domaennamen fuer Attraktoren
+    broadcast_name: String,     // Name den dieser Knoten nach aussen sendet
+    broadcast_opt_in: bool,
 }
 
 impl FlowSphereScene {
@@ -8033,8 +8151,10 @@ impl canvas::Program<Message> for FlowSphereScene {
 
         let background_top = Color::from_rgb8(0x03, 0x09, 0x12);
         let background_bottom = Color::from_rgb8(0x09, 0x15, 0x22);
-        let local_shell = Color::from_rgba(0.45, 0.25, 0.86, if self.view_mode { 0.25 } else { 0.08 });
-        let global_shell = Color::from_rgba(0.16, 0.74, 0.76, if self.view_mode { 0.08 } else { 0.25 });
+        let local_shell = Color::from_rgba(0.45, 0.25, 0.86, if self.show_internal { 0.22 } else { 0.06 });
+        let global_shell = Color::from_rgba(0.16, 0.74, 0.76, if self.show_external { 0.22 } else { 0.06 });
+        let shell_opacity = if self.show_internal && self.show_external { 0.14 } else { 0.20 };
+        let _ = shell_opacity; // used below
         let grid_color = Color::from_rgba(0.45, 0.67, 0.82, 0.18);
         let internal_color = Color::from_rgb8(0x9A, 0x67, 0xFF);
         let external_color = Color::from_rgb8(0x7F, 0xD9, 0xFF);
@@ -8068,7 +8188,13 @@ impl canvas::Program<Message> for FlowSphereScene {
             )
         };
 
-        let shell_color = if self.view_mode { local_shell } else { global_shell };
+        // Shell-Farbe: beide Layer koennen gleichzeitig aktiv sein
+        let shell_color = match (self.show_internal, self.show_external) {
+            (true, true)   => Color::from_rgba(0.30, 0.48, 0.74, 0.18), // Blau-Mix
+            (true, false)  => local_shell,
+            (false, true)  => global_shell,
+            (false, false) => Color::from_rgba(0.22, 0.28, 0.36, 0.10),
+        };
         frame.fill(&canvas::Path::circle(center, sphere_radius * 1.03), shell_color);
         frame.stroke(
             &canvas::Path::circle(center, sphere_radius),
@@ -8125,6 +8251,8 @@ impl canvas::Program<Message> for FlowSphereScene {
             );
         }
 
+        // === INTERNAL LAYER: Kern, Wellen, Attractor-Graph =========
+        if self.show_internal {
         let core_radius = sphere_radius * (0.18 + self.stability * 0.10);
         frame.fill(
             &canvas::Path::circle(center, core_radius),
@@ -8163,6 +8291,47 @@ impl canvas::Program<Message> for FlowSphereScene {
             );
         }
 
+        // Interne Domaen-Kanten: verbinde benachbarte Attraktoren
+        let attractor_pts: Vec<(Point, f32)> = self.attractor_lons.iter().enumerate().map(|(idx, lon)| {
+            let lat = ((idx as f32 * 0.63) + self.info_growth * 0.05).sin() * 0.58 * (0.35 + self.stability * 0.55);
+            project(lat, *lon)
+        }).collect();
+        for i in 0..attractor_pts.len() {
+            let j = (i + 1) % attractor_pts.len();
+            let (pi, _di) = attractor_pts[i];
+            let (pj, _dj) = attractor_pts[j];
+            let edge = canvas::Path::new(|builder| {
+                builder.move_to(pi);
+                builder.line_to(pj);
+            });
+            // Adjazente Kanten: solid, komplex = entferntere mit gestrichelt
+            if j == i + 1 {
+                frame.stroke(&edge, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(internal_color.r, internal_color.g, internal_color.b,
+                        0.28 + self.noether_consistency * 0.18 + if focus_is_internal { 0.14 } else { 0.0 })),
+                    width: if focus_is_internal { 1.6 } else { 1.0 },
+                    ..canvas::Stroke::default()
+                });
+            }
+        }
+        // Diagonale Kanten (domäneninterne Langstrecken-Kopplungen)
+        for i in 0..attractor_pts.len() {
+            let j = (i + 2) % attractor_pts.len();
+            let (pi, _) = attractor_pts[i];
+            let (pj, _) = attractor_pts[j];
+            let coupling = ((self.noether_consistency - 0.35) * 1.8).clamp(0.0, 1.0);
+            if coupling > 0.2 {
+                let edge = canvas::Path::new(|builder| { builder.move_to(pi); builder.line_to(pj); });
+                frame.stroke(&edge, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(internal_color.r * 0.7, internal_color.g * 0.7, 1.0,
+                        coupling * 0.18)),
+                    width: 0.8,
+                    line_dash: canvas::LineDash { segments: &[5.0, 6.0], offset: 0 },
+                    ..canvas::Stroke::default()
+                });
+            }
+        }
+
         for (idx, lon) in self.attractor_lons.iter().enumerate() {
             let lat = ((idx as f32 * 0.63) + self.info_growth * 0.05).sin() * 0.58 * (0.35 + self.stability * 0.55);
             let (point, depth) = project(lat, *lon);
@@ -8178,7 +8347,19 @@ impl canvas::Program<Message> for FlowSphereScene {
                     ..canvas::Stroke::default()
                 },
             );
+            if let Some(label) = self.domain_names.get(idx).map(|s| s.trim()).filter(|label| !label.is_empty()) {
+                frame.fill_text(canvas::Text {
+                    content: label.to_owned(),
+                    position: Point::new(point.x + radius + 6.0, point.y - 3.0),
+                    color: Color::from_rgba(stable_color.r, stable_color.g, stable_color.b, 0.72 + if is_selected { 0.20 } else { 0.0 }),
+                    size: iced::Pixels(if is_selected { 11.0 } else { 9.5 }),
+                    horizontal_alignment: iced::alignment::Horizontal::Left,
+                    vertical_alignment: iced::alignment::Vertical::Center,
+                    ..canvas::Text::default()
+                });
+            }
         }
+        } // end show_internal
 
         for (idx, phase) in self.delta_phases.iter().enumerate() {
             let lon = rotation * 0.6 + idx as f32 * TAU / self.delta_phases.len() as f32;
@@ -8235,7 +8416,8 @@ impl canvas::Program<Message> for FlowSphereScene {
             );
         }
 
-        if !self.view_mode {
+        // === EXTERNAL LAYER: Orbit, Swarm-Knoten, Broadcast-Label ===
+        if self.show_external {
             let orbit_radius = sphere_radius * (1.42 + self.external_link_strength * 0.14);
             frame.stroke(
                 &canvas::Path::circle(center, orbit_radius),
@@ -8246,7 +8428,6 @@ impl canvas::Program<Message> for FlowSphereScene {
                     ..canvas::Stroke::default()
                 },
             );
-
             for (idx, (name, lat, lon, coherence)) in self.swarm_nodes.iter().enumerate() {
                 let (anchor, _) = project(*lat * 0.55, *lon);
                 let angle = *lon + rotation * 0.35;
@@ -8254,36 +8435,21 @@ impl canvas::Program<Message> for FlowSphereScene {
                     center.x + angle.cos() * orbit_radius,
                     center.y + angle.sin() * orbit_radius * 0.58,
                 );
-                let node_color = if *coherence > 0.72 {
-                    stable_color
-                } else if *coherence > 0.45 {
-                    pulse_color
-                } else {
-                    anomaly_color
-                };
+                let node_color = if *coherence > 0.72 { stable_color } else if *coherence > 0.45 { pulse_color } else { anomaly_color };
                 let is_selected = self.active_focus_key == format!("swarm_{}", idx);
-                let bridge = canvas::Path::new(|builder| {
-                    builder.move_to(anchor);
-                    builder.line_to(node_point);
+                let bridge = canvas::Path::new(|builder| { builder.move_to(anchor); builder.line_to(node_point); });
+                frame.stroke(&bridge, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.20 + self.external_link_strength * 0.22 + if is_selected || focus_is_external { 0.16 } else { 0.0 })),
+                    width: if is_selected { 2.4 } else if focus_is_external { 1.6 } else { 1.1 },
+                    ..canvas::Stroke::default()
                 });
-                frame.stroke(
-                    &bridge,
-                    canvas::Stroke {
-                        style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.20 + self.external_link_strength * 0.22 + if is_selected || focus_is_external { 0.16 } else { 0.0 })),
-                        width: if is_selected { 2.4 } else if focus_is_external { 1.6 } else { 1.1 },
-                        ..canvas::Stroke::default()
-                    },
-                );
                 frame.fill(&canvas::Path::circle(node_point, 5.0 + *coherence * 4.0), node_color);
-                frame.stroke(
-                    &canvas::Path::circle(node_point, 9.0 + (1.0 - *coherence) * 4.0),
-                    canvas::Stroke {
-                        style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.18 + if is_selected { 0.22 } else { 0.0 })),
-                        width: if is_selected { 2.2 } else { 1.0 },
-                        ..canvas::Stroke::default()
-                    },
-                );
-                if idx < 4 {
+                frame.stroke(&canvas::Path::circle(node_point, 9.0 + (1.0 - *coherence) * 4.0), canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(node_color.r, node_color.g, node_color.b, 0.18 + if is_selected { 0.22 } else { 0.0 })),
+                    width: if is_selected { 2.2 } else { 1.0 },
+                    ..canvas::Stroke::default()
+                });
+                if idx < 6 {
                     frame.fill_text(canvas::Text {
                         content: name.clone(),
                         position: Point::new(node_point.x + 10.0, node_point.y - 4.0),
@@ -8295,13 +8461,25 @@ impl canvas::Program<Message> for FlowSphereScene {
                     });
                 }
             }
-        }
+            if self.broadcast_opt_in && !self.broadcast_name.is_empty() {
+                frame.fill_text(canvas::Text {
+                    content: format!("\u{25CE} Broadcast-Vorschlag: {}", self.broadcast_name),
+                    position: Point::new(center.x, center.y + orbit_radius + 14.0),
+                    color: Color::from_rgba(external_color.r, external_color.g, external_color.b, 0.88),
+                    size: iced::Pixels(11.0),
+                    horizontal_alignment: iced::alignment::Horizontal::Center,
+                    vertical_alignment: iced::alignment::Vertical::Top,
+                    ..canvas::Text::default()
+                });
+            }
+        } // end show_external
 
         frame.fill_text(canvas::Text {
-            content: if self.view_mode {
-                "Innenmuster: Kerne, Takt und Bruchstellen".to_owned()
-            } else {
-                "Aussenmuster: Knoten, Kopplungen und Drift".to_owned()
+            content: match (self.show_internal, self.show_external) {
+                (true, true)   => "Intern + Extern: Vollstaendige Topologie-Ueberlagerung".to_owned(),
+                (true, false)  => "Interne Verbindungen: Kern, Domaenen, Kopplungsgraph".to_owned(),
+                (false, true)  => "Externe Verbindungen: Swarm-Orbit, Knoten, Drift".to_owned(),
+                (false, false) => "Alle Layer ausgeblendet - Schalter aktivieren".to_owned(),
             },
             position: Point::new(18.0, 22.0),
             color: Color::from_rgb8(0xD8, 0xE6, 0xF2),
@@ -8326,10 +8504,14 @@ impl canvas::Program<Message> for FlowSphereScene {
             ..canvas::Text::default()
         });
         frame.fill_text(canvas::Text {
-            content: if self.view_mode {
-                "Klick auf gruene Kerne fuer Details, oder auf die Fokus-Chips fuer Ueberlagerungen und Anomalien.".to_owned()
+            content: if self.show_internal && self.show_external {
+                "Beide Layer: optionale Nutzerhinweise innen und externe Peers aussen gleichzeitig sichtbar.".to_owned()
+            } else if self.show_internal {
+                "Lokalmodus priorisiert Anker und Musterkerne. Hinweise erscheinen erst, wenn du selbst Typen vergibst.".to_owned()
+            } else if self.show_external {
+                "Globalmodus priorisiert externe Kopplung. Broadcast-Vorschlaege bleiben bis zur Zustimmung lokal.".to_owned()
             } else {
-                "Klick auf cyanfarbene Aussenknoten fuer Erklaerungen zu Kopplung und Drift.".to_owned()
+                "Schalter 'Intern' oder 'Extern' aktivieren, um Ebenen einzublenden.".to_owned()
             },
             position: Point::new(18.0, 56.0),
             color: Color::from_rgb8(0x90, 0xA8, 0xB8),
