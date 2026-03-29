@@ -69,6 +69,7 @@ def tree_signature(n: Optional[Node]) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
 
 def tree_to_json(n: Optional[Node]) -> str:
+    """Legacy — wird intern für tree_signature() gebraucht. Nicht für Persistenz verwenden."""
     def serialize(nd):
         if nd is None: return None
         return {"t":nd.t,"iv":nd.iv,"v":round(nd.v,12),"f":nd.f,
@@ -76,6 +77,7 @@ def tree_to_json(n: Optional[Node]) -> str:
     return json.dumps(serialize(n), separators=(',',':'))
 
 def tree_from_json(s: str) -> Optional[Node]:
+    """Legacy — nur für Migration alter .json-Vault-Dateien."""
     def deserialize(d):
         if d is None: return None
         n = Node(d["t"], d["iv"], d["v"], d["f"])
@@ -84,6 +86,131 @@ def tree_from_json(s: str) -> Optional[Node]:
         n.c = deserialize(d["c"])
         return n
     return deserialize(json.loads(s))
+
+# ---------------------------------------------------------------------------
+# DNA-Format — flat-indexed, OS-agnostisch, git-freundlich
+# ---------------------------------------------------------------------------
+# Format:
+#   # AETHER.DNA v1
+#   # nodes:N
+#   0 t=TYPE iv=IV v=VALUE f=FLAGS a=A_IDX b=B_IDX c=C_IDX
+#   ...
+#
+# Pre-order Traversal. Kinder durch Index referenziert, -1 = None.
+# tree_signature() bleibt JSON-basiert (Kompatibilität mit bestehenden Signaturen).
+# ---------------------------------------------------------------------------
+_DNA_HEADER = "# AETHER.DNA v1"
+
+
+def tree_to_dna(n: Optional[Node]) -> str:
+    """
+    Serialisiert einen Baum als flach-indiziertes DNA-Format.
+
+    Eigenschaften:
+    - Kein JSON, kein Windows-Pfadproblem, kein BOM
+    - Menschenlesbar und git-freundlich (line-diff funktioniert)
+    - OS-agnostisch: nur ASCII-Zeichen
+    - Deterministisch: gleicher Baum → gleicher Output
+    - order=pre-order; Kindknoten durch integer index referenziert
+    """
+    if n is None:
+        return _DNA_HEADER + "\n# nodes:0\n"
+
+    # Pre-order: index zuweisen und Adjazenzliste aufbauen
+    order: list[Node] = []
+    idx_of: dict[int, int] = {}  # id(node) -> index
+
+    def visit(nd: Optional[Node]) -> int:
+        if nd is None:
+            return -1
+        obj_id = id(nd)
+        if obj_id in idx_of:
+            return idx_of[obj_id]
+        i = len(order)
+        idx_of[obj_id] = i
+        order.append(nd)
+        # Kinder besuchen NACH der Index-Zuweisung (Pre-order, keine Zyklen)
+        nd._dna_a = visit(nd.a)
+        nd._dna_b = visit(nd.b)
+        nd._dna_c = visit(nd.c)
+        return i
+
+    visit(n)
+
+    lines = [_DNA_HEADER, f"# nodes:{len(order)}"]
+    for i, nd in enumerate(order):
+        lines.append(
+            f"{i} t={nd.t} iv={nd.iv} v={nd.v:.12f} f={nd.f}"
+            f" a={nd._dna_a} b={nd._dna_b} c={nd._dna_c}"
+        )
+        # Temp-Attribute aufräumen
+        del nd._dna_a, nd._dna_b, nd._dna_c
+
+    return "\n".join(lines) + "\n"
+
+
+def tree_from_dna(s: str) -> Optional[Node]:
+    """
+    Deserialisiert einen Baum aus dem DNA-Format.
+
+    Robust gegenüber Leerzeilen, unbekannten Kommentaren und
+    Zahlen-Formaten (inf, nan → 0.0 als Fallback).
+    Gibt None zurück wenn das Format nicht erkannt wird.
+    """
+    raw: dict[int, tuple] = {}  # idx → (t, iv, v, f, a_idx, b_idx, c_idx)
+
+    for line in s.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        try:
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+            idx = int(parts[0])
+            kv: dict[str, str] = {}
+            for part in parts[1:]:
+                k, _, v = part.partition("=")
+                kv[k] = v
+            v_raw = float(kv["v"])
+            if not isinstance(v_raw, float) or not (v_raw == v_raw):  # NaN guard
+                v_raw = 0.0
+            import math as _math
+            if _math.isinf(v_raw):
+                v_raw = 0.0
+            raw[idx] = (
+                int(kv["t"]),
+                int(kv["iv"]),
+                v_raw,
+                int(kv["f"]),
+                int(kv["a"]),
+                int(kv["b"]),
+                int(kv["c"]),
+            )
+        except (KeyError, ValueError, IndexError):
+            continue
+
+    if not raw:
+        return None
+
+    cache: dict[int, Optional[Node]] = {}
+
+    def build(idx: int) -> Optional[Node]:
+        if idx < 0:
+            return None
+        if idx in cache:
+            return cache[idx]
+        if idx not in raw:
+            return None
+        t, iv, v, f, a_i, b_i, c_i = raw[idx]
+        nd = Node(t, iv, v, f)
+        cache[idx] = nd  # vor Rekursion eintragen (Sicherheit gegen Zyklen)
+        nd.a = build(a_i)
+        nd.b = build(b_i)
+        nd.c = build(c_i)
+        return nd
+
+    return build(0)
 
 # ---------------------------------------------------------------------------
 # Baum-Metrik-Extraktion (deterministisch, keine Zufallskomponente)
@@ -385,6 +512,18 @@ class AEVault:
             self._write_index()
         return node_copy(tree) if tree else None
 
+    def get_tree_dna(self, sig: str) -> Optional[str]:
+        """
+        Gibt den DNA-String eines gespeicherten Baums zurück.
+
+        Direkter Pfad für evolver.decode_dna():
+            dna = vault.get_tree_dna(sig)
+            if dna:
+                result = evolver.decode_dna(dna)
+        """
+        tree = self.get_tree(sig)
+        return tree_to_dna(tree) if tree else None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -490,14 +629,14 @@ class AEVault:
     # I/O (deterministisch, kein Zufall)
     # ------------------------------------------------------------------
     def _tree_path(self, sig: str, bucket: str) -> Path:
-        return self.root / bucket / f"{sig[:16]}.json"
+        return self.root / bucket / f"{sig[:16]}.dna"
 
     def _save_tree(self, sig: str, tree: Node):
         e = self._entries.get(sig)
         bucket = e.bucket if e else "main"
         path = self._tree_path(sig, bucket)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(tree_to_json(tree), encoding="utf-8")
+        path.write_text(tree_to_dna(tree), encoding="utf-8")
 
     def _move_tree(self, sig: str, new_bucket: str):
         e = self._entries[sig]
@@ -559,9 +698,11 @@ class AEVault:
             bucket_path = self.root / bucket
             if not bucket_path.exists():
                 continue
-            for json_file in bucket_path.glob("*.json"):
+
+            # Neue DNA-Dateien laden
+            for dna_file in bucket_path.glob("*.dna"):
                 try:
-                    tree = tree_from_json(json_file.read_text(encoding="utf-8"))
+                    tree = tree_from_dna(dna_file.read_text(encoding="utf-8"))
                     if tree is None:
                         continue
                     sig = tree_signature(tree)
@@ -572,6 +713,30 @@ class AEVault:
                         index[sig] = e
                     else:
                         index[sig].bucket = bucket
+                except Exception:
+                    continue
+
+            # Legacy: .json migrieren → sofort als .dna neu schreiben, .json löschen
+            for json_file in bucket_path.glob("*.json"):
+                try:
+                    tree = tree_from_json(json_file.read_text(encoding="utf-8"))
+                    if tree is None:
+                        continue
+                    sig = tree_signature(tree)
+                    if sig in self._trees:
+                        json_file.unlink(missing_ok=True)
+                        continue
+                    self._trees[sig] = tree
+                    if sig not in index:
+                        e = VaultEntry(sig=sig, label=sig[:12], bucket=bucket)
+                        e.init_lifecycle()
+                        index[sig] = e
+                    else:
+                        index[sig].bucket = bucket
+                    # Migration: als DNA speichern, alte JSON-Datei entfernen
+                    dna_path = json_file.with_suffix(".dna")
+                    dna_path.write_text(tree_to_dna(tree), encoding="utf-8")
+                    json_file.unlink(missing_ok=True)
                 except Exception:
                     continue
 

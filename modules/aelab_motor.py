@@ -822,6 +822,22 @@ class AEEvolver:
             prev = b / 255.0
         return bytes(out)
 
+    def decode_dna(self, dna_str: str) -> bytes:
+        """
+        DNA-Decoder: Lädt Baum aus DNA-String und rekonstruiert Bytes.
+
+        Das ist der fehlende Blocker für den vollständigen Pipeline:
+            vault.get_tree_dna(sig) → dna_str → evolver.decode_dna() → bytes
+
+        Lazy import von tree_from_dna vermeidet Zirkelimport
+        (aelab_motor ← aelab_vault ← aelab_motor).
+        """
+        from modules.aelab_vault import tree_from_dna
+        tree = tree_from_dna(dna_str)
+        if tree is None:
+            return b""
+        return self.decode(tree)
+
     def summary(self) -> str:
         lines = [
             f"AELab Motor – Ergebnis",
