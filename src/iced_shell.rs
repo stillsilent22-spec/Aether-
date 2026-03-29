@@ -4175,6 +4175,44 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .width(Length::FillPortion(1))
         };
 
+        let broadcast_panel: Element<'_, Message> = if let Some(proposal) = &self.flow_sphere_broadcast_proposal {
+            Row::new()
+                .push(container(text(format!("Anfrage: {}", proposal)).size(10).color(c(TEXT_H())))
+                    .padding([8, 10])
+                    .width(Length::Fill)
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.10, 0.16, 0.24, 0.92))),
+                        border: Border { color: Color::from_rgba(0.35, 0.80, 0.92, 0.55), width: 1.0, radius: 8.0.into() },
+                        ..Default::default()
+                    }))
+                .push(button(text("Zustimmen").size(11))
+                    .on_press(Message::FlowSphereBroadcastApprove)
+                    .padding([6, 10])
+                    .style(primary_button_style))
+                .push(button(text("Verwerfen").size(11))
+                    .on_press(Message::FlowSphereBroadcastReject)
+                    .padding([6, 10])
+                    .style(secondary_button_style))
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
+        } else if let Some(visible) = &self.flow_sphere_broadcast_visible {
+            container(text(format!("Sichtbar: {}", visible)).size(10).color(c(TEXT_H())))
+                .padding([8, 10])
+                .width(Length::Fill)
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.92))),
+                    border: Border { color: Color::from_rgba(0.30, 0.85, 0.45, 0.60), width: 1.0, radius: 8.0.into() },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            text("Noch kein Broadcast sichtbar. Erst Vorschlag aus Analyse finden, dann Zustimmung geben.")
+                .size(10)
+                .color(soft)
+                .into()
+        };
+
         let interaction_bar = Row::new()
             .push(text("Ansicht:").size(11).color(dim))
             .push(button(text("Zoom +").size(11))
@@ -4248,43 +4286,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         .width(Length::Fill))
                     .spacing(8)
                     .align_y(Alignment::Center),
-                if let Some(proposal) = &self.flow_sphere_broadcast_proposal {
-                    Row::new()
-                        .push(container(text(format!("Anfrage: {}", proposal)).size(10).color(c(TEXT_H())))
-                            .padding([8, 10])
-                            .width(Length::Fill)
-                            .style(|_: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgba(0.10, 0.16, 0.24, 0.92))),
-                                border: Border { color: Color::from_rgba(0.35, 0.80, 0.92, 0.55), width: 1.0, radius: 8.0.into() },
-                                ..Default::default()
-                            }))
-                        .push(button(text("Zustimmen").size(11))
-                            .on_press(Message::FlowSphereBroadcastApprove)
-                            .padding([6, 10])
-                            .style(primary_button_style))
-                        .push(button(text("Verwerfen").size(11))
-                            .on_press(Message::FlowSphereBroadcastReject)
-                            .padding([6, 10])
-                            .style(secondary_button_style))
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .into()
-                } else if let Some(visible) = &self.flow_sphere_broadcast_visible {
-                    container(text(format!("Sichtbar: {}", visible)).size(10).color(c(TEXT_H())))
-                        .padding([8, 10])
-                        .width(Length::Fill)
-                        .style(|_: &Theme| container::Style {
-                            background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.92))),
-                            border: Border { color: Color::from_rgba(0.30, 0.85, 0.45, 0.60), width: 1.0, radius: 8.0.into() },
-                            ..Default::default()
-                        })
-                        .into()
-                } else {
-                    text("Noch kein Broadcast sichtbar. Erst Vorschlag aus Analyse finden, dann Zustimmung geben.")
-                        .size(10)
-                        .color(soft)
-                        .into()
-                },
+                broadcast_panel,
                 text("Lokal oder Global waehlt die Leseperspektive. Intern und Extern schalten die Ebenen sichtbar. Broadcast bleibt bis zur Zustimmung rein lokal.")
                     .size(10)
                     .color(soft),
