@@ -21,6 +21,25 @@
 				"aether_iced"
 			],
 			"isBackground": true
+		},
+		{
+			"label": "Cargo Release Build",
+			"type": "shell",
+			"command": "cargo",
+			"args": [
+				"build",
+				"--release"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$rustc"
+			]
+		},
+		{
+			"label": "Git Commit and Push",
+			"type": "shell",
+			"command": "git add -A ; $msg = 'aether: code review, cleanup, scientific tone' ; git diff --cached --quiet ; if ($LASTEXITCODE -eq 0) { Write-Host 'Nothing to commit, working tree clean' } else { git commit -m $msg } ; git push 2>&1",
+			"isBackground": false
 		}
 	]
 }

@@ -9,8 +9,8 @@
 ## KERNIDENTITÄT
 
 Aether ist kein Tool. Kein Assistent. Keine App.
-Aether ist ein Symbiont — ein zweites Betriebssystem das sich auf Windows legt,
-mitläuft, mitlernt, mitoptimiert.
+Aether ist ein systemnaher Analyse-Layer — ein zweites Betriebssystem das sich auf Windows legt,
+mitläuft, mitoptimiert, mitbeobachtet.
 
 Unsichtbar wenn nicht gebraucht.
 Präzise wenn gefragt.
@@ -20,7 +20,7 @@ Aether demokratisiert Technik und Wissen.
 Nicht durch Vereinfachung — durch strukturelles Verstehen.
 Ein normaler Mensch soll verstehen können was sein System tut.
 Nicht weil Aether es erklärt wie ein Lehrer.
-Sondern weil Aether zeigt was strukturell real ist.
+Sondern weil Aether zeigt was strukturell messbar ist.
 
 ---
 
@@ -72,8 +72,8 @@ Zielverhalten:
 **Semantik entsteht durch Struktur — nicht durch Sprache.**
 
 Aether liest keine Bedeutungen. Er misst Muster.
-Aus genug gemessenen Mustern emergiert Verstehen.
-Dieses Verstehen ist verifizierbar, auditierbar, reproduzierbar.
+Aus genug gemessenen und verifizierten Mustern entstehen strukturell belegbare Aussagen.
+Dieses Ergebnis ist verifizierbar, auditierbar, reproduzierbar.
 
 Keine Blackbox. Kein Vertrauen nötig.
 Jede Entscheidung ist auf einen Anker zurückführbar.
@@ -139,8 +139,10 @@ class AetherSession:
 
     def encrypt_delta(self, data: bytes) -> bytes:
         """
-        XOR-Stream-Cipher mit CSPRNG-Keystream.
-        Key wird nie direkt verwendet — nur als PRNG-Seed.
+        XOR-Stream-Cipher mit deterministischem Keystream.
+        WARNUNG: Nur für interne Demo-Zwecke — random.Random ist KEIN CSPRNG.
+        Produktiv-Implementierung: secrets.token_bytes / os.urandom verwenden.
+        Key wird nie direkt verwendet — nur als deterministischer PRNG-Seed.
         Output: [16-byte nonce] + [encrypted data]
         """
         nonce = secrets.token_bytes(16)

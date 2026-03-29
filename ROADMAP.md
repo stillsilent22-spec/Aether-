@@ -60,7 +60,7 @@ Die folgenden vier Hebel sind ab sofort als verbindlicher Umsetzungs-Track defin
   - Standardisierte Incident-Playbooks pro Szenario.
 
 Stand: März 2026 | Author: Kevin Hannemann
-Wissenschaftsfeld: Strukturell Emergente Metadynamische Semantik (SEMS)
+Forschungsrichtung: Strukturell Emergente Metadynamische Semantik (SEMS) — projektinternes Arbeitslabel, kein anerkanntes Wissenschaftsfeld
 
 ---
 

@@ -10,11 +10,18 @@ Status: Technisches Whitepaper zur source-available Veröffentlichung
 
 ## 1. Einleitung
 
-Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether — einem symbiotischen Proto-Meta-Layer-OS für strukturelle Datenanalyse mit integriertem Datenschutz.
+Dieses Whitepaper beschreibt die technischen Grundlagen und Architektur von Aether — einem lokalen Struktur-Analyse-Layer für deterministische Datenanalyse mit integriertem Datenschutz.
 
 Aether ist kein Klassifikator, kein KI-Modell und kein Interpreter. Es ist ein Messinstrument: Es berechnet strukturelle Merkmale beliebiger Daten und macht diese vergleichbar — ohne Labels, ohne Training, ohne sensitive Inhalte preiszugeben.
 
 **Grundsatz:** Strukturelle Ähnlichkeit ist eine Beobachtung, keine Aussage. Ob sie relevant ist, entscheiden Domänenexperten oder weitere Untersuchungen — nicht das System.
+
+> **Hinweis zu Metriknamen:** Einige Metriken tragen Namen aus Physik und Mathematik
+> (Noether-Score, Heisenberg-Score, Interferenz-Score). Diese Namen sind **pädagogische
+> Kürzel** — sie beschreiben das intuitive Konzept hinter der Metrik, nicht eine
+> physikalische Analogie. Die zugrunde liegenden Berechnungen sind jeweils vollständig
+> in Abschnitt 3.6 formal definiert und auf ihre statistischen Eigenschaften, nicht auf
+> physikalische Gesetze, rückführbar.
 
 ---
 

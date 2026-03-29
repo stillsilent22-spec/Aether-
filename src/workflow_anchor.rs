@@ -4,6 +4,7 @@ use crate::inter_layer_bus::{
 use crate::priority::LogarithmicPriority;
 use crate::vault_access::VaultAccessLayer;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -162,7 +163,7 @@ impl WorkflowSignalCollector {
             .unwrap_or(0)
             .saturating_sub(events.first().map(|entry| entry.timestamp_ms).unwrap_or(0));
         let sig = format!("{entropy:.3}|{fractal:.3}|{program_id}");
-        let anchor_hash = format!("{:x}", md5::compute(sig.as_bytes()));
+        let anchor_hash = format!("{:x}", Sha256::digest(sig.as_bytes()));
         WorkflowAnchor {
             anchor_hash,
             context: program_id.to_string(),

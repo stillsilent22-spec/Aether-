@@ -50,7 +50,7 @@ pub struct SecurityMonitor {
 impl SecurityMonitor {
     const CORE_FILES: [(&'static str, &'static str); 7] = [
         ("cargo", "Cargo.toml"),
-        ("main", "src/main.rs"),
+        ("lib", "src/lib.rs"),
         ("app", "src/app.rs"),
         ("auth", "src/auth.rs"),
         ("bus", "src/inter_layer_bus.rs"),

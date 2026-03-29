@@ -46,6 +46,7 @@ pub fn detect() -> HardwareProfile {
     let disk = detect_disk_kind();
 
     let mut old_score = 0u32;
+    // Only penalise when values are actually known (non-zero means detected)
     if ram_total > 0 && ram_total < 2048 { old_score += 2; }
     if freq_mhz > 0.0 && freq_mhz < 2000.0 { old_score += 2; }
     if disk == DiskKind::Hdd { old_score += 1; }
@@ -134,6 +135,8 @@ fn detect_ram_mb() -> (u64, u64) {
         return detect_ram_linux();
     }
     #[allow(unreachable_code)]
+    // Fallback for unsupported platforms (macOS, BSD, etc.):
+    // Returns (0, 0) — detect() treats 0 as "unknown" and skips the low-RAM score.
     (0, 0)
 }
 

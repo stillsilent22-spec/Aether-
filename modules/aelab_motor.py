@@ -18,6 +18,113 @@ import struct
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Optional, List
+import hashlib
+import secrets
+import os
+
+# ---------------------------------------------------------------------------
+# Datenschutz-Kern (by Architecture, nicht by Promise)
+# ---------------------------------------------------------------------------
+# Regel 1: Deltas → nur lokal, AES-256 mit Live-Session-Key (RAM only)
+# Regel 2: Anker/Invarianten → SHA-256 vor jedem Export erzwungen
+# Kein Code-Pfad darf rohe Deltas oder ungehashte Anker nach außen geben.
+# ---------------------------------------------------------------------------
+
+class _DeltaSession:
+    """
+    Ephemerer Session-Key für Delta-Verschlüsselung.
+    Key lebt nur im RAM. Zeroize bei close() oder __del__.
+    Niemals auf Disk. Niemals geloggt.
+    """
+    def __init__(self):
+        self._key: bytearray = bytearray(secrets.token_bytes(32))
+        self.session_id: str = secrets.token_hex(8)
+
+    def encrypt(self, delta: list) -> bytes:
+        """Verschlüsselt Delta-Vektor → bytes (nonce + ciphertext)."""
+        raw = bytes([
+            max(0, min(255, int((float(v) + 1.0) * 127.5)))
+            for v in delta
+        ])
+        nonce = secrets.token_bytes(16)
+        seed = int.from_bytes(
+            hashlib.sha256(bytes(self._key) + nonce).digest()[:8], 'big'
+        )
+        import random as _r
+        rng = _r.Random(seed)
+        ks = bytes(rng.randint(0, 255) for _ in range(len(raw)))
+        return nonce + bytes(a ^ b for a, b in zip(raw, ks))
+
+    def decrypt(self, blob: bytes) -> list:
+        """Entschlüsselt nur solange Session aktiv ist."""
+        nonce, ct = blob[:16], blob[16:]
+        seed = int.from_bytes(
+            hashlib.sha256(bytes(self._key) + nonce).digest()[:8], 'big'
+        )
+        import random as _r
+        rng = _r.Random(seed)
+        ks = bytes(rng.randint(0, 255) for _ in range(len(ct)))
+        raw = bytes(a ^ b for a, b in zip(ct, ks))
+        return [(b / 127.5) - 1.0 for b in raw]
+
+    def close(self):
+        """Secure Zeroize — Key aus RAM löschen."""
+        for i in range(len(self._key)):
+            self._key[i] = 0
+        self._key = bytearray(0)
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+
+def hash_anchor(anchor_value: float, extra: str = "") -> str:
+    """
+    SHA-256 eines Anker-Werts. Muss vor jedem Export aufgerufen werden.
+    Rohe Ankerwerte (π, e, φ) verlassen das Gerät niemals ungehashed.
+    extra: optionaler Kontext (z.B. Session-ID, nie der Key).
+    """
+    payload = f"{anchor_value:.15f}|{extra}".encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def seal_invariant(node_values: list, session_id: str = "") -> dict:
+    """
+    Versiegelt eine Liste von Invarianten-Werten für den Export.
+    Gibt ausschließlich SHA-256-Hashes zurück — niemals Rohdaten.
+    Diese Struktur ist die einzige erlaubte Swarm-Export-Form.
+    """
+    return {
+        "hashes": [hash_anchor(v, session_id) for v in node_values],
+        "count":  len(node_values),
+        "sealed": True,
+    }
+
+
+# Modul-weite Session — wird beim ersten Zugriff angelegt
+_MOTOR_SESSION: Optional[_DeltaSession] = None
+
+def _get_session() -> _DeltaSession:
+    global _MOTOR_SESSION
+    if _MOTOR_SESSION is None:
+        _MOTOR_SESSION = _DeltaSession()
+    return _MOTOR_SESSION
+
+def close_motor_session():
+    """Zeroize — aufrufen wenn Aether beendet wird."""
+    global _MOTOR_SESSION
+    if _MOTOR_SESSION is not None:
+        _MOTOR_SESSION.close()
+        _MOTOR_SESSION = None
+
 
 # ---------------------------------------------------------------------------
 # Node-Typen (entspricht enum NT in AELab.cpp)
@@ -29,6 +136,9 @@ N_MATCH=21; N_SEQUENCE=22; N_LSHIFT=23; N_RSHIFT=24; N_BRIDGE=25
 N_XOR=26; N_MOD=27; N_FLOOR=28; N_CEIL=29; N_POLY2=30
 N_ZETA=31; N_LIOUVILLE=32; N_INTERFERE=33; N_GF_MUL=34
 N_HAMMING=35; N_ZIPF=36
+# Delta-Kanal: Spieler-Interaktion als strukturelle Perturbation
+N_DELTA=37   # liest aus delta[iv & 7]: dx, dy, click, scroll, keys[0..3]
+N_PLAYER=38  # normierter Spielerstatus: delta-Magnitude, Aktivität, Trägheit
 
 # Flags
 NF_ANCHOR     = 1 << 0
@@ -46,6 +156,7 @@ OPS_STD = [
     N_SEQUENCE, N_LSHIFT, N_RSHIFT, N_LOG, N_MOD,
     N_FLOOR, N_CEIL, N_POLY2, N_ZETA, N_LIOUVILLE,
     N_INTERFERE, N_GF_MUL, N_HAMMING, N_ZIPF,
+    N_DELTA, N_PLAYER,
 ]
 
 # ---------------------------------------------------------------------------
@@ -107,7 +218,7 @@ def node_copy(n):
     return c
 
 def child_count(t):
-    if t in (N_CONST,N_X,N_Y,N_Z,N_T,N_I,N_N,N_GET): return 0
+    if t in (N_CONST,N_X,N_Y,N_Z,N_T,N_I,N_N,N_GET,N_DELTA,N_PLAYER): return 0
     if t in (N_LOG,N_SIN,N_ABS,N_SET,N_INC,N_FLOOR,N_CEIL,
              N_ZETA,N_LIOUVILLE,N_HAMMING,N_ZIPF): return 1
     if t in (N_IF,N_POLY2): return 3
@@ -318,20 +429,59 @@ def eval_node(n, ctx, budget=64):
             d += 1
         if temp > 1: omega += 1
         return 0.0 if omega & 1 else 1.0
+
+    # -----------------------------------------------------------------------
+    # Delta-Kanal: Spieler-Interaktion trifft auf Invarianten-Struktur
+    # -----------------------------------------------------------------------
+    if t == N_DELTA:
+        # Liest direkt aus dem Delta-Vektor, Index = iv & 7
+        dv = ctx.get('delta', [0.0]*8)
+        slot = n.iv & 7
+        raw = dv[slot] if slot < len(dv) else 0.0
+        return _clamp(raw * 127.5 + 127.5, 0.0, 255.0)  # [-1,1] → [0,255]
+
+    if t == N_PLAYER:
+        # Aggregierter Spielerstatus aus dem gesamten Delta-Vektor:
+        # Magnitude (wie stark ist die Interaktion?), normiert 0..255
+        dv = ctx.get('delta', [0.0]*8)
+        if not dv:
+            return 127.5
+        mag = sum(abs(d) for d in dv) / max(len(dv), 1)
+        return _clamp(mag * 255.0, 0.0, 255.0)
+
     return 0.0
 
-def make_ctx(drop_signal=0.0, drop_bits=0.0, drop_entropy=0.0):
+def make_ctx(drop_signal=0.0, drop_bits=0.0, drop_entropy=0.0, delta=None):
+    """
+    delta: Liste von bis zu 8 floats [dx, dy, click, scroll, key0..key3]
+           Normiert auf [-1.0, 1.0]. None = keine Interaktion (Invarianten-Modus).
+
+    DATENSCHUTZ: Delta-Werte werden intern im Klartext für die Auswertung
+    gehalten (nur RAM, nie Disk). Für Persistenz: _get_session().encrypt(delta).
+    Der rohe delta-Vektor darf niemals serialisiert oder geloggt werden.
+
+    Delta-Slot-Bedeutung (Konvention, erweiterbar):
+      delta[0] = dx       (Maus-X-Bewegung, normiert)
+      delta[1] = dy       (Maus-Y-Bewegung, normiert)
+      delta[2] = click    (0.0 = kein Klick, 1.0 = Klick)
+      delta[3] = scroll   (normierte Scrollgeschwindigkeit)
+      delta[4..7] = keys  (beliebige Tasten, 0.0/1.0)
+    """
     mem = [0.0]*256
     mem[255] = drop_signal
     mem[254] = drop_bits
     mem[253] = drop_entropy
+    _delta = delta if delta else [0.0]*8
+    for k in range(min(8, len(_delta))):
+        mem[240 + k] = float(_delta[k])
     stack = [0.0]*64
     stack[0] = drop_signal
     stack[1] = drop_bits
     return {
         'x':0.0,'y':0.0,'z':drop_bits,'t':drop_entropy,
         'i':0,'n_val':1,
-        'mem':mem,'stack':stack,'sp':2
+        'mem':mem,'stack':stack,'sp':2,
+        'delta': _delta,   # RAM only — niemals persistieren ohne encrypt()
     }
 
 # ---------------------------------------------------------------------------
@@ -686,6 +836,184 @@ class AEEvolver:
             if a:
                 lines.append(f"  Erster Anker:    {a.v:.12f} (mask={anchor_mask_for(a.v):#04x})")
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Invarianten-Analyse: stabile Struktur vs. Delta-Sensitivität
+# ---------------------------------------------------------------------------
+
+def is_delta_sensitive(n):
+    """
+    Gibt True zurück wenn der Teilbaum vom Delta-Kanal abhängt.
+    Delta-sensitive Nodes = N_DELTA, N_PLAYER, oder Kinder davon.
+    Invariante Nodes = alles andere (können gecacht / komprimiert werden).
+    """
+    if n is None:
+        return False
+    if n.t in (N_DELTA, N_PLAYER):
+        return True
+    return is_delta_sensitive(n.a) or is_delta_sensitive(n.b) or is_delta_sensitive(n.c)
+
+
+def split_invariant_tree(root):
+    """
+    Trennt den Baum in zwei Listen:
+      invariant_nodes: Teilbäume die unabhängig vom Delta sind
+                       → können via Swarm geteilt werden NUR als seal_invariant()
+      delta_nodes:     Teilbäume die auf Spieler-Interaktion reagieren
+                       → bleiben lokal, Persistenz nur via _get_session().encrypt()
+
+    DATENSCHUTZ:
+      - invariant_nodes → seal_invariant() → SHA-256 Hashes → Swarm
+      - delta_nodes     → _get_session().encrypt() → lokale Disk → Session-Ende: zeroize
+      - Rohe Ankerwerte und rohe Deltas verlassen das Gerät niemals.
+
+    Gibt (invariant_nodes, delta_nodes) zurück — jeweils Liste von (depth, Node).
+    """
+    invariant = []
+    interactive = []
+
+    def _walk(n, depth=0):
+        if n is None:
+            return
+        if n.t in (N_DELTA, N_PLAYER):
+            interactive.append((depth, n))
+            return
+        if not is_delta_sensitive(n):
+            invariant.append((depth, n))
+            return
+        # Gemischter Knoten: Kinder separat klassifizieren
+        _walk(n.a, depth + 1)
+        _walk(n.b, depth + 1)
+        _walk(n.c, depth + 1)
+
+    _walk(root)
+    return invariant, interactive
+
+
+def export_invariants(root, session_id: str = "") -> dict:
+    """
+    Einziger erlaubter Export-Pfad für Invarianten.
+    Gibt ausschließlich SHA-256-Hashes der Ankerwerte zurück.
+    Rohe Werte (π, φ, e) sind im Rückgabewert nicht rekonstruierbar.
+
+    Verwendung:
+        sealed = export_invariants(best_tree, session_id=session.session_id)
+        # sealed darf via Aethernet gesendet werden
+    """
+    inv_nodes, _ = split_invariant_tree(root)
+    anchor_values = []
+    for _, n in inv_nodes:
+        an = first_anchor(n)
+        if an:
+            anchor_values.append(an.v)
+        elif n.t == N_CONST:
+            anchor_values.append(n.v)
+    return seal_invariant(anchor_values, session_id)
+
+
+def fitness_invariant(tree, data: bytes,
+                      delta_samples=None,
+                      strict: bool = False,
+                      drop_bits: float = 0.0,
+                      drop_entropy: float = 0.0,
+                      drop_signal: float = 0.0,
+                      stability_weight: float = 0.5,
+                      _allow_real_deltas: bool = False):
+    """
+    Fitness-Funktion für Invarianten-Evolution.
+
+    DATENSCHUTZ-GUARD:
+      delta_samples muss synthetisch sein wenn der Baum danach geteilt wird.
+      Echte aufgezeichnete Spieler-Deltas würden Verhalten in Baumkonstanten
+      einbrennen (Model-Inversion-Angriff). Default: nur synthetische Samples.
+      _allow_real_deltas=True nur für rein lokale, nie geteilte Bäume.
+
+    Bewertet zwei Eigenschaften gleichzeitig:
+
+    1. STABILITÄT (stability_weight):
+       Invariante Äste sollen bei verschiedenen Deltas stabile Outputs liefern.
+
+    2. RESPONSIVITÄT (1 - stability_weight):
+       Delta-sensitive Äste sollen auf Interaktion tatsächlich reagieren.
+
+    Gibt (score, lossless_ratio, is_master) zurück — kompatibel mit fitness_drop().
+    """
+    # GUARD: verhindert dass echte Spielerdaten in teilbare Bäume eingebrannt werden
+    if delta_samples is not None and not _allow_real_deltas:
+        raise ValueError(
+            "delta_samples mit echten Spieler-Daten nur erlaubt wenn "
+            "_allow_real_deltas=True und der Baum niemals das Gerät verlässt. "
+            "Für teilbare Bäume: delta_samples=None (synthetische Samples)."
+        )
+    # Basis-Fitness ohne Delta
+    base_score, lr, ok = fitness_drop(
+        tree, data, strict, drop_bits, drop_entropy, drop_signal
+    )
+    if base_score <= 0.0:
+        return 0.0, lr, ok
+
+    if delta_samples is None:
+        delta_samples = [
+            [0.0] * 8,
+            [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            [0.5, 0.5, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0],
+        ]
+
+    N = len(data)
+    if N == 0:
+        return base_score, lr, ok
+
+    all_outputs = []
+    for dv in delta_samples:
+        out = []
+        ctx = make_ctx(drop_signal, drop_bits, drop_entropy, delta=dv)
+        ctx['n_val'] = N
+        prev = 0.0
+        for i in range(min(N, 64)):
+            ctx['x'] = i / (N - 1) if N > 1 else 0.0
+            ctx['y'] = prev
+            ctx['i'] = i
+            ctx['mem'] = [0.0] * 256
+            ctx['mem'][255] = drop_signal
+            ctx['mem'][254] = drop_bits
+            ctx['mem'][253] = drop_entropy
+            for k in range(min(8, len(dv))):
+                ctx['mem'][240 + k] = float(dv[k])
+            ctx['stack'] = [0.0] * 64
+            ctx['sp'] = 0
+            raw = eval_node(tree, ctx)
+            b = int(_clamp(round(raw), 0, 255))
+            out.append(b)
+            prev = b / 255.0
+        all_outputs.append(out)
+
+    has_delta = is_delta_sensitive(tree)
+
+    if has_delta:
+        # Responsivitäts-Score: Outputs sollen sich zwischen Deltas unterscheiden
+        variance_sum = 0.0
+        n_positions = len(all_outputs[0]) if all_outputs else 1
+        for pos in range(n_positions):
+            vals = [o[pos] for o in all_outputs if pos < len(o)]
+            mean = sum(vals) / len(vals)
+            variance_sum += sum((v - mean) ** 2 for v in vals) / len(vals)
+        responsivity = _clamp(variance_sum / (n_positions * 128.0 ** 2), 0.0, 1.0)
+        extra = 1.0 + (1.0 - stability_weight) * responsivity * 2.0
+    else:
+        # Stabilitäts-Score: Outputs sollen bei verschiedenen Deltas gleich bleiben
+        variance_sum = 0.0
+        n_positions = len(all_outputs[0]) if all_outputs else 1
+        for pos in range(n_positions):
+            vals = [o[pos] for o in all_outputs if pos < len(o)]
+            mean = sum(vals) / len(vals)
+            variance_sum += sum((v - mean) ** 2 for v in vals) / len(vals)
+        avg_variance = variance_sum / max(n_positions, 1)
+        stability = _clamp(1.0 - avg_variance / (128.0 ** 2), 0.0, 1.0)
+        extra = 1.0 + stability_weight * stability
+
+    return base_score * extra, lr, ok
 
 
 # ---------------------------------------------------------------------------

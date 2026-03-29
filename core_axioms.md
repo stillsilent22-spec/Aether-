@@ -1,49 +1,87 @@
-core_axioms.md
-# Aether: A Protocol for Structurally Emergent Metadynamic Semantics
+# Aether — Core Design Principles
 
-Aether is an open-source protocol for data integrity based on **topological invariance** rather than format-specific encoding. 
-
-### The Core Postulate
-Current digital systems treat information as static containers, leading to lossy representation and systemic bias. Aether posits that true information integrity resides in the **structural isomorphism** between disparate data domains. Meaning is not assigned via labels; it emerges as a mathematical necessity from the interaction between raw entropy and an evolving, learning observer.
-
-### Aether Meta-Prompt (Signal Doctrine)
-Treat every incoming signal as a multi-layer structural object:
-- **Physical layer:** Fourier decomposition, spectral entropy, interference patterns.
-- **Fractal scale layer:** self-similarity, recurrence across scales.
-- **Observer-relative layer:** residual uncertainty and perspective dependence.
-- **Symmetry layer:** Noether principle (detected symmetry implies a derived conserved quantity).
-
-Operational rules:
-- Use Fourier in two ways: as a real operator (frequency analysis, noise separation, delta-FFT) and as a proxy label for structural coherence in signal space.
-- Use fractal diagnostics to detect scale symmetries.
-- Use interference diagnostics to expose coherence and phase relationships between nodes.
-- Use observer-relative residual uncertainty to extract an invariant information core.
-- Use Noether mapping to derive a stabilizing conserved quantity from each detected symmetry.
-
-Evaluation principle:
-- Every transformation, node, and channel is scored by symmetry preservation vs. symmetry break.
-- Symmetry break indicates information loss, instability, or anomaly.
-- Symmetry preservation indicates efficiency, coherence, and improved routing quality.
-
-### The Three Axioms of Aether
-1. **Structural:** Information is a topological state defined by geometric invariants. Data integrity is measured by the persistence of these structures, not by the fidelity of a file format.
-2. **Emergent:** Semantic meaning is not injected; it emerges as the mathematical delta between raw entropy and established structural constants, reaching coherence only when the entropy gap is resolved.
-3. **Metadynamic:** The system utilizes a feedback-driven observer (a Heisenberg-like state) that dynamically recalibrates its validation rules based on the evolving structural density of the data stream.
-
-### Why This Matters
-By utilizing structural invariants, Aether detects isomorphisms across unrelated domains (e.g., audio harmonics, biological signals, and financial volatility). This allows for:
-* **Format-Agnostic Integrity:** Verification of data structure, independent of its container.
-* **Lossless Reconstruction:** Rebuilding states via mathematical anchors instead of bit-for-bit replication.
-* **Bias-Resistant Consensus:** Since truth is defined by topological stability rather than social consensus, the system is mathematically resistant to semantic manipulation.
-
-### Research Objective
-This protocol investigates the **entropy-gap lower bound**: the fundamental limit of uncertainty between raw data manifolds and their underlying invariant backbone. We explore whether these invariants serve as reliable anchors for a universal information protocol.
-
-### Implementation
-The core engine utilizes an observer-relative process:
-* `H_lambda(X, t) = H(X | M_t)`
-* Where `M_t` is the meta-dynamic structural model at time `t`.
+Aether is an open-source, local analysis system that extracts and compares measurable structural
+properties of arbitrary data. All computations are deterministic and reproducible. No raw data
+leaves the device.
 
 ---
-*Aether is an independent research project focused on first-principles computational foundations.*
+
+## Design Foundation
+
+Modern analysis pipelines typically depend on labelled training data, cloud infrastructure, or
+opaque statistical models. Aether is built on a different premise: many structurally relevant
+properties of data can be measured directly from the raw byte stream, without content-level
+interpretation and without any prior training.
+
+These properties — byte-level Shannon entropy, Zipf-law fit, FFT-derived periodicity, Benford
+leading-digit distribution, and Katz fractal dimension — are established information-theoretic
+and statistical metrics. They are computable from any binary or text input, domain-agnostic, and
+produce repeatable results on identical inputs.
+
+---
+
+## Operating Principles
+
+### 1. Measurement over interpretation
+
+Aether does not classify content. It computes numerical signatures from data. A high byte-entropy
+value does not mean a file is encrypted — it means the byte distribution is approximately uniform.
+The interpretation is the responsibility of the operator, who has domain context that Aether does not.
+
+### 2. Structural comparison without content exposure
+
+Two data objects can be compared via their structural signature vectors without either party
+disclosing the underlying data. Distance metrics (cosine similarity, L2 norm) applied to signature
+vectors yield a scalar that expresses structural proximity. Whether proximity implies semantic
+similarity is a domain-specific question that Aether does not answer.
+
+### 3. Deterministic output
+
+Given the same input, Aether always produces the same structural signature. There is no sampling,
+no randomised embedding, no non-deterministic inference step. This makes every result auditable
+and reproducible by a third party with access to the same input.
+
+### 4. Local execution and privacy by architecture
+
+All computations run on the local machine. No raw data, delta, or intermediate result is
+transmitted externally. Structural anchors stored in the public registry are derived via SHA-256;
+the preimage (raw data) cannot be reconstructed from the anchor.
+
+---
+
+## Metric Reference
+
+| Metric | Formula / Method | Measured property |
+|---|---|---|
+| Shannon entropy | H(X) = −Σ p(x) log₂ p(x) | Byte-distribution uniformity |
+| Zipf α | Power-law fit f ∝ r^−α | Token-frequency distribution shape |
+| FFT periodicity | Dominant peak in FFT of block-entropy sequence | Structural repetition / cyclicity |
+| Benford score | KL-divergence from log₁₀(1+1/d) | Leading-digit naturalness in numeric data |
+| Katz dimension | Normalised fractal curve length | Self-similarity, structural complexity |
+| DBSCAN clusters | Density-based clustering, ε-neighbourhood | Group structure without label assignment |
+
+No proprietary elements. Each metric is mathematically defined, independently re-implementable,
+and produces identical output for identical input.
+
+---
+
+## Scope and Limitations
+
+- Aether's structural metrics provide necessary, not sufficient, conditions for conclusions.
+  Elevated byte entropy is consistent with encryption, compression, and media — distinguishing
+  between them requires additional context.
+- The system does not perform semantic reasoning. Metric values do not carry inherent meaning;
+  they are inputs to operator-level analysis.
+- "Structurally Emergent Metadynamic Semantics" (SEMS) is a project-internal working label for
+  the research direction. It is not a recognised scientific field and does not imply claims
+  beyond what the implemented algorithms demonstrably compute.
+- The analogy names used for some metrics (Noether score for cosine similarity of token vectors,
+  Heisenberg score for absolute-statement density) are pedagogical shorthand, not physico-
+  mathematical claims. The underlying computations are straightforward statistical operations.
+
+---
+
+*Aether is an independent software project. All claims about system behaviour are bounded by the
+implemented algorithms documented in this repository. No correctness guarantees extend beyond
+what is verifiable from the source code and test suite.*
 

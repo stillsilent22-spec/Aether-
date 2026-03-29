@@ -10,11 +10,17 @@ Status: Technical Whitepaper for Source-Available Release
 
 ## 1. Introduction
 
-This whitepaper describes the technical foundations and architecture of Aether ??? a symbiotic proto-meta-layer OS for structural data analysis with integrated privacy.
+This whitepaper describes the technical foundations and architecture of Aether — a local structural analysis layer for deterministic data analysis with integrated privacy.
 
-Aether is not a classifier, not an AI model, and not an interpreter. It is a measurement instrument: it computes structural characteristics of arbitrary data and makes them comparable ??? without labels, without training, without revealing sensitive content.
+Aether is not a classifier, not an AI model, and not an interpreter. It is a measurement instrument: it computes structural characteristics of arbitrary data and makes them comparable — without labels, without training, without revealing sensitive content.
 
-**Core principle:** Structural similarity is an observation, not a statement. Whether it is relevant is decided by domain experts or further investigation ??? not by the system.
+**Core principle:** Structural similarity is an observation, not a statement. Whether it is relevant is decided by domain experts or further investigation — not by the system.
+
+> **Note on metric names:** Some metrics carry names from physics and mathematics
+> (Noether score, Heisenberg score, interference score). These names are **pedagogical
+> shorthand** — they describe the intuitive concept behind the metric, not a physical
+> analogy. The underlying computations are formally defined in Section 3.6 and are
+> grounded in statistical properties, not physical laws.
 
 ---
 

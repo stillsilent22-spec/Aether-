@@ -25,6 +25,17 @@ pub fn deep_scan_file<P: AsRef<Path>>(file_path: P) -> io::Result<DeepScanResult
     let anchor_count = data.iter().filter(|b| **b > 128).count();
     let geometry_info = format!("{} bytes, {} unique", data.len(), data.iter().copied().collect::<std::collections::HashSet<_>>().len());
     let font_info = if path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase() == "ttf" { "TrueType Font".to_string() } else { "-".to_string() };
-    let entropy = if data.is_empty() { 0.0 } else { (data.iter().map(|b| (*b as f32).ln()).sum::<f32>() / data.len() as f32).abs() };
+    // Shannon entropy: H(X) = -Σ p(x) * log2(p(x))
+    let entropy = if data.is_empty() {
+        0.0
+    } else {
+        let mut freq = [0u64; 256];
+        for &b in &data { freq[b as usize] += 1; }
+        let len = data.len() as f32;
+        freq.iter().filter(|&&c| c > 0).fold(0.0f32, |acc, &c| {
+            let p = c as f32 / len;
+            acc - p * p.log2()
+        })
+    };
     Ok(DeepScanResult { anchor_count, geometry_info, font_info, entropy })
 }

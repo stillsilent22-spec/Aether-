@@ -138,11 +138,15 @@ impl QuarantineIpcClient {
     pub fn with_root(root: PathBuf) -> Self {
         Self { root }
     }
+}
 
-    pub fn default() -> Self {
+impl Default for QuarantineIpcClient {
+    fn default() -> Self {
         Self::with_root(PathBuf::from("data").join("rust_shell").join("quarantine"))
     }
+}
 
+impl QuarantineIpcClient {
     pub fn classify(
         &self,
         query: &ClassifyQueryMessage,

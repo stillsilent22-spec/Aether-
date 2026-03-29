@@ -5,11 +5,13 @@
 // Funktionen:
 // - extract_archive: Entpackt unterstützte Archive in ein Zielverzeichnis
 //
-// Hinweis: Für 7z und RAR werden externe Tools benötigt (7z.exe, unrar.exe)
+// Hinweis: Für 7z und RAR werden externe Tools benötigt (7z.exe, unrar.exe).
+// ZIP/TAR/GZ-Extraktion ist derzeit deaktiviert (Crate nicht eingebunden).
 use std::io;
 use std::path::{Path, PathBuf};
 
-const SUPPORTED_ARCHIVES: &[&str] = &[".zip", ".tar", ".gz", ".7z", ".rar"];
+/// Formate, die `extract_archive` tatsächlich verarbeiten kann.
+const SUPPORTED_ARCHIVES: &[&str] = &[".7z", ".rar"];
 
 pub fn extract_archive<P: AsRef<Path>>(path: P, out_dir: P) -> Result<PathBuf, io::Error> {
     let ext = path.as_ref().extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
@@ -17,8 +19,8 @@ pub fn extract_archive<P: AsRef<Path>>(path: P, out_dir: P) -> Result<PathBuf, i
     match ext.as_str() {
         "zip" | "tar" | "gz" => {
             return Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Archiv-Extraktion deaktiviert (zip/tar nicht verfügbar)",
+                io::ErrorKind::Unsupported,
+                "ZIP/TAR/GZ-Extraktion ist nicht eingebunden — bitte 7z oder RAR verwenden",
             ));
         }
         "7z" => {

@@ -11,12 +11,17 @@ use std::io;
 use std::path::{Path, PathBuf};
 use chrono::Local;
 
-/// Legt ein Backup der Datei im Backup-Ordner an (C:/AetherBackup/YYYY-MM-DD/).
+/// Legt ein Backup der Datei im Backup-Ordner an.
+/// Der Backup-Ordner liegt unter `<user-home>/AetherBackup/<YYYY-MM-DD>/`.
 pub fn backup_file<P: AsRef<Path>>(src: P) -> io::Result<PathBuf> {
     let src_path = src.as_ref();
-    let date_folder = format!("C:/AetherBackup/{}", Local::now().format("%Y-%m-%d"));
-    let backup_dir = Path::new(&date_folder);
-    fs::create_dir_all(backup_dir)?;
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let date_str = Local::now().format("%Y-%m-%d").to_string();
+    let backup_dir = home.join("AetherBackup").join(&date_str);
+    fs::create_dir_all(&backup_dir)?;
     let mut dest = backup_dir.join(src_path.file_name().unwrap_or_default());
     if dest.exists() {
         let timestamp = Local::now().format("%H%M%S");

@@ -9,11 +9,11 @@ python start.py            # launch Aether
 
 Solo genesis mode is supported — no second node required to start.
 
-> **We are burning the future to simulate intelligence. Aether is the alternative: a local, deterministic, mathematically grounded instrument for measuring structure, not generating guesses. No labels. No training. No cloud. No hallucinations. Only information theory, executed locally, with privacy as an architectural principle.**
+> **Aether is a local, deterministic, label-free analysis system. It measures structural properties of arbitrary data using established information-theoretic methods — Shannon entropy, Zipf fit, FFT periodicity, Benford score, Katz fractal dimension — without cloud services, training data, or black-box models. All computation runs on-device. No raw data leaves the machine.**
 
-> **Wir verbrennen die Zukunft, um Intelligenz zu simulieren. Aether ist die Alternative: ein lokales, deterministisches, mathematisch fundiertes Instrument zur Messung von Struktur, nicht zur Erzeugung von Vermutungen. Keine Labels. Kein Training. Keine Cloud. Keine Halluzinationen. Nur Informationstheorie, lokal ausgeführt, mit Privatsphäre als Architekturprinzip.**
+> **Aether ist ein lokales, deterministisches Analysesystem ohne Labels. Es misst Struktureigenschaften beliebiger Daten mit etablierten informationstheoretischen Methoden — ohne Cloud, ohne Trainingsdaten, ohne Black-Box-Modelle. Alle Berechnungen laufen lokal. Keine Rohdaten verlassen das Gerät.**
 
-**Symbiotischer Proto-Meta-Layer-OS für strukturelle Datenanalyse — ohne Labels, ohne Cloud, ohne Halluzinationen.**
+**Lokaler Struktur-Analyse-Layer — ohne Labels, ohne Cloud, ohne Halluzinationen.**
 
 Aether berechnet messbare Struktureigenschaften beliebiger Daten und macht sie vergleichbar:
 Shannon-Entropie, Zipf-Konformität, Fourier-Periodizität, Benford-Score, fraktale Dimension (Katz),

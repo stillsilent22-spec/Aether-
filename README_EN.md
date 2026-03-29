@@ -1,10 +1,8 @@
 ﻿# Aether
 
-> **We are burning the future to simulate intelligence. Aether is the alternative: a local, deterministic, mathematically grounded instrument for measuring structure, not generating guesses. No labels. No training. No cloud. No hallucinations. Only information theory, executed locally, with privacy as an architectural principle.**
+> **Aether is a local, deterministic, label-free analysis system. It measures structural properties of arbitrary data using established information-theoretic methods — Shannon entropy, Zipf fit, FFT periodicity, Benford score, Katz fractal dimension — without cloud services, training data, or black-box models. All computation runs on-device. No raw data leaves the machine.**
 
-> **Wir verbrennen die Zukunft, um Intelligenz zu simulieren. Aether ist die Alternative: ein lokales, deterministisches, mathematisch fundiertes Instrument zur Messung von Struktur, nicht zur Erzeugung von Vermutungen. Keine Labels. Kein Training. Keine Cloud. Keine Halluzinationen. Nur Informationstheorie, lokal ausgeführt, mit Privatsphäre als Architekturprinzip.**
-
-**Symbiotic proto-meta-layer OS for structural data analysis — no labels, no cloud, no hallucinations.**
+**Local structural analysis layer — no labels, no cloud, no hallucinations.**
 
 Aether computes measurable structural properties of arbitrary data and makes them comparable:
 Shannon entropy, Zipf compliance, Fourier periodicity, Benford score, fractal dimension (Katz),

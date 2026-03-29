@@ -188,7 +188,15 @@ impl CapsuleViewState {
             katz_dimension: value_as_f32(metrics.get("katz_dimension")),
             sce_score: value_as_f32(metrics.get("sce_score")),
             bayes_confidence: value_as_f32(metrics.get("bayes_confidence")),
-            trust_score: value_as_f32(metrics.get("trust_score")),
+            trust_score: {
+                let raw = value_as_f32(metrics.get("trust_score"));
+                if raw > 0.0 { raw } else {
+                    let sym = value_as_f32(metrics.get("symmetry"));
+                    let bc  = value_as_f32(metrics.get("bayes_confidence"));
+                    let nc  = value_as_f32(metrics.get("noether_consistency"));
+                    (0.40 * sym + 0.35 * bc + 0.25 * nc).clamp(0.0, 1.0)
+                }
+            },
             noether_consistency: value_as_f32(metrics.get("noether_consistency")),
             delta_ratio: value_as_f32(metrics.get("delta_ratio")),
             changed_bytes: local_delta.get("changed_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
@@ -2331,8 +2339,13 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
     }
 
     fn view_data(&self) -> Element<'_, Message> {
+        let cyan = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+        let amber = Color::from_rgb8(0xD4, 0xA0, 0x42);
+        let purple = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let green = Color::from_rgb8(0x4C, 0xD9, 0x6E);
         let capsule_state = self.capsule_state.as_ref();
         let structure_map_state = self.structure_map_state.as_ref();
+        let compression_state = self.compression_state.as_ref();
         let analysis_detail = match (capsule_state, structure_map_state, self.last_analysis.as_ref()) {
             (Some(capsule), Some(structure_map), Some(analysis)) => format!(
                 "{}\nTrigger {} | {} | {} B\nRegion {} | Nodes {} | Edges {} | Anchors {} | Flags {}\n{}",
@@ -2358,6 +2371,28 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         let mut items = Column::new()
             .push(text("Data").size(24))
             .push(text("Dateien, Analysen, Deltas und Transformationen bleiben intern organisiert.").size(16))
+            .push(
+                container(
+                    column![
+                        text("Metriken direkt erklaeren").size(14).color(c(TEXT_H())),
+                        Row::new()
+                            .push(metric_help_chip("Entropie", "ENTROPY", purple))
+                            .push(metric_help_chip("Symmetrie", "SYMMETRY", cyan))
+                            .push(metric_help_chip("Delta", "DELTA", amber))
+                            .push(metric_help_chip("Kompression", "COMPRESSION", green))
+                            .spacing(8),
+                        Row::new()
+                            .push(metric_help_chip("H-Lambda", "H_LAMBDA", cyan))
+                            .push(metric_help_chip("SCE", "SCE", green))
+                            .push(metric_help_chip("Bayes", "BAYES", purple))
+                            .push(metric_help_chip("Trust", "TRUST", amber))
+                            .spacing(8),
+                    ]
+                    .spacing(8)
+                )
+                .padding([10, 12])
+                .style(panel_frame_style)
+            )
             .push(
                 Column::new()
                     .push(
@@ -2403,6 +2438,27 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     }
                 }
             );
+        items = items.push(
+            if let Some(compression) = compression_state {
+                info_card(
+                    "Kompression nach Analyse",
+                    &format!(
+                        "Format: {}\nOriginal: {} B | Komprimiert: {} B\nAenderung: {} B | Ratio: {:.4}\nGewinn: {:.2}%",
+                        compression.format,
+                        compression.original_bytes,
+                        compression.compressed_bytes,
+                        compression.changed_bytes,
+                        compression.ratio,
+                        compression.gain_percent,
+                    ),
+                )
+            } else {
+                info_card(
+                    "Kompression nach Analyse",
+                    "Noch keine Kompressionsdaten sichtbar. Nach einer erfolgreichen Datei-Analyse erscheint hier der konkrete Gewinn inklusive Ratio und geaenderter Bytes.",
+                )
+            }
+        );
         let entries = self.entries();
         if entries.is_empty() {
             items = items.push(info_card(
@@ -3333,7 +3389,14 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .cascade_metrics
             .as_ref()
             .map(|metrics| metrics.delta_convergence as f32)
-            .unwrap_or((1.0 - self.live_render_last_delta_ratio).clamp(0.0, 1.0));
+            .unwrap_or_else(|| {
+                if self.live_render_last_delta_ratio > 0.0 {
+                    (1.0 - self.live_render_last_delta_ratio).clamp(0.0, 1.0)
+                } else {
+                    // synthetic: grows from 0 → 1 as step_structure_map runs
+                    (self.structure_map_compression / 100.0).clamp(0.0, 1.0)
+                }
+            });
         let compression_gain = self
             .compression_state
             .as_ref()
@@ -3435,7 +3498,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             "Nach aussen gibt es nur lockere Verbindungen; Unterschiede sind wichtiger als Gleichlauf."
         };
         let anomaly_headline = if anomaly_flags.is_empty() {
-            "Derzeit sticht nichts stark aus dem Gesamtbild heraus."
+            "Derzeit sticht nichts stark aus dem Gesamtbild heraus.".to_owned()
         } else {
             format!("Auffaellig sind vor allem: {}.", anomaly_flags.join(", "))
         };
@@ -3797,6 +3860,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .padding([5, 10])
                 .style(secondary_button_style))
             .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+            .push(text(format!("Tick {}", self.tick_counter)).size(11).color(view_accent))
+            .push(text(format!("Iterationen {}", self.structure_map_anchor_hist.len())).size(11).color(soft))
+            .push(text(format!("Delta {:.0}%", delta_convergence * 100.0)).size(11).color(amber))
             .push(text(format!("Zoom {:.0}%", self.flow_sphere_zoom * 100.0)).size(11).color(c(TEXT_M())))
             .spacing(8)
             .align_y(Alignment::Center);
@@ -3949,6 +4015,29 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
         let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
         let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let amber   = Color::from_rgb8(0xD4, 0xA0, 0x42);
+
+        let metric_help_panel = container(
+            column![
+                text("Metriken direkt erklaeren").size(14).color(c(TEXT_H())),
+                Row::new()
+                    .push(metric_help_chip("Entropie", "ENTROPY", cyan))
+                    .push(metric_help_chip("Periodizitaet", "PERIODICITY", amber))
+                    .push(metric_help_chip("Zipf", "ZIPF", Color::from_rgb8(0x7F, 0xD9, 0xFF)))
+                    .push(metric_help_chip("Benford", "BENFORD", Color::from_rgb8(0xC0, 0x8D, 0xFF)))
+                    .spacing(8),
+                Row::new()
+                    .push(metric_help_chip("Katz FD", "KATZ", amber))
+                    .push(metric_help_chip("Noether", "NOETHER", green))
+                    .push(metric_help_chip("Delta Ratio", "DELTA", red))
+                    .push(metric_help_chip("Coherence", "COHERENCE", green))
+                    .push(metric_help_chip("Kompression", "COMPRESSION", cyan))
+                    .spacing(8),
+            ]
+            .spacing(8)
+        )
+        .padding([10, 12])
+        .style(panel_frame_style);
 
         let capsule_panel = if let Some(capsule) = &self.capsule_state {
             let mut rows = column![
@@ -4084,6 +4173,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
         let main_content = scrollable(
             column![
+                metric_help_panel,
                 capsule_panel,
                 structure_map_panel,
                 aelab_panel,
@@ -4155,11 +4245,35 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             ade_subpanel("AELAB · THREAT CORRELATION", text("No AELab correlation available yet").size(13).color(dim).into(), panel_s)
         };
 
+        let compression_panel_ade = if let Some(compression) = &self.compression_state {
+            let rows = column![
+                text(format!("format: {}", compression.format)).size(14).color(cyan),
+                text(format!("original: {} B  |  compressed: {} B", compression.original_bytes, compression.compressed_bytes)).size(14).color(dim),
+                text(format!("ratio: {:.4}  |  gain: {:.2}%", compression.ratio, compression.gain_percent)).size(16).color(if compression.gain_percent > 0.0 { green } else { dim }),
+                text(format!("changed bytes: {}", self.capsule_state.as_ref().map_or(0, |c| c.changed_bytes))).size(13).color(dim),
+            ];
+            ade_subpanel("COMPRESSION · RATIO", rows.into(), panel_s)
+        } else {
+            ade_subpanel("COMPRESSION · RATIO", text("Datei analysieren um Kompressionswerte zu sehen.").size(13).color(dim).into(), panel_s)
+        };
+
+        let reconstruct_link: Element<'_, Message> = if self.capsule_state.is_some() {
+            button(text("→ Rekonstruktion pruefen").size(12).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)))
+                .on_press(Message::TabSelected(Tab::Rekonstruktion))
+                .padding([6, 14])
+                .style(primary_button_style)
+                .into()
+        } else {
+            iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
+        };
+
         scrollable(
             column![
+                reconstruct_link,
                 capsule_panel,
                 structure_panel,
                 aelab_panel,
+                compression_panel_ade,
             ]
             .spacing(12)
             .padding([0.0f32, 8.0]),
@@ -4234,14 +4348,14 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 nav_item("3. Files", Tab::Data, self.active_tab),
                 nav_item("4. Chat", Tab::Chat, self.active_tab),
                 nav_item("5. Logs", Tab::Logs, self.active_tab),
-                text("Advanced").size(12).color(c(TEXT_D())),
-                nav_item("6. Symbiont", Tab::Symbiont, self.active_tab),
-                nav_item("7. Swarm Ops", Tab::SwarmOps, self.active_tab),
-                nav_item("8. Privacy", Tab::Privacy, self.active_tab),
+                text("Operations").size(12).color(c(TEXT_D())),
+                nav_item("6. Swarm Ops", Tab::SwarmOps, self.active_tab),
+                nav_item("7. Privacy", Tab::Privacy, self.active_tab),
                 text("Analysis").size(12).color(c(TEXT_D())),
-                nav_item("9. Threat Analysis", Tab::ADE, self.active_tab),
-                nav_item("10. FlowSphere", Tab::FlowSphere, self.active_tab),
-                nav_item("11. Delta Convergence", Tab::StructureMap, self.active_tab),
+                nav_item("8. Threat Analysis", Tab::ADE, self.active_tab),
+                nav_item("9. FlowSphere", Tab::FlowSphere, self.active_tab),
+                nav_item("10. Delta Convergence", Tab::StructureMap, self.active_tab),
+                nav_item("11. Symbiont", Tab::Symbiont, self.active_tab),
                 action_item(
                     if self.live_render_mode {
                         "12. Live Render deaktivieren".to_owned()
@@ -4252,13 +4366,11 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 ),
                 nav_item("13. Anchors", Tab::Anchors, self.active_tab),
                 text("Workspace").size(12).color(c(TEXT_D())),
-                nav_item("14. Browser", Tab::Browser, self.active_tab),
-                nav_item("15. YouTube", Tab::YouTube, self.active_tab),
-                nav_item("16. Reconstruction", Tab::Rekonstruktion, self.active_tab),
-                nav_item("17. Info", Tab::Imprint, self.active_tab),
+                nav_item("14. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("15. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D())),
-                nav_item("18. Runtime", Tab::Settings, self.active_tab),
-                nav_item("19. Launcher", Tab::Launcher, self.active_tab),
+                nav_item("16. Runtime", Tab::Settings, self.active_tab),
+                nav_item("17. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -4419,19 +4531,39 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             ..Default::default()
         });
 
+        let status_strip: Element<'_, Message> = if self.status_line.is_empty() {
+            iced::widget::Space::new(Length::Fill, Length::Fixed(0.0)).into()
+        } else {
+            container(
+                text(format!("\u{24d8}  {}", &self.status_line))
+                    .size(12)
+                    .color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
+            )
+            .padding([4, 16])
+            .width(Length::Fill)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.22, 0.14, 0.0, 0.96))),
+                border: Border { color: Color::from_rgb8(0xD4, 0xA0, 0x42), width: 1.0, radius: 0.0.into() },
+                ..Default::default()
+            })
+            .into()
+        };
+
         container(
             row![
                 shell_sidebar,
-                column![
-                    shell_header,
-                    container(main)
-                        .padding(6)
-                        .style(standard_card_style)
-                        .width(Length::Fill)
-                        .height(Length::Fill),
-                ]
-                .spacing(10)
-                .width(Length::Fill),
+                Column::new()
+                    .push(shell_header)
+                    .push(status_strip)
+                    .push(
+                        container(main)
+                            .padding(6)
+                            .style(standard_card_style)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                    )
+                    .spacing(10)
+                    .width(Length::Fill),
             ]
             .spacing(10),
         )
@@ -4465,11 +4597,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         let bar = row![
             text("⬡ AETHER").size(12).color(c(ACCENT())),
             quick_button("Control", Tab::Control),
-            quick_button("Symbiont", Tab::Symbiont),
+            quick_button("Files", Tab::Data),
             quick_button("FlowSphere", Tab::FlowSphere),
             quick_button("Delta Conv", Tab::StructureMap),
-            quick_button("Browser", Tab::Browser),
-            quick_button("YouTube", Tab::YouTube),
+            quick_button("ADE", Tab::ADE),
             quick_button("Logs", Tab::Logs),
             iced::widget::Space::new(Length::Fill, Length::Shrink),
             button(text(if self.live_render_mode { "Live Render: AUS" } else { "Live Render: AN" }).size(11).color(c(TEXT_H())))
@@ -4935,8 +5066,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
         let frame_payload = serde_json::json!({
             "tick": self.tick_counter,
-            "app_mode": format!("{:?}", self.app_mode),
-            "active_tab": format!("{:?}", self.active_tab),
             "runtime_profile": self.runtime_profile_label(),
             "services": process_rows,
             "backend": {
@@ -4950,6 +5079,12 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 "sample": os_processes.iter().take(120).cloned().collect::<Vec<String>>(),
             },
             "xor_delta": self.last_xor_delta.clone(),
+            "analysis_signal": {
+                "progress": self.analysis_progress,
+                "status": self.analysis_status,
+                "delta_ratio": self.live_render_last_delta_ratio,
+                "pixeldynamics": self.live_render_last_pixeldynamics,
+            },
         });
 
         let frame_bytes = serde_json::to_vec(&frame_payload).unwrap_or_default();
@@ -5091,20 +5226,19 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         match self.active_tab {
             Tab::Browser => Some(Tab::Browser),
             Tab::YouTube => Some(Tab::YouTube),
-            Tab::Home => match self.dashboard_nav.as_str() {
-                "Browser" => Some(Tab::Browser),
-                "YouTube" => Some(Tab::YouTube),
-                _ => None,
-            },
+            Tab::Home => None,
             _ => None,
         }
     }
 
     fn profile_tick_interval_ms(&self) -> u64 {
         let browser_like = self.browser_surface_mode().is_some();
+        let analysis_visual = matches!(self.active_tab, Tab::FlowSphere | Tab::StructureMap | Tab::ADE);
         match self.runtime_profile {
             RuntimeProfile::Auto => {
-                if browser_like {
+                if analysis_visual {
+                    120
+                } else if browser_like {
                     220
                 } else if self.analysis_running {
                     320
@@ -5113,21 +5247,27 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 }
             }
             RuntimeProfile::Balanced => {
-                if browser_like {
+                if analysis_visual {
+                    160
+                } else if browser_like {
                     260
                 } else {
                     650
                 }
             }
             RuntimeProfile::LowPower => {
-                if browser_like {
+                if analysis_visual {
+                    220
+                } else if browser_like {
                     420
                 } else {
                     1150
                 }
             }
             RuntimeProfile::Legacy => {
-                if browser_like {
+                if analysis_visual {
+                    320
+                } else if browser_like {
                     650
                 } else {
                     1600
@@ -5283,7 +5423,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 let target = match value.as_str() {
                     "Overview" => Some(Tab::Home),
                     "Control" => Some(Tab::Control),
-                    "Symbiont" => Some(Tab::Symbiont),
                     "Swarm Ops" => Some(Tab::SwarmOps),
                     "Privacy" => Some(Tab::Privacy),
                     "Logs" => Some(Tab::Logs),
@@ -5294,8 +5433,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     "Threat Graph" => Some(Tab::FlowSphere),
                     "Delta Convergence" => Some(Tab::StructureMap),
                     "Chat" => Some(Tab::Chat),
-                    "Browser" => Some(Tab::Browser),
-                    "YouTube" => Some(Tab::YouTube),
                     "Reconstruction" => Some(Tab::Rekonstruktion),
                     "Info" => Some(Tab::Imprint),
                     "Runtime" => Some(Tab::Settings),
@@ -5304,38 +5441,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
                 if let Some(tab) = target {
                     self.active_tab = tab;
-                    if self.active_tab == Tab::Browser {
-                        self.browser_address = "https://duckduckgo.com/".to_owned();
-                        match self.browser_embed.navigate(&self.browser_address) {
-                            Ok(()) => {
-                                self.sync_browser_embed();
-                                self.browser_note = "DuckDuckGo wurde im Dashboard geladen.".to_owned();
-                                self.status_line = self.browser_note.clone();
-                            }
-                            Err(err) => {
-                                self.browser_note =
-                                    format!("DuckDuckGo konnte im Dashboard nicht geladen werden: {err}");
-                                self.status_line = self.browser_note.clone();
-                            }
-                        }
-                    } else if self.active_tab == Tab::YouTube {
-                        self.youtube_address = "https://www.youtube.com/".to_owned();
-                        let url = self.youtube_address.clone();
-                        match self.browser_embed.navigate(&url) {
-                            Ok(()) => {
-                                self.sync_browser_embed();
-                                self.browser_note = "YouTube wurde im Dashboard geladen.".to_owned();
-                                self.status_line = self.browser_note.clone();
-                            }
-                            Err(err) => {
-                                self.browser_note =
-                                    format!("YouTube konnte im Dashboard nicht geladen werden: {err}");
-                                self.status_line = self.browser_note.clone();
-                            }
-                        }
-                    } else {
-                        self.browser_embed.hide();
-                    }
+                    self.browser_embed.hide();
                 }
             }
             Message::DashboardInfoToggle(key) => {
@@ -6049,13 +6155,16 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         Message::SymbiontEventsReceived,
                     ));
                 }
-                if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE {
-                    if !self.live_render_mode
-                        && self.structure_map_state.is_none()
-                        && self.structure_map_nodes.iter().all(|ring| ring.is_empty())
+                let analysis_visual_tab =
+                    matches!(self.active_tab, Tab::FlowSphere | Tab::StructureMap | Tab::ADE);
+                if analysis_visual_tab && !self.live_render_mode && self.capsule_state.is_none() {
+                    if self.structure_map_nodes.iter().all(|ring| ring.is_empty())
+                        || self.tick_counter % 2 == 0
                     {
                         self.step_structure_map();
                     }
+                }
+                if self.active_tab == Tab::StructureMap || self.active_tab == Tab::ADE || self.active_tab == Tab::FlowSphere {
                     return if queued_tasks.is_empty() {
                         Task::none()
                     } else {
@@ -6070,18 +6179,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         Task::batch(queued_tasks)
                     };
                 }
-                let (effective_browser_stride, boost_activity) = if self.live_render_mode && self.live_render_anchor_boost {
-                    // Real boost: reduce stride (faster sync) + enable high-load delta compression
-                    (self.browser_sync_stride.saturating_div(2).max(1), true)
-                } else {
-                    (self.browser_sync_stride.max(1), false)
-                };
+                let effective_browser_stride = self.browser_sync_stride.max(1);
                 if self.tick_counter % effective_browser_stride == 0 {
                     self.sync_browser_embed();
-                    // When boost is active, prioritize delta updates over full redraws
-                    if boost_activity {
-                        self.structure_map_compression = (self.structure_map_compression + 0.5).min(100.0);
-                    }
                 }
                 for event in self
                     .browser_embed
@@ -6249,7 +6349,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             text(vault_str).size(12).color(c(TEXT_M())),
             text(cpu_str).size(12).color(c(TEXT_M())),
             quick_button(self.ui_text("Kontrolle", "Control").to_owned(), Tab::Control),
-            quick_button(self.ui_text("Symbiont", "Symbiont").to_owned(), Tab::Symbiont),
             quick_button(self.ui_text("Swarm Ops", "Swarm Ops").to_owned(), Tab::SwarmOps),
             quick_button(self.ui_text("Threat", "Threat").to_owned(), Tab::ADE),
             quick_button(self.ui_text("FlowSphere", "FlowSphere").to_owned(), Tab::FlowSphere),
@@ -6343,25 +6442,33 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             ]
             .spacing(2)
         } else {
-            // Platzhalter für fehlende Panels
-            let mut col = Column::new();
-            col = col.push(text("[Pane Graph Placeholder]").size(14));
-            col = col.push(text("[KPIs Placeholder]").size(14));
-            let mut row1 = Row::new();
-            row1 = row1.push(text("[Risk Panel Placeholder]").size(14));
-            row1 = row1.push(text("[Threat Summary Panel Placeholder]").size(14));
-            col = col.push(row1.spacing(10));
-            let mut row2 = Row::new();
-            row2 = row2.push(text("[Table Panel Placeholder]").size(14));
-            row2 = row2.push(text("[Donut Panel Placeholder]").size(14));
-            row2 = row2.push(text("[Device Panel Placeholder]").size(14));
-            col = col.push(row2.spacing(10));
-            col = col.push(text("[Dropper Panel Placeholder]").size(14));
-            col = col.spacing(10);
-            col.spacing(2)
+            self.symbiont_events
+                .iter()
+                .rev()
+                .take(24)
+                .fold(Column::new().spacing(8), |col, event| {
+                    col.push(
+                        container(
+                            column![
+                                text(event).size(11).color(c(TEXT_M())),
+                            ]
+                            .spacing(2),
+                        )
+                        .padding([8, 10])
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgba(0.08, 0.13, 0.18, 0.92))),
+                            border: Border {
+                                color: Color::from_rgba(0.24, 0.54, 0.58, 0.90),
+                                width: 1.0,
+                                radius: 8.0.into(),
+                            },
+                            ..Default::default()
+                        })
+                    )
+                })
         };
 
-        container(
+        let sym_inner = container(
             column![
                 text("Symbiont Control").size(28).color(c(TEXT_H())),
                 text("Zentrale Stelle fuer Signal- und Strukturanalyse. Symbiont-Module leben teils im Backend, hier bekommst du klare Einstiegspunkte.")
@@ -6551,9 +6658,12 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .spacing(12)
         )
         .padding(12)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .width(Length::Fill);
+
+        scrollable(sym_inner)
+            .height(Length::Fill)
+            .width(Length::Fill)
+            .into()
     }
 
     fn view_swarm_ops(&self) -> Element<'_, Message> {
@@ -8727,6 +8837,39 @@ fn info_badge(tooltip_text: &'static str) -> Element<'static, Message> {
     })
     .padding([1, 5])
     .into()
+}
+
+fn metric_help_text(metric: &str) -> &'static str {
+    match metric {
+        "ENTROPY" => get_score_tooltip("SHANNON"),
+        "H_LAMBDA" => get_score_tooltip("H_LAMBDA"),
+        "SYMMETRY" => get_score_tooltip("SYMMETRY"),
+        "PERIODICITY" => get_score_tooltip("PERIODICITY"),
+        "SCE" => get_score_tooltip("SCE"),
+        "BAYES" => get_score_tooltip("BAYES"),
+        "TRUST" => get_score_tooltip("TRUST"),
+        "ZIPF" => "Zipf zeigt, ob Haeufigkeiten einem natuerlichen Rangmuster folgen. Hilfreich, um Sprache, Ereignisverteilungen und organische Wiederholungen von kuenstlichen Mustern zu trennen.",
+        "BENFORD" => "Benford prueft, ob fuehrende Ziffern natuerlich verteilt sind. Auffaellige Abweichungen koennen auf kuenstliche Erzeugung, Manipulation oder unnatuerliche Auswahl hindeuten.",
+        "KATZ" => "Katz FD beschreibt, wie verschlungen oder verzweigt ein Verlauf ist. Hoehere Werte bedeuten meist mehr Richtungswechsel und komplexere Pfade im Signal.",
+        "NOETHER" => "Noether Consistency zeigt, wie stark Grundmuster ueber Veraenderungen hinweg erhalten bleiben. Hohe Werte sprechen fuer stabile Erhaltungsstrukturen statt Bruechen.",
+        "DELTA" => "Delta Ratio misst, wie stark sich das aktuelle Signal gegen den letzten Zustand veraendert hat. Niedrigeres Delta heisst mehr Kontinuitaet, hoeheres Delta mehr Drift oder Bruch.",
+        "COHERENCE" => "Coherence fasst zusammen, wie gut die innere Struktur zusammenhaelt. Sie steigt, wenn Muster, Knoten und Wiederholungen sauber zueinander passen.",
+        "COMPRESSION" => "Kompression zeigt den verlustfreien Verdichtungsgewinn gegen das Original. Sichtbarer Gewinn bedeutet, dass Wiederholung oder Struktur vorhanden ist, die effizient beschrieben werden kann.",
+        _ => "Keine Erklaerung hinterlegt.",
+    }
+}
+
+fn metric_help_chip(label: &'static str, metric: &'static str, accent: Color) -> Element<'static, Message> {
+    button(text(label).size(11).color(Color::from_rgb8(0xE4, 0xEE, 0xF2)))
+        .on_press(Message::ShowTooltip(metric_help_text(metric).to_owned()))
+        .padding([6, 10])
+        .style(move |_: &Theme, _| button::Style {
+            background: Some(Background::Color(Color::from_rgba(accent.r * 0.18, accent.g * 0.18, accent.b * 0.18, 0.95))),
+            border: Border { color: accent, width: 1.0, radius: 9.0.into() },
+            text_color: Color::from_rgb8(0xE4, 0xEE, 0xF2),
+            ..Default::default()
+        })
+        .into()
 }
 
 #[allow(dead_code)]
