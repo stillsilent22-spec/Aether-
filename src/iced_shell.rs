@@ -1104,7 +1104,26 @@ impl AetherIcedShell {
             .map(|metrics| metrics.noether_consistency as f32)
             .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.noether_consistency))
             .unwrap_or(self.structure_map_compression / 100.0);
-        if self.backend_swarm_node_count == 0 || external_link_strength < 0.30 {
+        let trust = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.trust_score as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.trust_score))
+            .unwrap_or(self.structure_map_compression / 100.0);
+        let anomaly_pressure = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.anomaly_flags.len() as f32 / 4.0)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let reachable = self.backend_swarm_reachable_node_count;
+        if self.backend_swarm_node_count == 0
+            || external_link_strength < 0.42
+            || noether < 0.58
+            || trust < 0.52
+            || reachable < 2
+            || anomaly_pressure > 0.65
+        {
             return None;
         }
 
@@ -1138,6 +1157,58 @@ impl AetherIcedShell {
             external_link_strength * 100.0,
             self.backend_swarm_reachable_node_count
         ))
+    }
+
+    fn flow_sphere_broadcast_gate_details(&self) -> (bool, String, String) {
+        let external_link_strength = if self.backend_swarm_node_count == 0 {
+            0.0
+        } else {
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
+                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+                .clamp(0.0, 1.0)
+        };
+        let noether = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.noether_consistency as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.noether_consistency))
+            .unwrap_or(self.structure_map_compression / 100.0);
+        let trust = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.trust_score as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.trust_score))
+            .unwrap_or(self.structure_map_compression / 100.0);
+        let anomaly_pressure = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.anomaly_flags.len() as f32 / 4.0)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+
+        let gate_ok = self.backend_swarm_node_count > 0
+            && external_link_strength >= 0.42
+            && noether >= 0.58
+            && trust >= 0.52
+            && self.backend_swarm_reachable_node_count >= 2
+            && anomaly_pressure <= 0.65;
+
+        let summary = format!(
+            "Gate: Kopplung {:.0}% | Noether {:.0}% | Trust {:.0}% | Peers {} | Stoerdruck {:.0}%",
+            external_link_strength * 100.0,
+            noether * 100.0,
+            trust * 100.0,
+            self.backend_swarm_reachable_node_count,
+            anomaly_pressure * 100.0
+        );
+
+        let detail = if gate_ok {
+            "Broadcast darf vorgeschlagen werden, weil Aussenkopplung, Invarianz und Vertrauenslage gleichzeitig ueber den Mindestschwellen liegen und der Stoerdruck niedrig genug bleibt.".to_owned()
+        } else {
+            "Broadcast bleibt gesperrt, solange mindestens eine Schwelle unterschritten ist: Kopplung < 42%, Noether < 58%, Trust < 52%, weniger als 2 erreichbare Peers oder Stoerdruck > 65%.".to_owned()
+        };
+
+        (gate_ok, summary, detail)
     }
 
     fn set_flow_sphere_focus(&mut self, key: impl Into<String>) {
@@ -3829,6 +3900,8 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         };
         let (focus_title, focus_summary, focus_detail, focus_accent) =
             self.flow_sphere_focus_details(&self.flow_sphere_focus_key);
+        let (broadcast_gate_ok, broadcast_gate_summary, broadcast_gate_detail) =
+            self.flow_sphere_broadcast_gate_details();
         let view_accent = if self.flow_sphere_view_mode {
             Color::from_rgb8(0x9A, 0x67, 0xFF)
         } else {
@@ -4255,6 +4328,30 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .spacing(8)
             .align_y(Alignment::Center);
 
+        let legend_chip = |title: &'static str, detail: &'static str, accent: Color| {
+            container(
+                column![
+                    text(title).size(10).color(accent),
+                    text(detail).size(10).color(soft),
+                ]
+                .spacing(3),
+            )
+            .padding([8, 10])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.09, 0.13, 0.19, 0.90))),
+                border: Border { color: Color::from_rgba(accent.r, accent.g, accent.b, 0.55), width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        };
+
+        let legend_panel = Row::new()
+            .push(legend_chip("Violette Baender", "Verteilungsdichte im Innenraum", Color::from_rgb8(0x9A, 0x67, 0xFF)))
+            .push(legend_chip("Gruene Kerne", "stabile Verdichtungspunkte", Color::from_rgb8(0x4C, 0xD9, 0x6E)))
+            .push(legend_chip("Goldpulse", "Ueberlagerung und Takt", Color::from_rgb8(0xFF, 0xD7, 0x00)))
+            .push(legend_chip("Cyan-Orbit", "Peer-Verteilung und Aussenkopplung", Color::from_rgb8(0x7F, 0xD9, 0xFF)))
+            .push(legend_chip("Rotmarker", "Bruch oder Stoerdruck", Color::from_rgb8(0xD9, 0x50, 0x50)))
+            .spacing(8);
+
         let classification_panel = container(
             column![
                 text("Anker haben keine Vorabbezeichnung. Du kannst sie nach einer Analyse nur grob benennen, zum Beispiel als Word-Dokument oder Genomsequenz.")
@@ -4287,6 +4384,22 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     .spacing(8)
                     .align_y(Alignment::Center),
                 broadcast_panel,
+                container(
+                    column![
+                        text(if broadcast_gate_ok { "Broadcast-Schwellen: erfuellt" } else { "Broadcast-Schwellen: noch nicht erfuellt" })
+                            .size(10)
+                            .color(if broadcast_gate_ok { green } else { amber }),
+                        text(broadcast_gate_summary.clone()).size(10).color(c(TEXT_H())),
+                        text(broadcast_gate_detail.clone()).size(10).color(dim),
+                    ]
+                    .spacing(3)
+                )
+                .padding([8, 10])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.08, 0.11, 0.16, 0.92))),
+                    border: Border { color: if broadcast_gate_ok { green } else { amber }, width: 1.0, radius: 8.0.into() },
+                    ..Default::default()
+                }),
                 text("Lokal oder Global waehlt die Leseperspektive. Intern und Extern schalten die Ebenen sichtbar. Broadcast bleibt bis zur Zustimmung rein lokal.")
                     .size(10)
                     .color(soft),
@@ -4383,6 +4496,16 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         text(format!("ANGEKLICKT: {}", focus_title)).size(11).color(soft),
                         text(focus_summary).size(15).color(c(TEXT_H())),
                         text(focus_detail).size(11).color(dim),
+                        text(broadcast_gate_summary.clone()).size(10).color(if broadcast_gate_ok { Color::from_rgb8(0x7F, 0xD9, 0xFF) } else { amber }),
+                        text(if self.flow_sphere_broadcast_proposal.is_some() {
+                            "Vorschau: Die Analyse hat einen Broadcast-Vorschlag gefunden, wartet aber noch auf deine Zustimmung."
+                        } else if self.flow_sphere_broadcast_visible.is_some() {
+                            "Vorschau: Ein freigegebener Broadcast ist sichtbar und bleibt an die aktuelle Strukturentscheidung gebunden."
+                        } else {
+                            broadcast_gate_detail.as_str()
+                        })
+                        .size(10)
+                        .color(soft),
                         text("Tipp: Farbchips oder Knoten direkt anklicken, um den Fokus zu wechseln.").size(10).color(soft),
                     ]
                     .spacing(4)
@@ -4401,6 +4524,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             Column::new()
                 .push(header)
                 .push(interaction_bar)
+                .push(legend_panel)
                 .push(overview_row)
                 .push(focus_row)
                 .push(focus_panel)
