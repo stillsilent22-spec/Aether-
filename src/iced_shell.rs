@@ -473,7 +473,6 @@ enum Message {
     RuntimeProfileSelected(RuntimeProfile),
     UiLanguageSelected(UiLanguage),
     DashboardSearchChanged(String),
-    DashboardNavSelected(String),
     DashboardInfoToggle(String),
     ChatUserSearchChanged(String),
     PrivatePartnerSelected(String),
@@ -5758,34 +5757,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 };
             }
             Message::DashboardSearchChanged(value) => self.dashboard_search = value,
-            Message::DashboardNavSelected(value) => {
-                self.dashboard_nav = value.clone();
-                self.dashboard_info_key = None;
-                self.dashboard_info_open_tick = self.tick_counter;
-                let target = match value.as_str() {
-                    "Overview" => Some(Tab::Home),
-                    "Control" => Some(Tab::Control),
-                    "Swarm Ops" => Some(Tab::SwarmOps),
-                    "Privacy" => Some(Tab::Privacy),
-                    "Logs" => Some(Tab::Logs),
-                    "Files" => Some(Tab::Data),
-                    "Anchors" => Some(Tab::Anchors),
-                    "Threat Analysis" => Some(Tab::ADE),
-                    "FlowSphere" => Some(Tab::FlowSphere),
-                    "Threat Graph" => Some(Tab::FlowSphere),
-                    "Delta Convergence" => Some(Tab::StructureMap),
-                    "Chat" => Some(Tab::Chat),
-                    "Reconstruction" => Some(Tab::Rekonstruktion),
-                    "Info" => Some(Tab::Imprint),
-                    "Runtime" => Some(Tab::Settings),
-                    _ => None,
-                };
-
-                if let Some(tab) = target {
-                    self.active_tab = tab;
-                    self.browser_embed.hide();
-                }
-            }
             Message::DashboardInfoToggle(key) => {
                 if self.dashboard_info_key.as_ref() == Some(&key) {
                     self.dashboard_info_key = None;

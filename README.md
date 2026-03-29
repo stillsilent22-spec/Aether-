@@ -35,32 +35,36 @@ Permutation Entropy (Bandt & Pompe). Alle Berechnungen laufen lokal. Keine Rohda
 - Root-Level-Dateien bleiben nur als Kompatibilitaets-Shims fuer Legacy-Imports bestehen.
 - Bevorzuge neue Imports in der Form `from modules.<name> import ...`.
 
-## Why Aether matters
+## Aktueller Stand
 
-Aether is a local, deterministic analysis and reconstruction system.
-It extracts structure from data without cloud services, without black-box models, and without hidden semantics.
-Everything is transparent, reproducible, and audit-grade.
+Aether ist ein Einzelprojekt in aktivem Aufbau — kein fertiges Produkt, kein peer-reviewed System.
+Der Kern ist funktionsfähig: lokale Strukturanalyse, Live-Render-Modus, DNA-Vault, Delta-Codec, Rust-GUI.
+Was fehlt: externe Validierung, Benchmarks gegen etablierte Verfahren, produktionsreifer Fehlerbehandlungsrahmen.
 
-Aether is designed for people who need clarity where conventional pipelines fail:
-researchers, analysts, forensic experts, scientists, engineers - anyone who works with complex signals that resist categorization.
+Die wissenschaftlichen Referenzen (Shannon, Bandt & Pompe, Benford, Noether) sind korrekt eingesetzt —
+die Kombination zu einem kohärenten System ist der eigene Beitrag. Ob diese Kombination einen
+messbaren Mehrwert gegenüber einzelnen Methoden liefert, ist offen und testbar.
 
-### Efficiency
+### Was funktioniert
 
-Aether does not rely on massive models or GPU clusters.
-Its architecture is built around minimal rules, explicit transformations, and deterministic kernels.
-This makes Aether extremely efficient: it runs on ordinary hardware while still revealing deep structural patterns.
+- Deterministische Strukturanalyse (Shannon, Zipf, Benford, Katz, Permutation Entropy) auf beliebigen Dateitypen
+- XOR-Delta Frame-Codec mit Vault-Lookup (schneller als O(n·log n) bei Warm-Vault)
+- Lokale Rust-GUI mit Live-Render-Modus, Noether-Symmetriedetektor, Bits-per-Joule-Anzeige
+- DNA-Vault-Format: Baum-Serialisierung, Roundtrip-verifiziert
+- Zero-Knowledge-Anker-Architektur: SHA-256-basiert, nicht invertierbar
+- Solo-Genesis ohne zweiten Node
 
-### Democratization
+### Was offen ist
 
-Because Aether is lightweight and fully local, every user contributes to a distributed ecosystem of computation.
-More users means more total available compute - not centralized, but spread across many independent machines.
-Aether scales horizontally through people, not through data centers.
+- Externe Evaluierung gegen Baseline-Verfahren fehlt
+- Swarm-Netzwerkschicht ist konzeptionell, nicht produktionsreif
+- Kein formales Peer-Review
 
-### Call for collaborators
+### Mitarbeit
 
-Aether is built by one person - for now.
-If you see potential in this paradigm and want to help push it to the next level (kernel, models, UI, visualization, theory, or tooling), reach out.
-Aether is ready to grow.
+Einzelprojekt, aktiv in Entwicklung. Wenn die Grundidee — strukturelle Analyse ohne Label,
+Cloud-Zwang oder Black Box — für dich relevant ist: Pull Requests, Issues oder
+direkte Kontaktaufnahme sind willkommen.
 
 ---
 
