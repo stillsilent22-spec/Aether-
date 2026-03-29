@@ -6,7 +6,7 @@
 
 Aether computes measurable structural properties of arbitrary data and makes them comparable:
 Shannon entropy, Zipf compliance, Fourier periodicity, Benford score, fractal dimension (Katz),
-attractor stability. All computation runs locally. No raw data leaves the device.
+Permutation Entropy (Bandt & Pompe). All computation runs locally. No raw data leaves the device.
 
 → [Deutsche Version: README.md](README.md)
 
@@ -85,6 +85,7 @@ All metrics used are established methods from information theory and statistics:
 | Benford score | Leading digits vs. log₁₀(1+1/d) | Statistical naturalness of numeric data |
 | Katz dimension | Normalized fractal curve length | Self-similarity, complexity |
 | DBSCAN clustering | Density-based, ε-neighborhood | Grouping without label assignment |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordinal structure in byte stream (Bandt & Pompe 2002), orthogonal to Shannon entropy |
 
 No proprietary algorithms, no black-box models. Every component is mathematically defined
 and reproducible.
@@ -198,12 +199,12 @@ no output.
 Raw data
    |
    v
-analysis_engine        --> Entropy, symmetry, Fourier, Benford, attractor
+analysis_engine        --> Entropy, symmetry, Fourier, Benford, Permutation Entropy
    |
    +-> ethics_engine   --> Structural text integrity
    +-> delta_engine    --> XOR delta, session seed
    +-> bayes_engine    --> Bayesian posteriors
-   +-> graph_engine    --> Graph and attractor analysis
+   +-> graph_engine    --> Graph and structural topology analysis
    |
    v
 reconstruction_engine  --> D(Snapshot, Residual) = Original

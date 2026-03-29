@@ -52,7 +52,7 @@ Within a domain, Aether detects anomalies through deviation from the observed st
 | Fractal dimension | Katz dimension | Self-similarity, complexity level |
 | Dominant frequency | FFT, strongest spectrum | Periodicity, rhythmic recurrence |
 | Benford score | Leading digit distribution vs. log??????(1+1/d) | Naturalness of number distribution |
-| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Permutation Entropy nach Bandt & Pompe (2002): misst die Häufigkeitsverteilung von Ordnungsmustern im Byte-Stream. Orthogonal zur Shannon-Entropie. |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordinal structure in the byte stream (Bandt & Pompe 2002). Measures pattern order distribution, orthogonal to Shannon entropy. |
 | Observer I_obs | `H(X) - H(X|M_t)` | Observer's learning gain |
 
 ### 3.2 Bioinformatics

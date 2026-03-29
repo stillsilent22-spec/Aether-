@@ -29,7 +29,7 @@ Aether ist kein Klassifikator, kein KI-Modell und kein Interpreter. Es ist ein M
 
 Aether behandelt Dateien, Byteströme und Systemprozesse als lokale Zustände, die über messbare Struktur beschrieben und verglichen werden. Der technische Kern:
 
-- **Analysepipeline**: misst Entropie, Symmetrie, Periodizität, fraktale Dimension, Fourier-Spektrum, Attraktorzust??nde, Benford-Verteilung
+- **Analysepipeline**: misst Entropie, Symmetrie, Periodizität, fraktale Dimension, Fourier-Spektrum, Permutation Entropy (Bandt & Pompe), Benford-Verteilung
 - **Rekonstruktionsschicht**: Snapshots, Deltas, verlustfreie Rekonstruktion
 - **Persistenzschicht**: lokale SQLite-Datenbank, append-only Audit-Log
 - **Governance-Schicht**: fail-closed Zugriffsregeln, consent-gebundene Freigaben
@@ -53,7 +53,7 @@ Innerhalb einer Dom??ne erkennt Aether Anomalien durch Abweichung von der beobac
 | Fraktale Dimension | Katz-Dimension | SelbstÄhnlichkeit, Komplexit??tsstufe |
 | Dominante Frequenz | FFT, st??rkstes Spektrum | Periodizit??t, rhythmische Wiederkehr |
 | Benford-Score | F??hrungsziffernverteilung vs. log??????(1+1/d) | Nat??rlichkeit der Zahlenverteilung |
-| Attraktorzustand | Graph-basierte Stabilisierung | Konvergenz, Langzeitstabilit??t |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordnungsstruktur im Byte-Stream (Bandt & Pompe 2002), orthogonal zur Shannon-Entropie |
 | Observer I_obs | `H(X) - H(X|M_t)` | Lernzuwachs des Beobachters |
 
 ### 3.2 Bioinformatik
@@ -67,10 +67,10 @@ Genomsequenzen besitzen charakteristische Entropie- und Periodizit??tsprofile. A
 
 ### 3.3 Klimaforschung
 
-Klimazeitreihen zeigen charakteristische Strukturmuster (saisonale Periodizit??t, Attraktor-Stabilit??t bei stabilen Klimaregimen). Aether erkennt:
-- Strukturbr??che (Regime-Wechsel ohne Annotation)
+Klimazeitreihen zeigen charakteristische Strukturmuster (saisonale Periodizität, Permutation-Entropy-Verschiebungen bei stabilen Klimaregimen). Aether erkennt:
+- Strukturbrüche (Regime-Wechsel ohne Annotation)
 - Abnorme Frequenzmuster (nicht-periodische Ereigniscluster)
-- Attraktordrift (Verschiebung stabiler Zustände über Zeit)
+- Permutation-Entropy-Drift (Verschiebung der Ordnungsstruktur über Zeit)
 
 **Datenschutz:** Messstationsdaten, Koordinaten, Metadaten bleiben lokal.
 

@@ -17,7 +17,7 @@ Solo genesis mode is supported — no second node required to start.
 
 Aether berechnet messbare Struktureigenschaften beliebiger Daten und macht sie vergleichbar:
 Shannon-Entropie, Zipf-Konformität, Fourier-Periodizität, Benford-Score, fraktale Dimension (Katz),
-Attraktor-Stabilität. Alle Berechnungen laufen lokal. Keine Rohdaten verlassen das Gerät.
+Permutation Entropy (Bandt & Pompe). Alle Berechnungen laufen lokal. Keine Rohdaten verlassen das Gerät.
 
 → [English version: README_EN.md](README_EN.md)
 
@@ -96,6 +96,7 @@ Alle verwendeten Metriken sind etablierte Verfahren der Informationstheorie und 
 | Benford-Score | Führungsziffern vs. log₁₀(1+1/d) | Statistische Natürlichkeit numerischer Daten |
 | Katz-Dimension | Normierte fraktale Kurvenlänge | Selbstähnlichkeit, Komplexität |
 | DBSCAN-Clustering | Dichtebasiert, ε-Nachbarschaft | Gruppenbildung ohne Labelzuweisung |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordnungsstruktur im Byte-Stream (Bandt & Pompe 2002), orthogonal zu Shannon-Entropie |
 
 Keine proprietären Algorithmen, kein Black-Box-Modell. Jede Komponente ist mathematisch definiert
 und reproduzierbar.
