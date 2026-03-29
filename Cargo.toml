@@ -4,7 +4,7 @@ name = "aether_rust_shell"
 version = "0.1.0"
 edition = "2021"
 description = "Aether symbiotic proto-meta-layer OS: local structural data analysis, privacy-preserving with Python module integration and IPC bridge."
-license = "LicenseRef-Aether-Source-Available"
+license = "LicenseRef-Aether-Restricted"
 default-run = "aether_iced"
 include = [
     "Cargo.toml",
