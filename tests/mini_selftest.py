@@ -1,4 +1,4 @@
-﻿"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Assistant-Ausgabe."""
+﻿"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Strukturanalyse."""
 
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ except Exception:  # pragma: no cover - optionale Laufzeitabhaengigkeit
 from modules.analysis_engine import AnalysisEngine
 from modules.efficiency_monitor import EfficiencyMonitor
 from modules.session_engine import SessionContext
-from modules.assistant import AssistantEngine
 
 
 def _write_pdf(path: Path) -> None:
@@ -63,7 +62,6 @@ def _write_samples(root: Path) -> dict[str, Path]:
 def _run_case(
     engine: AnalysisEngine,
     monitor: EfficiencyMonitor,
-    assistant: AssistantEngine,
     sample_path: Path,
     low_power: bool,
 ) -> dict[str, object]:
@@ -76,25 +74,6 @@ def _run_case(
     )
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     snapshot = monitor.sample(status=f"selftest {'low' if low_power else 'full'} {sample_path.name}")
-    assessment = assistant.detect_asymmetry(
-        f"{sample_path.name} {getattr(fingerprint, 'integrity_text', '')}",
-        coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
-        browser_mode=False,
-        active=True,
-        h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
-        observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
-        source_label=str(sample_path),
-        file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
-        observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
-        fingerprint_payload={
-            "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
-            "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
-            "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
-            "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
-        },
-    )
-    response = assistant.render_response(assessment)
     return {
         "path": str(sample_path),
         "mode": "low_power" if low_power else "full",
@@ -104,9 +83,6 @@ def _run_case(
         "ram_percent": float(snapshot.ram_percent),
         "cpu_percent": float(snapshot.cpu_percent),
         "threads": int(snapshot.threads),
-        "missing_dependencies": list(assessment.missing_dependencies),
-        "missing_data": list(assessment.missing_data),
-        "response": str(response),
         "progress_count": int(len(progress_events)),
         "reconstruction_verified": bool(dict(getattr(fingerprint, "reconstruction_verification", {}) or {}).get("verified", False)),
         "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
@@ -116,7 +92,6 @@ def _run_case(
 def main() -> None:
     engine = AnalysisEngine(SessionContext(seed=7))
     monitor = EfficiencyMonitor()
-    assistant = AssistantEngine()
     expected_categories = {
         ".txt": "document",
         ".jpg": "image",
@@ -129,7 +104,7 @@ def main() -> None:
         samples = _write_samples(root)
         for sample in samples.values():
             for low_power in (False, True):
-                result = _run_case(engine, monitor, assistant, sample, low_power=low_power)
+                result = _run_case(engine, monitor, sample, low_power=low_power)
                 results.append(result)
                 assert result["category"] == expected_categories[sample.suffix.lower()], (
                     f"Kategorie falsch fuer {sample.name}: {result['category']}"
@@ -139,15 +114,6 @@ def main() -> None:
                     f"Chunk-Groesse falsch fuer {sample.name}: {result['chunk_size']}"
                 )
                 assert int(result["progress_count"]) > 0, f"Kein Fortschritt fuer {sample.name}"
-                response = str(result["response"])
-                if result["missing_dependencies"]:
-                    assert response.startswith("MISSING_DEPENDENCIES:"), (
-                        f"Missing-Dependencies nicht zuerst in Assistant fuer {sample.name}"
-                    )
-                elif result["missing_data"]:
-                    assert response.startswith("MISSING_DATA:") or response.startswith("MISSING_DEPENDENCIES:"), (
-                        f"Missing-Data nicht zuerst in Assistant fuer {sample.name}"
-                    )
                 assert bool(result["reconstruction_verified"]), (
                     f"Rekonstruktion nicht bestaetigt fuer {sample.name}"
                 )

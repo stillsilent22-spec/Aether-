@@ -313,6 +313,8 @@ def _form_recommendation(invariants: Dict[str, Any]) -> str:
 
 
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     # Quick test
     test_changes = [1, 2, 3, 2, 1, 2, 3, 2, 1, 2, 3, 2]  # Periodic seq
     test_freqs = {"a": 100, "b": 50, "c": 25, "d": 10, "e": 5}

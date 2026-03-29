@@ -438,7 +438,22 @@ struct LiveRenderAnalysisResult {
 pub enum AppMode { Overlay, Full }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ChatContext { Private, Group }
+pub enum ChatContext { Private, Group, SwarmRequest }
+
+/// A pending swarm domain-overlap contact request from a remote node.
+#[derive(Debug, Clone)]
+struct SwarmOverlapRequest {
+    /// Short hash of the local anchor that matched.
+    anchor_hash_a: String,
+    /// Domain tag assigned by the user (e.g. "biology").
+    domain_tag: String,
+    /// Structural similarity score, 0.0–1.0.
+    structural_score: f32,
+    /// Calendar week of the overlap, e.g. "KW12-2026".
+    epoch_week: String,
+    /// Truncated public key of the remote node (used as chat partner ID).
+    remote_node_pubkey: String,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UiLanguage { German, English }
@@ -522,6 +537,11 @@ enum Message {
     LauncherBuildTaskPressed(String),
     LauncherBuildTaskCompleted(String, Result<BuildTaskResult, String>),
     LauncherLogsClearPressed,
+    SwarmConsentToggled(bool),
+    /// User accepted a swarm domain-overlap contact request (payload = anchor_hash_a).
+    SwarmOverlapAccepted(String),
+    /// User declined a swarm domain-overlap contact request (payload = anchor_hash_a).
+    SwarmOverlapDeclined(String),
 }
 
 pub struct AetherIcedShell {
@@ -656,6 +676,9 @@ pub struct AetherIcedShell {
     live_render_noether_prev_entropy: f32,
     #[allow(dead_code)]
     backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
+    swarm_consented: bool, // Swarm-Teilnahme: opt-in/out über UI steuerbar
+    /// Pending swarm domain-overlap contact requests, polled from data/interbus/.
+    swarm_overlap_requests: Vec<SwarmOverlapRequest>,
 
     // Cascade result state
     #[allow(dead_code)]
@@ -820,7 +843,9 @@ impl AetherIcedShell {
             live_render_noether_prev_entropy: 0.0,
             cascade_run_id: None,
             cascade_metrics: None,
-            backup_enabled: true, // Standardm\u00e4\u00dfig aktiviert
+            backup_enabled: true, // Standardmäßig aktiviert
+            swarm_consented: read_swarm_consent(),
+            swarm_overlap_requests: Vec::new(),
         };
         shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
@@ -834,6 +859,44 @@ impl AetherIcedShell {
 
 
 // --- Moved methods into impl block ---
+
+fn read_swarm_consent() -> bool {
+    let path = std::path::Path::new("data").join("swarm_consent.json");
+    if let Ok(raw) = fs::read_to_string(&path) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+            return val.get("consented").and_then(|v| v.as_bool()).unwrap_or(true);
+        }
+    }
+    true // opt-in by default
+}
+
+fn write_swarm_consent(enabled: bool) -> Result<(), String> {
+    let path = std::path::Path::new("data").join("swarm_consent.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let mut state: serde_json::Value = if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+    state["consented"] = serde_json::Value::Bool(enabled);
+    state["consent_ok"] = serde_json::Value::Bool(true);
+    if !enabled {
+        state["revoked"] = serde_json::Value::Bool(true);
+    } else {
+        state["revoked"] = serde_json::Value::Bool(false);
+    }
+    let ts = chrono::Utc::now().to_rfc3339();
+    state["updated_at"] = serde_json::Value::String(ts);
+    state["actor"] = serde_json::Value::String("iced_shell".to_owned());
+    fs::write(&path, serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
 impl AetherIcedShell {
     fn apply_projection_state(
         &mut self,
@@ -1055,6 +1118,64 @@ impl AetherIcedShell {
             .unwrap_or(&self.backend_swarm_summary.clone())
             .to_owned();
         self.backend_state_loaded = true;
+    }
+
+    /// Reads `data/interbus/swarm_overlap_events.json` and appends new entries to
+    /// `self.swarm_overlap_requests`. Duplicate entries (same `anchor_hash_a`) are skipped.
+    fn poll_swarm_overlap_events(&mut self) {
+        let path = std::path::Path::new("data")
+            .join("interbus")
+            .join("swarm_overlap_events.json");
+        let Ok(raw) = std::fs::read_to_string(&path) else {
+            return;
+        };
+        let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return;
+        };
+        let Some(list) = val.as_array() else {
+            return;
+        };
+        for item in list {
+            let anchor_hash_a = item
+                .get("anchor_hash_a")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if anchor_hash_a.is_empty() {
+                continue;
+            }
+            // Skip duplicates already in the pending list.
+            if self
+                .swarm_overlap_requests
+                .iter()
+                .any(|r| r.anchor_hash_a == anchor_hash_a)
+            {
+                continue;
+            }
+            self.swarm_overlap_requests.push(SwarmOverlapRequest {
+                anchor_hash_a,
+                domain_tag: item
+                    .get("domain_tag")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unbekannt")
+                    .to_string(),
+                structural_score: item
+                    .get("structural_score")
+                    .and_then(|v| v.as_f64())
+                    .map(|f| f as f32)
+                    .unwrap_or(0.0),
+                epoch_week: item
+                    .get("epoch_week")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("?")
+                    .to_string(),
+                remote_node_pubkey: item
+                    .get("remote_node_pubkey")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            });
+        }
     }
 
     fn poll_hybrid_state(&mut self) {
@@ -2166,13 +2287,60 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         let panel = match self.chat_context {
             ChatContext::Private => self.view_private_chat(),
             ChatContext::Group => self.view_group_chat(),
+            ChatContext::SwarmRequest => self.view_swarm_requests(),
         };
+        // Swarm-Anfragen-Tab with a live count badge when requests are pending.
+        let swarm_req_count = self.swarm_overlap_requests.len();
+        let swarm_tab_label = if swarm_req_count > 0 {
+            format!("Swarm-Anfragen ({})", swarm_req_count)
+        } else {
+            "Swarm-Anfragen".to_string()
+        };
+        let is_swarm_active = self.chat_context == ChatContext::SwarmRequest;
+        let swarm_tab_btn: Element<'_, Message> = container(
+            button(text(swarm_tab_label).size(15))
+                .padding([8, 18])
+                .on_press(Message::ChatContextSelected(ChatContext::SwarmRequest))
+                .style(if is_swarm_active {
+                    primary_button_style
+                } else {
+                    secondary_button_style
+                }),
+        )
+        .style(move |_theme: &Theme| {
+            if is_swarm_active {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgba(
+                        0.59, 0.34, 0.96, 0.12,
+                    ))),
+                    border: Border {
+                        color: Color::from_rgb8(0xA0, 0x70, 0xFF),
+                        width: 1.2,
+                        radius: 10.0.into(),
+                    },
+                    text_color: Some(Color::from_rgb8(0xEE, 0xEA, 0xFF)),
+                    ..Default::default()
+                }
+            } else {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x11, 0x1C))),
+                    border: Border {
+                        color: Color::from_rgb8(0x2C, 0x2A, 0x46),
+                        width: 1.0,
+                        radius: 10.0.into(),
+                    },
+                    ..Default::default()
+                }
+            }
+        })
+        .into();
         container(
             Column::new()
                 .push(
                     Row::new()
                         .push(self.context_button(ChatContext::Private, "Privat"))
                         .push(self.context_button(ChatContext::Group, "Gruppen"))
+                        .push(swarm_tab_btn)
                         .push(tutorial_button)
                         .spacing(10)
                 )
@@ -2600,6 +2768,72 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         container(scrollable(content).height(Length::Fill))
             .padding(12)
             .style(panel_frame_style)
+            .into()
+    }
+
+    fn view_swarm_requests(&self) -> Element<'_, Message> {
+        let mut col = Column::new().spacing(12);
+        col = col.push(text("Swarm · Domänen-Anfragen").size(20));
+        col = col.push(
+            text("Andere Nodes haben strukturelle Überschneidungen in deinen Anker-Domänen gefunden und bitten um anonymen Kontakt. Du entscheidest, ob du antwortest.")
+                .size(14),
+        );
+        if self.swarm_overlap_requests.is_empty() {
+            col = col.push(info_card(
+                "Keine offenen Anfragen",
+                "Sobald ein anderer Node strukturelle Überschneidungen mit deinen Domänen-Tags erkennt, erscheint hier eine Kontaktanfrage.",
+            ));
+        } else {
+            for req in &self.swarm_overlap_requests {
+                let score_pct = (req.structural_score * 100.0).round() as u32;
+                let short_pubkey: String = req.remote_node_pubkey.chars().take(16).collect();
+                let card: Element<'_, Message> = container(
+                    Column::new()
+                        .push(
+                            text(format!(
+                                "Domäne: {}  ·  Ähnlichkeit: {}%  ·  {}",
+                                req.domain_tag, score_pct, req.epoch_week
+                            ))
+                            .size(15),
+                        )
+                        .push(
+                            text(format!(
+                                "Lokaler Anker: {}  ·  Node: {}…",
+                                req.anchor_hash_a, short_pubkey
+                            ))
+                            .size(13),
+                        )
+                        .push(
+                            Row::new()
+                                .push(
+                                    button(text("Annehmen – privaten Chat öffnen"))
+                                        .padding([8, 14])
+                                        .on_press(Message::SwarmOverlapAccepted(
+                                            req.anchor_hash_a.clone(),
+                                        ))
+                                        .style(primary_button_style),
+                                )
+                                .push(
+                                    button(text("Ablehnen"))
+                                        .padding([8, 14])
+                                        .on_press(Message::SwarmOverlapDeclined(
+                                            req.anchor_hash_a.clone(),
+                                        ))
+                                        .style(secondary_button_style),
+                                )
+                                .spacing(10),
+                        )
+                        .spacing(8),
+                )
+                .padding(12)
+                .style(panel_frame_style)
+                .into();
+                col = col.push(card);
+            }
+        }
+        container(scrollable(col).height(Length::Fill))
+            .padding(16)
+            .height(Length::Fill)
             .into()
     }
 
@@ -6109,6 +6343,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 if self.tick_counter % 120 == 0 {
                     self.poll_backend_state();
                 }
+                // Poll swarm overlap contact requests every ~60 ticks (offset to avoid collision).
+                if self.tick_counter % 60 == 30 {
+                    self.poll_swarm_overlap_events();
+                }
                 // Poll Symbiont live events every ~8 ticks while the server is running
                 if self.tick_counter % 8 == 3
                     && self.hybrid_symbiont_running
@@ -6303,6 +6541,43 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 self.launcher_state.unified_log.clear();
                 self.launcher_state.log("Logs cleared".to_string());
                 self.status_line = "Launcher logs cleared".to_owned();
+            }
+            Message::SwarmConsentToggled(enabled) => {
+                match write_swarm_consent(enabled) {
+                    Ok(()) => {
+                        self.swarm_consented = enabled;
+                        self.status_line = if enabled {
+                            "Swarm-Teilnahme aktiviert. Nur strukturelle Fingerabdrücke werden geteilt.".to_owned()
+                        } else {
+                            "Swarm-Teilnahme deaktiviert.".to_owned()
+                        };
+                    }
+                    Err(err) => {
+                        self.status_line = format!("Swarm-Consent konnte nicht gespeichert werden: {err}");
+                    }
+                }
+            }
+            Message::SwarmOverlapAccepted(key) => {
+                if let Some(req) = self
+                    .swarm_overlap_requests
+                    .iter()
+                    .find(|r| r.anchor_hash_a == key)
+                    .cloned()
+                {
+                    self.swarm_overlap_requests.retain(|r| r.anchor_hash_a != key);
+                    // Open a private chat thread with the remote node's public key as partner ID.
+                    self.selected_private_partner = Some(req.remote_node_pubkey.clone());
+                    self.chat_context = ChatContext::Private;
+                    self.active_tab = Tab::Chat;
+                    self.status_line = format!(
+                        "Domänen-Anfrage angenommen · Privater Thread mit {} geöffnet.",
+                        &req.remote_node_pubkey.chars().take(16).collect::<String>()
+                    );
+                }
+            }
+            Message::SwarmOverlapDeclined(key) => {
+                self.swarm_overlap_requests.retain(|r| r.anchor_hash_a != key);
+                self.status_line = "Domänen-Anfrage abgelehnt.".to_owned();
             }
             // ─────────────────────────────────────────────────────────────────────
             Message::AnchorGroupSelected(index) => self.selected_anchor_group = index,
@@ -6710,6 +6985,26 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     ),
                 ]
                 .spacing(10),
+                row![
+                    button(text(if self.swarm_consented { "Swarm-Teilnahme [aktiv]" } else { "Swarm aktivieren" }).size(12).color(c(TEXT_H())))
+                        .on_press(Message::SwarmConsentToggled(true))
+                        .padding([8, 12])
+                        .style(if self.swarm_consented { primary_button_style } else { secondary_button_style }),
+                    button(text(if !self.swarm_consented { "Swarm-Teilnahme [aus]" } else { "Swarm deaktivieren" }).size(12).color(c(TEXT_H())))
+                        .on_press(Message::SwarmConsentToggled(false))
+                        .padding([8, 12])
+                        .style(if !self.swarm_consented { primary_button_style } else { secondary_button_style }),
+                ]
+                .spacing(10),
+                container(
+                    text(if self.swarm_consented {
+                        "Aktiv — es werden ausschließlich SHA-256-Fingerabdrücke und aggregierte Strukturmetriken geteilt. Keine Rohdaten."
+                    } else {
+                        "Deaktiviert — dieser Knoten sendet keine Daten an den Swarm."
+                    }).size(11).color(c(TEXT_M()))
+                )
+                .padding(10)
+                .style(panel_frame_style),
                 row![
                     button(text("Open Anchors").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Anchors))

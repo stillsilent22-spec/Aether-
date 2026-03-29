@@ -1,14 +1,3 @@
-if __name__ == "__main__":
-    import sys
-    if len(sys.argv) < 2:
-        print("Usage: python -m modules.unified_cascade <file_path>")
-        sys.exit(1)
-    file_path = Path(sys.argv[1])
-    def print_log(msg):
-        print(msg)
-    report = run_full_pipeline(file_path, log_fn=print_log)
-    print("\n--- JSON REPORT ---\n")
-    print(json.dumps(report, indent=2, ensure_ascii=False))
 import importlib
 
 # Dynamisches Laden der Engines wie im Dropper
@@ -516,3 +505,17 @@ def cascade_to_swarm_kpi(result: CascadeResult) -> dict[str, float]:
         "noether_consistency":  result.noether_consistency,
         "compression_gain_percent": (1.0 - result.entropy / 8.0) * 100.0,
     }
+
+if __name__ == "__main__":
+    import sys
+    from modules.session_guard import require_session
+    require_session()
+    if len(sys.argv) < 2:
+        print("Usage: python -m modules.unified_cascade <file_path>")
+        sys.exit(1)
+    file_path = Path(sys.argv[1])
+    def print_log(msg):
+        print(msg)
+    report = run_full_pipeline(file_path, log_fn=print_log)
+    print("\n--- JSON REPORT ---\n")
+    print(json.dumps(report, indent=2, ensure_ascii=False))

@@ -220,6 +220,7 @@ def _ensure_settings(settings_path: Path, node_id: str, dry_run: bool) -> Dict[s
 def _ensure_consent(consent_path: Path, dry_run: bool) -> Dict[str, Any]:
     consent = _load_json(consent_path, default={})
     consent["consent_ok"] = True
+    consent.setdefault("consented", True)
     consent.setdefault("approved", True)
     consent.setdefault("source", "solo_bootstrap")
     consent.setdefault("updated_at", _utc_now())

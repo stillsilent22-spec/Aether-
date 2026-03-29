@@ -1,4 +1,11 @@
-﻿from __future__ import annotations
+"""modules/text_utils.py — Structural text normalisation and feature extraction.
+
+Public API:
+    text_normalize(text)         → normalised string (NFKC, lowercase, no umlauts)
+    text_reduce(text)            → structural feature dict (entropy, anchors, …)
+    interference_score(a, b)     → float [0,1] — structural divergence between two texts
+"""
+from __future__ import annotations
 
 import hashlib
 import math
@@ -19,7 +26,7 @@ _STOPWORDS = {
 }
 
 
-def assistant_normalize(text: str) -> str:
+def text_normalize(text: str) -> str:
     value = " ".join(str(text or "").split())
     value = "".join(char for char in value if char.isprintable())
     value = unicodedata.normalize("NFKC", value).lower()
@@ -35,7 +42,7 @@ def assistant_normalize(text: str) -> str:
 
 
 def _tokenize(text: str) -> list[str]:
-    return _TOKEN_RE.findall(assistant_normalize(text))
+    return _TOKEN_RE.findall(text_normalize(text))
 
 
 def _entropy_bytes(payload: bytes) -> float:
@@ -74,14 +81,13 @@ def _project_root() -> Path:
 @lru_cache(maxsize=1)
 def _reference_model() -> dict[str, Any]:
     root = _project_root()
-    corpus_dir = root / "data" / "assistant_corpus"
+    corpus_dir = root / "data" / "text_corpus"
     fallback_paths = [
         root / "README.md",
         root / "README_EN.md",
         root / "WHITEPAPER.md",
         root / "WHITEPAPER_EN.md",
         root / "core_axioms.md",
-        root / "ASSISTANT_MASTER.md",
         root / "contracts" / "aether_event_schema_v1.json",
         root / "contracts" / "aether_kpi_contract_v1.json",
         root / "data" / "aether_event_schema_v1.json",
@@ -102,7 +108,7 @@ def _reference_model() -> dict[str, Any]:
             raw_text = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        normalized = assistant_normalize(raw_text)[:200000]
+        normalized = text_normalize(raw_text)[:200000]
         tokens = _tokenize(normalized)
         bigrams = _bigrams(tokens)
         documents.append(
@@ -137,9 +143,10 @@ def _language_hint(tokens: list[str]) -> str:
     return "mixed"
 
 
-def assistant_interference_score(a: str, b: str) -> float:
-    left_norm = assistant_normalize(a)
-    right_norm = assistant_normalize(b)
+def interference_score(a: str, b: str) -> float:
+    """Structural divergence between two texts. Returns float in [0, 1]."""
+    left_norm = text_normalize(a)
+    right_norm = text_normalize(b)
     if not left_norm and not right_norm:
         return 0.0
 
@@ -155,8 +162,9 @@ def assistant_interference_score(a: str, b: str) -> float:
     return float(min(1.0, max(0.0, xor_drift * 0.35 + token_distance * 0.30 + sequence_distance * 0.25 + length_drift * 0.10)))
 
 
-def assistant_reduce(text: str) -> dict[str, Any]:
-    normalized = assistant_normalize(text)
+def text_reduce(text: str) -> dict[str, Any]:
+    """Extract structural features from text for Aether analysis pipeline."""
+    normalized = text_normalize(text)
     payload = normalized.encode("utf-8")
     tokens = _tokenize(normalized)
     token_set = set(tokens)

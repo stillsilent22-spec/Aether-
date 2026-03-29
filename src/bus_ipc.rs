@@ -182,6 +182,9 @@ pub fn event_type_name(event: &BusEvent) -> &'static str {
         BusEvent::PackDownloadConfirmed(_) => "PackDownloadConfirmed",
         BusEvent::PackInstalled(_) => "PackInstalled",
         BusEvent::OfflineCachePrepared(_) => "OfflineCachePrepared",
+        BusEvent::AELabAnalysisResult(_) => "AELabAnalysisResult",
+        BusEvent::CrossDomainStructuralHint(_) => "CrossDomainStructuralHint",
+        BusEvent::MotorSessionClose => "MotorSessionClose",
     }
 }
 

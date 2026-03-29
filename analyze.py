@@ -1,5 +1,5 @@
 ﻿"""
-analyze.py — Assistant Datei- und Text-Analyse (lokal, ohne Netzwerk/LLM)
+analyze.py — Aether Datei- und Text-Analyse (lokal, ohne Netzwerk/LLM)
 
 Aufruf:
     python analyze.py path/to/datei.txt
@@ -21,16 +21,6 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
-
-# ---------------------------------------------------------------------------
-# Imports
-# ---------------------------------------------------------------------------
-try:
-    from modules.assistant_safety import get_safety_filter, AssistantSafetyFilter
-    SAFETY_OK = True
-except Exception as e:
-    print(f"[WARN] assistant_safety nicht ladbar: {e}")
-    SAFETY_OK = False
 
 # ---------------------------------------------------------------------------
 # Hilfsfunktionen
@@ -86,71 +76,26 @@ def _file_hash(data: bytes) -> str:
 
 
 def analyze_text(text: str, source_label: str = "direkte Eingabe") -> dict:
-    """Analysiert beliebigen Text mit Assistant-Sicherheitsfilter."""
-    result = {
+    """Analysiert beliebigen Text anhand struktureller Metriken."""
+    h = _h_lambda(text)
+    trust = _trust_score(text)
+    # Verdict ausschließlich auf Metriken basiert
+    if h > 5.5:
+        verdict = f"STRUKTURELL UNSICHER — h_lambda={h} (>5.5)"
+    elif trust < 0.45:
+        verdict = f"STRUKTURELL UNSICHER — trust={trust} (<0.45)"
+    else:
+        verdict = "STRUKTURELL OK"
+    return {
         "source": source_label,
         "length": len(text),
         "words": len(re.findall(r"\b\w+\b", text)),
         "shannon_entropy": round(_shannon_entropy(text), 4),
-        "h_lambda": _h_lambda(text),
-        "trust_score": _trust_score(text),
-        "safety": {},
-        "verdict": "",
-        "output": "",
+        "h_lambda": h,
+        "trust_score": trust,
+        "verdict": verdict,
+        "output": text[:500],
     }
-
-    if SAFETY_OK:
-        sf: AssistantSafetyFilter = get_safety_filter()
-
-        # Einzelfilter
-        med   = sf.check_medical(text)
-        bl    = sf.check_blacklist(text)
-        det   = sf.check_determinism(result["h_lambda"], result["trust_score"])
-        hed   = sf.check_hedging(text)
-        wl    = sf.check_whitelist(text)
-
-        result["safety"] = {
-            "medical_ok":    med.passed,
-            "blacklist_ok":  bl.passed,
-            "determinism_ok": det.passed,
-            "hedging_ok":    hed.passed,
-            "on_whitelist":  wl,
-            "medical_reason":    med.reason if not med.passed else "",
-            "blacklist_reason":  bl.reason  if not bl.passed  else "",
-            "determinism_reason": det.reason if not det.passed else "",
-            "hedging_reason":    hed.reason  if not hed.passed  else "",
-        }
-
-        # safe_generate (ohne LLM: Text direkt als "generierter" Output)
-        safe_out = sf.safe_generate(
-            query=text[:200],
-            generated_text=text[:500],
-            h_lambda=result["h_lambda"],
-            trust=result["trust_score"],
-        )
-        all_filters_pass = (
-            med.passed and bl.passed and det.passed and hed.passed
-        )
-        if not med.passed:
-            result["verdict"] = "SCHWEIGEN — medizinische Anfrage"
-            result["output"]  = ""
-        elif not bl.passed:
-            result["verdict"] = "SCHWEIGEN — Blacklist-Treffer"
-            result["output"]  = ""
-        elif not det.passed:
-            result["verdict"] = f"SCHWEIGEN — {det.reason}"
-            result["output"]  = ""
-        elif not hed.passed:
-            result["verdict"] = "BEREINIGT — Hedging entfernt"
-            result["output"]  = sf.strip_hedging(text)
-        else:
-            result["verdict"] = "FREIGEGEBEN"
-            result["output"]  = text[:500]
-    else:
-        result["verdict"] = "SAFETY-FILTER NICHT GELADEN"
-        result["output"]  = text[:500]
-
-    return result
 
 
 def analyze_file(path: str) -> dict:
@@ -185,7 +130,7 @@ def _print_result(r: dict) -> None:
     """Gibt das Analyse-Ergebnis formatiert aus."""
     print()
     print("=" * 64)
-    print("  ASSISTANT ANALYSE")
+    print("  AETHER ANALYSE")
     print("=" * 64)
 
     if "error" in r:
@@ -206,17 +151,6 @@ def _print_result(r: dict) -> None:
     print(f"  h_lambda     : {r['h_lambda']}  (>5.5 → Schweigen)")
     print(f"  Trust        : {r['trust_score']}  (<0.45 → Schweigen)")
 
-    s = r.get("safety", {})
-    if s:
-        print()
-        print("  — Sicherheitsfilter —")
-        icons = {True: "✓", False: "✗"}
-        print(f"  Medical      : {icons[s['medical_ok']]}  {s.get('medical_reason','')}")
-        print(f"  Blacklist    : {icons[s['blacklist_ok']]}  {s.get('blacklist_reason','')}")
-        print(f"  Determinismus: {icons[s['determinism_ok']]}  {s.get('determinism_reason','')}")
-        print(f"  Hedging      : {icons[s['hedging_ok']]}  {s.get('hedging_reason','')}")
-        print(f"  Whitelist    : {'✓ (sichere Domäne)' if s['on_whitelist'] else '— (nicht klassifiziert)'}")
-
     print()
     print(f"  URTEIL       : {r.get('verdict', '?')}")
 
@@ -235,11 +169,11 @@ def _print_result(r: dict) -> None:
 
 def interactive_mode() -> None:
     """Interaktiver Analyse-Modus."""
-    print("\nASSISTANT ANALYSE — Interaktiver Modus")
+    print("\nAETHER ANALYSE — Interaktiver Modus")
     print("Eingabe: Text oder Dateipfad. 'exit' zum Beenden.\n")
     while True:
         try:
-            inp = input("Assistant> ").strip()
+            inp = input("Aether> ").strip()
         except (EOFError, KeyboardInterrupt):
             print("\nBeendet.")
             break
@@ -261,6 +195,8 @@ def interactive_mode() -> None:
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     if len(sys.argv) < 2 or sys.argv[1] in ("-i", "--interactive"):
         interactive_mode()
     else:

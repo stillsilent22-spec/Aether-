@@ -23,7 +23,6 @@ from modules.public_ttd_transport import PublicTTDTransport
 from modules.reconstruction_engine import GoedelLoopTerminator, LosslessReconstructionEngine, VaultMissError
 from modules.screen_vision_engine import is_private_context as is_private_screen_context
 from modules.session_engine import SessionContext
-from modules.assistant import AssistantEngine
 from modules.vault_chain import AetherAugmentor
 
 
@@ -51,16 +50,6 @@ def _reconstruct_from_delta(delta: bytes, session_seed: int) -> bytes:
     return bytes(left ^ right for left, right in zip(delta, noise))
 
 
-def _fingerprint_payload(fingerprint: Any) -> dict[str, Any]:
-    """Verdichtet die Rekonstruktionsfelder fuer Assistant-Checks."""
-    return {
-        "reconstruction_verification": dict(getattr(fingerprint, "reconstruction_verification", {}) or {}),
-        "verdict_reconstruction": str(getattr(fingerprint, "verdict_reconstruction", "") or ""),
-        "verdict_reconstruction_reason": str(getattr(fingerprint, "verdict_reconstruction_reason", "") or ""),
-        "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
-    }
-
-
 def run_roundtrip_smoke_test() -> dict[str, Any]:
     """Fuehrt einen echten Analyze->Reload->Reconstruct-Roundtrip lokal aus."""
     original_bytes = _sample_bytes()
@@ -83,22 +72,6 @@ def run_roundtrip_smoke_test() -> dict[str, Any]:
     reconstructed_bytes = _reconstruct_from_delta(bytes(getattr(fingerprint, "delta", b"")), reloaded_seed)
     replay_verification = reconstruction_engine.verify_lossless(original_bytes, reconstructed_bytes)
 
-    assistant = AssistantEngine()
-    assessment = assistant.detect_asymmetry(
-        "lossless roundtrip smoke test",
-        coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
-        browser_mode=False,
-        active=True,
-        h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
-        observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
-        source_label="tests::lossless_roundtrip",
-        file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
-        observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
-        fingerprint_payload=_fingerprint_payload(fingerprint),
-    )
-    response = assistant.render_response(assessment)
-
     return {
         "fingerprint": fingerprint,
         "verdict_reconstruction": verdict,
@@ -108,7 +81,6 @@ def run_roundtrip_smoke_test() -> dict[str, Any]:
         "reconstructed_bytes": reconstructed_bytes,
         "replay_verification": dict(replay_verification),
         "original_hash": str(original_hash),
-        "response": str(response),
     }
 
 
@@ -129,29 +101,8 @@ def run_roundtrip_failure_smoke_test() -> dict[str, Any]:
     verification = dict(reconstruction_engine.verify_lossless(original_bytes, reconstructed_bytes))
     verification["session_seed_match"] = False
 
-    assistant = AssistantEngine()
-    assessment = assistant.detect_asymmetry(
-        "lossless roundtrip failure smoke test",
-        coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
-        browser_mode=False,
-        active=True,
-        h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
-        observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
-        source_label="tests::lossless_roundtrip_failure",
-        file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
-        observer_payload=dict(getattr(fingerprint, "observer_payload", {}) or {}),
-        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
-        fingerprint_payload={
-            "reconstruction_verification": verification,
-            "verdict_reconstruction": "FAILED",
-            "verdict_reconstruction_reason": "delta_session_seed mismatch",
-            "delta_session_seed": int(getattr(fingerprint, "delta_session_seed", 0) or 0),
-        },
-    )
-    response = assistant.render_response(assessment)
     return {
         "verification": verification,
-        "response": str(response),
         "wrong_seed": int(wrong_seed),
     }
 
@@ -171,20 +122,16 @@ def test_lossless_roundtrip_confirmed() -> None:
     assert hashlib.sha256(bytes(result["reconstructed_bytes"])).hexdigest() == str(result["original_hash"])
     assert len(bytes(result["reconstructed_bytes"])) == len(_sample_bytes())
     assert 0.0 <= float(verification.get("compression_ratio", 0.0) or 0.0) <= 1.0
-    assert str(result["response"]).startswith("Rekonstruktion bestätigt:")
     assert int(getattr(fingerprint, "delta_session_seed", 0) or 0) == 1337
 
 
 def test_lossless_roundtrip_wrong_seed_fails() -> None:
-    """Ein falscher Seed muss als FAILED samt Delta-Seed-Hinweis sichtbar werden."""
+    """Ein falscher Seed muss als FAILED erkannt werden."""
     result = run_roundtrip_failure_smoke_test()
     verification = dict(result["verification"])
-    response = str(result["response"])
 
     assert bool(verification.get("verified", True)) is False
     assert bool(verification.get("session_seed_match", True)) is False
-    assert response.startswith("Für vollständige Rekonstruktion fehlt noch:")
-    assert "Delta-Seed muss für Rekonstruktion erhalten bleiben" in response
 
 
 def test_vault_growth_reduces_delta_size() -> None:
@@ -279,34 +226,9 @@ def test_lossless_roundtrip_with_recursive_raster_reflection() -> None:
     learning_state = observer.update_learning_state(context, reflection)
     reflection["learned_insight"] = str(list(learning_state.get("learned_insights", []) or [""])[-1] or "")
 
-    assistant = AssistantEngine()
-    assessment = assistant.detect_asymmetry(
-        "recursive raster reflection roundtrip",
-        coherence_score=float(getattr(fingerprint, "coherence_score", 0.0) or 0.0),
-        browser_mode=False,
-        active=True,
-        h_lambda=float(getattr(fingerprint, "h_lambda", 0.0) or 0.0),
-        observer_mutual_info=float(getattr(fingerprint, "observer_mutual_info", 0.0) or 0.0),
-        source_label="tests::recursive_raster_roundtrip",
-        file_profile=dict(getattr(fingerprint, "file_profile", {}) or {}),
-        observer_payload={"learning_state": dict(learning_state)},
-        sce_signature=dict(getattr(fingerprint, "sce_signature", {}) or {}),
-        fingerprint_payload=_fingerprint_payload(fingerprint),
-        miniature_payload=miniature_payload,
-        raster_payload=raster_payload,
-        self_reflection_payload=reflection,
-    )
-    response = assistant.render_response(assessment)
-
     assert bool(dict(getattr(fingerprint, "reconstruction_verification", {}) or {}).get("verified", False)) is True
-    assert "[Miniatur-Reflexion]" in response
-    assert "[Raster-Self-Perception]" in response
-    assert "REKURSION:" in response
-    assert "GELERNTE_INSIGHT:" in response
     assert str(reflection.get("learned_insight", "") or "").strip()
     assert str(dict(learning_state).get("current_insight", "") or "").strip()
-    assert len(list(assessment.recursive_reflections)) >= 1
-    assert len(list(assessment.recursive_reflections)) <= 5
     shutil.rmtree(temp_learning_dir, ignore_errors=True)
 
 
@@ -730,49 +652,6 @@ def test_agent_loop_plans_browser_followup_for_open_state() -> None:
     assert int(second.loop_iteration) <= 2
 
 
-def test_assistant_partner_reply_includes_history_and_web_context() -> None:
-    """Assistant soll lokalen Verlauf und optionalen Netzkontext lesbar zusammenziehen."""
-    engine = AssistantEngine()
-    assessment = engine.detect_asymmetry(
-        "Was ist AGI?",
-        coherence_score=91.0,
-        browser_mode=False,
-        active=True,
-        h_lambda=1.1,
-        observer_mutual_info=2.4,
-        source_label="chat://private/local/assistant",
-        observer_knowledge_ratio=0.93,
-        history_factor=4.0,
-        fingerprint_payload={
-            "reconstruction_verification": {
-                "verified": True,
-                "byte_match": True,
-                "size_match": True,
-                "compression_ratio": 1.0,
-                "anchor_coverage_ratio": 0.91,
-                "unresolved_residual_ratio": 0.04,
-            },
-            "verdict_reconstruction": "CONFIRMED",
-        },
-    )
-    reply = engine.compose_chat_partner_reply(
-        "Was ist AGI?",
-        assessment,
-        assistant_text="AGI lese ich hier als lokalen Analyse- und Reflexionskreis.",
-        history_excerpt="Du: Erklaere Aether | Assistant: Aether bleibt lokal und strukturell.",
-        web_context={
-            "ok": True,
-            "provider": "duckduckgo",
-            "summary": "AGI bezeichnet ein allgemeineres, flexibel lernendes System; Aether bleibt dabei bewusst lokal.",
-        },
-        channel_kind="private_assistant",
-    )
-
-    assert "Kontext gehalten:" in reply
-    assert "Netzkontext (duckduckgo):" in reply
-    assert "AGI lese ich hier" in reply
-
-
 def main() -> None:
     """Fuehrt beide Smoke-Varianten direkt ohne pytest-Runner aus."""
     success = run_roundtrip_smoke_test()
@@ -783,7 +662,6 @@ def main() -> None:
     test_public_ttd_pool_admin_anchor_is_trusted_immediately()
     test_public_ttd_transport_http_mirror_roundtrip()
     test_agent_loop_plans_browser_followup_for_open_state()
-    test_assistant_partner_reply_includes_history_and_web_context()
     gain = max(
         0.0,
         min(

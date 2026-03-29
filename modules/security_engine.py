@@ -203,6 +203,63 @@ def public_ttd_quorum_policy(session_like: _Any) -> dict:
     }
 
 
+import re as _re
+
+_SENSITIVE_PATTERNS = {
+    "iban": _re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"),
+    "credential": _re.compile(
+        r"\b(password|passwort|pwd|pin|tan|otp|cvv|iban|bic|login|konto|account)\b\s*[:=]\s*\S+",
+        _re.IGNORECASE,
+    ),
+    "seed_phrase": _re.compile(r"\b(seed phrase|mnemonic|wallet seed|recovery phrase)\b", _re.IGNORECASE),
+}
+_CARD_PATTERN = _re.compile(r"(?:\d[ -]*?){13,19}")
+_BANKING_KEYWORDS = frozenset(
+    ("banking", "onlinebanking", "kreditkarte", "debitkarte", "iban", "tan")
+)
+
+
+def _luhn_valid(number_text: str) -> bool:
+    """Prueft eine Ziffernfolge gegen den Luhn-Algorithmus (Kreditkarten)."""
+    digits = [int(c) for c in str(number_text) if c.isdigit()]
+    if not 13 <= len(digits) <= 19:
+        return False
+    checksum = 0
+    parity = len(digits) % 2
+    for idx, digit in enumerate(digits):
+        val = digit * 2 if idx % 2 == parity else digit
+        if val > 9:
+            val -= 9
+        checksum += val
+    return checksum % 10 == 0
+
+
+def sensitive_data_scan(text: str) -> dict:
+    """
+    Scannt Text auf strukturell erkennbare sensitive Datenfelder.
+
+    Erkennt: IBAN-Muster, Credential-Paare (key=value), Seed-Phrasen,
+    Kreditkartennummern (Luhn-validiert), Banking-Keywords.
+
+    Gibt ein Dict mit 'hits' (Trefferliste) und 'sensitive' (bool) zurueck.
+    Kein semantisches Urteil — nur Mustererkennung.
+    """
+    raw = str(text or "")
+    hits: list[str] = []
+    for label, pattern in _SENSITIVE_PATTERNS.items():
+        if pattern.search(raw):
+            hits.append(label)
+    for match in _CARD_PATTERN.findall(raw):
+        if _luhn_valid(match):
+            hits.append("credit_card")
+            break
+    lowered = raw.lower()
+    if any(kw in lowered for kw in _BANKING_KEYWORDS):
+        hits.append("banking_keyword")
+    unique_hits = sorted(set(hits))
+    return {"sensitive": bool(unique_hits), "hits": unique_hits}
+
+
 def validate_public_ttd_candidate(
     candidate: dict,
     *,

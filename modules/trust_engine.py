@@ -269,4 +269,6 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     raise SystemExit(main(sys.argv[1:]))

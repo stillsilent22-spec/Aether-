@@ -21,6 +21,12 @@ from modules.analysis_capsule import AnalysisCapsuleEngine
 from modules.structure_map_engine import StructureMapEngine
 
 try:
+    from modules.ethics_engine import EthicsEngine as _EthicsEngine
+    _ethics_engine = _EthicsEngine()
+except Exception:
+    _ethics_engine = None
+
+try:
     from reconstruction_engine import reconstruction_engine as _reconstruction_engine
 except Exception:
     _reconstruction_engine = None
@@ -28,10 +34,11 @@ except Exception:
 class AetherPipeline:
     def learn_structural_patterns(self) -> dict:
         """
-        Lernt typische mathematische Strukturen (z.B. Symmetrie, Entropie, Invarianten) aus dem Audit-Log.
-        Erkennt Muster von Malware, Obfuskation, KI-generierten Texten, verschleiertem Code usw.
-        Keine Inhaltsanalyse, nur mathematische Regeln/Verteilungen.
-        Gibt typische Wertebereiche und Auffälligkeiten zurück.
+        Leitet statistische Baselines aus dem Audit-Log ab und markiert Messungen,
+        die ausserhalb typischer Bereiche natuerlicher Signale liegen.
+        Keine Inhaltsinterpretation — ausschliesslich Messwertvergleich gegen
+        empirische Referenzbereiche (Shannon-Entropie, Noether-Symmetrie, Invariantenstaerke).
+        Gibt Statistiken und reine Messbeschreibungen zurueck (keine Labels/Urteile).
         """
         if not self.audit_log:
             return {}
@@ -56,14 +63,35 @@ class AetherPipeline:
             "periodicity": stats(periodicities),
             "invariant_strength": stats(invariant_strengths),
         }
-        # Heuristik: Auffällige Bereiche
+        # Heuristik: Auffällige Bereiche — reine Messbeschreibung, keine inhaltliche Interpretation
         hints = []
-        if patterns["entropy"].get("mean", 0) > 7.5:
-            hints.append("Hohe Entropie: Mögliche Verschlüsselung/Obfuskation/Malware")
-        if patterns["symmetry"].get("mean", 1) < 0.5:
-            hints.append("Niedrige Symmetrie: Starke Obfuskation oder KI-generierter Text")
-        if patterns["invariant_strength"].get("mean", 0) > 0.7:
-            hints.append("Starke mathematische Invarianten: KI-generierte oder stark strukturierte Daten")
+        e_mean = patterns["entropy"].get("mean", 0)
+        s_mean = patterns["symmetry"].get("mean", 1)
+        iv_mean = patterns["invariant_strength"].get("mean", 0)
+
+        if e_mean > 7.5:
+            hints.append({
+                "metric": "entropy",
+                "value": round(e_mean, 4),
+                "observation": f"entropy_mean={e_mean:.4f} — exceeds natural-language baseline (typical: 3.5–5.5 bits/byte). "
+                               "Near-random byte distribution. Common in compressed, encrypted, or densely packed binary payloads.",
+            })
+        if s_mean < 0.5:
+            hints.append({
+                "metric": "symmetry",
+                "value": round(s_mean, 4),
+                "observation": f"symmetry_mean={s_mean:.4f} — below structural baseline (typical: > 0.75). "
+                               "Irregular distributional symmetry. Observed in strongly non-uniform byte sequences "
+                               "and in text deviating from natural power-law distributions.",
+            })
+        if iv_mean > 0.7:
+            hints.append({
+                "metric": "invariant_strength",
+                "value": round(iv_mean, 4),
+                "observation": f"invariant_strength_mean={iv_mean:.4f} — above high-structure threshold (typical: < 0.5). "
+                               "Strong mathematical invariants detected. Observed in highly regular, "
+                               "algorithmically generated, or densely structured data streams.",
+            })
         patterns["hints"] = hints
         return patterns
 
@@ -160,6 +188,33 @@ class AetherPipeline:
     def _augment_result(self, result: Dict[str, Any], raw: bytes) -> None:
         result["compression"] = self._build_compression_summary(raw)
         result["reconstruction"] = self._build_reconstruction_summary(result)
+        # ── Malware / Obfuskationserkennung ─────────────────────────────────
+        # Wird deterministisch auf jede Nutzlast angewendet — kein optionaler Pfad.
+        obfuscation_hints = self.learn_structural_patterns()
+        result["obfuscation_scan"] = {
+            "hints": obfuscation_hints.get("hints", []),
+            "entropy_stats": obfuscation_hints.get("entropy", {}),
+            "symmetry_stats": obfuscation_hints.get("symmetry", {}),
+            "invariant_strength_stats": obfuscation_hints.get("invariant_strength", {}),
+        }
+
+        # ── Ethics-Engine (strukturelle Integritätsprüfung) ───────────────────
+        if _ethics_engine is not None:
+            ethics_result = _ethics_engine.assess(
+                text=str(result.get("sha256", "")),
+                entropy_mean=result.get("entropy"),
+            )
+            result["ethics"] = {
+                "integrity_score": float(ethics_result.score),
+                "zipf": float(ethics_result.zipf),
+                "benford": float(ethics_result.benford),
+                "noether": float(ethics_result.noether),
+                "interferenz": float(ethics_result.interferenz),
+                "heisenberg": float(ethics_result.heisenberg),
+            }
+        else:
+            result["ethics"] = {"integrity_score": None, "error": "ethics_engine_unavailable"}
+
         if _aelab is not None:
             aelab_result = _aelab.analyze(raw)
             result["aelab"] = aelab_result
@@ -434,6 +489,8 @@ class AetherPipeline:
 
 # Beispielnutzung
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     pipeline = AetherPipeline()
     res = pipeline.process(Path("test.bin"))
     print(json.dumps(res, indent=2, ensure_ascii=False))

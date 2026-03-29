@@ -173,6 +173,7 @@ export component AetherModernWindow inherits Window {
                     TabChip { label: "Anchors"; active: false; }
                     TabChip { label: "Logs"; active: false; }
                     TabChip { label: "YouTube"; active: false; }
+                    TabChip { label: "Referenz"; active: false; }
 
                     Rectangle { height: 1px; background: #1F2A33; }
 
@@ -321,6 +322,70 @@ export component AetherModernWindow inherits Window {
                             Text { text: "08:31  Workflow hit persisted while minimized"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
                             Text { text: "08:18  Slint preview refreshed"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
                             Text { text: "07:57  Public queue idle"; color: #A7B0B7; font-size: 13px; font-family: "Inter"; }
+                        }
+                    }
+
+                    // ── Metriken-Referenz ─────────────────────────────────────────────────────
+                    // Korrelationshinweise — keine Urteile, nur Strukturbeobachtungen.
+                    // "kann korrelieren mit" bedeutet nicht "ist".
+                    Rectangle {
+                        border-radius: 16px;
+                        background: #121B22;
+                        border-width: 1px;
+                        border-color: #1F2A33;
+                        VerticalBox {
+                            padding: 18px;
+                            spacing: 14px;
+                            Text { text: "Metriken-Referenz"; color: #E8ECEF; font-size: 16px; font-weight: 600; font-family: "Inter"; }
+                            Text {
+                                text: "Strukturelle Beobachtungen — keine Urteile.\nKorrelationen setzen weitere Analyse voraus.";
+                                color: #A7B0B7; font-size: 11px; font-family: "Inter"; wrap: word-wrap;
+                            }
+
+                            // Entropie
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Shannon-Entropie H(X)  [0 – 8 bits/byte]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "< 3.5   — hoch kompressibel, stark repetitiv"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "3.5 – 5.5  — typischer Bereich natürlicher Sprache"; color: #E8ECEF; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "5.5 – 7.0  — Code, gemischte Datentypen"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "> 7.5   — Zufällig wirkende Byte-Verteilung;\n            kann mit gepackten/verschlüsselten Inhalten korrelieren"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            // Symmetrie
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Noether-Symmetrie  [0 – 1]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "> 0.75  — strukturtreue Verteilung (Basisbereich)"; color: #E8ECEF; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "0.40 – 0.75  — erhöhte Ungleichmäßigkeit"; color: #A7B0B7; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "< 0.40  — stark unregelmäßig;\n           kann mit nicht-natürlichen Sequenzen korrelieren"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            // Zipf
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Zipf-Konformität (α)  [0 – 1, ideal ≈1.0]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "0.8 – 1.2  — dem Potenzgesetz folgend (natürl. Sprache)"; color: #E8ECEF; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "< 0.5 oder > 1.8  — Abweichung vom Potenzgesetz;\n                   kann mit synthetisch generiertem Text korrelieren"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            // Benford
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Benford-Score  [0 – 1]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "> 0.7   — konform mit Benford-Verteilung"; color: #E8ECEF; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "< 0.3   — starke Abweichung;\n          kann mit artifiziell generierten Zahlenwerten korrelieren"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            // Invariantenstärke
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Invariantenstärke  [0 – 1]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "< 0.5   — geringe Regelmäßigkeit (Basisbereich)"; color: #E8ECEF; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "> 0.7   — stark strukturierte Daten;\n          können algorithmisch erzeugt oder stark geordnet sein"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            // Trust
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text { text: "Trust-Score  [0 – 1]"; color: #3FBAC2; font-size: 12px; font-weight: 700; font-family: "Inter"; }
+                            Text { text: "> 0.85  — alle Invarianten stabil (hohe Konsistenz)"; color: #5AAE84; font-size: 12px; font-family: "Inter"; }
+                            Text { text: "< 0.30  — mehrere Invarianzversagen;\n          Nutzlast anomal, modifiziert oder unvollständig"; color: #C7A04A; font-size: 12px; font-family: "Inter"; wrap: word-wrap; }
+
+                            Rectangle { height: 1px; background: #1F2A33; }
+                            Text {
+                                text: "Diese Tabelle ist eine wissenschaftliche Orientierungshilfe.\nKein Wert allein begründet ein Urteil.\nAether bewertet Struktur — nicht Inhalt.";
+                                color: #A7B0B7; font-size: 11px; font-family: "Inter"; wrap: word-wrap;
+                            }
                         }
                     }
                 }

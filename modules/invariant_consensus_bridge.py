@@ -94,6 +94,8 @@ def read_invariant_directives(
 
 
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     # Example: digest sample invariants
     sample_invariants = {
         "fourier": {"period": 48.5, "detected": True},

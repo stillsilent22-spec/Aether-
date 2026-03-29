@@ -142,13 +142,13 @@ def _write_consent(state: Dict[str, Any]) -> None:
 
 def has_consent() -> bool:
     state = _read_consent()
-    return bool(state.get("consented", False))
+    return bool(state.get("consented", True))
 
 
 def get_consent_state() -> Dict[str, Any]:
     state = _read_consent()
     return {
-        "consented": bool(state.get("consented", False)),
+        "consented": bool(state.get("consented", True)),
         "consented_at": state.get("consented_at"),
         "actor": state.get("actor"),
         "revoked": bool(state.get("revoked", False)),

@@ -1,10 +1,10 @@
 ﻿from __future__ import annotations
 
-from modules.assistant_engine import assistant_interference_score, assistant_reduce
+from modules.text_utils import interference_score, text_reduce
 
 
-def test_assistant_reduce_returns_structural_features() -> None:
-    result = assistant_reduce("Aether anchor delta entropy observer symmetry")
+def test_text_reduce_returns_structural_features() -> None:
+    result = text_reduce("Aether anchor delta entropy observer symmetry")
 
     assert result["length"] > 0
     assert result["entropy"] >= 0.0
@@ -17,12 +17,12 @@ def test_assistant_reduce_returns_structural_features() -> None:
     assert isinstance(result["reference_candidates"], list)
 
 
-def test_assistant_interference_prefers_similar_inputs() -> None:
-    close_score = assistant_interference_score(
+def test_interference_prefers_similar_inputs() -> None:
+    close_score = interference_score(
         "Aether anchor delta graph",
         "Aether anchor delta sphere",
     )
-    far_score = assistant_interference_score(
+    far_score = interference_score(
         "Aether anchor delta graph",
         "banana invoice volcano orchard",
     )
@@ -32,8 +32,8 @@ def test_assistant_interference_prefers_similar_inputs() -> None:
     assert close_score < far_score
 
 
-def test_assistant_reduce_exposes_reference_candidates() -> None:
-    result = assistant_reduce("observer-relative structural intelligence and local anchor analysis")
+def test_text_reduce_exposes_reference_candidates() -> None:
+    result = text_reduce("observer-relative structural intelligence and local anchor analysis")
 
     assert result["corpus_ready"] is True
     assert len(result["reference_candidates"]) >= 1

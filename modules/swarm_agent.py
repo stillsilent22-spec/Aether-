@@ -122,6 +122,7 @@ class SwarmAgent:
         self._started_at: Optional[str] = None
         self._cpu_usage: float = 0.0
         self._last_health_check: float = 0.0  # Adaptive FPS: track last health sync
+        self._last_overlap_check: float = 0.0  # Domain-overlap detection interval
 
     # ---- Lifecycle ---------------------------------------------------------
 
@@ -194,6 +195,17 @@ class SwarmAgent:
                 if now - self._last_health_check > 5.0:
                     self._adjust_fps_from_health()
                     self._last_health_check = now
+
+                # Domain-overlap detection every 5 minutes
+                if now - self._last_overlap_check > 300.0:
+                    self._last_overlap_check = now
+                    try:
+                        from modules.swarm_overlap import detect_and_publish_overlaps
+                        found = detect_and_publish_overlaps()
+                        if found:
+                            print(f"[SWARM-AGENT] {found} new domain overlap event(s) published")
+                    except Exception as _oe:
+                        print(f"[SWARM-AGENT] overlap detection error: {_oe}")
 
             except Exception as err:
                 self._error_count += 1
@@ -408,4 +420,6 @@ def run_agent_daemon() -> None:
 
 
 if __name__ == "__main__":
+    from modules.session_guard import require_session
+    require_session()
     run_agent_daemon()

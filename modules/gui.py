@@ -9,9 +9,6 @@ from tkinter import filedialog, ttk
 from typing import Any
 
 from .analysis_engine import AnalysisEngine, AetherFingerprint
-from .assistant import AssistantEngine
-from .assistant_interface import AssistantInterface, AssistantInterfaceResult
-from .assistant_response_builder import AssistantResponseBuilder
 from .log_system import LogSystem
 from .preload_optimizer import PreloadOptimizer
 from .registry import AetherRegistry, GENESIS_HASH
@@ -48,22 +45,12 @@ class AetherGUI:
         self.renderer = renderer
         self.ae_vault = ae_vault
         self.ae_interpreter = ae_interpreter
-        self.assistant_engine = AssistantEngine()
-        self.preload_optimizer = PreloadOptimizer()
-        self.response_builder = AssistantResponseBuilder()
-        self.assistant_interface = AssistantInterface(
-            assistant_engine=self.assistant_engine,
-            preload_optimizer=self.preload_optimizer,
-            auto_push_ttd=False,
-            response_builder=self.response_builder,
-        )
         self.root: tk.Tk | None = None
         self.path_var: tk.StringVar | None = None
         self.status_var: tk.StringVar | None = None
         self.summary_var: tk.StringVar | None = None
         self.output_text: tk.Text | None = None
         self._latest_fingerprint: AetherFingerprint | None = None
-        self._latest_assistant: AssistantInterfaceResult | None = None
 
     def _ensure_root(self) -> tk.Tk:
         if self.root is not None:
@@ -155,8 +142,7 @@ class AetherGUI:
         source_path = Path(path_value)
         fingerprint = self.analysis_engine.analyze_file(source_path)
         self._latest_fingerprint = fingerprint
-        self._latest_assistant = self.assistant_interface.analyze_and_route(source_path.name)
-        self._render_result(source_path, fingerprint, self._latest_assistant)
+        self._render_result(source_path, fingerprint)
         self._set_status(f"Analyse abgeschlossen: {source_path.name}")
         return fingerprint
 
@@ -164,7 +150,6 @@ class AetherGUI:
         self,
         source_path: Path,
         fingerprint: AetherFingerprint,
-        assistant_result: AssistantInterfaceResult,
     ) -> None:
         payload = {
             "path": str(source_path),
@@ -177,7 +162,6 @@ class AetherGUI:
             "ethics_score": float(getattr(fingerprint, "ethics_score", 0.0) or 0.0),
             "verdict": str(getattr(fingerprint, "verdict", "") or ""),
             "integrity_state": str(getattr(fingerprint, "integrity_state", "") or ""),
-            "assistant": assistant_result.to_payload(),
         }
         self._set_output(json.dumps(payload, ensure_ascii=False, indent=2))
 
