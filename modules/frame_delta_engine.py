@@ -46,6 +46,15 @@ class FrameCodecStats:
     bytes_raw:        int = 0
     bytes_transmitted: int = 0   # 64 Bytes ASCII-Hex pro Signatur
 
+    # Energy tracking — Bits per Joule
+    cpu_joules_accumulated: float = 0.0
+    """Estimated joules consumed so far (cpu_pct/100 × tdp_watts × dt_s)."""
+    bits_delivered: int = 0
+    """Bits delivered to receiver via vault compression (vault_hits × CHUNK_SIZE × 8)."""
+    bits_per_joule: float = 0.0
+    """Current efficiency metric: how many bits are transmitted per joule of compute.
+    Higher = more efficient. At swarm scale this rises as hit_ratio increases."""
+
     @property
     def hit_ratio(self) -> float:
         if self.chunks_total == 0:
@@ -63,25 +72,62 @@ class FrameCodecStats:
     def savings_pct(self) -> float:
         return max(0.0, (1.0 - self.compression_ratio) * 100.0)
 
+    def update_energy(
+        self,
+        cpu_pct: float,
+        *,
+        tdp_watts: float = 15.0,
+        dt_s: float = 0.033,
+        new_vault_hits: int = 0,
+    ) -> None:
+        """Update the energy model after one encode call.
+
+        Args:
+            cpu_pct:  Current CPU utilisation in percent (0–100).
+            tdp_watts: Assumed thermal design power of the CPU in watts.
+                       15 W is typical for a mid-range laptop CPU; adjust for desktop.
+            dt_s:     Time elapsed since last call in seconds (≈ 1/fps).
+            new_vault_hits: Number of vault hits in the most recent encode call,
+                       used to credit bits_delivered.
+        """
+        joules = (max(cpu_pct, 0.5) / 100.0) * tdp_watts * dt_s
+        self.cpu_joules_accumulated += joules
+        self.bits_delivered += new_vault_hits * CHUNK_SIZE * 8
+        if self.cpu_joules_accumulated > 0.0:
+            self.bits_per_joule = self.bits_delivered / self.cpu_joules_accumulated
+
     def to_dict(self) -> dict:
         return {
-            "frames_encoded":    self.frames_encoded,
-            "chunks_total":      self.chunks_total,
-            "vault_hits":        self.vault_hits,
-            "vault_misses":      self.vault_misses,
-            "hit_ratio":         round(self.hit_ratio, 4),
-            "compression_ratio": round(self.compression_ratio, 4),
-            "savings_pct":       round(self.savings_pct, 2),
-            "bytes_raw":         self.bytes_raw,
-            "bytes_transmitted": self.bytes_transmitted,
+            "frames_encoded":           self.frames_encoded,
+            "chunks_total":             self.chunks_total,
+            "vault_hits":               self.vault_hits,
+            "vault_misses":             self.vault_misses,
+            "hit_ratio":                round(self.hit_ratio, 4),
+            "compression_ratio":        round(self.compression_ratio, 4),
+            "savings_pct":              round(self.savings_pct, 2),
+            "bytes_raw":                self.bytes_raw,
+            "bytes_transmitted":        self.bytes_transmitted,
+            "cpu_joules_accumulated":   round(self.cpu_joules_accumulated, 6),
+            "bits_delivered":           self.bits_delivered,
+            "bits_per_joule":           round(self.bits_per_joule, 1),
         }
 
     def __str__(self) -> str:
+        bpj = self.bits_per_joule
+        if bpj >= 1e6:
+            bpj_str = f"{bpj/1e6:.2f} Mb/J"
+        elif bpj >= 1e3:
+            bpj_str = f"{bpj/1e3:.1f} kb/J"
+        elif bpj > 0:
+            bpj_str = f"{bpj:.0f} b/J"
+        else:
+            bpj_str = "— b/J"
         return (
             f"Frames={self.frames_encoded} "
             f"Chunks={self.chunks_total} "
             f"Hits={self.vault_hits} ({self.hit_ratio*100:.1f}%) "
-            f"Savings={self.savings_pct:.1f}%"
+            f"Savings={self.savings_pct:.1f}%  "
+            f"Efficiency={bpj_str}"
         )
 
 

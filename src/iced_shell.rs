@@ -675,6 +675,10 @@ pub struct AetherIcedShell {
     live_render_noether_symmetry_preserved: bool,
     live_render_noether_prev_spectral: [f32; 5],
     live_render_noether_prev_entropy: f32,
+    /// Bits per Joule — live efficiency metric.
+    /// bits_saved_this_tick / joules_consumed_this_tick
+    /// (bits_saved = (1-delta_ratio)*frame_bytes*8, joules = cpu_pct/100*15W*1/fps)
+    live_render_bits_per_joule: f32,
     #[allow(dead_code)]
     backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
     swarm_consented: bool, // Swarm-Teilnahme: opt-in/out über UI steuerbar
@@ -842,6 +846,7 @@ impl AetherIcedShell {
             live_render_noether_symmetry_preserved: true,
             live_render_noether_prev_spectral: [0.0f32; 5],
             live_render_noether_prev_entropy: 0.0,
+            live_render_bits_per_joule: 0.0,
             cascade_run_id: None,
             cascade_metrics: None,
             backup_enabled: true, // Standardmäßig aktiviert
@@ -4803,10 +4808,22 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 // ● Live-Indikator
                 button(
                     text(if self.live_render_mode {
-                        format!("● LIVE  p={}  δ={:.3}  px={:.3}",
+                        format!("● LIVE  p={}  δ={:.3}  px={:.3}  {}",
                             self.live_render_saved_patterns,
                             self.live_render_last_delta_ratio,
                             self.live_render_last_pixeldynamics,
+                            {
+                                let bpj = self.live_render_bits_per_joule;
+                                if bpj >= 1_000_000.0 {
+                                    format!("{:.1} Mb/J", bpj / 1_000_000.0)
+                                } else if bpj >= 1_000.0 {
+                                    format!("{:.0} kb/J", bpj / 1_000.0)
+                                } else if bpj > 0.0 {
+                                    format!("{:.0} b/J", bpj)
+                                } else {
+                                    "— b/J".to_owned()
+                                }
+                            },
                         )
                     } else {
                         "○ Live Render".to_owned()
@@ -5498,6 +5515,19 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         self.live_render_noether_symmetry_preserved = noether_sym;
         self.live_render_noether_prev_spectral = noether_curr_spectral;
         self.live_render_noether_prev_entropy = noether_curr_entropy;
+
+        // Bits per Joule — live efficiency estimate.
+        // bits_saved: the fraction of the raw frame that the delta codec eliminated
+        // this tick, expressed in bits (conservative: only count non-delta payload).
+        // joules: CPU-fraction × assumed 15 W TDP × ~33 ms frame period.
+        // Result is intentionally approximate — its trend matters more than its absolute value.
+        {
+            let frame_bits = self.live_render_last_frame.len() as f32 * 8.0;
+            let bits_saved = (1.0 - self.live_render_last_delta_ratio.clamp(0.0, 1.0)) * frame_bits;
+            let cpu_fraction = (self.backend_cpu_pct / 100.0).clamp(0.005, 1.0);
+            let joules_per_tick = cpu_fraction * 15.0_f32 * 0.033_f32;
+            self.live_render_bits_per_joule = bits_saved / joules_per_tick;
+        }
     }
 
     fn theme_definition(&self) -> Theme {

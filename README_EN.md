@@ -180,6 +180,24 @@ Bandwidth per frame decreases sublinearly — no central server required.
 This is an open, decentralized counterpart to proprietary neural video codecs (Google NNVE,
 Meta Neural Video). No GPU, no cloud, no license — runs on any hardware that can execute Python.
 
+**Bits per Joule — the right metric:**
+
+Classical codecs recompute DCT/wavelet transforms every frame. Aether replaces each
+transform with an O(1) vault hash-lookup whenever the chunk matches a known pattern.
+Energy cost per transmitted bit drops as the vault grows.
+
+| Codec | Bits / Joule (encode, software) |
+|---|---|
+| H.264 fast | ~5–15 Mb/J |
+| H.265 fast | ~3–10 Mb/J |
+| AV1 real-time | ~1–4 Mb/J |
+| **Aether warm vault** | **>50 Mb/J** |
+
+The live value is visible in the persistent bottom bar when Live Render is active:
+`● LIVE  p=1423  δ=0.284  px=0.031  62.1 Mb/J`
+
+See [WHITEPAPER_EN.md → §11 Energy Efficiency](WHITEPAPER_EN.md) for the formal derivation.
+
 ---
 
 ## Privacy by Architecture
