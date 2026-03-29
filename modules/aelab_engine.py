@@ -123,6 +123,11 @@ def analyze(raw: bytes) -> dict:
             "signature":  tree_signature(best_tree) if best_tree else "",
             "selected_seed": selected_entry or {},
             "vault": vault_state,
+            # ── Commit-Gate (architektonisch, nicht optional) ──────────────
+            # Vault-Commit nur erlaubt wenn lossless >= 0.95 UND Anker vorhanden.
+            # Dieser Wert ist die einzige authoritative Stelle — kein Code-Pfad darf
+            # ihn umgehen. Gilt für Rust-Bus AELabAnalysisEvent.gate_passes() ebenso.
+            "commit_allowed": lr >= 0.95 and (has_anchor(best_tree) if best_tree else False),
         }
 
     except Exception as exc:
@@ -163,6 +168,7 @@ def _empty_result() -> dict:
         "signature":  "",
         "selected_seed": {},
         "vault": {},
+        "commit_allowed": False,
     }
 
 

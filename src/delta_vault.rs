@@ -37,9 +37,18 @@ struct EncryptedDeltaRecord {
     ciphertext_b64: String,
 }
 
+/// Datenschutz by Architecture:
+/// Der Key lebt ausschliesslich im RAM. Zeroize() wird beim Drop erzwungen –
+/// kein Code-Pfad kann diesen Schritt ueberspringen.
 pub struct LocalDeltaVault {
     path: PathBuf,
     encryption_key: [u8; 32],
+}
+
+impl Drop for LocalDeltaVault {
+    fn drop(&mut self) {
+        self.encryption_key.zeroize();
+    }
 }
 
 impl LocalDeltaVault {

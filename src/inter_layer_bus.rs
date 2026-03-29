@@ -48,6 +48,14 @@ pub enum BusEvent {
     PackDownloadConfirmed(PackDownloadEvent),
     PackInstalled(PackInstalledEvent),
     OfflineCachePrepared(OfflineCacheEvent),
+    /// AELab GP-Baum-Analyse abgeschlossen. Lossless-Ratio ist Commit-Gate:
+    /// < 0.95 → kein Vault-Commit erlaubt.
+    AELabAnalysisResult(AELabAnalysisEvent),
+    /// Strukturelle Parallele zwischen zwei Domains gefunden — rein metrisch,
+    /// ohne semantische Interpretation. Nur Hinweis, kein Urteil.
+    CrossDomainStructuralHint(CrossDomainHintEvent),
+    /// Session-Shutdown: Alle RAM-only Keys zeroizen, Motor schliessen.
+    MotorSessionClose,
 }
 
 #[derive(Debug, Clone)]
@@ -429,6 +437,61 @@ pub struct OfflineCacheEvent {
     pub cache_size_mb: f32,
     pub anchor_count: usize,
     pub coverage_by_activity: Vec<(String, f32)>,
+}
+
+/// Ergebnis einer AELab GP-Baum-Analyse — Pflicht-Gate vor jedem Vault-Commit.
+/// Lossless-Ratio < 0.95 → Commit wird blockiert (architektonisch, nicht optional).
+/// Tree-Signatur ist SHA-256-deterministisch, rohe Werte verlassen das Gerät nie.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AELabAnalysisEvent {
+    /// SHA-256 des serialisierten GP-Baums (deterministisch, kein Klartext).
+    pub tree_signature: String,
+    /// Anteil exakt rekonstruierter Bytes [0.0, 1.0]. Commit-Gate: >= 0.95.
+    pub lossless_ratio: f32,
+    /// Fitness-Wert des besten Baums (kleiner = besser).
+    pub fitness: f32,
+    /// Anzahl Nodes im Baum.
+    pub nodes: u32,
+    /// Tiefe des Baums.
+    pub depth: u32,
+    /// Baum enthält mathematische Ankerpunkte (π, e, φ, 2^k, ...).
+    pub has_anchor: bool,
+    /// Neue Evolution wurde gestartet (false = Vault-Seed wiederverwendet).
+    pub evolved: bool,
+    /// Domain des analysierten Signals.
+    pub domain: String,
+    /// Commit erlaubt: lossless_ratio >= 0.95 UND has_anchor.
+    pub commit_allowed: bool,
+}
+
+impl AELabAnalysisEvent {
+    /// Berechnet ob ein Vault-Commit erlaubt ist — einzige authoritative Stelle.
+    pub fn gate_passes(lossless_ratio: f32, has_anchor: bool) -> bool {
+        lossless_ratio >= 0.95 && has_anchor
+    }
+}
+
+/// Strukturelle Parallele zwischen zwei Domains — rein metrisch, keine Semantik.
+/// Das System zeigt NUR: "Muster A und Muster B haben strukturelle Ähnlichkeit X".
+/// Was das bedeutet, entscheidet der Nutzer. Kein Label, kein Urteil.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CrossDomainHintEvent {
+    /// SHA-256-Signatur von Anker A (Domain 1).
+    pub anchor_a: String,
+    /// SHA-256-Signatur von Anker B (Domain 2).
+    pub anchor_b: String,
+    /// Domain von Anker A (z.B. "physics", "genomics", "audio").
+    pub domain_a: String,
+    /// Domain von Anker B.
+    pub domain_b: String,
+    /// Strukturelle Ähnlichkeit [0.0, 1.0] — ausschliesslich metrisch.
+    /// Berechnet aus: Entropie-Profil, Fourier-Score, Periodizität, Symmetrie.
+    pub structural_similarity: f32,
+    /// Welche Metriken übereinstimmen (z.B. ["entropy", "periodicity"]).
+    /// Keine semantischen Labels — nur Metrik-Namen.
+    pub matching_metrics: Vec<String>,
+    /// Konfidenz des strukturellen Musters [0.0, 1.0].
+    pub confidence: f32,
 }
 
 pub struct InterLayerBus {

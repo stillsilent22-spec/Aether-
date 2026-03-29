@@ -161,7 +161,21 @@ class AetherPipeline:
         result["compression"] = self._build_compression_summary(raw)
         result["reconstruction"] = self._build_reconstruction_summary(result)
         if _aelab is not None:
-            result["aelab"] = _aelab.analyze(raw)
+            aelab_result = _aelab.analyze(raw)
+            result["aelab"] = aelab_result
+            # ── Commit-Gate (architektonisch) ───────────────────────────────
+            # Vault-Commit nur erlaubt wenn lossless >= 0.95 UND Anker vorhanden.
+            # Kein Code-Pfad kann dieses Gate umgehen — es ist kein Feature,
+            # es ist die Grundbedingung.
+            result["vault_commit_allowed"] = aelab_result.get("commit_allowed", False)
+            # ── Cross-Domain Structural Hint ────────────────────────────────
+            # Vergleich aktueller Anker mit dem Audit-Log: Finde strukturelle
+            # Parallelen über Domains hinweg — rein metrisch, ohne Semantik.
+            hints = self._find_cross_domain_hints(result)
+            if hints:
+                result["cross_domain_hints"] = hints
+        else:
+            result["vault_commit_allowed"] = False
 
     def _build_compression_summary(self, raw: bytes) -> Dict[str, Any]:
         compressed = zlib.compress(raw, level=9)
@@ -311,6 +325,108 @@ class AetherPipeline:
         # Platzhalter für Trust-Berechnung
         return 0.0
 
+    def _find_cross_domain_hints(self, current: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Sucht in bereits analysierten Einträgen nach strukturellen Parallelen
+        zum aktuellen Ergebnis. Rein metrisch — kein semantisches Label, kein Urteil.
+
+        Vergleicht: Entropie-Profil, Fourier/Periodizität, Symmetrie, Benford-Score.
+        Gibt nur Hinweise zurück wenn similarity > 0.80 und Domain verschieden.
+        """
+        if len(self.audit_log) < 2:
+            return []
+
+        cur_domain = current.get("file", "unknown")
+        cur_entropy = float(current.get("entropy", 0.0))
+        cur_symmetry = float(current.get("symmetry", 0.0))
+        cur_periodicity = float(current.get("periodicity", 0.0))
+        cur_benford = float(current.get("benford_score", 0.0))
+        cur_katz = float(current.get("katz_dimension", 0.0))
+        cur_zipf = float(current.get("zipf_alpha", 0.0))
+        cur_anchor_sig = current.get("aelab", {}).get("signature", "")
+
+        hints = []
+        for past in self.audit_log[:-1]:  # nicht mit sich selbst vergleichen
+            past_domain = past.get("file", "unknown")
+            if past_domain == cur_domain:
+                continue
+
+            past_entropy = float(past.get("entropy", 0.0))
+            past_symmetry = float(past.get("symmetry", 0.0))
+            past_periodicity = float(past.get("periodicity", 0.0))
+            past_benford = float(past.get("benford_score", 0.0))
+            past_katz = float(past.get("katz_dimension", 0.0))
+            past_zipf = float(past.get("zipf_alpha", 0.0))
+            past_anchor_sig = past.get("aelab", {}).get("signature", "")
+
+            # Metrischer Vergleich: L1-Distanz normiert auf [0, 1]
+            # Alle 6 Metriken aus dem README (Shannon, Zipf, Fourier, Benford, Katz, Symmetrie)
+            # Keine proprietären Algorithmen — jede Komponente mathematisch definiert.
+            matching_metrics = []
+            diffs = []
+
+            e_diff = abs(cur_entropy - past_entropy) / 8.0
+            diffs.append(e_diff)
+            if e_diff < 0.10:
+                matching_metrics.append("entropy")
+
+            s_diff = abs(cur_symmetry - past_symmetry)
+            diffs.append(s_diff)
+            if s_diff < 0.10:
+                matching_metrics.append("symmetry")
+
+            p_diff = abs(cur_periodicity - past_periodicity)
+            diffs.append(p_diff)
+            if p_diff < 0.10:
+                matching_metrics.append("periodicity")
+
+            b_diff = abs(cur_benford - past_benford)
+            diffs.append(b_diff)
+            if b_diff < 0.10:
+                matching_metrics.append("benford")
+
+            # Katz-Dimension: normalisierte fraktale Kurvenlänge — Selbstähnlichkeit
+            k_diff = abs(cur_katz - past_katz)
+            diffs.append(k_diff)
+            if k_diff < 0.10:
+                matching_metrics.append("katz_dimension")
+
+            # Zipf-Konformität: Potenzgesetz-Fit f ∝ r^-α — Natürlichkeit
+            z_diff = abs(cur_zipf - past_zipf)
+            diffs.append(z_diff)
+            if z_diff < 0.10:
+                matching_metrics.append("zipf")
+
+            similarity = 1.0 - (sum(diffs) / len(diffs))
+
+            if similarity >= 0.80 and matching_metrics:
+                hints.append({
+                    # Nur Signaturen (SHA-256-Prefix), niemals Rohdaten
+                    "anchor_a": hashlib.sha256(cur_anchor_sig.encode()).hexdigest()[:16],
+                    "anchor_b": hashlib.sha256(past_anchor_sig.encode()).hexdigest()[:16],
+                    "domain_a": cur_domain,
+                    "domain_b": past_domain,
+                    "structural_similarity": round(similarity, 4),
+                    "matching_metrics": matching_metrics,
+                    # Konfidenz = Anteil übereinstimmender Metriken (max 6)
+                    "confidence": round(len(matching_metrics) / 6.0, 4),
+                })
+
+        # Maximal 3 Hints pro Analyse — Signal, kein Rauschen
+        return hints[:3]
+
+    def close(self) -> None:
+        """
+        Ordentlicher Shutdown: Motor-Session zeroizen, RAM-only Keys löschen.
+        Muss beim Beenden von Aether aufgerufen werden.
+        """
+        if _aelab is not None:
+            try:
+                from modules.aelab_motor import close_motor_session
+                close_motor_session()
+            except Exception:
+                pass
+
     def append_audit(self, result: Dict[str, Any]):
         self.audit_log.append(result)
         with open("aether_audit_log.jsonl", "a", encoding="utf-8") as f:
@@ -321,5 +437,5 @@ if __name__ == "__main__":
     pipeline = AetherPipeline()
     res = pipeline.process(Path("test.bin"))
     print(json.dumps(res, indent=2, ensure_ascii=False))
-    # Pipeline-Optimierungsvorschlag anzeigen
     pipeline.optimize_pipeline()
+    pipeline.close()  # Zeroize RAM-only Keys
