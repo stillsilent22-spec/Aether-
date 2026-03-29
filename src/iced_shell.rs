@@ -512,6 +512,9 @@ enum Message {
     FlowSphereDomainRename(usize, String),
     FlowSphereBroadcastNameChanged(String),
     FlowSphereBroadcastConsentToggled,
+    FlowSphereBroadcastSuggest,
+    FlowSphereBroadcastApprove,
+    FlowSphereBroadcastReject,
     FlowSphereExplain(String),
     FlowSphereNodeClicked(usize),
     FlowSphereExportPressed,
@@ -615,8 +618,10 @@ pub struct AetherIcedShell {
     flow_sphere_show_internal: bool,  // Schalter: Interne Verbindungen an/aus
     flow_sphere_show_external: bool,  // Schalter: Externe Verbindungen an/aus
     flow_sphere_domain_names: Vec<String>, // Benutzerdefinierte Namen fuer interne Domaenen
-    flow_sphere_broadcast_name: String,    // Name, den dieser Knoten nach aussen sendet
+    flow_sphere_broadcast_name: String,    // Optionaler Hinweis fuer Broadcast-Vorschlag
     flow_sphere_broadcast_opt_in: bool,    // Broadcast nur nach ausdruecklicher Zustimmung
+    flow_sphere_broadcast_proposal: Option<String>,
+    flow_sphere_broadcast_visible: Option<String>,
     // --- YouTube ---
     youtube_address: String,
     // --- Rekonstruktion ---
@@ -803,6 +808,8 @@ impl AetherIcedShell {
             flow_sphere_domain_names: vec![String::new(); 6],
             flow_sphere_broadcast_name: String::new(),
             flow_sphere_broadcast_opt_in: false,
+            flow_sphere_broadcast_proposal: None,
+            flow_sphere_broadcast_visible: None,
             youtube_address: "https://www.youtube.com/".to_owned(),
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
@@ -1081,6 +1088,56 @@ impl AetherIcedShell {
                 Color::from_rgb8(0x9A, 0x67, 0xFF),
             ),
         }
+    }
+
+    fn flow_sphere_broadcast_suggestion(&self) -> Option<String> {
+        let external_link_strength = if self.backend_swarm_node_count == 0 {
+            0.0
+        } else {
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
+                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+                .clamp(0.0, 1.0)
+        };
+        let noether = self
+            .cascade_metrics
+            .as_ref()
+            .map(|metrics| metrics.noether_consistency as f32)
+            .or_else(|| self.capsule_state.as_ref().map(|capsule| capsule.noether_consistency))
+            .unwrap_or(self.structure_map_compression / 100.0);
+        if self.backend_swarm_node_count == 0 || external_link_strength < 0.30 {
+            return None;
+        }
+
+        let domain_hint = self
+            .flow_sphere_domain_names
+            .iter()
+            .find_map(|value| {
+                let trimmed = value.trim();
+                if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
+            })
+            .unwrap_or_else(|| "unbenannte Struktur".to_owned());
+        let user_hint = self.flow_sphere_broadcast_name.trim();
+        let relation = if noether > 0.72 {
+            "stabile Aussenkopplung"
+        } else if self.backend_swarm_candidate_count > self.backend_swarm_reachable_node_count {
+            "pruefenswerte Strukturnaehe"
+        } else {
+            "lose aber wiederkehrende Kopplung"
+        };
+
+        let prefix = if user_hint.is_empty() {
+            domain_hint
+        } else {
+            format!("{} / {}", user_hint, domain_hint)
+        };
+
+        Some(format!(
+            "{} · {} · {:.0}% Kopplung · {} erreichbare Peers",
+            prefix,
+            relation,
+            external_link_strength * 100.0,
+            self.backend_swarm_reachable_node_count
+        ))
     }
 
     fn set_flow_sphere_focus(&mut self, key: impl Into<String>) {
@@ -4092,8 +4149,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             show_internal: self.flow_sphere_show_internal,
             show_external: self.flow_sphere_show_external,
             domain_names: self.flow_sphere_domain_names.clone(),
-            broadcast_name: self.flow_sphere_broadcast_name.clone(),
-            broadcast_opt_in: self.flow_sphere_broadcast_opt_in,
+            broadcast_visible: self.flow_sphere_broadcast_visible.clone(),
         };
 
         let sphere_canvas = canvas::Canvas::new(sphere_scene)
@@ -4181,6 +4237,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         .on_press(Message::FlowSphereBroadcastConsentToggled)
                         .padding([6, 10])
                         .style(secondary_button_style))
+                    .push(button(text("Vorschlag finden").size(11))
+                        .on_press(Message::FlowSphereBroadcastSuggest)
+                        .padding([6, 10])
+                        .style(secondary_button_style))
                     .push(text_input("optional: interessanten Aussenbezug als Broadcast-Vorschlag benennen", &self.flow_sphere_broadcast_name)
                         .on_input(Message::FlowSphereBroadcastNameChanged)
                         .padding([6, 8])
@@ -4188,6 +4248,43 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         .width(Length::Fill))
                     .spacing(8)
                     .align_y(Alignment::Center),
+                if let Some(proposal) = &self.flow_sphere_broadcast_proposal {
+                    Row::new()
+                        .push(container(text(format!("Anfrage: {}", proposal)).size(10).color(c(TEXT_H())))
+                            .padding([8, 10])
+                            .width(Length::Fill)
+                            .style(|_: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgba(0.10, 0.16, 0.24, 0.92))),
+                                border: Border { color: Color::from_rgba(0.35, 0.80, 0.92, 0.55), width: 1.0, radius: 8.0.into() },
+                                ..Default::default()
+                            }))
+                        .push(button(text("Zustimmen").size(11))
+                            .on_press(Message::FlowSphereBroadcastApprove)
+                            .padding([6, 10])
+                            .style(primary_button_style))
+                        .push(button(text("Verwerfen").size(11))
+                            .on_press(Message::FlowSphereBroadcastReject)
+                            .padding([6, 10])
+                            .style(secondary_button_style))
+                        .spacing(8)
+                        .align_y(Alignment::Center)
+                        .into()
+                } else if let Some(visible) = &self.flow_sphere_broadcast_visible {
+                    container(text(format!("Sichtbar: {}", visible)).size(10).color(c(TEXT_H())))
+                        .padding([8, 10])
+                        .width(Length::Fill)
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.92))),
+                            border: Border { color: Color::from_rgba(0.30, 0.85, 0.45, 0.60), width: 1.0, radius: 8.0.into() },
+                            ..Default::default()
+                        })
+                        .into()
+                } else {
+                    text("Noch kein Broadcast sichtbar. Erst Vorschlag aus Analyse finden, dann Zustimmung geben.")
+                        .size(10)
+                        .color(soft)
+                        .into()
+                },
                 text("Lokal oder Global waehlt die Leseperspektive. Intern und Extern schalten die Ebenen sichtbar. Broadcast bleibt bis zur Zustimmung rein lokal.")
                     .size(10)
                     .color(soft),
@@ -6219,11 +6316,37 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             }
             Message::FlowSphereBroadcastConsentToggled => {
                 self.flow_sphere_broadcast_opt_in = !self.flow_sphere_broadcast_opt_in;
+                if !self.flow_sphere_broadcast_opt_in {
+                    self.flow_sphere_broadcast_proposal = None;
+                    self.flow_sphere_broadcast_visible = None;
+                }
                 self.status_line = if self.flow_sphere_broadcast_opt_in {
-                    "FlowSphere: Broadcast-Vorschlag freigegeben. Externe Hinweise werden nur nach Zustimmung sichtbar.".to_owned()
+                    "FlowSphere: Broadcast-Pruefung aktiviert. Vorschlaege koennen jetzt angefragt werden.".to_owned()
                 } else {
-                    "FlowSphere: Broadcast-Vorschlag gesperrt. Es wird nichts nach aussen markiert.".to_owned()
+                    "FlowSphere: Broadcast-Pruefung deaktiviert. Vorschlag und Sichtbarkeit wurden geloescht.".to_owned()
                 };
+            }
+            Message::FlowSphereBroadcastSuggest => {
+                if !self.flow_sphere_broadcast_opt_in {
+                    self.status_line = "FlowSphere: Broadcast zuerst freigeben, dann Vorschlag aus der Analyse ableiten.".to_owned();
+                } else {
+                    self.flow_sphere_broadcast_proposal = self.flow_sphere_broadcast_suggestion();
+                    self.status_line = if self.flow_sphere_broadcast_proposal.is_some() {
+                        "FlowSphere: Broadcast-Vorschlag gefunden. Zustimmung steht aus.".to_owned()
+                    } else {
+                        "FlowSphere: Kein belastbarer Broadcast-Vorschlag gefunden.".to_owned()
+                    };
+                }
+            }
+            Message::FlowSphereBroadcastApprove => {
+                if let Some(proposal) = self.flow_sphere_broadcast_proposal.take() {
+                    self.flow_sphere_broadcast_visible = Some(proposal);
+                    self.status_line = "FlowSphere: Broadcast-Vorschlag freigegeben und sichtbar geschaltet.".to_owned();
+                }
+            }
+            Message::FlowSphereBroadcastReject => {
+                self.flow_sphere_broadcast_proposal = None;
+                self.status_line = "FlowSphere: Broadcast-Vorschlag verworfen.".to_owned();
             }
             Message::FlowSphereExplain(key) => {
                 self.set_flow_sphere_focus(key);
@@ -8061,8 +8184,7 @@ struct FlowSphereScene {
     show_internal: bool,        // Interne Verbindungen (Attractor-Graph + Kanten)
     show_external: bool,        // Externe Verbindungen (Swarm-Orbit + Bruecken)
     domain_names: Vec<String>,  // Benutzerdefinierte Domaennamen fuer Attraktoren
-    broadcast_name: String,     // Name den dieser Knoten nach aussen sendet
-    broadcast_opt_in: bool,
+    broadcast_visible: Option<String>,
 }
 
 impl FlowSphereScene {
@@ -8251,8 +8373,32 @@ impl canvas::Program<Message> for FlowSphereScene {
             );
         }
 
-        // === INTERNAL LAYER: Kern, Wellen, Attractor-Graph =========
+        // === INTERNAL LAYER: Kern, Wellen, Verteilungsfelder =========
         if self.show_internal {
+        for band_idx in 0..3 {
+            let lat = (band_idx as f32 - 1.0) * 0.28 + (self.info_growth * 0.15);
+            let spread = (0.14 + self.entropy * 0.18 + band_idx as f32 * 0.03).clamp(0.10, 0.34);
+            let path = canvas::Path::new(|builder| {
+                for step in 0..=72 {
+                    let lon = -PI + TAU * step as f32 / 72.0;
+                    let wobble = (lon * (1.2 + band_idx as f32 * 0.35) + rotation * 0.85).sin() * spread;
+                    let (point, _) = project((lat + wobble).clamp(-1.1, 1.1), lon);
+                    if step == 0 {
+                        builder.move_to(point);
+                    } else {
+                        builder.line_to(point);
+                    }
+                }
+            });
+            frame.stroke(
+                &path,
+                canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(internal_color.r, internal_color.g, internal_color.b, 0.12 + band_idx as f32 * 0.05)),
+                    width: 5.0 + band_idx as f32 * 2.0,
+                    ..canvas::Stroke::default()
+                },
+            );
+        }
         let core_radius = sphere_radius * (0.18 + self.stability * 0.10);
         frame.fill(
             &canvas::Path::circle(center, core_radius),
@@ -8338,6 +8484,10 @@ impl canvas::Program<Message> for FlowSphereScene {
             let radius = 5.5 + depth * 4.0;
             let is_selected = self.active_focus_key == format!("attractor_{}", idx);
             let color = Color::from_rgba(stable_color.r, stable_color.g, stable_color.b, 0.45 + depth * 0.35);
+            frame.fill(
+                &canvas::Path::circle(point, radius + 10.0 + self.entropy * 8.0),
+                Color::from_rgba(stable_color.r, stable_color.g, stable_color.b, 0.05 + depth * 0.08),
+            );
             frame.fill(&canvas::Path::circle(point, radius), color);
             frame.stroke(
                 &canvas::Path::circle(point, radius + 4.0 + self.entropy * 4.0),
@@ -8347,7 +8497,8 @@ impl canvas::Program<Message> for FlowSphereScene {
                     ..canvas::Stroke::default()
                 },
             );
-            if let Some(label) = self.domain_names.get(idx).map(|s| s.trim()).filter(|label| !label.is_empty()) {
+            if is_selected {
+                if let Some(label) = self.domain_names.get(idx).map(|s| s.trim()).filter(|label| !label.is_empty()) {
                 frame.fill_text(canvas::Text {
                     content: label.to_owned(),
                     position: Point::new(point.x + radius + 6.0, point.y - 3.0),
@@ -8357,6 +8508,7 @@ impl canvas::Program<Message> for FlowSphereScene {
                     vertical_alignment: iced::alignment::Vertical::Center,
                     ..canvas::Text::default()
                 });
+                }
             }
         }
         } // end show_internal
@@ -8428,6 +8580,36 @@ impl canvas::Program<Message> for FlowSphereScene {
                     ..canvas::Stroke::default()
                 },
             );
+            let orbit_points: Vec<(Point, f32)> = self.swarm_nodes.iter().map(|(_, lat, lon, coherence)| {
+                let angle = *lon + rotation * 0.35;
+                (
+                    Point::new(
+                        center.x + angle.cos() * orbit_radius,
+                        center.y + angle.sin() * orbit_radius * 0.58,
+                    ),
+                    *coherence,
+                )
+            }).collect();
+            for idx in 0..orbit_points.len() {
+                let next = (idx + 1) % orbit_points.len().max(1);
+                if let Some((point_a, coh_a)) = orbit_points.get(idx).copied() {
+                    if let Some((point_b, coh_b)) = orbit_points.get(next).copied() {
+                        let density_arc = canvas::Path::new(|builder| {
+                            builder.move_to(point_a);
+                            builder.line_to(point_b);
+                        });
+                        let density = ((coh_a + coh_b) * 0.5).clamp(0.0, 1.0);
+                        frame.stroke(
+                            &density_arc,
+                            canvas::Stroke {
+                                style: canvas::Style::Solid(Color::from_rgba(external_color.r, external_color.g, external_color.b, 0.08 + density * 0.18)),
+                                width: 1.2 + density * 2.2,
+                                ..canvas::Stroke::default()
+                            },
+                        );
+                    }
+                }
+            }
             for (idx, (name, lat, lon, coherence)) in self.swarm_nodes.iter().enumerate() {
                 let (anchor, _) = project(*lat * 0.55, *lon);
                 let angle = *lon + rotation * 0.35;
@@ -8449,7 +8631,7 @@ impl canvas::Program<Message> for FlowSphereScene {
                     width: if is_selected { 2.2 } else { 1.0 },
                     ..canvas::Stroke::default()
                 });
-                if idx < 6 {
+                if is_selected {
                     frame.fill_text(canvas::Text {
                         content: name.clone(),
                         position: Point::new(node_point.x + 10.0, node_point.y - 4.0),
@@ -8461,9 +8643,9 @@ impl canvas::Program<Message> for FlowSphereScene {
                     });
                 }
             }
-            if self.broadcast_opt_in && !self.broadcast_name.is_empty() {
+            if let Some(visible) = &self.broadcast_visible {
                 frame.fill_text(canvas::Text {
-                    content: format!("\u{25CE} Broadcast-Vorschlag: {}", self.broadcast_name),
+                    content: format!("\u{25CE} Broadcast: {}", visible),
                     position: Point::new(center.x, center.y + orbit_radius + 14.0),
                     color: Color::from_rgba(external_color.r, external_color.g, external_color.b, 0.88),
                     size: iced::Pixels(11.0),
@@ -8476,9 +8658,9 @@ impl canvas::Program<Message> for FlowSphereScene {
 
         frame.fill_text(canvas::Text {
             content: match (self.show_internal, self.show_external) {
-                (true, true)   => "Intern + Extern: Vollstaendige Topologie-Ueberlagerung".to_owned(),
-                (true, false)  => "Interne Verbindungen: Kern, Domaenen, Kopplungsgraph".to_owned(),
-                (false, true)  => "Externe Verbindungen: Swarm-Orbit, Knoten, Drift".to_owned(),
+                (true, true)   => "Intern + Extern: Verteilungsfelder und Netzbezug".to_owned(),
+                (true, false)  => "Interne Verteilungen: Kern, Dichtefelder, Kopplungsgraph".to_owned(),
+                (false, true)  => "Externe Verteilungen: Orbitdichte, Peers, Drift".to_owned(),
                 (false, false) => "Alle Layer ausgeblendet - Schalter aktivieren".to_owned(),
             },
             position: Point::new(18.0, 22.0),
@@ -8505,11 +8687,11 @@ impl canvas::Program<Message> for FlowSphereScene {
         });
         frame.fill_text(canvas::Text {
             content: if self.show_internal && self.show_external {
-                "Beide Layer: optionale Nutzerhinweise innen und externe Peers aussen gleichzeitig sichtbar.".to_owned()
+                "Beide Layer: Musterdichte innen, Peer-Verteilung aussen. Namen bleiben Nebensache.".to_owned()
             } else if self.show_internal {
-                "Lokalmodus priorisiert Anker und Musterkerne. Hinweise erscheinen erst, wenn du selbst Typen vergibst.".to_owned()
+                "Lokalmodus zeigt Verteilungsfelder und Kernpunkte. Nutzerhinweise erscheinen nur im Fokus.".to_owned()
             } else if self.show_external {
-                "Globalmodus priorisiert externe Kopplung. Broadcast-Vorschlaege bleiben bis zur Zustimmung lokal.".to_owned()
+                "Globalmodus zeigt Peer-Verteilung und Kopplung. Broadcast wird erst nach Anfrage und Zustimmung sichtbar.".to_owned()
             } else {
                 "Schalter 'Intern' oder 'Extern' aktivieren, um Ebenen einzublenden.".to_owned()
             },
