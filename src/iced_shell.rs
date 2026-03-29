@@ -4798,6 +4798,68 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .into()
         };
 
+        let live_bottom_bar: Element<'_, Message> = container(
+            row![
+                // ● Live-Indikator
+                button(
+                    text(if self.live_render_mode {
+                        format!("● LIVE  p={}  δ={:.3}  px={:.3}",
+                            self.live_render_saved_patterns,
+                            self.live_render_last_delta_ratio,
+                            self.live_render_last_pixeldynamics,
+                        )
+                    } else {
+                        "○ Live Render".to_owned()
+                    })
+                    .size(12)
+                    .color(if self.live_render_mode {
+                        Color::from_rgb8(0x9F, 0xF2, 0xA8)
+                    } else {
+                        c(TEXT_M())
+                    })
+                )
+                .on_press(Message::LiveRenderToggle)
+                .padding([5, 14])
+                .style(|_: &Theme, _| button::Style {
+                    background: Some(Background::Color(if self.live_render_mode {
+                        Color::from_rgba(0.10, 0.38, 0.16, 0.55)
+                    } else {
+                        Color::from_rgba(0.10, 0.14, 0.22, 0.55)
+                    })),
+                    border: Border {
+                        color: if self.live_render_mode {
+                            Color::from_rgb8(0x4C, 0xBE, 0x6A)
+                        } else {
+                            Color::from_rgb8(0x30, 0x40, 0x60)
+                        },
+                        width: 1.2,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
+                iced::widget::Space::new(Length::Fill, Length::Shrink),
+                // Schnellzugriff Rekonstruktion
+                button(text("Vault Reconstruction").size(11).color(c(TEXT_M())))
+                    .on_press(Message::TabSelected(Tab::Rekonstruktion))
+                    .padding([5, 10])
+                    .style(|_: &Theme, _| button::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.14, 0.20, 0.36, 0.55))),
+                        border: Border { color: c(BORDER()), width: 1.0, radius: 6.0.into() },
+                        ..Default::default()
+                    }),
+            ]
+            .align_y(Alignment::Center)
+            .spacing(10),
+        )
+        .padding([4, 12])
+        .width(Length::Fill)
+        .style(|_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(0x08, 0x10, 0x22))),
+            border: Border { color: Color::from_rgb8(0x1A, 0x26, 0x42), width: 1.0, radius: 0.0.into() },
+            ..Default::default()
+        })
+        .into();
+
         container(
             row![
                 shell_sidebar,
@@ -4811,7 +4873,8 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                             .width(Length::Fill)
                             .height(Length::Fill)
                     )
-                    .spacing(10)
+                    .push(live_bottom_bar)
+                    .spacing(6)
                     .width(Length::Fill),
             ]
             .spacing(10),

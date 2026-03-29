@@ -90,6 +90,41 @@ Source code and binary structures have measurable structural properties:
 - Anomaly detection (deviations from the codebase baseline)
 - Structural similarity between modules (without reading content)
 
+### 3.6 Collaborative Frame Delta Codec
+
+The `frame_delta_engine` module implements a swarm-based media compression architecture
+built directly on the Aether structural analysis and vault infrastructure.
+
+**Operating principle:**
+
+$$\text{XOR-Delta}_N = \text{Frame}_N \oplus \text{Frame}_{N-1}$$
+
+The delta stream is partitioned into 512-byte chunks. Each chunk is addressed by its
+SHA-256 fingerprint. The AEVault is queried:
+
+- **Vault-Hit:** a DNA-encoded expression tree already exists for this chunk pattern.
+  Transmission cost: 64 bytes (hex signature) instead of 512 bytes raw → ×8 reduction.
+- **Vault-Miss:** an AEEvolver GA run discovers a compact expression tree for the chunk.
+  The tree is stored in DNA format; the 64-byte signature is transmitted.
+
+**Swarm scaling property:**
+
+Frame-chunk patterns (motion vectors, texture blocks, UI elements, particle systems)
+recur deterministically across all players of the same title. The collective vault
+hit-rate $h(n)$ grows with swarm size $n$:
+
+$$h(n) \approx 1 - e^{-\lambda n}$$
+
+where $\lambda$ depends on chunk diversity per game title. Average transmission cost
+per chunk decreases sublinearly, without any central bottleneck or proprietary codec.
+
+**Hardware requirements:** Python 3.9+, no GPU, no cloud access. Compatible with
+constrained hardware (Raspberry Pi, decade-old consumer hardware) as passive vault nodes.
+
+This constitutes an open, decentralized architecture in the research space occupied by
+proprietary neural video codecs (Google NNVE, Meta VCT), with the distinction that
+all computation, vault storage, and tree evolution remain local and auditable.
+
 ---
 
 ## 4. Cross-Domain Comparison
