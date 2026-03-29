@@ -288,7 +288,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-CASCADE_VERSION = "1"
+CASCADE_VERSION = "2"
 AUDIT_LOG_PATH = Path("logs/cascade_audit.jsonl")
 
 # In-memory: source_id → last CascadeResult (for delta convergence)
@@ -312,7 +312,9 @@ class CascadeResult:
     benford_score: float    # 3. Benford first-digit conformance ∈ [0, 1]
     fourier_period: float    # 4. Dominant autocorrelation period (0.0 = none)
     katz_dimension: float    # 5. Katz fractal dimension
-    attractor_stability: float  # 6. Lyapunov-like convergence ∈ [0, 1]
+    perm_entropy: float          # 6. Permutation Entropy (Bandt & Pompe) ∈ [0, 1]
+                                 #    1.0 = maximal geordnet, 0.0 = weißes Rauschen
+                                 #    Misst Ordnungsstruktur, orthogonal zu entropy (Metrik 1)
     delta_convergence: float # 7. Distance from previous run same source_id
     noether_consistency: float  # 8. Symmetry-preservation invariant ∈ [0, 1]
 
@@ -389,13 +391,13 @@ def cascade(
         return math.log10(n) / (math.log10(n) + math.log10(d / avg + 1e-9))
     katz_dimension = _katz(data)
 
-    # Attractor stability
-    from modules.attractor_engine import attractor_track
-    history = [hashlib.md5(data[i:i+64]).hexdigest()[:8]
-               for i in range(0, min(len(data), 4096), 64)]
-    track = attractor_track(history)
-    total_blocks = len(history) or 1
-    attractor_stability = len(track.get("attractors", [])) / total_blocks
+    # Permutation Entropy (Bandt & Pompe, 2002)
+    # Misst die Häufigkeitsverteilung von Ordnungsmustern im Byte-Stream.
+    # Orthogonal zu Shannon-Entropie (Metrik 1): diese misst Byte-Verteilung,
+    # Permutation Entropy misst Ordnungsstruktur.
+    # order=3: 3! = 6 mögliche Muster, effizient und sensitiv für Byte-Streams.
+    from modules.attractor_engine import perm_entropy as _perm_entropy
+    perm_entropy_val = _perm_entropy(data, order=3, step=1)
 
     # Delta convergence — all metrics normalized to [0,1] before distance computation
     def _norm(val: float, lo: float, hi: float) -> float:
@@ -410,7 +412,7 @@ def cascade(
             (_norm(zipf_alpha,          0.0, 3.0) - _norm(prev.zipf_alpha,          0.0, 3.0)) ** 2,
             (_norm(benford_score,       0.0, 1.0) - _norm(prev.benford_score,       0.0, 1.0)) ** 2,
             (_norm(katz_dimension,      0.0, 2.0) - _norm(prev.katz_dimension,      0.0, 2.0)) ** 2,
-            (_norm(attractor_stability, 0.0, 1.0) - _norm(prev.attractor_stability, 0.0, 1.0)) ** 2,
+            (_norm(perm_entropy_val,    0.0, 1.0) - _norm(prev.perm_entropy,        0.0, 1.0)) ** 2,
         ])) / math.sqrt(5)
 
     # Noether consistency
@@ -445,7 +447,7 @@ def cascade(
         0.15 * benford_score +
         0.10 * min(fourier_period / 128.0, 1.0) +
         0.15 * min(katz_dimension / 2.0, 1.0) +
-        0.10 * attractor_stability +
+        0.10 * perm_entropy_val +
         0.05 * (1.0 - min(delta_convergence, 1.0)) +
         0.10 * noether_consistency
     ))
@@ -456,7 +458,7 @@ def cascade(
     if benford_score < 0.3:            anomaly_flags.append("BENFORD_VIOLATION")
     if delta_convergence > 0.5:        anomaly_flags.append("HIGH_DELTA")
     if noether_consistency < 0.4:      anomaly_flags.append("NOETHER_BROKEN")
-    if attractor_stability > 0.8:      anomaly_flags.append("STRONG_ATTRACTOR")
+    if perm_entropy_val > 0.85:        anomaly_flags.append("HIGH_ORDER_STRUCTURE")
     if katz_dimension > 1.8:           anomaly_flags.append("HIGH_FRACTAL")
 
     result = CascadeResult(
@@ -471,7 +473,7 @@ def cascade(
         benford_score=round(benford_score, 5),
         fourier_period=round(fourier_period, 5),
         katz_dimension=round(katz_dimension, 5),
-        attractor_stability=round(attractor_stability, 5),
+        perm_entropy=round(perm_entropy_val, 5),
         delta_convergence=round(delta_convergence, 5),
         noether_consistency=round(noether_consistency, 5),
         trust_score=round(trust_score, 5),
@@ -500,7 +502,7 @@ def cascade_to_swarm_kpi(result: CascadeResult) -> dict[str, float]:
         "benford_score":        result.benford_score,
         "fourier_period":       result.fourier_period,
         "katz_dimension":       result.katz_dimension,
-        "attractor_stability":  result.attractor_stability,
+        "perm_entropy":         result.perm_entropy,
         "delta_convergence":    result.delta_convergence,
         "noether_consistency":  result.noether_consistency,
         "compression_gain_percent": (1.0 - result.entropy / 8.0) * 100.0,

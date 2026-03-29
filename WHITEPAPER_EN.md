@@ -28,7 +28,7 @@ Aether is not a classifier, not an AI model, and not an interpreter. It is a mea
 
 Aether treats files, byte streams, and system processes as local states that can be described and compared by measurable structure. The technical core:
 
-- **Analysis pipeline**: measures entropy, symmetry, periodicity, fractal dimension, Fourier spectrum, attractor states, Benford distribution
+- **Analysis pipeline**: measures entropy, symmetry, periodicity, fractal dimension, Fourier spectrum, Permutation Entropy (Bandt & Pompe), Benford distribution
 - **Reconstruction layer**: snapshots, deltas, lossless reconstruction
 - **Persistence layer**: local SQLite database, append-only audit log
 - **Governance layer**: fail-closed access rules, consent-bound releases
@@ -52,7 +52,7 @@ Within a domain, Aether detects anomalies through deviation from the observed st
 | Fractal dimension | Katz dimension | Self-similarity, complexity level |
 | Dominant frequency | FFT, strongest spectrum | Periodicity, rhythmic recurrence |
 | Benford score | Leading digit distribution vs. log??????(1+1/d) | Naturalness of number distribution |
-| Attractor state | Graph-based stabilization | Convergence, long-term stability |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Permutation Entropy nach Bandt & Pompe (2002): misst die Häufigkeitsverteilung von Ordnungsmustern im Byte-Stream. Orthogonal zur Shannon-Entropie. |
 | Observer I_obs | `H(X) - H(X|M_t)` | Observer's learning gain |
 
 ### 3.2 Bioinformatics
@@ -66,10 +66,10 @@ Genome sequences have characteristic entropy and periodicity profiles. Aether de
 
 ### 3.3 Climate Research
 
-Climate time series show characteristic structural patterns (seasonal periodicity, attractor stability in stable climate regimes). Aether detects:
+Climate time series show characteristic structural patterns (seasonal periodicity, Permutation Entropy shifts in stable climate regimes). Aether detects:
 - Structural breaks (regime changes without annotation)
 - Abnormal frequency patterns (non-periodic event clusters)
-- Attractor drift (shift of stable states over time)
+- Permutation Entropy drift (shift of ordinal structure over time)
 
 **Privacy:** Station data, coordinates, metadata stay local.
 
@@ -77,7 +77,7 @@ Climate time series show characteristic structural patterns (seasonal periodicit
 
 Running processes are described with the same metrics as other data sources:
 - CPU burst clusters ??? periodicity analysis
-- Memory usage ??? baseline attractor drift
+- Memory usage → baseline Permutation Entropy drift
 - I/O behavior ??? delta and frequency analysis
 - Render events ??? GPU resonance, frame structure
 

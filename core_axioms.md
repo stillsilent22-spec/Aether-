@@ -59,6 +59,7 @@ the preimage (raw data) cannot be reconstructed from the anchor.
 | Benford score | KL-divergence from log₁₀(1+1/d) | Leading-digit naturalness in numeric data |
 | Katz dimension | Normalised fractal curve length | Self-similarity, structural complexity |
 | DBSCAN clusters | Density-based clustering, ε-neighbourhood | Group structure without label assignment |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordnungsstruktur (Bandt & Pompe 2002), orthogonal zu Shannon H(X) |
 
 No proprietary elements. Each metric is mathematically defined, independently re-implementable,
 and produces identical output for identical input.

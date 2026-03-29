@@ -78,7 +78,7 @@ Klimazeitreihen zeigen charakteristische Strukturmuster (saisonale Periodizit??t
 
 Laufende Prozesse werden mit denselben Metriken beschrieben wie andere Datenquellen:
 - CPU-Burst-Cluster ??? Periodizit??tsanalyse
-- Speicherbelegung ??? Baseline-Attractordrift
+- Speicherbelegung → Baseline-Permutation-Entropy-Drift
 - I/O-Verhalten ??? Delta- und Frequenzanalyse
 - Render-Events ??? GPU-Resonanz, Frame-Struktur
 

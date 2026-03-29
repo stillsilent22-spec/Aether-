@@ -5,6 +5,7 @@
   "yggdrasil_addr": "202:a904:a772:bc31:d395:489b:a7d0:8c1e",
   "relay": true,
   "registered_at": "2026-03-21T20:24:51.417669+00:00",
-  "aether_version": "master-v22",
+  "aether_version": "master-v27",
+  "publisher_id": "tryharder997",
   "role": "genesis"
 }

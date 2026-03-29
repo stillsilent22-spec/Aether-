@@ -71,6 +71,9 @@ jobs:
 
           # delta plaintext never in result
           assert r1.delta_encrypted_hex == '', 'delta must be empty without session key'
+          assert hasattr(r1, 'perm_entropy'), 'perm_entropy field must exist'
+          assert 'attractor_stability' not in r1.to_dict(), 'attractor_stability must be removed'
+          assert CASCADE_VERSION == '2', f'Expected CASCADE_VERSION 2, got {CASCADE_VERSION}'
 
           # session key encrypts delta
           r3 = cascade(data, source_id='test_c', source_type='bytes', session_key=b'testsessionkey32')

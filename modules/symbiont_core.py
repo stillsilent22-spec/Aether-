@@ -51,7 +51,7 @@ class StructuralProfile:
     zipf_exponent: float            # Zipf-Exponent (Wortverteilung)
     mandelbrot_score: float         # Mandelbrot-ähnliche Fraktalität
     katz_dimension: float           # Katz-Fraktalitätsmaß
-    attractor_stability: float      # Attraktor-Stabilität (Lyapunov-ähnlich)
+    perm_entropy: float             # Permutation Entropy (Bandt & Pompe) ∈ [0, 1]
     noether_invariants: dict        # Extrahierte Noether-Invarianten
 
     def to_dict(self) -> dict:
@@ -71,7 +71,7 @@ class StructuralProfile:
             "zipf_exponent":      round(self.zipf_exponent, 5),
             "mandelbrot_score":   round(self.mandelbrot_score, 5),
             "katz_dimension":     round(self.katz_dimension, 5),
-            "attractor_stability":round(self.attractor_stability, 5),
+            "perm_entropy":        round(self.perm_entropy, 5),
             "noether_invariants": self.noether_invariants,
         }
 
@@ -301,17 +301,13 @@ class AetherSymbiont:
                 return 0.0
             return np.log10(n) / (np.log10(n) + np.log10(d / L))
 
-        # Attraktor-Stabilität (Lyapunov-ähnlich, grobe Approximation)
-        def attractor_stability(arr):
-            import numpy as np
-            if len(arr) < 3:
-                return 0.0
-            arr = np.asarray(arr, dtype=np.float64)
-            diffs = np.diff(arr)
-            # Lyapunov-ähnlich: mittlere log. Divergenz der Differenzen
-            eps = 1e-9
-            lyap = np.mean(np.log(np.abs(diffs) + eps))
-            return float(lyap)
+        # Permutation Entropy (Bandt & Pompe)
+        # Wird aus dem kanonischen Modul importiert damit beide Codepfade
+        # identische Ergebnisse liefern.
+        from modules.attractor_engine import perm_entropy as _perm_entropy_fn
+        def _compute_perm_entropy(arr) -> float:
+            raw = bytes(int(v) & 0xFF for v in arr[:4096])
+            return _perm_entropy_fn(raw, order=3, step=1)
 
         # Noether-Invarianten (hier als dict, z.B. Extremwerte, Mittelwert, Median)
         def noether_invariants(arr):
@@ -329,7 +325,7 @@ class AetherSymbiont:
             arr_np = np.frombuffer(raw, dtype=np.uint8)
             noether = noether_invariants(arr_np)
             katz = katz_dimension(arr_np)
-            attractor = attractor_stability(arr_np)
+            attractor = _compute_perm_entropy(arr_np)
         except Exception:
             noether = {}
             katz = 0.0
@@ -351,7 +347,7 @@ class AetherSymbiont:
             zipf_exponent      = zipf,
             mandelbrot_score   = mandelbrot,
             katz_dimension     = katz,
-            attractor_stability= attractor,
+            perm_entropy= attractor,
             noether_invariants = noether,
         )
 

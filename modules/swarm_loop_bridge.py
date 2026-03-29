@@ -41,6 +41,40 @@ def _sign(payload: bytes) -> str:
         return "unsigned"
 
 
+def _load_admin_publisher_id() -> str:
+    """
+    Lädt die autorisierte Admin-Publisher-ID aus trusted_publishers.json.
+    Nur diese ID darf Anker ohne Quorum pushen (role="genesis").
+    Gibt leeren String zurück wenn die Datei nicht lesbar ist — das blockiert
+    dann den Genesis-Push (fail-closed).
+    """
+    try:
+        config = json.loads(
+            Path("data/trusted_publishers.json").read_text(encoding="utf-8")
+        )
+        return str(config.get("admin_publisher_id", ""))
+    except Exception:
+        return ""
+
+
+def _verify_genesis_authorization(node_id: str) -> bool:
+    """
+    Prüft ob der angegebene node_id dem registrierten Admin-Publisher gehört.
+    Verhindert dass ein fremder Node sich selbst role=genesis geben kann.
+    """
+    try:
+        config = json.loads(
+            Path("data/trusted_publishers.json").read_text(encoding="utf-8")
+        )
+        admin_id = str(config.get("admin_publisher_id", ""))
+        publishers = dict(config.get("publishers", {}))
+        admin_entry = dict(publishers.get(admin_id, {}))
+        registered_node_id = str(admin_entry.get("node_id", ""))
+        return bool(registered_node_id) and registered_node_id == node_id
+    except Exception:
+        return False  # fail-closed: im Zweifel kein Bypass
+
+
 def submit_cascade_result(
     result: CascadeResult,
     role: str = "peer",  # "genesis" = admin, skips quorum gate
@@ -83,7 +117,20 @@ def submit_cascade_result(
     report["signature"] = _sign(canonical)
 
     # Genesis role = immediate anchor promotion without quorum
+    # Sicherheitsgate: nur der registrierte Admin-Node darf diese Route nehmen.
+    # Fremde Nodes die sich role="genesis" setzen werden hier geblockt.
     if role == "genesis":
+        if not _verify_genesis_authorization(report["node_id"]):
+            return {
+                "ok":       False,
+                "promoted": False,
+                "reason":   (
+                    f"genesis_unauthorized: node_id '{report['node_id']}' ist nicht "
+                    f"als Admin-Publisher in trusted_publishers.json registriert. "
+                    f"Nur der registrierte Genesis-Node kann Anker ohne Quorum pushen."
+                ),
+                "run_id":   result.run_id,
+            }
         return _promote_genesis_anchor(report, result)
 
     # Peer role = submit to swarm controller for quorum aggregation

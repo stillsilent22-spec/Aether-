@@ -108,7 +108,7 @@ pub struct CascadeMetrics {
     pub benford_score: f64,
     pub fourier_period: f64,
     pub katz_dimension: f64,
-    pub attractor_stability: f64,
+    pub perm_entropy: f64,
     pub delta_convergence: f64,
     pub noether_consistency: f64,
     pub trust_score: f64,
@@ -123,7 +123,7 @@ impl CascadeMetrics {
             benford_score: capsule.benford_score as f64,
             fourier_period: capsule.periodicity as f64,
             katz_dimension: capsule.katz_dimension as f64,
-            attractor_stability: structure_map.coherence_score as f64,
+            perm_entropy: structure_map.coherence_score as f64,
             delta_convergence: (1.0 - capsule.delta_ratio).clamp(0.0, 1.0) as f64,
             noether_consistency: capsule.noether_consistency as f64,
             trust_score: capsule.trust_score as f64,
@@ -956,7 +956,7 @@ impl AetherIcedShell {
         let stability = self
             .cascade_metrics
             .as_ref()
-            .map(|metrics| metrics.attractor_stability as f32)
+            .map(|metrics| metrics.perm_entropy as f32)
             .unwrap_or_else(|| if self.structure_map_locked { 1.0 } else { self.structure_map_compression / 100.0 });
         let noether = self
             .cascade_metrics
@@ -3095,11 +3095,25 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
 
     fn view_anchors(&self) -> Element<'_, Message> {
         let clusters = self.anchor_clusters();
+
+        // Guard: leere Vault beim Erststart — zeige Onboarding-Hinweis statt Panic
+        if clusters.is_empty() {
+            return container(
+                column![
+                    text("◆ ANCHOR VAULT").size(22),
+                    text("Noch keine Anchor-Cluster vorhanden.").size(14),
+                    text("Analysiere eine Datei um erste Strukturanker zu erzeugen.").size(13),
+                ]
+                .spacing(10),
+            )
+            .padding(20)
+            .into();
+        }
+
         let selected = clusters
             .get(self.selected_anchor_group)
             .cloned()
-            .or_else(|| clusters.first().cloned())
-            .unwrap();
+            .unwrap_or_else(|| clusters[0].clone());
         let mut list = Column::new()
             .push(text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22))
             .push(text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13))
