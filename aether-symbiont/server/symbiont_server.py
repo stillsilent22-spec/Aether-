@@ -54,13 +54,14 @@ async def handle_batch_profile_compare(params: dict) -> dict:
 Startet einen asynchronen JSON-RPC-Server auf stdin/stdout (kompatibel mit
 VS Code Language Server Protocol). Implementiert 7 Methoden:
 
-  aether/profile    → StructuralProfile für ein Signal
-  aether/razor      → RazorReport für eine Signalmenge
-  aether/snapshot   → Snapshot im Vault speichern
-  aether/diff       → Zwei Snapshots vergleichen
-  aether/twins      → Twin-Cluster in Signalmenge finden
-  aether/complete   → Completions filtern + ranken
-  aether/status     → Server-Status
+  aether/profile     → StructuralProfile für ein Signal
+  aether/razor       → RazorReport für eine Signalmenge
+  aether/snapshot    → Snapshot im Vault speichern
+  aether/diff        → Zwei Snapshots vergleichen
+  aether/twins       → Twin-Cluster in Signalmenge finden
+  aether/complete    → Completions filtern + ranken
+  aether/status      → Server-Status
+  aether/decode_dna  → DNA-Baum aus Vault laden und Bytes rekonstruieren
     /bootstrap/status → Bootstrap-Status aus lokalen Dateien
 """
 from __future__ import annotations
@@ -291,6 +292,45 @@ async def handle_bootstrap_status(params: dict) -> dict:
 @register("aether/bootstrap_status")
 async def handle_bootstrap_status_rpc(params: dict) -> dict:
     return _bootstrap_status_payload()
+
+
+@register("aether/decode_dna")
+async def handle_decode_dna(params: dict) -> dict:
+    """
+    Rekonstruiert Bytes aus einem DNA-Baum (aus Vault-Signatur oder direkt).
+
+    params:
+      { "sig": "<64-hex-char Vault-Signatur>", "length": 256 }
+      { "dna": "# AETHER.DNA v1\n...",          "length": 256 }
+
+    Antwortet mit:
+      { "ok": true, "length": N, "bytes_hex": "...", "sig": "..." }
+    """
+    sig      = str(params.get("sig", "")).strip()
+    dna_raw  = str(params.get("dna", "")).strip()
+    length   = max(1, min(int(params.get("length", 256)), 65536))
+
+    from modules.aelab_vault import AEVault, tree_from_dna
+    from modules.aelab_motor import AEEvolver
+
+    if not dna_raw and sig:
+        vault   = AEVault()
+        dna_raw = vault.get_tree_dna(sig) or ""
+        if not dna_raw:
+            return {"ok": False, "error": "sig_not_found", "sig": sig}
+
+    if not dna_raw:
+        return {"ok": False, "error": "no_dna_or_sig"}
+
+    evolver      = AEEvolver(data=bytes(length))
+    result_bytes = evolver.decode_dna(dna_raw)
+    _log_event("decode_dna", f"sig={sig[:12] or 'inline'} len={len(result_bytes)}")
+    return {
+        "ok":        True,
+        "length":    len(result_bytes),
+        "bytes_hex": result_bytes.hex(),
+        "sig":       sig,
+    }
 
 
 @register("aether/events")

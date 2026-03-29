@@ -519,6 +519,7 @@ enum Message {
     SymbiontRazorPressed,
     SymbiontSnapshotPressed,
     SymbiontStatusPressed,
+    SymbiontDecodeDnaPressed,
     SymbiontRpcCompleted(Result<String, String>),
     SymbiontEventsReceived(Result<(Vec<String>, u64), String>),
     SymbiontEventsClearPressed,
@@ -6171,6 +6172,31 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     Message::SymbiontRpcCompleted,
                 );
             }
+            Message::SymbiontDecodeDnaPressed => {
+                let host  = self.symbiont_host.clone();
+                let port  = self.symbiont_port;
+                let input = self.symbiont_input.trim().to_owned();
+                self.symbiont_busy   = true;
+                self.symbiont_result = "DNA-Rekonstruktion laeuft...".to_owned();
+                return Task::perform(
+                    async move {
+                        // 64-stellige Hex-Signatur → sig-Lookup; sonst direkt als DNA
+                        let params = if input.len() == 64
+                            && input.chars().all(|c| c.is_ascii_hexdigit())
+                        {
+                            serde_json::json!({ "sig": input, "length": 256 })
+                        } else {
+                            serde_json::json!({ "dna": input, "length": 256 })
+                        };
+                        let result = symbiont_rpc::request_json(
+                            &host, port, "aether/decode_dna", params,
+                        )?;
+                        serde_json::to_string_pretty(&result)
+                            .map_err(|err| format!("Decode-DNA Formatfehler: {err}"))
+                    },
+                    Message::SymbiontRpcCompleted,
+                );
+            }
             Message::SymbiontRpcCompleted(result) => {
                 self.symbiont_busy = false;
                 match result {
@@ -6904,6 +6930,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                                 .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontStatusPressed))
                                 .padding([8, 12])
                                 .style(secondary_button_style),
+                            button(text(if self.symbiont_busy { "Decode DNA ..." } else { "Decode DNA" }).size(12).color(c(TEXT_H())))
+                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontDecodeDnaPressed))
+                                .padding([8, 12])
+                                .style(primary_button_style),
                         ]
                         .spacing(10),
                         container(scrollable(text(self.symbiont_result.clone()).size(11).color(c(TEXT_M()))).height(Length::Fixed(160.0)))
