@@ -83,7 +83,6 @@ ohne Trainingsdaten, ohne inhaltliche Interpretation.
 **Aether ist:**
 - Ein lokales Anomalieerkennungs-Werkzeug auf Basis messbarer Strukturmetriken
 - Ein symbiotischer Betriebssystem-Layer mit integrierten Datenschutzgarantien und kryptografisch nicht invertierbaren Fingerprints
-- Ein deterministischer Ausgabefilter (Assistant) für pipeline-verifizierte Strukturbefunde
 - Ein Systemoptimierungswerkzeug auf Basis von Prozess-Strukturprofilen
 
 ---
@@ -133,22 +132,7 @@ Die `CodeEthicsEngine` erkennt diese Muster **ohne Signaturdatenbank und ohne Ne
 rein über messbare Struktureigenschaften. Das macht die Erkennung robust gegenüber neuen
 Obfuskierungsvarianten, die noch nicht in Signaturlisten erfasst sind.
 
-### 3. Dokumenten- und Textstrukturanalyse
-
-Die `EthicsEngine` berechnet sprachstrukturelle Metriken ohne inhaltliche Interpretation:
-
-| Metrik | Was gemessen wird | Bedeutung bei Extremwert |
-|--------|------------------|--------------------------|
-| Zipf-Konformität | Token-Häufigkeit vs. Potenzgesetz | Synthetisch generierter oder stark repetitiver Text |
-| Negationsdichte | Negationswörter pro Gesamttoken | Extrem negative oder übermäßig relativierende Sprache |
-| Absolutaussagendichte | „immer", „alle", „nie" etc. pro Satz | Rhetorische Absolutsetzungen (Propaganda-Indikator) |
-| Noether-Score | cos(v_Anfang, v_Ende) über Kernvokabular | Thematische Inkonsistenz im Textverlauf |
-
-Das sind **strukturelle Beobachtungen**, keine semantischen Urteile. Kein Keyword-Matching,
-kein Label, kein Training. Die Metriken liefern quantifizierbare Hinweise — die Interpretation
-obliegt dem Nutzer.
-
-### 4. Privacy-preserving Kollaboration
+### 3. Privacy-preserving Kollaboration
 
 Zwei Teams können Datensätze strukturell vergleichen, ohne Rohdaten auszutauschen:
 
@@ -159,14 +143,14 @@ Zwei Teams können Datensätze strukturell vergleichen, ohne Rohdaten auszutausc
 Die `PrivacyRegistry` implementiert granulare Consent-Schichten: anonym, ephemer (TTL-gebunden),
 sofort widerrufbar.
 
-### 5. Systemoptimierung und Performance-Profiling
+### 4. Systemoptimierung und Performance-Profiling
 
 Prozess-Strukturprofile (CPU-Bursts, I/O-Muster, Speicher-Deltas) werden mit denselben Metriken
 beschrieben wie beliebige andere Datenquellen. Abweichungen von der Prozess-Baseline werden erkannt,
 ohne Prozessinhalte zu lesen. Auf schwacher Hardware (< 2 GB RAM, HDD) erkennt Aether automatisch
 den Hardware-Kontext und priorisiert Low-Resource-Optimierungen mit vollständigem Rollback-Pfad.
 
-### 6. Medizinische Datensätze — struktureller Vergleich ohne Datenweitergabe
+### 5. Medizinische Datensätze — struktureller Vergleich ohne Datenweitergabe
 
 Zwei Institutionen können Patientendaten und Befundreihen strukturell vergleichen, ohne Rohdaten auszutauschen:
 
@@ -182,7 +166,7 @@ Zwei Institutionen können Patientendaten und Befundreihen strukturell vergleich
 
 **Datenschutzgarantie durch Mathematik:** Weder Patientenname noch Diagnose noch Messwert sind aus dem Anker rekonstruierbar — nicht durch technische Vorkehrungen, sondern weil die SHA-256-Funktion es strukturell ausschließt.
 
-### 7. Datenforensik — Authentizität und Manipulationsnachweis
+### 6. Datenforensik — Authentizität und Manipulationsnachweis
 
 | Forensische Frage | Messmethode |
 |-------------------|-------------|
@@ -193,7 +177,7 @@ Zwei Institutionen können Patientendaten und Befundreihen strukturell vergleich
 
 Alle Aussagen sind domänenunabhängig, reproduzierbar und ohne inhaltliche Interpretation des Datensatzes möglich.
 
-### 8. Demokratisierung analytischer Werkzeuge
+### 7. Demokratisierung analytischer Werkzeuge
 
 Strukturanalytische Methoden sind in der Praxis oft an Institutionszugänge, Cloud-Abonnements oder spezialisierte Hardware gebunden. Aether beseitigt diese Zugangshürden:
 
@@ -232,22 +216,6 @@ kryptografischen Hash: er identifiziert, ohne etwas preiszugeben.
 
 ---
 
-## Assistant: Deterministischer Ausgabefilter
-
-Assistant ist kein Sprachmodell, das eigenständig Inhalte generiert. Es ist ein
-**deterministischer Renderer**: Es übersetzt ausschließlich pipeline-verifizierte Strukturbefunde
-in Sprache.
-
-- **Eingang:** nur Daten, die die vollständige Aether-Analysepipeline durchlaufen haben
-- **Filterkette:** Blacklist → Medical-Rule → Determinismus-Gate (h_lambda-Schwelle) →
-  Konsens-Gate (mind. 3 bestätigte Quellen) → Hedging-Prüfung
-- **Ausgabe:** verifizierter Befund oder Schweigen — keine Spekulation, keine Interpretation
-
-Bei fehlender Datenlage, unzureichendem Quellenkonsens oder zu hoher Restunsicherheit:
-keine Ausgabe.
-
----
-
 ## Technische Architektur
 
 ```
@@ -267,7 +235,6 @@ reconstruction_engine  --> D(Snapshot, Residuum) = Original
    v
 registry (SQLite, lokal) --> Vault, Audit-Log, append-only
    |
-   +-> assistant          --> Sprachausgabe (nur verifizierte Daten)
    +-> aethernet        --> Ankerpfad (optional, consent-gebunden)
 ```
 
@@ -303,51 +270,12 @@ anchor = SHA-256(H_entropy ‖ zipf_α ‖ benford_score ‖ katz_dim ‖ chunk_
 
 Anker ermöglichen kollektives Wissen ohne kollektive Datenweitergabe.
 
-### Effizienz durch Logik: der Konvergenzeffekt
+### Netzwerkpfad als Konzept
 
-Mit wachsendem Ankerpool M_t gilt:
-
-```
-H_lambda(X, t) → H_min(X)
-```
-
-Delta schrumpft logarithmisch mit der Knotenzahl. Jeder neue Teilnehmer im Netz erhöht die Ankerdichte — was alle bestehenden Knoten strukturell effizienter macht. Mehr Symbionten → geringere Unsicherheit pro Analyse.
-
-Das ist kein Marketing-Versprechen. Es ist die messbare Konsequenz des Shannon-Limits.
-
-Gemessen: N=1 → Delta 0.355 · N=1000 → Delta 0.269 · Verlauf: logarithmisch konvergent.
-
----
-
-## Empirischer Beweis: Delta-Konvergenz
-
-`aether prove` misst den strukturellen Delta-Verlauf über N Knoten.
-
-```bash
-cargo run --bin aether-cli -- prove
-```
-
-**Ergebnis (20. März 2026, lokaler Vault):**
-
-| Knoten N | Delta-Ratio | H_lambda |
-|----------|-------------|----------|
-| 1        | 0.355       | —        |
-| 1000     | 0.269       | 0.2113   |
-
-```
-✓ KONVERGENZ NACHGEWIESEN
-  Delta N=1 → N=1000: 0.355 → 0.269
-  Shannon-Limit: ~0.2682
-  Beweis: data/convergence_proof.json
-  Plot:   data/convergence_plot.html
-```
-
-**Was das bedeutet:**
-
-Mit wachsendem Anker-Pool M_t gilt:
-
-```
-H_lambda(X, t) → H_min(X)
+Der Netzpfad ist im Projekt derzeit als optionales, consent-gebundenes Konzept beschrieben.
+Er dient dem Vergleich nicht invertierbarer Strukturanker zwischen Instanzen. Aussagen über
+skalierende Konvergenz oder einen nachgewiesenen globalen Effekt werden hier bewusst nicht
+getroffen.
 ```
 
 Delta schrumpft logarithmisch mit der Knotenzahl —

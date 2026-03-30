@@ -68,7 +68,6 @@ classifier, without training data, without content interpretation.
 **Aether is:**
 - A local anomaly detection tool based on measurable structural metrics
 - A symbiotic operating system layer with integrated privacy guarantees and cryptographically non-invertible fingerprints
-- A deterministic output filter (Assistant) for pipeline-verified structural findings
 - A system optimization tool based on process structural profiles
 
 ---
@@ -118,23 +117,7 @@ The `CodeEthicsEngine` detects these patterns **without a signature database and
 access** — purely via measurable structural properties. This makes detection robust against new
 obfuscation variants not yet captured in signature lists.
 
-### 3. Document and Text Structure Analysis
-
-The `EthicsEngine` computes language-neutral structural metrics on text without content
-interpretation:
-
-| Metric | What is measured | Indication at extreme values |
-|--------|-----------------|------------------------------|
-| Zipf compliance | Token frequency distribution vs. power law | Synthetically generated or highly repetitive text |
-| Negation density | Negation words per total tokens | Extreme negative language or over-qualification |
-| Absolute statement density | "always", "everyone", "never" etc. per sentence | Rhetorical absolutes — indicator of propaganda style |
-| Noether score | cos(v_start, v_end) over core vocabulary | Thematic inconsistency within the text |
-
-These are **structural observations**, not semantic judgments. No keyword matching, no labels,
-no training. The metrics provide quantifiable indicators — interpretation is the user's
-responsibility.
-
-### 4. Privacy-Preserving Collaboration
+### 3. Privacy-Preserving Collaboration
 
 Two teams can compare datasets structurally without exchanging raw data:
 
@@ -146,7 +129,7 @@ Two teams can compare datasets structurally without exchanging raw data:
 The `PrivacyRegistry` implements granular consent layers: anonymous, ephemeral (TTL-bound),
 immediately revocable.
 
-### 5. System Optimization and Performance Profiling
+### 4. System Optimization and Performance Profiling
 
 Process structural profiles (CPU bursts, I/O patterns, memory deltas) are described with the
 same metrics as any other data source. Deviations from process baselines are detected without
@@ -154,7 +137,7 @@ reading process content. On constrained hardware (< 2 GB RAM, HDD), Aether autom
 detects the hardware context and prioritizes low-resource optimizations with full rollback
 capability.
 
-### 6. Collaborative Delta Streaming Codec
+### 5. Collaborative Delta Streaming Codec
 
 The `frame_delta_engine` implements a swarm-based video compression concept:
 
@@ -222,21 +205,6 @@ cryptographic hash: it identifies without revealing anything.
 
 ---
 
-## Assistant: Deterministic Output Filter
-
-Assistant is not a language model that independently generates content. It is a **deterministic
-renderer**: it translates exclusively pipeline-verified structural findings into language.
-
-- **Input:** only data that has passed through the full Aether analysis pipeline
-- **Filter chain:** blacklist → medical rule → determinism gate (h_lambda threshold) →
-  consensus gate (min. 3 confirmed sources) → hedging check
-- **Output:** verified finding or silence — no speculation, no interpretation
-
-When data is insufficient, source consensus is missing, or residual uncertainty is too high:
-no output.
-
----
-
 ## Technical Architecture
 
 ```
@@ -256,7 +224,6 @@ reconstruction_engine  --> D(Snapshot, Residual) = Original
    v
 registry (SQLite, local) --> Vault, audit log, append-only
    |
-   +-> assistant          --> Language output (verified data only)
    +-> aethernet        --> Anchor path (optional, consent-bound)
 ```
 

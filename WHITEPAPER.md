@@ -33,7 +33,6 @@ Aether behandelt Dateien, Byteströme und Systemprozesse als lokale Zustände, d
 - **Rekonstruktionsschicht**: Snapshots, Deltas, verlustfreie Rekonstruktion
 - **Persistenzschicht**: lokale SQLite-Datenbank, append-only Audit-Log
 - **Governance-Schicht**: fail-closed Zugriffsregeln, consent-gebundene Freigaben
-- **Assistant**: lokaler Sprachpfad — formuliert ausschließlich verifizierte Strukturbefunde
 - **Aethernet**: optionaler dezentraler Ankerpfad (consent-bound, kein Rohdaten-Export)
 
 ---
@@ -90,104 +89,6 @@ Quellcode und Bin??rstrukturen haben messbare Struktureigenschaften:
 - Komplexit??tsverteilung (Entropiedichte pro Modul)
 - Anomalie-Erkennung (Abweichungen von der Codebase-Baseline)
 - Strukturelle Ähnlichkeit zwischen Modulen (ohne Inhalte zu lesen)
-### 3.6 EthicsEngine: Formale Definitionen der Sprachstrukturmetriken
-
-Die EthicsEngine bewertet Texte ausschließlich anhand messbarer Sprachstrukturgesetze.
-Kein Keyword-Matching, kein Training, kein Label. Nur Struktur.
-
-#### 3.6.1 Noether-Score — Thematische Konsistenz
-
-**Analogie:** Emmy Noethers Symmetrieprinzip: Eine konservierte Größe entsteht aus
-einer kontinuierlichen Symmetrie. Thematisch konsistente Texte zeigen eine
-"Erhaltungsgröße" ihrer Kernbegriffe über den gesamten Text.
-
-**Formale Definition:**
-
-Sei $T$ ein Text. Teile $T$ in Anfangs-Drittel $T_A$ und End-Drittel $T_E$.
-Sei $\mathbf{v}_A, \mathbf{v}_E \in \mathbb{R}^{|V|}$ die Worthäufigkeitsvektoren
-über das gemeinsame Vokabular $V$ (Top-20-Wörter je Hälfte, Stoppwörter entfernt).
-
-$$N(T) = \text{clamp}\!\left(2 \cdot \frac{\mathbf{v}_A \cdot \mathbf{v}_E}{\|\mathbf{v}_A\| \cdot \|\mathbf{v}_E\|},\ 0,\ 1\right)$$
-
-**Interpretation:**
-- $N = 1.0$: Anfang und Ende teilen dieselbe Themenwelt (Symmetrie erhalten)
-- $N = 0.0$: Vollständiger Themenwechsel (Symmetriebruch)
-- Implementierung: `_noether()` in `modules/ethics_engine.py`, Rust-Port in `modules/aether_core_rs.py`
-
-#### 3.6.2 Interferenz-Score — Stilüberlagerung durch Negation
-
-**Analogie:** Physikalische Interferenz — überlagerte Wellen können sich gegenseitig
-verstärken oder auslöschen. Negationen im Text "überlagern" die eigentliche Aussage
-und erzeugen semantische Unschärfe.
-
-**Formale Definition:**
-
-Sei $\delta_{\neg}$ die Negationsdichte:
-
-$$\delta_{\neg}(T) = \frac{|\{w \in T : w \in \mathcal{N}\}|}{|T|}$$
-
-wobei $\mathcal{N} = \{\text{nicht, kein, keine, nie, niemals, never, no, not, without, ohne, \ldots}\}$
-
-Der Interferenz-Score ist eine stückweise lineare Funktion mit optimalem Fenster:
-
-$$I(T) = \begin{cases}
-0.50 & \delta_{\neg} < 0.01 \\
-0.50 + \frac{\delta_{\neg} - 0.01}{0.01} \cdot 0.50 & 0.01 \leq \delta_{\neg} < 0.02 \\
-1.00 & 0.02 \leq \delta_{\neg} \leq 0.08 \\
-\max\!\left(0.20,\ 1.00 - \frac{\delta_{\neg} - 0.08}{0.07} \cdot 0.80\right) & \delta_{\neg} > 0.08
-\end{cases}$$
-
-**Interpretation:**
-- $I = 1.0$: Gesunde Negationsdichte (2–8 %) — natürlicher, ausgewogener Stil
-- $I < 0.3$: Extrem hohe Negationsdichte — Interferenz dominiert den Textfluss
-- $I = 0.5$: Sehr wenig oder gar keine Negation — möglicherweise zu absolut
-
-#### 3.6.3 Heisenberg-Score — Bedeutungsunschärfe durch Absolutaussagen
-
-**Analogie:** Heisenbergs Unschärfeprinzip: Je präziser eine Aussage formuliert wird
-("immer", "nie", "alle", "einzig"), desto mehr kontextuelle Unschärfe entsteht.
-Extreme Absolutaussagen verringern den Informationsgehalt — sie machen keine
-falsifizierbaren Aussagen mehr.
-
-**Formale Definition:**
-
-Sei $\delta_{\infty}$ die absolute Aussagendichte (Absolutwörter pro Satz):
-
-$$\delta_{\infty}(T) = \frac{|\{w \in T : w \in \mathcal{A}\}|}{|\text{Sätze}(T)|}$$
-
-wobei $\mathcal{A} = \{\text{immer, alle, alles, jeden, einzig, ausschließlich, always, never, everyone, 100\%, \ldots}\}$
-
-Der Heisenberg-Score:
-
-$$H(T) = \begin{cases}
-0.80 & \delta_{\infty} < 0.10 \\
-1.00 & 0.10 \leq \delta_{\infty} \leq 0.80 \\
-\max\!\left(0.0,\ 1.00 - \frac{\delta_{\infty} - 0.80}{2.20}\right) & 0.80 < \delta_{\infty} \leq 3.0 \\
-\max\!\left(0.0,\ 1.00 - \frac{\delta_{\infty} - 0.80}{0.70} \cdot 0.40\right) \cdot 0.5 & \delta_{\infty} > 3.0
-\end{cases}$$
-
-**Interpretation:**
-- $H = 1.0$: Ausgewogene Absolutaussagendichte — präzise, aber falsifizierbar
-- $H < 0.4$: Hochgradig absolutistische Sprache — Propaganda-Indikator
-- $H = 0.8$: Kaum Absolutaussagen — neutral, sachlich
-
-#### 3.6.4 Gesamtscore (EthicsEngine)
-
-Der strukturelle Integritätsscore kombiniert alle sechs Metriken gewichtet:
-
-$$E(T) = \begin{cases}
-0.30 \cdot Z + 0.25 \cdot F + 0.25 \cdot N + 0.12 \cdot I + 0.08 \cdot H & \text{(Benford nicht messbar)} \\
-0.25 \cdot Z + 0.15 \cdot B + 0.20 \cdot F + 0.20 \cdot N + 0.10 \cdot I + 0.10 \cdot H & \text{(Benford messbar)}
-\end{cases}$$
-
-| Symbol | Metrik | Beschreibung |
-|--------|--------|--------------|
-| $Z$ | Zipf | Worthäufigkeitsverteilung folgt Potenzgesetz $f \propto r^{-\alpha}$ |
-| $B$ | Benford | Führungsziffernverteilung vs. $\log_{10}(1 + 1/d)$ |
-| $F$ | Fraktal | Satzlängenvariation (Standardabweichung, Zielbereich 5–20) |
-| $N$ | Noether | Thematische Konsistenz $\cos(\mathbf{v}_A, \mathbf{v}_E)$ |
-| $I$ | Interferenz | Negationsdichte im optimalen Fenster |
-| $H$ | Heisenberg | Absolute Aussagendichte, Unschärfemaß |
 ---
 
 ## 4. Domänenübergreifender Vergleich
@@ -210,7 +111,6 @@ Aether gibt nur Stufe 1 aus. Stufe 2 entsteht durch Akkumulation im lokalen Vaul
 
 - StrukturÄhnlichkeit als Kausalit??t ausgeben
 - Domänenübergreifende Muster als Befunde formulieren
-- Unvalidierte Beobachtungen als Ergebnis darstellen (Assistant-Schutz)
 - R??ckschl??sse auf den Inhalt der verglichenen Daten ziehen
 
 ### 4.3 Wann dom??nenübergreifende Vergleiche relevant werden
@@ -246,11 +146,6 @@ Gegeben: $\varepsilon > 0$ (max. Distanz), $m_{\min}$ (Mindestpunkte im Cluster)
 - Beliebige Clusterformen erkennbar
 - Rauschpunkte werden explizit als Rauschen markiert (kein Label erzwungen)
 - Implementierung: `ProcessAnchorStore.cluster_consensus_anchors()`, `ProcessAnchorStore._dbscan()`
-
-**Assistant-Integration:** Die Cluster werden über `AnchorQuery.describe_clusters()` als
-Fließtext für Assistant bereitgestellt — ohne rohe Prozessdetails.
-
----
 
 ## 5. Formales Grundmodell
 
@@ -305,18 +200,7 @@ Aus `anchor_hash` lassen sich weder der Chunk noch der Inhalt der analysierten D
 
 ---
 
-## 7. Nicht-halluzinierende Architektur: Assistant
-
-Assistant empfängt ausschließlich strukturell verifizierte Daten aus der Pipeline. Der System-Prompt verhindert Spekulation. Bei Unsicherheit wird keine Ausgabe erzeugt.
-
-**Was das in der Praxis bedeutet:**
-- Wenn `H_lambda` hoch ist (viel Restunsicherheit): Assistant schweigt oder kennzeichnet die Ausgabe entsprechend
-- Wenn Rekonstruktionsbedingung `D(S_t, R_t) = X_t` nicht erfüllt: Assistant gibt keine Vollständigkeitsaussage aus
-- Wenn Governance-Bedingungen brechen: Assistant gibt keine Ausgabe
-
----
-
-## 8. Sicherheits- und Governance-Modell
+## 7. Sicherheits- und Governance-Modell
 
 **Interne Sicherheitsregeln:**
 1. Unzulässige Zustände sind nicht bequem darstellbar
@@ -332,7 +216,7 @@ Assistant empfängt ausschließlich strukturell verifizierte Daten aus der Pipel
 
 ---
 
-## 9. Entwicklungspfad: AELAB und Aether
+## 8. Entwicklungspfad: AELAB und Aether
 
 AELAB war der erste Entwicklungsimpuls ??? ein evolutiver Pfad zur Extraktion stabiler Strukturkandidaten. Er erwies sich als zu ungebunden für den Anspruch des Systems.
 

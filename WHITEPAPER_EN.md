@@ -32,7 +32,6 @@ Aether treats files, byte streams, and system processes as local states that can
 - **Reconstruction layer**: snapshots, deltas, lossless reconstruction
 - **Persistence layer**: local SQLite database, append-only audit log
 - **Governance layer**: fail-closed access rules, consent-bound releases
-- **Assistant**: local language path ??? formulates only verified structural findings
 - **Aethernet**: optional decentralized anchor path (consent-bound, no raw data export)
 
 ---
@@ -147,7 +146,6 @@ Aether outputs only Stage 1. Stage 2 emerges through accumulation in the local v
 
 - Express structural similarity as causality
 - Report cross-domain patterns as findings
-- Formulate unvalidated observations as results (Assistant protection)
 - Draw inferences about the content of compared data
 
 ### 4.3 When Cross-Domain Comparisons Become Relevant
@@ -213,18 +211,7 @@ Neither the chunk nor the content of the analyzed file can be reconstructed from
 
 ---
 
-## 7. Non-Hallucinating Architecture: Assistant
-
-Assistant receives exclusively structurally verified data from the pipeline. The system prompt prevents speculation. On uncertainty, no output is produced.
-
-**What this means in practice:**
-- When `H_lambda` is high (much residual uncertainty): Assistant is silent or marks output accordingly
-- When reconstruction condition `D(S_t, R_t) = X_t` is not met: Assistant produces no completeness statement
-- When governance conditions break: Assistant produces no output
-
----
-
-## 8. Security and Governance Model
+## 7. Security and Governance Model
 
 **Internal security rules:**
 1. Impermissible states are not conveniently representable
@@ -240,7 +227,7 @@ Assistant receives exclusively structurally verified data from the pipeline. The
 
 ---
 
-## 9. Development Path: AELAB and Aether
+## 8. Development Path: AELAB and Aether
 
 AELAB was the first development impulse ??? an evolutionary path for extracting stable structural candidates. It proved too unbounded for the system's requirements.
 
