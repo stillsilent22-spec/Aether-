@@ -14,7 +14,7 @@ Privacy guarantees:
   - Share ONLY: fingerprints, aggregated metrics, anonymous node_id
   - NEVER share: raw frames, pixel data, application content
 
-Opt-in: disabled by default. Set settings.json > swarm_p2p.enabled = true to activate.
+Opt-in via settings.json. Bootstrap enables swarm_p2p by default for fresh nodes.
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from modules.lan_beacon import start as start_lan_beacon
 from modules.yggdrasil_install import is_yggdrasil_managed_running, start_yggdrasil_subprocess, stop_yggdrasil_subprocess
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,7 +43,7 @@ LOCAL_NODE_JSON_PATH = ROOT / "data" / "swarm" / "node.json"
 NODE_DISCOVERY_DIR = ROOT / "data" / "swarm" / "nodes"
 
 DEFAULT_P2P: Dict[str, Any] = {
-    "enabled": False,              # opt-in, default OFF
+    "enabled": False,
     "gossip_interval_seconds": 30.0,
     "max_fingerprints_per_gossip": 20,
     "leader_election_enabled": True,
@@ -167,6 +168,7 @@ class P2PLayer:
         self._received_lock = threading.Lock()
         self._discovered_peer_addrs: List[str] = []
         self._discovered_relay_addrs: List[str] = []
+        self._bootstrapped_peer_addrs: set[str] = set()
         self._started_yggdrasil = False
 
     @property
@@ -179,9 +181,10 @@ class P2PLayer:
 
     def start(self) -> None:
         if not self.enabled:
-            print("[P2P] Disabled (opt-in). Set swarm_p2p.enabled=true to activate.")
+            print("[P2P] Disabled. Set swarm_p2p.enabled=true to activate.")
             return
         self._ensure_yggdrasil_runtime()
+        start_lan_beacon()
         discovery_dir = str(self._config.get("discovery_nodes_dir", "data/swarm/nodes") or "data/swarm/nodes")
         self._discovered_peer_addrs = self.discover_from_nodes_dir(discovery_dir)
         self._bootstrap_known_peers(self._discovered_peer_addrs)
@@ -333,21 +336,34 @@ class P2PLayer:
     def _bootstrap_known_peers(self, addresses: List[str]) -> None:
         if not addresses or self._transport is None:
             return
+        new_addresses = [address for address in addresses if address not in self._bootstrapped_peer_addrs]
+        if not new_addresses:
+            return
         try:
             bootstrap = getattr(self._transport, "bootstrap_peers", None)
             if callable(bootstrap):
-                bootstrap(list(addresses))
+                bootstrap(list(new_addresses))
+                self._bootstrapped_peer_addrs.update(new_addresses)
                 return
             connect_peers = getattr(self._transport, "connect_peers", None)
             if callable(connect_peers):
-                connect_peers(list(addresses))
+                connect_peers(list(new_addresses))
+                self._bootstrapped_peer_addrs.update(new_addresses)
                 return
             connect_peer = getattr(self._transport, "connect_peer", None)
             if callable(connect_peer):
-                for address in addresses:
+                for address in new_addresses:
                     connect_peer(address)
+                self._bootstrapped_peer_addrs.update(new_addresses)
         except Exception as err:
             print(f"[P2P] discovery bootstrap failed: {err}")
+
+    def _refresh_discovery(self) -> None:
+        discovery_dir = str(self._config.get("discovery_nodes_dir", "data/swarm/nodes") or "data/swarm/nodes")
+        discovered = self.discover_from_nodes_dir(discovery_dir)
+        if discovered:
+            self._discovered_peer_addrs = list(discovered)
+            self._bootstrap_known_peers(discovered)
 
     def _ensure_yggdrasil_runtime(self) -> None:
         if not bool(self._config.get("auto_manage_yggdrasil", True)):
@@ -370,6 +386,7 @@ class P2PLayer:
 
     def _do_gossip(self) -> None:
         """Collect recent fingerprints from DB and publish."""
+        self._refresh_discovery()
         try:
             from modules.swarm_persist import get_fingerprint_stats, _connect, DEFAULT_DB_PATH, _db_lock
             with _db_lock:

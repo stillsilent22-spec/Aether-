@@ -9049,7 +9049,7 @@ impl canvas::Program<Message> for FlowSphereScene {
                     ..canvas::Stroke::default()
                 },
             );
-            let orbit_points: Vec<(Point, f32)> = self.swarm_nodes.iter().map(|(_, lat, lon, coherence)| {
+            let orbit_points: Vec<(Point, f32)> = self.swarm_nodes.iter().map(|(_, _lat, lon, coherence)| {
                 let angle = *lon + rotation * 0.35;
                 (
                     Point::new(

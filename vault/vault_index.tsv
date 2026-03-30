@@ -1,2 +1,0 @@
-sig	label	bucket	fitness	lossless	nodes	depth	anchors	anchor_mask	stability	novelty	coherence	coupling	adaptability	utility_score	decay_rate	generation_created	times_used	times_recovered	times_influenced_best	inactive_ticks	active	reactivated	access_seq	has_sequence	has_bridge	has_xor	has_interfere	has_shift	has_log	has_prime
-b3d73d33bd2a8ba61244577d74d2002b8e2fa7252ff3eb23450cbc728d5dbaee	chunk_fdeab9ac	main	3.13043478	1.0	1	1	0	0	0.7	1.0	0.4	0.0	0.03125	0.525687	0.003	0	3	0	0	0	1	0	3	0	0	0	0	0	0	0

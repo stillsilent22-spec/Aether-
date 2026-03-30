@@ -213,6 +213,14 @@ def _ensure_settings(settings_path: Path, node_id: str, dry_run: bool) -> Dict[s
     settings["solo_genesis_mode"] = True
     settings.setdefault("node_id", node_id)
     settings.setdefault("bootstrap_completed_at", _utc_now())
+    swarm_p2p = settings.get("swarm_p2p")
+    if not isinstance(swarm_p2p, dict):
+        swarm_p2p = {}
+        settings["swarm_p2p"] = swarm_p2p
+    swarm_p2p.setdefault("enabled", True)
+    swarm_p2p.setdefault("auto_manage_yggdrasil", True)
+    swarm_p2p.setdefault("yggdrasil_config_path", "data/yggdrasil.conf")
+    swarm_p2p.setdefault("discovery_nodes_dir", "data/swarm/nodes")
     _dump_json(settings_path, settings, dry_run)
     return settings
 
@@ -228,6 +236,21 @@ def _ensure_consent(consent_path: Path, dry_run: bool) -> Dict[str, Any]:
     return consent
 
 
+def _ensure_yggdrasil_config(config_path: Path, dry_run: bool) -> Dict[str, Any]:
+    if config_path.is_file():
+        return {"created": False, "path": str(config_path)}
+    payload = {
+        "Peers": [
+            "tls://pl1.servers.devices.cwinfo.net:11129",
+            "tls://ygg.yt:443",
+            "tls://de-ber-01.yggdrasil.peer.fyi:443",
+        ],
+        "InterfaceName": "tun0",
+    }
+    _dump_json(config_path, payload, dry_run)
+    return {"created": True, "path": str(config_path)}
+
+
 def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
     root = Path(__file__).resolve().parent
     settings_path = root / "data" / "settings.json"
@@ -236,6 +259,7 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
     node_json_path = root / "data" / "swarm" / "node.json"
     nodes_dir = root / "data" / "swarm" / "nodes"
     keys_dir = root / "keys"
+    yggdrasil_config_path = root / "data" / "yggdrasil.conf"
 
     keypair = _ensure_keypair(keys_dir, dry_run=dry_run)
     existing_node = _load_json(node_json_path, default={})
@@ -281,6 +305,7 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
                 print(f"[BOOTSTRAP] Yggdrasil installiert: {binary}")
         else:
             print("[BOOTSTRAP] Yggdrasil bereits vorhanden.")
+        yggdrasil_config = _ensure_yggdrasil_config(yggdrasil_config_path, dry_run=dry_run)
 
         node_payload = build_node_record(
             node_id,
@@ -311,6 +336,8 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
             "yggdrasil_addr": yggdrasil_addr,
             "node_json_path": str(node_json_path),
             "discovery_path": str(discovery_path),
+            "yggdrasil_config_created": bool(yggdrasil_config["created"]),
+            "yggdrasil_config_path": str(yggdrasil_config_path),
         }
 
         print(f"[BOOTSTRAP] Node ID: {node_id}")

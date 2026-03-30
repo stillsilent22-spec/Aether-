@@ -27,7 +27,7 @@ except Exception:
     _ethics_engine = None
 
 try:
-    from reconstruction_engine import reconstruction_engine as _reconstruction_engine
+    from modules.reconstruction_engine import reconstruction_engine as _reconstruction_engine
 except Exception:
     _reconstruction_engine = None
 

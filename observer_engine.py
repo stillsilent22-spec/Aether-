@@ -1,6 +1,2 @@
-def observer_engine(O):
-    metadata = {
-        "length": O.get("length", None),
-        "byte_sum": sum(O.get("bytes", b"")),
-    }
-    return {"O": O, "metadata": metadata}
+# Compatibility shim -- canonical implementation in modules/observer_engine.py
+from modules.observer_engine import *  # noqa: F401,F403

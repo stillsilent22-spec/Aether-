@@ -123,3 +123,4 @@ data/aelab_vault/vault_index.tsv
 data/anchors/genesis_*.pack
 bin/downloads/
 target_release_verify/
+vault/
