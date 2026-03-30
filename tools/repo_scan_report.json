@@ -6514,7 +6514,7 @@
       "flags": [
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PUBLIC KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "yggdrasil",
@@ -8288,12 +8288,12 @@
         "EXCLUDE_PARTS = [\"/target/\", \"/.git/\", \"/aether_repo/extracted/\", \"/aether-symbiont/node_modules/\", \"/node_modules/\", \"/data/_pytest_tmp/\", \"/.venv/\", \"/build/\", \"/dist/\"]",
         "",
         "KEY_PATTERNS = [",
-        "    r\"-----BEGIN PRIVATE KEY-----\",",
-        "    r\"-----BEGIN RSA PRIVATE KEY-----\",",
-        "    r\"-----BEGIN OPENSSH PRIVATE KEY-----\",",
-        "    r\"-----BEGIN PRIVATE KEY-----\",",
-        "    r\"-----BEGIN PUBLIC KEY-----\",",
-        "    r\"password=<REDACTED>",",
+        "    r\"REDACTED\",",
+        "    r\"REDACTED\",",
+        "    r\"REDACTED\",",
+        "    r\"REDACTED\",",
+        "    r\"REDACTED\",",
+        "    r\"password=REDACTED",",
         "    r\"api[_-]?key\",",
         "    r\"pinata\",",
         "    r\"secret\",",
@@ -8354,27 +8354,27 @@
       "flags": [
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN RSA PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN OPENSSH PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PUBLIC KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "password=<REDACTED>"
+          "pattern": "password=REDACTED"
         },
         {
           "kind": "key_like",
@@ -8534,27 +8534,27 @@
       "flags": [
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN RSA PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN OPENSSH PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PRIVATE KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "-----BEGIN PUBLIC KEY-----"
+          "pattern": "REDACTED"
         },
         {
           "kind": "key_like",
-          "pattern": "password=<REDACTED>"
+          "pattern": "password=REDACTED"
         },
         {
           "kind": "key_like",
@@ -9051,4 +9051,5 @@
     }
   ]
 }
+
 
