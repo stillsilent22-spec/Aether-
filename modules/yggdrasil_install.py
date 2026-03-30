@@ -185,6 +185,53 @@ def install_yggdrasil(dest_dir: str = "bin") -> Path:
     return extracted_binary
 
 
+def _inject_public_peers(config_path: Path) -> None:
+    """Injiziert public Yggdrasil peers in eine frisch generierte Config.
+
+    Peers werden nur gesetzt wenn das Peers-Array noch leer ist.
+    Die Liste kann in data/settings.json unter 'yggdrasil_peers' ueberschrieben werden.
+    Quelle community-Peers: https://publicpeers.neilalexander.dev/
+    Alle Verbindungen sind Yggdrasil-seitig end-to-end verschluesselt.
+    """
+    import json as _json
+
+    # Benutzerdefinierte Peers aus settings.json lesen
+    settings_path = DATA_DIR / "settings.json"
+    custom_peers: list[str] = []
+    try:
+        if settings_path.is_file():
+            raw = _json.loads(settings_path.read_text(encoding="utf-8"))
+            custom_peers = [str(p) for p in (raw.get("yggdrasil_peers") or []) if p]
+    except Exception:
+        pass
+
+    # Stabile community peers als Fallback (Stand 2025 — bei Bedarf in settings.json ueberschreiben)
+    default_peers = [
+        "tls://ygg.maru.hk:18395",
+        "tls://vpn1.ht4.ca:5122",
+        "tls://s1.geo.trnsz.com:655",
+    ]
+    peers_to_inject = custom_peers if custom_peers else default_peers
+
+    try:
+        raw_conf = config_path.read_text(encoding="utf-8")
+        conf = _json.loads(raw_conf)
+    except Exception:
+        return  # Format unbekannt, nicht anfassen
+
+    if not isinstance(conf.get("Peers"), list) or conf["Peers"]:
+        return  # Peers schon gesetzt, nicht ueberschreiben
+
+    conf["Peers"] = peers_to_inject
+    try:
+        config_path.write_text(
+            _json.dumps(conf, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"[YGGDRASIL] Public peers injiziert: {peers_to_inject}")
+    except Exception as err:
+        print(f"[YGGDRASIL] Peer-Injektion fehlgeschlagen: {err}")
+
+
 def start_yggdrasil_subprocess(config_path: str = "data/yggdrasil.conf") -> None:
     """Startet Yggdrasil als Hintergrundprozess und speichert die PID."""
     if is_yggdrasil_managed_running():
@@ -201,6 +248,7 @@ def start_yggdrasil_subprocess(config_path: str = "data/yggdrasil.conf") -> None
             check=True,
         )
         config.write_text(generated.stdout, encoding="utf-8")
+        _inject_public_peers(config)
 
     kwargs = {
         "cwd": str(ROOT),

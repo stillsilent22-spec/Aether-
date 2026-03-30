@@ -51,6 +51,10 @@ DEFAULT_P2P: Dict[str, Any] = {
     "discovery_nodes_dir": "data/swarm/nodes",
     "auto_manage_yggdrasil": True,
     "yggdrasil_config_path": "data/yggdrasil.conf",
+    # Retry connecting to peers that haven't responded yet (seconds)
+    "peer_retry_interval_seconds": 300.0,
+    # Builtin genesis seed — always try this address on startup
+    "genesis_yggdrasil_addr": "202:a904:a772:bc31:d395:489b:a7d0:8c1e",
 }
 
 
@@ -168,7 +172,8 @@ class P2PLayer:
         self._received_lock = threading.Lock()
         self._discovered_peer_addrs: List[str] = []
         self._discovered_relay_addrs: List[str] = []
-        self._bootstrapped_peer_addrs: set[str] = set()
+        # addr -> monotonic timestamp of last connection attempt
+        self._bootstrapped_peer_addrs: Dict[str, float] = {}
         self._started_yggdrasil = False
 
     @property
@@ -288,13 +293,14 @@ class P2PLayer:
         }
 
     def discover_from_nodes_dir(self, nodes_dir: str = "data/swarm/nodes") -> List[str]:
-        """Liest alle node.json und gibt Relay-Nodes zuerst zurueck."""
+        """Liest alle node.json und gibt Relay-Nodes zuerst zurueck.
+
+        Der in DEFAULT_P2P konfigurierte genesis_yggdrasil_addr wird immer als
+        erstes Relay zurueck gegeben (falls er nicht die eigene Adresse ist).
+        """
         path = Path(nodes_dir)
         if not path.is_absolute():
             path = ROOT / path
-        if not path.is_dir():
-            self._discovered_relay_addrs = []
-            return []
 
         own_node_id = str(self._node_id or "")
         try:
@@ -308,6 +314,23 @@ class P2PLayer:
         relay_addrs: List[str] = []
         peer_addrs: List[str] = []
         seen: set[str] = set()
+
+        # --- Builtin genesis seed: always try first unless it's ourselves ---
+        own_ygg = ""
+        try:
+            if LOCAL_NODE_JSON_PATH.is_file():
+                _lp = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
+                own_ygg = str(_lp.get("yggdrasil_addr", "") or "")
+        except Exception:
+            pass
+        genesis_seed = str(self._config.get("genesis_yggdrasil_addr", "") or "").strip()
+        if genesis_seed and genesis_seed != own_ygg:
+            seen.add(genesis_seed)
+            relay_addrs.append(genesis_seed)
+
+        if not path.is_dir():
+            self._discovered_relay_addrs = list(relay_addrs)
+            return relay_addrs + peer_addrs
         for node_path in sorted(path.glob("*.json")):
             try:
                 payload = json.loads(node_path.read_text(encoding="utf-8"))
@@ -334,27 +357,44 @@ class P2PLayer:
         return relay_addrs + peer_addrs
 
     def _bootstrap_known_peers(self, addresses: List[str]) -> None:
+        """Connect to peers. Retries unconfirmed peers every peer_retry_interval_seconds."""
         if not addresses or self._transport is None:
             return
-        new_addresses = [address for address in addresses if address not in self._bootstrapped_peer_addrs]
-        if not new_addresses:
+        now = time.monotonic()
+        retry_interval = float(self._config.get("peer_retry_interval_seconds", 300.0))
+        active_peer_ids = set(self._leader_election._known_peers.keys())
+        has_active_peers = bool(active_peer_ids)
+
+        to_try: List[str] = []
+        for address in addresses:
+            last_attempt = self._bootstrapped_peer_addrs.get(address, -1.0)
+            if last_attempt < 0:
+                # Never tried
+                to_try.append(address)
+            elif not has_active_peers and now - last_attempt >= retry_interval:
+                # No confirmed peers yet — keep retrying every retry_interval
+                to_try.append(address)
+
+        if not to_try:
             return
         try:
             bootstrap = getattr(self._transport, "bootstrap_peers", None)
             if callable(bootstrap):
-                bootstrap(list(new_addresses))
-                self._bootstrapped_peer_addrs.update(new_addresses)
+                bootstrap(list(to_try))
+                for address in to_try:
+                    self._bootstrapped_peer_addrs[address] = now
                 return
             connect_peers = getattr(self._transport, "connect_peers", None)
             if callable(connect_peers):
-                connect_peers(list(new_addresses))
-                self._bootstrapped_peer_addrs.update(new_addresses)
+                connect_peers(list(to_try))
+                for address in to_try:
+                    self._bootstrapped_peer_addrs[address] = now
                 return
             connect_peer = getattr(self._transport, "connect_peer", None)
             if callable(connect_peer):
-                for address in new_addresses:
+                for address in to_try:
                     connect_peer(address)
-                self._bootstrapped_peer_addrs.update(new_addresses)
+                    self._bootstrapped_peer_addrs[address] = now
         except Exception as err:
             print(f"[P2P] discovery bootstrap failed: {err}")
 
