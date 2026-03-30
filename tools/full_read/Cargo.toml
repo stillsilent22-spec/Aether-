@@ -1,0 +1,76 @@
+
+[package]
+name = "aether_rust_shell"
+version = "0.1.0"
+edition = "2021"
+description = "Local structural analysis and reconstruction project with Rust and Python components."
+license = "LicenseRef-Aether-Restricted"
+default-run = "aether_iced"
+include = [
+    "Cargo.toml",
+    "Cargo.lock",
+    "src/**",
+    "ui/**",
+    "assets/**",
+    "modules/**",
+    "data/**",
+    "tests/**",
+    "requirements.txt",
+]
+
+
+[lib]
+name = "aether_rust_shell"
+path = "src/lib.rs"
+
+
+[dependencies]
+zip = "2"
+tar = "0.4"
+aes-gcm = "0.10"
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+crc32fast = "1.4"
+ed25519-dalek = "2"
+eframe = "0.30"
+flate2 = "1.0"
+iced = { version = "0.13", features = ["tokio", "canvas"] }
+image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+interprocess = "2.2"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
+uuid = { version = "1", features = ["serde", "v4"] }
+zeroize = "1.8"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# pyo3 und maturin wurden vollständig entfernt.
+# egui_extras wurde entfernt (nicht in aether_iced verwendet).
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_ProcessStatus",
+    "Win32_System_JobObjects",
+    "Win32_System_SystemInformation",
+    "Win32_System_Registry",
+] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
+
+[features]
+default = []

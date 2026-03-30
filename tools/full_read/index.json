@@ -1,0 +1,2006 @@
+{
+  "root": "C:\\Users\\kalle\\Downloads\\Aether_master (1) (1)\\aether_final",
+  "count": 400,
+  "files": [
+    {
+      "path": ".github/workflows/swarm_tests.yml",
+      "lines": 96,
+      "size": 3738
+    },
+    {
+      "path": ".github/workflows/vault-pr-check.yml",
+      "lines": 54,
+      "size": 1693
+    },
+    {
+      "path": ".github/workflows/vault_verify.yml",
+      "lines": 31,
+      "size": 766
+    },
+    {
+      "path": ".gitignore",
+      "lines": 127,
+      "size": 2289
+    },
+    {
+      "path": ".vscode/tasks.json",
+      "lines": 57,
+      "size": 1147
+    },
+    {
+      "path": "aether-symbiont/out/delta_status.js",
+      "lines": 80,
+      "size": 3202
+    },
+    {
+      "path": "aether-symbiont/out/delta_status.js.map",
+      "lines": 1,
+      "size": 1659
+    },
+    {
+      "path": "aether-symbiont/out/extension.js",
+      "lines": 159,
+      "size": 7878
+    },
+    {
+      "path": "aether-symbiont/out/extension.js.map",
+      "lines": 1,
+      "size": 5248
+    },
+    {
+      "path": "aether-symbiont/out/lsp_client.js",
+      "lines": 158,
+      "size": 6180
+    },
+    {
+      "path": "aether-symbiont/out/lsp_client.js.map",
+      "lines": 1,
+      "size": 4684
+    },
+    {
+      "path": "aether-symbiont/out/shared_runtime.js",
+      "lines": 84,
+      "size": 3360
+    },
+    {
+      "path": "aether-symbiont/out/shared_runtime.js.map",
+      "lines": 1,
+      "size": 1822
+    },
+    {
+      "path": "aether-symbiont/out/symbiont_panel.js",
+      "lines": 162,
+      "size": 7006
+    },
+    {
+      "path": "aether-symbiont/out/symbiont_panel.js.map",
+      "lines": 1,
+      "size": 3093
+    },
+    {
+      "path": "aether-symbiont/package-lock.json",
+      "lines": 139,
+      "size": 5212
+    },
+    {
+      "path": "aether-symbiont/package.json",
+      "lines": 95,
+      "size": 2475
+    },
+    {
+      "path": "aether-symbiont/server/symbiont_server.py",
+      "lines": 478,
+      "size": 16779
+    },
+    {
+      "path": "aether-symbiont/src/delta_status.ts",
+      "lines": 52,
+      "size": 2000
+    },
+    {
+      "path": "aether-symbiont/src/extension.ts",
+      "lines": 150,
+      "size": 6856
+    },
+    {
+      "path": "aether-symbiont/src/lsp_client.ts",
+      "lines": 158,
+      "size": 6170
+    },
+    {
+      "path": "aether-symbiont/src/shared_runtime.ts",
+      "lines": 76,
+      "size": 2511
+    },
+    {
+      "path": "aether-symbiont/src/symbiont_panel.ts",
+      "lines": 394,
+      "size": 21696
+    },
+    {
+      "path": "aether-symbiont/tsconfig.json",
+      "lines": 14,
+      "size": 305
+    },
+    {
+      "path": "Aether.spec",
+      "lines": 131,
+      "size": 3081
+    },
+    {
+      "path": "aether_audit_log.jsonl",
+      "lines": 7,
+      "size": 178811
+    },
+    {
+      "path": "aether_pipeline.py",
+      "lines": 498,
+      "size": 22962
+    },
+    {
+      "path": "aether_repo/LICENSE",
+      "lines": 661,
+      "size": 35184
+    },
+    {
+      "path": "aether_repo/README.md",
+      "lines": 2,
+      "size": 304
+    },
+    {
+      "path": "analysis_engine.py",
+      "lines": 2,
+      "size": 136
+    },
+    {
+      "path": "analyze.py",
+      "lines": 210,
+      "size": 6654
+    },
+    {
+      "path": "assets/robot_mark.svg",
+      "lines": 10,
+      "size": 687
+    },
+    {
+      "path": "ASSISTANT_MASTER.md",
+      "lines": 342,
+      "size": 16850
+    },
+    {
+      "path": "attraktor_engine.py",
+      "lines": 2,
+      "size": 79
+    },
+    {
+      "path": "Cargo.lock",
+      "lines": 6970,
+      "size": 172106
+    },
+    {
+      "path": "Cargo.toml",
+      "lines": 76,
+      "size": 1904
+    },
+    {
+      "path": "contracts/aether_e2e_reference_scenarios_v1.json",
+      "lines": 45,
+      "size": 1693
+    },
+    {
+      "path": "contracts/aether_event_schema_v1.json",
+      "lines": 36,
+      "size": 897
+    },
+    {
+      "path": "contracts/aether_kpi_contract_v1.json",
+      "lines": 50,
+      "size": 1512
+    },
+    {
+      "path": "contracts/aether_meta_signal_policy_v1.json",
+      "lines": 127,
+      "size": 3437
+    },
+    {
+      "path": "contracts/aether_operating_modes_v1.json",
+      "lines": 41,
+      "size": 1686
+    },
+    {
+      "path": "core_axioms.md",
+      "lines": 88,
+      "size": 4630
+    },
+    {
+      "path": "daemon_headless.py",
+      "lines": 299,
+      "size": 11116
+    },
+    {
+      "path": "data/aelab_vault/legacy_imports/.gitkeep",
+      "lines": 1,
+      "size": 1
+    },
+    {
+      "path": "data/aether_e2e_reference_scenarios_v1.json",
+      "lines": 45,
+      "size": 1693
+    },
+    {
+      "path": "data/aether_event_schema_v1.json",
+      "lines": 36,
+      "size": 897
+    },
+    {
+      "path": "data/aether_kpi_contract_v1.json",
+      "lines": 50,
+      "size": 1512
+    },
+    {
+      "path": "data/aether_operating_modes_v1.json",
+      "lines": 41,
+      "size": 1686
+    },
+    {
+      "path": "data/assistant_corpus/de/.gitkeep",
+      "lines": 1,
+      "size": 1
+    },
+    {
+      "path": "data/assistant_corpus/en/.gitkeep",
+      "lines": 1,
+      "size": 1
+    },
+    {
+      "path": "data/assistant_corpus/README.txt",
+      "lines": 25,
+      "size": 716
+    },
+    {
+      "path": "data/convergence_history.json",
+      "lines": 228,
+      "size": 6858
+    },
+    {
+      "path": "data/convergence_proof.json",
+      "lines": 19,
+      "size": 566
+    },
+    {
+      "path": "data/file_register.py",
+      "lines": 33,
+      "size": 998
+    },
+    {
+      "path": "data/flow_sphere_snapshot_164.json",
+      "lines": 7,
+      "size": 97
+    },
+    {
+      "path": "data/flow_sphere_snapshot_564.json",
+      "lines": 7,
+      "size": 97
+    },
+    {
+      "path": "data/flow_sphere_snapshot_566.json",
+      "lines": 7,
+      "size": 97
+    },
+    {
+      "path": "data/flow_sphere_snapshot_567.json",
+      "lines": 7,
+      "size": 97
+    },
+    {
+      "path": "data/flow_sphere_snapshot_568.json",
+      "lines": 7,
+      "size": 97
+    },
+    {
+      "path": "data/interbus/backend_state.json",
+      "lines": 29,
+      "size": 862
+    },
+    {
+      "path": "data/interbus/capability_score.json",
+      "lines": 115,
+      "size": 2376
+    },
+    {
+      "path": "data/interbus/hybrid_status.json",
+      "lines": 30,
+      "size": 947
+    },
+    {
+      "path": "data/interbus/swarm_status.json",
+      "lines": 6,
+      "size": 123
+    },
+    {
+      "path": "data/public_anchor_library/history/.gitkeep",
+      "lines": 1,
+      "size": 1
+    },
+    {
+      "path": "data/public_anchor_library/README.txt",
+      "lines": 17,
+      "size": 695
+    },
+    {
+      "path": "data/publisher_keys/.gitkeep",
+      "lines": 1,
+      "size": 1
+    },
+    {
+      "path": "data/rust_shell/users.json",
+      "lines": 17,
+      "size": 455
+    },
+    {
+      "path": "data/settings.json",
+      "lines": 36,
+      "size": 1008
+    },
+    {
+      "path": "data/startup_trace.log",
+      "lines": 4,
+      "size": 180
+    },
+    {
+      "path": "data/swarm/invites/outgoing/014a4987bcee4b8f84c135f211eae41a.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/041a24af1cb641d09a5dd13a6175e85a.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/0502fe4693ae4b8c8e4b55a00251a68e.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/0cd305dacaf449fba4f5de47c6696c74.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/0d6ceacbd5c44851b63eeb184e6363fe.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/0fe7e511c1ac4ddcbb95a073490ea8ea.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/1502e17b444f4528a5b6bf9899ac4ba6.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/15413422ae714e1c9102fc14926f617d.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/17676601c7ed4c37bcb0e64f52939614.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/1a5d90fa9f35451bb9041233016d2b42.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/1d327ef4ade847e586a1cab4b744e3f2.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/326d72cafb5c4c7da2c1b882e12a1593.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/34ef916e6c9f4db0afa96f81b326df6c.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/371b4606682042a1be2a56a8e12dec85.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/3b0a21f007f748cda3cd7f10baa322ce.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/3b72d4e2e97c439aa9c881509238e623.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/421b5ab0cc1f4b7e993286baac1365e1.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/478a4069264c4a909487e32d30cb1758.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/4fb55493d0af47cc9cde9ccb053fdca5.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/505297ddb99c4d6b97febe1252c4f07d.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/52d67f9c96584663a1c2cd486fa7d5ad.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/59cbc1be46b345b88eba8bdebc14bcb6.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/5a6c584e72d14d9f95f4c09f35308a03.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/5d8fd9e7583b47b6811a3ea6fbda9941.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/5ea5e8c574b4429c9892eeaf84a46451.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/612f1904eb17474f96f4a545d8715f2e.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/6620e1a1e49d4bf2a1647e4772a75a27.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/6b243cd6d0d04f9b9016a713a8a05362.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/71b84a6c337646498b61255382aebd91.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/7881fa6ab7c74e048737c1f0b4ced84c.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/7fb6e70b31874607ad729930bbc6a57f.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/81ff9832b542426eae74ce289ac38a76.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/84e2dbe2899b4c3d9286004729ddbec9.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/8722ed8cbc5d4f0bb14a1cf313ba4245.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/8cf3873b144544569bc60368add62901.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/94fd003fedd544c5869d5c44744fed32.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/9809c9fca3704ba4bd4b1ca585fefc04.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/9883eb2fc525490c91113ff01339cc10.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/9962c5d987914863bc1991e42c0fdcf0.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/9c4dca928282420485a41f67690828be.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/a29334f0e47b49dda0a99a6158b28caf.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/a3f9eb4d80dc43c9b764b843d3f9b8aa.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/a7cbc1a0ebb74dbe9fc73d9b4b1b0ae0.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/a7ebe126949441cabd04e4cb248d18c0.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/a94ad463ca63480eb853833d5ce22233.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/ad2be11227fb40bba5d5b9822325579c.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/adc13923ac4a4da28d24c6039dd4d421.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/b6c75d8339874597a6f6b464c2b2eec6.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/b9c85d99a519446ca937b976b8b243f4.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/c0bbc085711a426b82284194a3eac23a.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/c76d042b12c6483f92710643dedfeff9.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/caa66df634b3421db551fa199cecedbe.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/d9b0c100ee0a4d7e9ed7a8e98ba6bead.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/e195687aefac4902857d2b6bb3a440eb.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/e1ffff5ef4f74bb5896c0788171582fe.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/e62f09a01b6d49edb1e7aea5892f95ff.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/e99da05fabc3452eba94649edc47e895.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/ecab9b848ae048349679f3f34153f75b.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/ef85fd97c5e74def827a91bc04b2e1d4.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/f47c1c66e13b485abdf6331d7ee00685.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/f5e7fe648f9b45e2932515a30f73b9e9.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/f8d01b5242ea401da2e6fd4217f423e7.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/fde0dbe9601d4b7aae4ec86fd1ef9f2d.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/invites/outgoing/latest_invite.json",
+      "lines": 8,
+      "size": 354
+    },
+    {
+      "path": "data/swarm/node.json",
+      "lines": 10,
+      "size": 409
+    },
+    {
+      "path": "data/swarm/nodes/6c9e2fcad95e2bd0.json",
+      "lines": 10,
+      "size": 409
+    },
+    {
+      "path": "data/swarm_consent.json",
+      "lines": 6,
+      "size": 131
+    },
+    {
+      "path": "data/trusted_publishers.json",
+      "lines": 21,
+      "size": 720
+    },
+    {
+      "path": "delta_engine.py",
+      "lines": 8,
+      "size": 277
+    },
+    {
+      "path": "entropy_engine.py",
+      "lines": 18,
+      "size": 486
+    },
+    {
+      "path": "fail_modes.py",
+      "lines": 2,
+      "size": 95
+    },
+    {
+      "path": "governance_engine.py",
+      "lines": 35,
+      "size": 1093
+    },
+    {
+      "path": "keys/node_private.key",
+      "lines": 3,
+      "size": 119
+    },
+    {
+      "path": "keys/node_public.key",
+      "lines": 3,
+      "size": 113
+    },
+    {
+      "path": "keys/node_secret.key",
+      "lines": 1,
+      "size": 32
+    },
+    {
+      "path": "LICENSE",
+      "lines": 333,
+      "size": 15732
+    },
+    {
+      "path": "logs/boundary_audit.jsonl",
+      "lines": 38,
+      "size": 5056
+    },
+    {
+      "path": "logs/decisions.jsonl",
+      "lines": 0,
+      "size": 0
+    },
+    {
+      "path": "logs/live_render_patterns.jsonl",
+      "lines": 249,
+      "size": 62329
+    },
+    {
+      "path": "modules/__init__.py",
+      "lines": 1,
+      "size": 25
+    },
+    {
+      "path": "modules/ae_evolution_core.md",
+      "lines": 37,
+      "size": 1477
+    },
+    {
+      "path": "modules/ae_evolution_core.py",
+      "lines": 1602,
+      "size": 74557
+    },
+    {
+      "path": "modules/aelab_engine.py",
+      "lines": 217,
+      "size": 8501
+    },
+    {
+      "path": "modules/aelab_motor.py",
+      "lines": 1056,
+      "size": 38505
+    },
+    {
+      "path": "modules/aelab_vault.py",
+      "lines": 978,
+      "size": 39076
+    },
+    {
+      "path": "modules/aether_core_rs.py",
+      "lines": 143,
+      "size": 4373
+    },
+    {
+      "path": "modules/aetherguard.py",
+      "lines": 146,
+      "size": 4725
+    },
+    {
+      "path": "modules/aethernet_temp.py",
+      "lines": 122,
+      "size": 4988
+    },
+    {
+      "path": "modules/aethernet_transport.py",
+      "lines": 654,
+      "size": 29077
+    },
+    {
+      "path": "modules/agent_control.py",
+      "lines": 635,
+      "size": 24530
+    },
+    {
+      "path": "modules/agent_loop.py",
+      "lines": 258,
+      "size": 11692
+    },
+    {
+      "path": "modules/analysis_capsule.py",
+      "lines": 540,
+      "size": 21386
+    },
+    {
+      "path": "modules/analysis_engine.py",
+      "lines": 2114,
+      "size": 96461
+    },
+    {
+      "path": "modules/anchor_query.py",
+      "lines": 201,
+      "size": 7151
+    },
+    {
+      "path": "modules/attractor_engine.py",
+      "lines": 98,
+      "size": 3693
+    },
+    {
+      "path": "modules/attraktor_engine.py",
+      "lines": 19,
+      "size": 454
+    },
+    {
+      "path": "modules/autopilot_engine.py",
+      "lines": 381,
+      "size": 14169
+    },
+    {
+      "path": "modules/background_monitor.py",
+      "lines": 307,
+      "size": 11343
+    },
+    {
+      "path": "modules/bayes_engine.py",
+      "lines": 369,
+      "size": 16010
+    },
+    {
+      "path": "modules/blockchain_interface.py",
+      "lines": 479,
+      "size": 19428
+    },
+    {
+      "path": "modules/bus_bridge.py",
+      "lines": 157,
+      "size": 5020
+    },
+    {
+      "path": "modules/capability_score.py",
+      "lines": 571,
+      "size": 21766
+    },
+    {
+      "path": "modules/capture_adapter.py",
+      "lines": 392,
+      "size": 14461
+    },
+    {
+      "path": "modules/chat_crypto.py",
+      "lines": 128,
+      "size": 4579
+    },
+    {
+      "path": "modules/chat_sync_engine.py",
+      "lines": 354,
+      "size": 13912
+    },
+    {
+      "path": "modules/cli.py",
+      "lines": 106,
+      "size": 3738
+    },
+    {
+      "path": "modules/completion_filter.py",
+      "lines": 156,
+      "size": 5850
+    },
+    {
+      "path": "modules/consensus_engine.py",
+      "lines": 257,
+      "size": 9552
+    },
+    {
+      "path": "modules/coord_atlas.py",
+      "lines": 250,
+      "size": 10394
+    },
+    {
+      "path": "modules/cross_domain_engine.py",
+      "lines": 699,
+      "size": 27904
+    },
+    {
+      "path": "modules/deep_scan_engine.py",
+      "lines": 329,
+      "size": 13406
+    },
+    {
+      "path": "modules/delta_convergence_tracker.py",
+      "lines": 319,
+      "size": 12252
+    },
+    {
+      "path": "modules/delta_propagation.py",
+      "lines": 13,
+      "size": 493
+    },
+    {
+      "path": "modules/device_profile.py",
+      "lines": 237,
+      "size": 8130
+    },
+    {
+      "path": "modules/diagnostics.py",
+      "lines": 8,
+      "size": 356
+    },
+    {
+      "path": "modules/dialog_engine.py",
+      "lines": 547,
+      "size": 26371
+    },
+    {
+      "path": "modules/efficiency_monitor.py",
+      "lines": 89,
+      "size": 3328
+    },
+    {
+      "path": "modules/embedding_engine.py",
+      "lines": 101,
+      "size": 3984
+    },
+    {
+      "path": "modules/ethics_engine.py",
+      "lines": 638,
+      "size": 24220
+    },
+    {
+      "path": "modules/frame_delta_engine.py",
+      "lines": 320,
+      "size": 12517
+    },
+    {
+      "path": "modules/godel_loop_renderer.py",
+      "lines": 240,
+      "size": 8903
+    },
+    {
+      "path": "modules/graph_engine.py",
+      "lines": 412,
+      "size": 17677
+    },
+    {
+      "path": "modules/gui.py",
+      "lines": 193,
+      "size": 7431
+    },
+    {
+      "path": "modules/hardware_profiler.py",
+      "lines": 472,
+      "size": 18688
+    },
+    {
+      "path": "modules/hybrid_bridge.py",
+      "lines": 548,
+      "size": 26036
+    },
+    {
+      "path": "modules/i18n.py",
+      "lines": 474,
+      "size": 15656
+    },
+    {
+      "path": "modules/invariant_consensus_bridge.py",
+      "lines": 113,
+      "size": 4027
+    },
+    {
+      "path": "modules/invariant_detector.py",
+      "lines": 324,
+      "size": 13014
+    },
+    {
+      "path": "modules/invariant_observer.py",
+      "lines": 242,
+      "size": 10464
+    },
+    {
+      "path": "modules/key_derivation.py",
+      "lines": 75,
+      "size": 2617
+    },
+    {
+      "path": "modules/lan_beacon.py",
+      "lines": 225,
+      "size": 6971
+    },
+    {
+      "path": "modules/local_secret_store.py",
+      "lines": 66,
+      "size": 1871
+    },
+    {
+      "path": "modules/log_system.py",
+      "lines": 89,
+      "size": 3351
+    },
+    {
+      "path": "modules/mdl.py",
+      "lines": 108,
+      "size": 3738
+    },
+    {
+      "path": "modules/media_processor.py",
+      "lines": 33,
+      "size": 1298
+    },
+    {
+      "path": "modules/meta_engine.py",
+      "lines": 34,
+      "size": 973
+    },
+    {
+      "path": "modules/meta_ockham.py",
+      "lines": 337,
+      "size": 13319
+    },
+    {
+      "path": "modules/metalayer_assistant.py",
+      "lines": 205,
+      "size": 8546
+    },
+    {
+      "path": "modules/metalayer_os.py",
+      "lines": 316,
+      "size": 13603
+    },
+    {
+      "path": "modules/monitoring_engine.py",
+      "lines": 11,
+      "size": 516
+    },
+    {
+      "path": "modules/multimodal_router.py",
+      "lines": 18,
+      "size": 747
+    },
+    {
+      "path": "modules/observer_engine.py",
+      "lines": 1514,
+      "size": 68653
+    },
+    {
+      "path": "modules/optimize_engine.py",
+      "lines": 34,
+      "size": 1284
+    },
+    {
+      "path": "modules/p2p_anchor_pool.py",
+      "lines": 214,
+      "size": 10020
+    },
+    {
+      "path": "modules/persist.py",
+      "lines": 24,
+      "size": 708
+    },
+    {
+      "path": "modules/persistence_engine.py",
+      "lines": 22,
+      "size": 702
+    },
+    {
+      "path": "modules/pixel_coord_optimizer.py",
+      "lines": 359,
+      "size": 14190
+    },
+    {
+      "path": "modules/preload_optimizer.py",
+      "lines": 207,
+      "size": 9155
+    },
+    {
+      "path": "modules/privacy_anchor_builder.py",
+      "lines": 86,
+      "size": 3542
+    },
+    {
+      "path": "modules/privacy_observer.py",
+      "lines": 457,
+      "size": 17347
+    },
+    {
+      "path": "modules/privacy_registry.py",
+      "lines": 418,
+      "size": 15700
+    },
+    {
+      "path": "modules/process_anchor_store.py",
+      "lines": 583,
+      "size": 22474
+    },
+    {
+      "path": "modules/process_engine.py",
+      "lines": 78,
+      "size": 2605
+    },
+    {
+      "path": "modules/process_monitor.py",
+      "lines": 197,
+      "size": 7253
+    },
+    {
+      "path": "modules/process_pixel_mapper.py",
+      "lines": 430,
+      "size": 16955
+    },
+    {
+      "path": "modules/process_thinning_engine.py",
+      "lines": 368,
+      "size": 14403
+    },
+    {
+      "path": "modules/public_anchor.py",
+      "lines": 444,
+      "size": 19652
+    },
+    {
+      "path": "modules/public_ttd_transport.py",
+      "lines": 215,
+      "size": 9874
+    },
+    {
+      "path": "modules/reconstruction_engine.py",
+      "lines": 1858,
+      "size": 82106
+    },
+    {
+      "path": "modules/registry.py",
+      "lines": 5767,
+      "size": 260300
+    },
+    {
+      "path": "modules/render_coordinator.py",
+      "lines": 453,
+      "size": 18171
+    },
+    {
+      "path": "modules/renderer_visual.py",
+      "lines": 13,
+      "size": 528
+    },
+    {
+      "path": "modules/repositories.py",
+      "lines": 897,
+      "size": 33829
+    },
+    {
+      "path": "modules/rule_engine.py",
+      "lines": 208,
+      "size": 7799
+    },
+    {
+      "path": "modules/runtime_core.py",
+      "lines": 17,
+      "size": 671
+    },
+    {
+      "path": "modules/runtime_loop.py",
+      "lines": 16,
+      "size": 540
+    },
+    {
+      "path": "modules/screen_vision_engine.py",
+      "lines": 364,
+      "size": 11830
+    },
+    {
+      "path": "modules/security_engine.py",
+      "lines": 289,
+      "size": 9951
+    },
+    {
+      "path": "modules/security_monitor.py",
+      "lines": 860,
+      "size": 37227
+    },
+    {
+      "path": "modules/session_engine.py",
+      "lines": 136,
+      "size": 4665
+    },
+    {
+      "path": "modules/session_guard.py",
+      "lines": 42,
+      "size": 1700
+    },
+    {
+      "path": "modules/spacetime_renderer.py",
+      "lines": 1272,
+      "size": 59177
+    },
+    {
+      "path": "modules/spectrum_engine.py",
+      "lines": 337,
+      "size": 13411
+    },
+    {
+      "path": "modules/state.py",
+      "lines": 61,
+      "size": 2033
+    },
+    {
+      "path": "modules/state_machine.py",
+      "lines": 11,
+      "size": 342
+    },
+    {
+      "path": "modules/storage_gp.py",
+      "lines": 257,
+      "size": 11832
+    },
+    {
+      "path": "modules/structure_grid.py",
+      "lines": 12,
+      "size": 378
+    },
+    {
+      "path": "modules/structure_map_engine.py",
+      "lines": 269,
+      "size": 10084
+    },
+    {
+      "path": "modules/swarm_agent.py",
+      "lines": 425,
+      "size": 16272
+    },
+    {
+      "path": "modules/swarm_consent.py",
+      "lines": 304,
+      "size": 11862
+    },
+    {
+      "path": "modules/swarm_controller.py",
+      "lines": 403,
+      "size": 15366
+    },
+    {
+      "path": "modules/swarm_health.py",
+      "lines": 208,
+      "size": 8058
+    },
+    {
+      "path": "modules/swarm_invite.py",
+      "lines": 113,
+      "size": 4298
+    },
+    {
+      "path": "modules/swarm_loop_bridge.py",
+      "lines": 222,
+      "size": 7929
+    },
+    {
+      "path": "modules/swarm_overlap.py",
+      "lines": 255,
+      "size": 9083
+    },
+    {
+      "path": "modules/swarm_p2p.py",
+      "lines": 487,
+      "size": 20094
+    },
+    {
+      "path": "modules/swarm_persist.py",
+      "lines": 326,
+      "size": 12144
+    },
+    {
+      "path": "modules/swarm_relay.py",
+      "lines": 60,
+      "size": 2186
+    },
+    {
+      "path": "modules/swarm_sync.py",
+      "lines": 102,
+      "size": 3412
+    },
+    {
+      "path": "modules/swarm_ui_adapter.py",
+      "lines": 248,
+      "size": 8964
+    },
+    {
+      "path": "modules/symbiont_core.py",
+      "lines": 451,
+      "size": 18361
+    },
+    {
+      "path": "modules/symbiont_vault.py",
+      "lines": 312,
+      "size": 12860
+    },
+    {
+      "path": "modules/symbol_grounding.py",
+      "lines": 232,
+      "size": 11029
+    },
+    {
+      "path": "modules/system_bus.py",
+      "lines": 12,
+      "size": 349
+    },
+    {
+      "path": "modules/telemetry_classifier.py",
+      "lines": 229,
+      "size": 7987
+    },
+    {
+      "path": "modules/text_utils.py",
+      "lines": 225,
+      "size": 8373
+    },
+    {
+      "path": "modules/trust_engine.py",
+      "lines": 274,
+      "size": 13274
+    },
+    {
+      "path": "modules/unified_cascade.py",
+      "lines": 523,
+      "size": 21944
+    },
+    {
+      "path": "modules/vault_analyzer.py",
+      "lines": 633,
+      "size": 25680
+    },
+    {
+      "path": "modules/vault_chain.py",
+      "lines": 914,
+      "size": 44204
+    },
+    {
+      "path": "modules/vault_orchestrator.py",
+      "lines": 308,
+      "size": 10823
+    },
+    {
+      "path": "modules/voxel_grid.py",
+      "lines": 306,
+      "size": 11169
+    },
+    {
+      "path": "modules/yggdrasil_addr.py",
+      "lines": 62,
+      "size": 2149
+    },
+    {
+      "path": "modules/yggdrasil_install.py",
+      "lines": 358,
+      "size": 13826
+    },
+    {
+      "path": "node_init.py",
+      "lines": 155,
+      "size": 5769
+    },
+    {
+      "path": "observer_engine.py",
+      "lines": 2,
+      "size": 136
+    },
+    {
+      "path": "operators.py",
+      "lines": 65,
+      "size": 1896
+    },
+    {
+      "path": "persist.py",
+      "lines": 2,
+      "size": 120
+    },
+    {
+      "path": "pytest.ini",
+      "lines": 4,
+      "size": 152
+    },
+    {
+      "path": "README.md",
+      "lines": 354,
+      "size": 16572
+    },
+    {
+      "path": "README_EN.md",
+      "lines": 249,
+      "size": 10620
+    },
+    {
+      "path": "reconstruction_engine.py",
+      "lines": 2,
+      "size": 148
+    },
+    {
+      "path": "ReconstructionEngine",
+      "lines": 0,
+      "size": 0
+    },
+    {
+      "path": "requirements.txt",
+      "lines": 37,
+      "size": 1571
+    },
+    {
+      "path": "ROADMAP.md",
+      "lines": 310,
+      "size": 13338
+    },
+    {
+      "path": "run_all_tests.bat",
+      "lines": 7,
+      "size": 253
+    },
+    {
+      "path": "run_full.py",
+      "lines": 56,
+      "size": 1492
+    },
+    {
+      "path": "run_tests.py",
+      "lines": 25,
+      "size": 778
+    },
+    {
+      "path": "sce_engine.py",
+      "lines": 63,
+      "size": 2796
+    },
+    {
+      "path": "scripts/deduplicate_nodes.py",
+      "lines": 137,
+      "size": 5078
+    },
+    {
+      "path": "scripts/migrate_node_v1_v2.py",
+      "lines": 53,
+      "size": 1482
+    },
+    {
+      "path": "SECURITY.md",
+      "lines": 48,
+      "size": 2294
+    },
+    {
+      "path": "service/aether-swarm.service",
+      "lines": 21,
+      "size": 445
+    },
+    {
+      "path": "service/windows_service_instructions.md",
+      "lines": 55,
+      "size": 1396
+    },
+    {
+      "path": "solo_bootstrap.py",
+      "lines": 376,
+      "size": 14371
+    },
+    {
+      "path": "src/aef.rs",
+      "lines": 1543,
+      "size": 54639
+    },
+    {
+      "path": "src/api.rs",
+      "lines": 193,
+      "size": 6741
+    },
+    {
+      "path": "src/app.rs",
+      "lines": 3409,
+      "size": 140919
+    },
+    {
+      "path": "src/archive.rs",
+      "lines": 54,
+      "size": 2393
+    },
+    {
+      "path": "src/auth.rs",
+      "lines": 276,
+      "size": 8894
+    },
+    {
+      "path": "src/backup.rs",
+      "lines": 34,
+      "size": 1496
+    },
+    {
+      "path": "src/bayes.rs",
+      "lines": 176,
+      "size": 6602
+    },
+    {
+      "path": "src/bin/aether-cli.rs",
+      "lines": 235,
+      "size": 7862
+    },
+    {
+      "path": "src/bin/aether_eframe.rs",
+      "lines": 17,
+      "size": 519
+    },
+    {
+      "path": "src/bin/aether_iced.rs",
+      "lines": 3,
+      "size": 71
+    },
+    {
+      "path": "src/bin/sandbox_worker.rs",
+      "lines": 356,
+      "size": 11736
+    },
+    {
+      "path": "src/bin/slint_preview.rs",
+      "lines": 5,
+      "size": 146
+    },
+    {
+      "path": "src/browser.rs",
+      "lines": 880,
+      "size": 29776
+    },
+    {
+      "path": "src/browser_embed.rs",
+      "lines": 607,
+      "size": 18531
+    },
+    {
+      "path": "src/bus_ipc.rs",
+      "lines": 293,
+      "size": 12193
+    },
+    {
+      "path": "src/capsule.rs",
+      "lines": 197,
+      "size": 6504
+    },
+    {
+      "path": "src/chat_sync.rs",
+      "lines": 328,
+      "size": 10496
+    },
+    {
+      "path": "src/deep_scan.rs",
+      "lines": 41,
+      "size": 1657
+    },
+    {
+      "path": "src/delta_vault.rs",
+      "lines": 175,
+      "size": 6036
+    },
+    {
+      "path": "src/egl_api.rs",
+      "lines": 400,
+      "size": 14804
+    },
+    {
+      "path": "src/egl_example.rs",
+      "lines": 335,
+      "size": 14544
+    },
+    {
+      "path": "src/EGL_GUIDE.rs",
+      "lines": 246,
+      "size": 9037
+    },
+    {
+      "path": "src/egl_policy.rs",
+      "lines": 281,
+      "size": 8466
+    },
+    {
+      "path": "src/ethics.rs",
+      "lines": 214,
+      "size": 9434
+    },
+    {
+      "path": "src/fingerprint.rs",
+      "lines": 61,
+      "size": 1852
+    },
+    {
+      "path": "src/gfx.rs",
+      "lines": 559,
+      "size": 18650
+    },
+    {
+      "path": "src/hardware.rs",
+      "lines": 200,
+      "size": 7247
+    },
+    {
+      "path": "src/iced_shell/dashboard_search.rs",
+      "lines": 53,
+      "size": 2848
+    },
+    {
+      "path": "src/iced_shell.rs",
+      "lines": 10995,
+      "size": 519868
+    },
+    {
+      "path": "src/inter_layer_bus.rs",
+      "lines": 555,
+      "size": 15211
+    },
+    {
+      "path": "src/key_vault.rs",
+      "lines": 52,
+      "size": 1302
+    },
+    {
+      "path": "src/lab_boundary.rs",
+      "lines": 216,
+      "size": 7004
+    },
+    {
+      "path": "src/launcher_dashboard.rs",
+      "lines": 646,
+      "size": 23498
+    },
+    {
+      "path": "src/lib.rs",
+      "lines": 54,
+      "size": 1308
+    },
+    {
+      "path": "src/network_guard.rs",
+      "lines": 322,
+      "size": 10609
+    },
+    {
+      "path": "src/observation.rs",
+      "lines": 738,
+      "size": 23364
+    },
+    {
+      "path": "src/observer.rs",
+      "lines": 157,
+      "size": 5522
+    },
+    {
+      "path": "src/ockham.rs",
+      "lines": 366,
+      "size": 13194
+    },
+    {
+      "path": "src/offline_cache.rs",
+      "lines": 96,
+      "size": 3280
+    },
+    {
+      "path": "src/orchestrator.rs",
+      "lines": 443,
+      "size": 15328
+    },
+    {
+      "path": "src/pack.rs",
+      "lines": 875,
+      "size": 31178
+    },
+    {
+      "path": "src/policy.rs",
+      "lines": 72,
+      "size": 1827
+    },
+    {
+      "path": "src/policy_executor.rs",
+      "lines": 348,
+      "size": 11502
+    },
+    {
+      "path": "src/priority.rs",
+      "lines": 41,
+      "size": 1379
+    },
+    {
+      "path": "src/public_ttd.rs",
+      "lines": 899,
+      "size": 31432
+    },
+    {
+      "path": "src/py_bridge.rs",
+      "lines": 328,
+      "size": 10286
+    },
+    {
+      "path": "src/py_entropy.rs",
+      "lines": 147,
+      "size": 4833
+    },
+    {
+      "path": "src/runtime_signal.rs",
+      "lines": 666,
+      "size": 22632
+    },
+    {
+      "path": "src/security.rs",
+      "lines": 281,
+      "size": 9857
+    },
+    {
+      "path": "src/state.rs",
+      "lines": 203,
+      "size": 6172
+    },
+    {
+      "path": "src/swarm_bootstrap.rs",
+      "lines": 97,
+      "size": 3127
+    },
+    {
+      "path": "src/swarm_loop.rs",
+      "lines": 572,
+      "size": 19246
+    },
+    {
+      "path": "src/symbiont_rpc.rs",
+      "lines": 88,
+      "size": 3186
+    },
+    {
+      "path": "src/theory_of_mind.rs",
+      "lines": 604,
+      "size": 19353
+    },
+    {
+      "path": "src/vault_access.rs",
+      "lines": 986,
+      "size": 34725
+    },
+    {
+      "path": "src/workflow_anchor.rs",
+      "lines": 249,
+      "size": 9106
+    },
+    {
+      "path": "src/zk_match.rs",
+      "lines": 126,
+      "size": 3581
+    },
+    {
+      "path": "start.py",
+      "lines": 167,
+      "size": 4937
+    },
+    {
+      "path": "start_all.py",
+      "lines": 39,
+      "size": 1228
+    },
+    {
+      "path": "tests/mini_selftest.py",
+      "lines": 138,
+      "size": 5513
+    },
+    {
+      "path": "tests/test_aether_dropper.py",
+      "lines": 16,
+      "size": 413
+    },
+    {
+      "path": "tests/test_aetherguard.py",
+      "lines": 62,
+      "size": 1735
+    },
+    {
+      "path": "tests/test_aethernet_temp.py",
+      "lines": 12,
+      "size": 377
+    },
+    {
+      "path": "tests/test_agent_control.py",
+      "lines": 112,
+      "size": 4000
+    },
+    {
+      "path": "tests/test_analysis_capsule.py",
+      "lines": 48,
+      "size": 1924
+    },
+    {
+      "path": "tests/test_assistant_engine.py",
+      "lines": 39,
+      "size": 1371
+    },
+    {
+      "path": "tests/test_bootstrap_idempotent.py",
+      "lines": 162,
+      "size": 6525
+    },
+    {
+      "path": "tests/test_consensus_hardening.py",
+      "lines": 35,
+      "size": 1492
+    },
+    {
+      "path": "tests/test_cross_domain_and_onboarding.py",
+      "lines": 506,
+      "size": 19869
+    },
+    {
+      "path": "tests/test_ethics_advanced.py",
+      "lines": 621,
+      "size": 24482
+    },
+    {
+      "path": "tests/test_godel_loop_renderer.py",
+      "lines": 19,
+      "size": 814
+    },
+    {
+      "path": "tests/test_key_derivation.py",
+      "lines": 45,
+      "size": 1351
+    },
+    {
+      "path": "tests/test_lossless_core.py",
+      "lines": 356,
+      "size": 14662
+    },
+    {
+      "path": "tests/test_lossless_roundtrip.py",
+      "lines": 693,
+      "size": 31243
+    },
+    {
+      "path": "tests/test_mdl.py",
+      "lines": 100,
+      "size": 3749
+    },
+    {
+      "path": "tests/test_media_phase2.py",
+      "lines": 33,
+      "size": 1055
+    },
+    {
+      "path": "tests/test_new_modules.py",
+      "lines": 517,
+      "size": 20296
+    },
+    {
+      "path": "tests/test_node_json_schema.py",
+      "lines": 40,
+      "size": 1325
+    },
+    {
+      "path": "tests/test_observer_learning_privacy.py",
+      "lines": 68,
+      "size": 2199
+    },
+    {
+      "path": "tests/test_optimize_phase5.py",
+      "lines": 28,
+      "size": 880
+    },
+    {
+      "path": "tests/test_preload_optimizer.py",
+      "lines": 28,
+      "size": 1131
+    },
+    {
+      "path": "tests/test_privacy_anchor_builder.py",
+      "lines": 40,
+      "size": 1366
+    },
+    {
+      "path": "tests/test_process_phase3.py",
+      "lines": 11,
+      "size": 295
+    },
+    {
+      "path": "tests/test_reconstruction_phase3.py",
+      "lines": 138,
+      "size": 4638
+    },
+    {
+      "path": "tests/test_render_phase4.py",
+      "lines": 106,
+      "size": 3854
+    },
+    {
+      "path": "tests/test_rule_engine.py",
+      "lines": 229,
+      "size": 7778
+    },
+    {
+      "path": "tests/test_state.py",
+      "lines": 127,
+      "size": 3468
+    },
+    {
+      "path": "tests/test_structure_map_engine.py",
+      "lines": 35,
+      "size": 1348
+    },
+    {
+      "path": "tests/test_swarm_agent.py",
+      "lines": 231,
+      "size": 7487
+    },
+    {
+      "path": "tests/test_swarm_controller.py",
+      "lines": 200,
+      "size": 6309
+    },
+    {
+      "path": "tests/test_swarm_hardening.py",
+      "lines": 103,
+      "size": 3523
+    },
+    {
+      "path": "tests/test_swarm_integration.py",
+      "lines": 319,
+      "size": 10483
+    },
+    {
+      "path": "tests/test_swarm_p2p_ygg.py",
+      "lines": 20,
+      "size": 762
+    },
+    {
+      "path": "tests/test_telemetry_classifier.py",
+      "lines": 79,
+      "size": 2368
+    },
+    {
+      "path": "tests/test_vault_orchestrator.py",
+      "lines": 217,
+      "size": 7588
+    },
+    {
+      "path": "tests/test_yggdrasil_install.py",
+      "lines": 44,
+      "size": 1513
+    },
+    {
+      "path": "TODO.md",
+      "lines": 16,
+      "size": 577
+    },
+    {
+      "path": "tools/convergence_plot.py",
+      "lines": 540,
+      "size": 17645
+    },
+    {
+      "path": "tools/dump_all_texts.py",
+      "lines": 71,
+      "size": 2442
+    },
+    {
+      "path": "tools/find_unused_defs.py",
+      "lines": 112,
+      "size": 3558
+    },
+    {
+      "path": "tools/repo_scan.py",
+      "lines": 196,
+      "size": 6124
+    },
+    {
+      "path": "tools/repo_scan_report.json",
+      "lines": 30833,
+      "size": 1725798
+    },
+    {
+      "path": "tools/unused_defs_report.json",
+      "lines": 4312,
+      "size": 123298
+    },
+    {
+      "path": "ui/aether_modern.slint",
+      "lines": 395,
+      "size": 21294
+    },
+    {
+      "path": "WHITEPAPER.md",
+      "lines": 398,
+      "size": 16288
+    },
+    {
+      "path": "WHITEPAPER_EN.md",
+      "lines": 316,
+      "size": 13213
+    }
+  ]
+}

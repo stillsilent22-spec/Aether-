@@ -1,0 +1,37 @@
+﻿# ── Aether Requirements ────────────────────────────────────────────────────
+# Kern (alle Plattformen)
+numpy>=1.26.0
+scipy>=1.12.0
+matplotlib>=3.8.0
+sounddevice>=0.4.6
+pyinstaller>=6.5.0
+tkinterdnd2>=0.3.0
+opencv-python>=4.9.0
+pillow>=10.0.0
+cryptography>=42.0.0
+fonttools>=4.50.0
+mss>=9.0.1
+pydub>=0.25.1
+moviepy>=1.0.3
+PyMuPDF>=1.24.0
+psutil>=5.9.8
+speechrecognition>=3.10.0
+
+# Optional: Browser-Einbettung via pywebview.
+# Auf Windows mit Python 3.14 kann die Installation aktuell an pythonnet scheitern.
+# Bei Bedarf separat installieren: pip install pywebview
+# Optional: Dateisignatur-Erkennung via python-magic.
+# Faellt ohne Paket auf Signatur- und Suffix-Erkennung zurueck.
+# Bei Bedarf separat installieren: pip install python-magic
+# Optional: Lokales GGUF-LLM via llama-cpp-python.
+# Assistant faellt ohne Paket auf deterministischen Template-Modus zurueck.
+# Bei Bedarf separat installieren: pip install llama-cpp-python
+
+# ── Windows-spezifisch (nur auf Windows installieren) ──────────────────────
+# pip install winshell pywin32  (Windows only)
+# winshell
+# pywin32
+
+# ── Entfernt (ersetzt) ──────────────────────────────────────────────────────
+# PyGetWindow -> ersetzt durch win32gui (in pywin32 enthalten)
+# pyautogui   -> nicht mehr benoetigt (screen_vision nutzt mss + win32gui)

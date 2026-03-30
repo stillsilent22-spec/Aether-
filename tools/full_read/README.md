@@ -1,0 +1,354 @@
+﻿# Aether
+
+## Quick Start
+
+```bash
+python solo_bootstrap.py   # first-time setup (genesis node, keypair, anchor pack)
+python start.py            # launch Aether
+```
+
+Solo genesis mode is supported — no second node required to start.
+
+> **Aether ist ein lokales Projekt zur strukturellen Analyse und Rekonstruktion von Daten. Der aktuelle Stand ist ein aktiver Entwicklungsstand, kein fertiges Produkt und kein extern validiertes System.**
+
+> **Aether is a local project for structural analysis and reconstruction of data. The current state is an active development snapshot, not a finished product and not an externally validated system.**
+
+**Lokaler Entwicklungsstand für Struktur-Analyse und Rekonstruktion.**
+
+Aether berechnet messbare Struktureigenschaften beliebiger Daten und macht sie vergleichbar:
+Shannon-Entropie, Zipf-Konformität, Fourier-Periodizität, Benford-Score, fraktale Dimension (Katz),
+Permutation Entropy (Bandt & Pompe). Teile des Systems arbeiten lokal; Funktionsumfang und Belastbarkeit befinden sich noch im Ausbau.
+
+→ [English version: README_EN.md](README_EN.md)
+
+## Execution Artifacts (30/60/90)
+
+- Operating Modes Contract: [contracts/aether_operating_modes_v1.json](contracts/aether_operating_modes_v1.json)
+- KPI Contract: [contracts/aether_kpi_contract_v1.json](contracts/aether_kpi_contract_v1.json)
+- Event/API Schema: [contracts/aether_event_schema_v1.json](contracts/aether_event_schema_v1.json)
+- E2E Reference Scenarios: [contracts/aether_e2e_reference_scenarios_v1.json](contracts/aether_e2e_reference_scenarios_v1.json)
+- Meta Signal Policy: [contracts/aether_meta_signal_policy_v1.json](contracts/aether_meta_signal_policy_v1.json)
+
+## Module Organization
+
+- Kanonische Python-Implementierungen liegen unter `modules/`.
+- Root-Level-Dateien bleiben nur als Kompatibilitaets-Shims fuer Legacy-Imports bestehen.
+- Bevorzuge neue Imports in der Form `from modules.<name> import ...`.
+
+## Aktueller Stand
+
+Aether ist ein Einzelprojekt in aktivem Aufbau — kein fertiges Produkt, kein peer-reviewed System.
+Der Kern ist funktionsfähig: lokale Strukturanalyse, Live-Render-Modus, DNA-Vault, Delta-Codec, Rust-GUI.
+Was fehlt: externe Validierung, Benchmarks gegen etablierte Verfahren, produktionsreifer Fehlerbehandlungsrahmen.
+
+Die wissenschaftlichen Referenzen (Shannon, Bandt & Pompe, Benford, Noether) sind korrekt eingesetzt —
+die Kombination zu einem kohärenten System ist der eigene Beitrag. Ob diese Kombination einen
+messbaren Mehrwert gegenüber einzelnen Methoden liefert, ist offen und testbar.
+
+### Was funktioniert
+
+- Deterministische Strukturanalyse (Shannon, Zipf, Benford, Katz, Permutation Entropy) auf beliebigen Dateitypen
+- XOR-Delta Frame-Codec mit Vault-Lookup (schneller als O(n·log n) bei Warm-Vault)
+- Lokale Rust-GUI mit Live-Render-Modus, Noether-Symmetriedetektor, Bits-per-Joule-Anzeige
+- DNA-Vault-Format: Baum-Serialisierung, Roundtrip-verifiziert
+- Zero-Knowledge-Anker-Architektur: SHA-256-basiert, nicht invertierbar
+- Solo-Genesis ohne zweiten Node
+
+### Was offen ist
+
+- Externe Evaluierung gegen Baseline-Verfahren fehlt
+- Swarm-Netzwerkschicht ist konzeptionell, nicht produktionsreif
+- Kein formales Peer-Review
+
+### Mitarbeit
+
+Einzelprojekt, aktiv in Entwicklung. Wenn die Grundidee — strukturelle Analyse ohne Label,
+Cloud-Zwang oder Black Box — für dich relevant ist: Pull Requests, Issues oder
+direkte Kontaktaufnahme sind willkommen.
+
+---
+
+## Was Aether ist — und was nicht
+
+Aether ist ein **lokales Messinstrument für Datenstruktur**. Es berechnet statistisch definierte
+Signaturen aus Rohdaten und erkennt Abweichungen von beobachteten Baselines — ohne Klassifikator,
+ohne Trainingsdaten, ohne inhaltliche Interpretation.
+
+**Aether ist nicht:**
+- Ein KI-Modell oder neuronales Netz
+- Ein Ersatz für Domänenexpertise
+- Ein semantisches Analyse- oder Interpretationssystem
+- Eine universelle Lösung für beliebige analytische Fragestellungen
+
+**Aether ist:**
+- Ein lokales Anomalieerkennungs-Werkzeug auf Basis messbarer Strukturmetriken
+- Ein lokaler Software-Stack, der Analyse, Rekonstruktion, Persistenz und Visualisierung zusammenführt
+- Ein Systemoptimierungswerkzeug auf Basis von Prozess-Strukturprofilen
+
+---
+
+## Technische Grundlage
+
+Alle verwendeten Metriken sind etablierte Verfahren der Informationstheorie und Statistik:
+
+| Metrik | Methode | Typische Anwendung |
+|--------|---------|-------------------|
+| Shannon-Entropie | H(X) = −Σ p(x) log₂ p(x) | Informationsdichte, Zufälligkeit |
+| Zipf-Konformität | Potenzgesetz-Fit f ∝ r^−α | Natürlichkeit von Token-Verteilungen |
+| Fourier-Periodizität | FFT über Block-Entropie-Sequenz | Rhythmische Muster, Saisonalität |
+| Benford-Score | Führungsziffern vs. log₁₀(1+1/d) | Statistische Natürlichkeit numerischer Daten |
+| Katz-Dimension | Normierte fraktale Kurvenlänge | Selbstähnlichkeit, Komplexität |
+| DBSCAN-Clustering | Dichtebasiert, ε-Nachbarschaft | Gruppenbildung ohne Labelzuweisung |
+| Permutation Entropy | PE = 1 − H_perm / log₂(order!) | Ordnungsstruktur im Byte-Stream (Bandt & Pompe 2002), orthogonal zu Shannon-Entropie |
+
+Keine proprietären Algorithmen, kein Black-Box-Modell. Jede Komponente ist mathematisch definiert
+und reproduzierbar.
+
+---
+
+## Realistische Anwendungsfälle
+
+### 1. Anomalieerkennung ohne Trainingsdaten
+
+Aether berechnet für jeden Datensatz ein Strukturprofil als Baseline. Abweichungen werden als
+Ausreißer markiert — unabhängig von Domäne und Datentyp, ohne gelabelte Beispiele.
+
+**Konkrete Szenarien:**
+
+- **Systemlogs:** CPU-Burst-Cluster, I/O-Periodizität, Speicher-Drift — messbar als Abweichung
+  von der Prozess-Baseline, ohne Prozessinhalte zu lesen.
+- **Zeitreihen:** Klimamessungen, Finanzkurse, Sensordaten — Regime-Wechsel und Periodizitätsbrüche
+  werden erkannt, ohne Vorannotation oder Trainingsdaten.
+- **Genomdaten:** Entropieausreißer in FASTA-Sequenzen, Benford-Abweichungen bei Codon-Häufigkeiten —
+  als kostengünstiges strukturelles Pre-Screening vor aufwendigen Alignment-Verfahren.
+
+### 2. Obfuscation- und Malware-Erkennung
+
+Obfuskierter Code zeigt konsistente, messbare Strukturmuster: hohe Byte-Entropie (H > 7,0 bit;
+normaler Quellcode liegt typischerweise bei 5–6 bit), kurze Bezeichner-Quote (> 60 %),
+hohe Hex-Literal-Dichte (> 10 %), Zipf-Verletzungen in der Token-Verteilung.
+
+Die `CodeEthicsEngine` erkennt diese Muster **ohne Signaturdatenbank und ohne Netzwerkzugriff** —
+rein über messbare Struktureigenschaften. Das macht die Erkennung robust gegenüber neuen
+Obfuskierungsvarianten, die noch nicht in Signaturlisten erfasst sind.
+
+### 3. Privacy-preserving Kollaboration
+
+Zwei Teams können Datensätze strukturell vergleichen, ohne Rohdaten auszutauschen:
+
+1. Team A berechnet den SHA-256-Fingerprint seines Strukturprofils (kryptografisch nicht invertierbar)
+2. Team B desgleichen
+3. Fingerprints werden verglichen — strukturelle Ähnlichkeit messbar, Inhalt bleibt verborgen
+
+Die `PrivacyRegistry` implementiert granulare Consent-Schichten: anonym, ephemer (TTL-gebunden),
+sofort widerrufbar.
+
+### 4. Systemoptimierung und Performance-Profiling
+
+Prozess-Strukturprofile (CPU-Bursts, I/O-Muster, Speicher-Deltas) werden mit denselben Metriken
+beschrieben wie beliebige andere Datenquellen. Abweichungen von der Prozess-Baseline werden erkannt,
+ohne Prozessinhalte zu lesen. Auf schwacher Hardware (< 2 GB RAM, HDD) erkennt Aether automatisch
+den Hardware-Kontext und priorisiert Low-Resource-Optimierungen mit vollständigem Rollback-Pfad.
+
+### 5. Medizinische Datensätze — struktureller Vergleich ohne Datenweitergabe
+
+Zwei Institutionen können Patientendaten und Befundreihen strukturell vergleichen, ohne Rohdaten auszutauschen:
+
+1. Institution A berechnet einen Strukturanker: `SHA-256(f(H_entropy, zipf_α, benford_score, katz_dim, chunk_hash))`
+2. Institution B berechnet das Gleiche für den eigenen Bestand
+3. Ankerdistanz < Schwelle δ → strukturell ähnliche Profile messbar — kein medizinischer Inhalt übertragen
+
+**Konkrete Anwendungsfälle:**
+- **Anomalie in Laborzeitreihen** — Ausreißer in Blutbild, Vitalwerten oder Sensordaten ohne Offenlegung von Patientenidentitäten
+- **Diagnose-Konsistenzprüfung** — strukturell inkonsistente Befundcodierung ist messbar ohne Inhaltszugriff
+- **Manipulationsnachweis** — nachträglich eingefügte Datenpunkte brechen Benford- und Katz-Signatur charakteristisch
+- **Epidemiologische Strukturclusterung** — Populationsähnlichkeit messbar ohne Individualisierung
+
+**Datenschutzgarantie durch Mathematik:** Weder Patientenname noch Diagnose noch Messwert sind aus dem Anker rekonstruierbar — nicht durch technische Vorkehrungen, sondern weil die SHA-256-Funktion es strukturell ausschließt.
+
+### 6. Datenforensik — Authentizität und Manipulationsnachweis
+
+| Forensische Frage | Messmethode |
+|-------------------|-------------|
+| Wurde dieser Datensatz nachträglich modifiziert? | Benford-Score + Katz-Dimension brechen bei manuellen Eingriffen charakteristisch |
+| Stammen zwei Datensätze aus derselben Quelle? | Ankerdistanz < δ → gemeinsamer Ursprung statistisch nachweisbar |
+| Ist diese Zeitreihe konsistent? | Fourier-Periodizität bricht bei rückwirkend eingefügten Einträgen |
+| Chain-of-Custody-Nachweis | Append-only SQLite-Audit-Log pro Session — nachträgliche Änderungen strukturell sichtbar |
+
+Alle Aussagen sind domänenunabhängig, reproduzierbar und ohne inhaltliche Interpretation des Datensatzes möglich.
+
+### 7. Demokratisierung analytischer Werkzeuge
+
+Strukturanalytische Methoden sind in der Praxis oft an Institutionszugänge, Cloud-Abonnements oder spezialisierte Hardware gebunden. Aether beseitigt diese Zugangshürden:
+
+| Umgebung | Status |
+|----------|--------|
+| < 2 GB RAM, HDD | vollständig unterstützt — Low-Resource-Modus automatisch aktiv |
+| Offline, kein Internet | alle Funktionen verfügbar, by design |
+| Consumer-Hardware (Laptop, Mini-PC) | keine Leistungseinbuße bei Strukturanalyse |
+| Kein institutioneller Zugang | keine Lizenzkosten, kein Vendor-Lock-in, keine Cloud-Abhängigkeit |
+
+Wer keinen Zugang zu Cloud-APIs oder Institutionslizenzen hat, bekommt dasselbe Werkzeug ohne Einschränkung. Keine eingeschränkte "Community Edition". Keine Daten als impliziter Preis für die Nutzung.
+
+**Teilhabe durch Architektur:** Die Methoden hinter Aether — Shannon, Zipf, Benford, Katz — sind öffentlich dokumentierte Mathematik. Erklärbar, reproduzierbar, kritisierbar. Kein proprietäres Modell, kein erforderliches Vertrauen in eine Black Box.
+
+---
+
+## Datenschutz durch Architektur
+
+Das Zero-Knowledge-Prinzip ist keine Einstellung — es ist die Architektur:
+
+```
+Lokal (Gerät)              Netz
+─────────────────────────────────────────────
+Rohdaten        ──> NIEMALS ──> Netz
+Deltas          ──> NIEMALS ──> Netz
+Filekeys        ──> NIEMALS ──> Netz
+Session-Seeds   ──> NIEMALS ──> Netz
+
+Strukturanker   ──> Optional (consent-gebunden) ──> Aethernet
+                    SHA-256(f(entropy, freq, fractal, benford, chunk_hash))
+                    Nicht invertierbar. Kein Inhalt rekonstruierbar.
+```
+
+Ein Anker ist eine mathematische Signatur ohne rekonstruierbaren Inhalt — vergleichbar einem
+kryptografischen Hash: er identifiziert, ohne etwas preiszugeben.
+
+---
+
+## Technische Architektur
+
+```
+Rohdaten
+   |
+   v
+analysis_engine        --> Entropie, Symmetrie, Fourier, Benford, Attraktor
+   |
+   +-> ethics_engine   --> Strukturelle Textintegrität
+   +-> delta_engine    --> XOR-Delta, Session-Seed
+   +-> bayes_engine    --> Bayesianische Posterioren
+   +-> graph_engine    --> Graph und Attraktoranalyse
+   |
+   v
+reconstruction_engine  --> D(Snapshot, Residuum) = Original
+   |
+   v
+registry (SQLite, lokal) --> Vault, Audit-Log, append-only
+   |
+   +-> aethernet        --> Ankerpfad (optional, consent-gebunden)
+```
+
+Stack: Python 3.9+ · Rust (pyo3) für performance-kritische Pfade
+
+---
+
+## AetherNet — Geplantes dezentrales Wissensnetz
+
+AetherNet ist die geplante Netzwerkschicht von Aether: ein dezentrales Peer-Netz für den Austausch struktureller Anker zwischen Instanzen. Kein zentraler Server. Keine Telemetrie. Keine Rohdaten im Netz.
+
+### Datenschutz durch Architektur — nicht durch Versprechen
+
+Der Datenschutz ist keine Konfigurationsoption — er ist die Konsequenz der Architektur:
+
+- Rohdaten, Deltas, Filekeys und Session-Seeds verlassen **niemals** das Gerät
+- Strukturanker verlassen das Gerät nur mit **explizitem, widerrufbarem Consent**
+- Aus einem Anker kann kein Originalinhalt rekonstruiert werden — das ist eine Eigenschaft der SHA-256-Funktion, kein Versprechen
+
+Was nicht gebaut wurde, kann nicht missbraucht werden. Zentralisierte Rohdaten-Infrastruktur wurde bewusst nicht entworfen.
+
+### Strukturanker: Herzstück der dezentralen Wissensbasis
+
+```
+anchor = SHA-256(H_entropy ‖ zipf_α ‖ benford_score ‖ katz_dim ‖ chunk_hash)
+```
+
+**Eigenschaften:**
+- **Nicht invertierbar:** kein Verfahren kann Originalinhalt aus dem Anker extrapolieren
+- **Reproduzierbar:** gleicher Datensatz → immer gleicher Anker (deterministisch)
+- **Universell:** CSV, JSON, FASTA, Logs, Binärdaten, medizinische Datensätze — alle erzeugen einen Anker
+- **Consent-gebunden:** kein Anker verlässt das Gerät ohne explizite Nutzerfreigabe
+
+Anker ermöglichen kollektives Wissen ohne kollektive Datenweitergabe.
+
+### Netzwerkpfad als Konzept
+
+Der Netzpfad ist im Projekt derzeit als optionales, consent-gebundenes Konzept beschrieben.
+Er dient dem Vergleich nicht invertierbarer Strukturanker zwischen Instanzen. Aussagen über
+skalierende Konvergenz oder einen nachgewiesenen globalen Effekt werden hier bewusst nicht
+getroffen.
+```
+
+Delta schrumpft logarithmisch mit der Knotenzahl —
+exakt wie Shannon voraussagt. Jeder neue Knoten im Aethernet
+macht alle anderen Knoten strukturell effizienter.
+
+Das ist kein Versprechen. Es ist eine Messung.
+Reproduzierbar. Falsifizierbar. Lokal ausführbar.
+
+---
+
+## Systemgrenzen
+
+Diese Grenzen sind keine Einschränkungen, die minimiert werden sollen — sie sind Teil der
+ehrlichen Systembeschreibung:
+
+- **Strukturähnlichkeit impliziert keine Kausalität.** Wenn zwei Datensätze denselben Fingerprint
+  zeigen, ist das ein Hinweis, kein Befund.
+- **Cross-domain-Clustering ist explorative Beobachtung**, keine Aussage. Die Interpretation
+  obliegt Domänenexperten.
+- **H_lambda ist ein projektinternes Arbeitsmodell**, kein etabliertes informationstheoretisches
+  Konzept.
+- **Aether ersetzt keine Domänenexpertise.** Es liefert strukturelle Hinweise, keine Diagnosen.
+- **Kein externer Sicherheitsaudit** wurde bisher durchgeführt.
+
+---
+
+## Schnellstart
+
+```bash
+git clone https://github.com/stillsilent22-spec/Aether-
+cd Aether-
+pip install -r requirements.txt
+python start.py
+```
+
+---
+
+## Dokumentation
+
+| Dokument | Inhalt |
+|----------|--------|
+| [WHITEPAPER.md](WHITEPAPER.md) | Technische Grundlagen und Architektur (DE) |
+| [WHITEPAPER_EN.md](WHITEPAPER_EN.md) | Technical foundations and architecture (EN) |
+| [ROADMAP.md](ROADMAP.md) | Entwicklungsphasen und offene Fragen |
+| [SECURITY.md](SECURITY.md) | Sicherheitsarchitektur |
+| [core_axioms.md](core_axioms.md) | Formale Grundaxiome |
+
+---
+
+## Swarm Mode (Controller + Agent)
+
+Der Swarm-Stack ist in diesem Repo lokal implementiert und standardmaessig sicher konfiguriert:
+
+- Consent vor Aktivierung: ohne Einwilligung kein Netzwerk-Sharing
+- Keine Rohframes auf Platte: gespeichert werden nur Metriken + SHA256-Fingerprints
+- Desktop-Capture als Default (`mss`), GPU/API-Hooks nur Lab-Stub
+- P2P-Fingerprint-Gossip ist opt-in und per Default deaktiviert
+
+### Lokale Steuerung
+
+```bash
+python -m modules.swarm_ui_adapter status
+python -m modules.swarm_ui_adapter consent
+python -m modules.swarm_ui_adapter enable_swarm
+python -m modules.swarm_ui_adapter disable_swarm
+```
+
+### Hintergrunddienst
+
+- Linux/systemd: `service/aether-swarm.service`
+- Windows/NSSM: `service/windows_service_instructions.md`
+
+---
+
+*Source-available. Stand: März 2026 — Autor: Kevin Hannemann*
