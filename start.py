@@ -132,6 +132,12 @@ def ensure_dependencies() -> bool:
 
 def main() -> int:
 	print("Aether-Start wird vorbereitet...")
+	try:
+		from modules.lan_beacon import start as _beacon_start
+		_beacon_start()
+		print("[START] LAN-Beacon aktiv.")
+	except Exception as exc:
+		print(f"[START] LAN-Beacon nicht verfuegbar: {exc}")
 	if not ensure_dependencies():
 		return 1
 

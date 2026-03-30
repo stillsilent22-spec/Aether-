@@ -344,6 +344,12 @@ def run_bootstrap(dry_run: bool = False) -> Dict[str, Any]:
         print(f"[BOOTSTRAP] Yggdrasil: {yggdrasil_addr}")
         print(f"[BOOTSTRAP] node.json -> data/swarm/nodes/{node_id}.json")
         print("[BOOTSTRAP] Naechster Schritt: git add data/swarm/nodes/ && git push")
+        try:
+            from modules.lan_beacon import start as _beacon_start
+            _beacon_start()
+            print("[BOOTSTRAP] LAN-Beacon gestartet.")
+        except Exception as exc:
+            print(f"[BOOTSTRAP] LAN-Beacon konnte nicht starten: {exc}")
         return summary
     finally:
         key_tree.zeroize()

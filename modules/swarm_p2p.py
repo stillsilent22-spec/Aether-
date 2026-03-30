@@ -43,7 +43,7 @@ LOCAL_NODE_JSON_PATH = ROOT / "data" / "swarm" / "node.json"
 NODE_DISCOVERY_DIR = ROOT / "data" / "swarm" / "nodes"
 
 DEFAULT_P2P: Dict[str, Any] = {
-    "enabled": False,
+    "enabled": True,
     "gossip_interval_seconds": 30.0,
     "max_fingerprints_per_gossip": 20,
     "leader_election_enabled": True,

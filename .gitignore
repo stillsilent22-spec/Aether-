@@ -70,9 +70,10 @@ gcm-diagnose.log
 !data/assistant_corpus/README.txt
 !data/assistant_corpus/de/.gitkeep
 !data/assistant_corpus/en/.gitkeep
-!data/trusted_publishers.json
 !data/swarm/
 !data/swarm/nodes/
+data/swarm/node.json
+data/swarm/nodes/*.json
 !data/anchors/
 !data/aelab_vault/legacy_imports/
 !data/aelab_vault/legacy_imports/.gitkeep
@@ -112,7 +113,7 @@ full_errors.txt
 proc_status.json
 release_build.txt
 ts.txt
-logs/boundary_audit.jsonl
+logs/*.jsonl
 logs/launcher/
 data/interbus/
 data/rust_shell/
