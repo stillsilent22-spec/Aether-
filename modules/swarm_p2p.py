@@ -184,9 +184,31 @@ class P2PLayer:
     def peer_id(self) -> str:
         return self._peer_id
 
+    def _is_consented(self) -> bool:
+        """Prueft ob der Nutzer aktiv der Schwarm-Teilnahme zugestimmt hat.
+
+        Liest data/swarm_consent.json. Standard ist False — der Nutzer muss
+        explizit zustimmen ('Swarm aktivieren' im SwarmOps-Tab).
+        Genesis-Nodes koennen consent_ok=true im Bootstrap setzen.
+        """
+        consent_path = ROOT / "data" / "swarm_consent.json"
+        try:
+            if consent_path.is_file():
+                data = json.loads(consent_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    return bool(data.get("consented", False))
+        except Exception:
+            pass
+        return False  # Kein Consent ohne explizite Zustimmung
+
     def start(self) -> None:
         if not self.enabled:
             print("[P2P] Disabled. Set swarm_p2p.enabled=true to activate.")
+            return
+        # --- Consent check: Nutzer muss aktiv zugestimmt haben ---
+        if not self._is_consented():
+            print("[P2P] Keine Zustimmung in swarm_consent.json — Swarm-Teilnahme abgebrochen.")
+            print("[P2P] Um teilzunehmen: SwarmOps-Tab → 'Swarm aktivieren'.")
             return
         self._ensure_yggdrasil_runtime()
         start_lan_beacon()

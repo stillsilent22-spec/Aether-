@@ -226,11 +226,18 @@ def _ensure_settings(settings_path: Path, node_id: str, dry_run: bool) -> Dict[s
 
 
 def _ensure_consent(consent_path: Path, dry_run: bool) -> Dict[str, Any]:
+    """Schreibt swarm_consent.json fuer den Genesis-Node-Betreiber.
+
+    solo_bootstrap laeuft nur beim Genesis-Setup durch den Betreiber selbst.
+    consented wird auf True gesetzt weil der Betreiber aktiv den Bootstrap ausfuehrt.
+    Fremde Nodes muessen im UI aktiv per 'Swarm aktivieren' zustimmen.
+    """
     consent = _load_json(consent_path, default={})
     consent["consent_ok"] = True
+    # Genesis-Betreiber stimmt durch Ausfuehren des Bootstraps aktiv zu
     consent.setdefault("consented", True)
     consent.setdefault("approved", True)
-    consent.setdefault("source", "solo_bootstrap")
+    consent.setdefault("source", "solo_bootstrap_genesis")
     consent.setdefault("updated_at", _utc_now())
     _dump_json(consent_path, consent, dry_run)
     return consent
