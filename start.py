@@ -133,6 +133,12 @@ def ensure_dependencies() -> bool:
 def main() -> int:
 	print("Aether-Start wird vorbereitet...")
 	try:
+		from modules.capability_score import probe_and_write as _cap_probe
+		result = _cap_probe()
+		print(f"[START] Aether OS Readiness: {result.get('percent_int', 0)}% — {result.get('stage', '?')}")
+	except Exception as exc:
+		print(f"[START] Capability-Score konnte nicht ermittelt werden: {exc}")
+	try:
 		from modules.lan_beacon import start as _beacon_start
 		_beacon_start()
 		print("[START] LAN-Beacon aktiv.")

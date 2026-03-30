@@ -707,6 +707,10 @@ pub struct AetherIcedShell {
     dropper_bridge: DropperBridge,
     cascade_run_id: Option<String>,
     cascade_metrics: Option<CascadeMetrics>,
+    /// Emergent OS capability score 0.0–1.0, filled by capability_score.py.
+    backend_capability_score: f32,
+    /// Human-readable stage label for the capability score.
+    backend_capability_stage: String,
 }
 
 impl AetherIcedShell {
@@ -873,6 +877,8 @@ impl AetherIcedShell {
             live_render_bits_per_joule: 0.0,
             cascade_run_id: None,
             cascade_metrics: None,
+            backend_capability_score: 0.0,
+            backend_capability_stage: String::new(),
             backup_enabled: true, // Standardmäßig aktiviert
             swarm_consented: read_swarm_consent(),
             swarm_overlap_requests: Vec::new(),
@@ -1269,6 +1275,19 @@ impl AetherIcedShell {
             .unwrap_or(&self.backend_swarm_summary.clone())
             .to_owned();
         self.backend_state_loaded = true;
+        // Read emergent OS capability score (written by capability_score.py)
+        let cap_path = std::path::Path::new("data").join("interbus").join("capability_score.json");
+        if let Ok(raw) = std::fs::read_to_string(&cap_path) {
+            if let Ok(cval) = serde_json::from_str::<serde_json::Value>(&raw) {
+                self.backend_capability_score = cval["percent"]
+                    .as_f64()
+                    .unwrap_or(self.backend_capability_score as f64) as f32;
+                self.backend_capability_stage = cval["stage"]
+                    .as_str()
+                    .unwrap_or(&self.backend_capability_stage.clone())
+                    .to_owned();
+            }
+        }
     }
 
     /// Reads `data/interbus/swarm_overlap_events.json` and appends new entries to
@@ -2142,6 +2161,57 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .push(info_card("RAM", &format!("{:.2} GB", self.backend_mem_used_gb)))
                 .push(info_card("Swarm-Nodes", &self.swarm_startup.node_count.to_string()));
 
+            let cap_pct = (self.backend_capability_score * 100.0) as u32;
+            let cap_stage_label = if self.backend_capability_stage.is_empty() {
+                "Wird analysiert…".to_owned()
+            } else {
+                self.backend_capability_stage.clone()
+            };
+            let cap_accent = if cap_pct >= 100 {
+                Color::from_rgb8(0x4C, 0xD9, 0x6E)
+            } else if cap_pct >= 75 {
+                Color::from_rgb8(0x66, 0x40, 0xCD)
+            } else if cap_pct >= 50 {
+                Color::from_rgb8(0xFF, 0xC8, 0x3A)
+            } else {
+                Color::from_rgb8(0x70, 0x90, 0xA8)
+            };
+            let capability_panel: Element<'_, Message> = container(
+                Column::new()
+                    .push(
+                        Row::new()
+                            .push(text("Aether OS Readiness").size(13).color(c(TEXT_H())))
+                            .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+                            .push(text(format!("{}% — {}", cap_pct, cap_stage_label))
+                                .size(12)
+                                .color(cap_accent))
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                    )
+                    .push(progress_bar(0.0..=1.0, self.backend_capability_score).height(7))
+                    .push(
+                        text(
+                            "Jedes Subsystem das erfolgreich startet erhöht den Score. \
+                             Bei 100 % ist der vollständige Aether-OS-Modus verfügbar."
+                        )
+                        .size(11)
+                        .color(c(TEXT_D())),
+                    )
+                    .spacing(5),
+            )
+            .padding([10, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.02, 0.07, 0.14, 0.92))),
+                border: Border {
+                    color: cap_accent,
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                ..Default::default()
+            })
+            .width(Length::Fill)
+            .into();
+
             let quick_actions = container(
                 Row::new()
                     .spacing(10)
@@ -2260,6 +2330,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .spacing(10)
                 .push(primary_metrics)
                 .push(system_metrics)
+                .push(capability_panel)
                 .push(quick_actions)
                 .push(Row::new().spacing(10).push(artifacts_panel).push(comms_panel))
                 .push(runtime_panel)
