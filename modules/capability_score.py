@@ -88,7 +88,10 @@ def _probe_python_runtime() -> Probe:
 
 
 def _probe_rust_binary() -> Probe:
-    p = Probe("rust_binary", "Rust CLI Binary", weight=10)
+    """Volles Rust-Binary = 10 Pkt. Headless-Daemon als Ersatz = 5 Pkt.
+    So bekommt auch ein alter PC, der keinen Rust-Build starten kann,
+    wenigstens Teilpunkte statt null."""
+    p = Probe("rust_binary", "Rust / Headless-Binary", weight=10)
     try:
         candidates = [
             Path("bin") / "aether-cli",
@@ -103,8 +106,13 @@ def _probe_rust_binary() -> Probe:
             p.ok = True
             p.earned = 10
             p.note = str(found[0])
+        elif Path("daemon_headless.py").exists():
+            # Alter PC ohne Rust-Toolchain kann trotzdem teilnehmen
+            p.ok = True
+            p.earned = 5
+            p.note = "daemon_headless.py vorhanden — Headless-Modus aktiv"
         else:
-            p.note = "Kein Rust-Binary in bin/ oder target/release/ gefunden"
+            p.note = "Kein Rust-Binary und kein Headless-Daemon gefunden"
     except Exception as exc:
         p.note = str(exc)
     return p
@@ -364,6 +372,104 @@ def _probe_data_writable() -> Probe:
     return p
 
 
+def _probe_swarm_invariants() -> Probe:
+    """Misst, wie viele Invarianten / Konsens-Ereignisse der Schwarm
+    bereits mit diesem Knoten geteilt hat.  Steigt kontinuierlich an —
+    auch auf sehr alter Hardware — weil die Punkte aus kollektivem
+    Wissen kommen, nicht aus lokaler Rechenpower.
+
+    Gewicht: 15 Punkte (höchste Einzelgewichtung).
+    Schwellen:
+      ≥ 1   Konsens-Ereignis  →  3 Pkt  (Basis-Teilnahme)
+      ≥ 5                     →  6 Pkt
+      ≥ 20                    →  9 Pkt
+      ≥ 50                    → 12 Pkt
+      ≥ 100                   → 15 Pkt  (vollständig synced)
+    """
+    p = Probe("swarm_invariants", "Geteilte Invarianten (Schwarm)", weight=15)
+    try:
+        # Primärquelle: backend_state.json (geschrieben von Python-Backend)
+        bs_path = Path("data") / "interbus" / "backend_state.json"
+        consensus_count = 0
+        pack_count = 0
+        if bs_path.exists():
+            data = json.loads(bs_path.read_text(encoding="utf-8"))
+            consensus_count = int(data.get("swarm_consensus_count", 0))
+            pack_count      = int(data.get("swarm_pack_count", 0))
+
+        # Fallback: Anzahl lokaler Swarm-Pack-Dateien zählen
+        if consensus_count == 0 and pack_count == 0:
+            packs_dir = Path("data") / "swarm" / "packs"
+            if packs_dir.is_dir():
+                pack_count = sum(1 for _ in packs_dir.rglob("*.json"))
+
+        total = max(consensus_count, pack_count)
+
+        if total >= 100:
+            p.ok = True
+            p.earned = 15
+            p.note = f"{total} Invarianten — vollständig synced"
+        elif total >= 50:
+            p.ok = True
+            p.earned = 12
+            p.note = f"{total} Invarianten geteilt"
+        elif total >= 20:
+            p.earned = 9
+            p.note = f"{total} Invarianten geteilt"
+        elif total >= 5:
+            p.earned = 6
+            p.note = f"{total} Invarianten geteilt"
+        elif total >= 1:
+            p.earned = 3
+            p.note = f"{total} Invariante — Schwarm-Kontakt hergestellt"
+        else:
+            p.note = "Noch keine geteilten Invarianten (Schwarm noch nicht aktiv)"
+    except Exception as exc:
+        p.note = str(exc)
+    return p
+
+
+def _probe_swarm_reachable_peers() -> Probe:
+    """Zählt aktiv erreichbare Peers — wächst mit jedem neuen Knoten,
+    der sich mit diesem Gerät verbindet.  Auch ein alter PC kann hier
+    maximale Punktzahl erreichen, wenn genug Peers aktiv sind.
+
+    Gewicht: 10 Punkte.
+    Schwellen:
+      ≥ 1 Peer  →  3 Pkt
+      ≥ 3       →  6 Pkt
+      ≥ 5       →  8 Pkt
+      ≥ 10      → 10 Pkt
+    """
+    p = Probe("swarm_reachable_peers", "Erreichbare Peers (aktiv)", weight=10)
+    try:
+        reachable = 0
+        bs_path = Path("data") / "interbus" / "backend_state.json"
+        if bs_path.exists():
+            data = json.loads(bs_path.read_text(encoding="utf-8"))
+            reachable = int(data.get("swarm_reachable_node_count", 0))
+
+        if reachable >= 10:
+            p.ok = True
+            p.earned = 10
+            p.note = f"{reachable} Peers erreichbar"
+        elif reachable >= 5:
+            p.ok = True
+            p.earned = 8
+            p.note = f"{reachable} Peers erreichbar"
+        elif reachable >= 3:
+            p.earned = 6
+            p.note = f"{reachable} Peers erreichbar"
+        elif reachable >= 1:
+            p.earned = 3
+            p.note = f"{reachable} Peer erreichbar — erster Kontakt"
+        else:
+            p.note = "Keine Peers erreichbar"
+    except Exception as exc:
+        p.note = str(exc)
+    return p
+
+
 # ── Score computation ────────────────────────────────────────────────────────
 
 def _stage(percent: int) -> tuple[str, int]:
@@ -378,23 +484,36 @@ def _stage(percent: int) -> tuple[str, int]:
 
 
 def run_probes() -> dict[str, Any]:
-    """Execute all probes and return the consolidated capability report."""
+    """Execute all probes and return the consolidated capability report.
+
+    Gewichtungsphilosophie
+    ─────────────────────
+    Hardware-Probes  (Rust-Binary, GPU, Yggdrasil) sind fest —
+    ein alter PC verliert dort Punkte, die er nicht zurückgewinnen kann.
+
+    Schwarm-Probes (swarm_invariants, swarm_reachable_peers) sind dynamisch —
+    sie steigen mit jedem Knoten der Invarianten teilt.  Dadurch kann
+    ein Raspberry Pi Zero mit 15 echten Peers trotzdem 90 %+ erreichen.
+    """
     probes: list[Probe] = [
-        _probe_python_runtime(),
-        _probe_rust_binary(),
-        _probe_gpu_display(),
-        _probe_yggdrasil(),
-        _probe_network(),
+        _probe_python_runtime(),          # 5  — fest
+        _probe_rust_binary(),             # 10 — fest (5 Pkt. mit Headless-Daemon)
+        _probe_gpu_display(),             # 10 — fest
+        _probe_yggdrasil(),               # 10 — fest
+        _probe_network(),                 # 5  — fest
         _probe_module("psutil",       "psutil",         "psutil",       5),
         _probe_module("numpy",        "NumPy",          "numpy",        5),
         _probe_module("scipy",        "SciPy",          "scipy",        5),
         _probe_module("cryptography", "cryptography",   "cryptography", 10),
-        _probe_swarm_consent(),
-        _probe_vault(),
-        _probe_peers(),
-        _probe_disk_space(),
-        _probe_ram(),
-        _probe_data_writable(),
+        _probe_swarm_consent(),           # 5  — fest (Opt-in)
+        _probe_vault(),                   # 10 — fest
+        _probe_peers(),                   # 5  — fest (Peer-Dateien vorhanden)
+        _probe_disk_space(),              # 5  — fest
+        _probe_ram(),                     # 5  — fest
+        _probe_data_writable(),           # 5  — fest
+        # ── Dynamische Schwarm-Probes (wachsen mit geteilten Invarianten) ──
+        _probe_swarm_invariants(),        # 15 — dynamisch, steigt mit Konsens-Ereignissen
+        _probe_swarm_reachable_peers(),   # 10 — dynamisch, steigt mit aktiven Peers
     ]
 
     total_weight = sum(pr.weight for pr in probes)
