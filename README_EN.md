@@ -1,12 +1,12 @@
 ﻿# Aether
 
-> **Aether is a local, deterministic, label-free analysis system. It measures structural properties of arbitrary data using established information-theoretic methods — Shannon entropy, Zipf fit, FFT periodicity, Benford score, Katz fractal dimension — without cloud services, training data, or black-box models. All computation runs on-device. No raw data leaves the machine.**
+> **Aether is a local project for structural analysis and reconstruction of data. The current state is an active development snapshot, not a finished product and not an externally validated system.**
 
-**Local structural analysis layer — no labels, no cloud, no hallucinations.**
+**Local development snapshot for structural analysis and reconstruction.**
 
 Aether computes measurable structural properties of arbitrary data and makes them comparable:
 Shannon entropy, Zipf compliance, Fourier periodicity, Benford score, fractal dimension (Katz),
-Permutation Entropy (Bandt & Pompe). All computation runs locally. No raw data leaves the device.
+Permutation Entropy (Bandt & Pompe). Parts of the system operate locally; scope and robustness are still under active development.
 
 → [Deutsche Version: README.md](README.md)
 
@@ -24,34 +24,11 @@ Permutation Entropy (Bandt & Pompe). All computation runs locally. No raw data l
 - Root-level files are kept only as compatibility shims for legacy imports.
 - Prefer new imports in the form `from modules.<name> import ...`.
 
-## Why Aether matters
+## Current Status
 
-Aether is a local, deterministic analysis and reconstruction system.
-It extracts structure from data without cloud services, without black-box models, and without hidden semantics.
-Everything is transparent, reproducible, and audit-grade.
-
-Aether is designed for people who need clarity where conventional pipelines fail:
-researchers, analysts, forensic experts, scientists, engineers - anyone who works with complex signals that resist categorization.
-
-### Efficiency
-
-Aether does not rely on massive models or GPU clusters.
-Its architecture is built around minimal rules, explicit transformations, and deterministic kernels.
-This makes Aether extremely efficient: it runs on ordinary hardware while still revealing deep structural patterns.
-
-### Democratization
-
-Because Aether is lightweight and fully local, every user contributes to a distributed ecosystem of computation.
-More users means more total available compute - not centralized, but spread across many independent machines.
-Aether scales horizontally through people, not through data centers.
-
-### Call for collaborators
-
-Aether is built by one person - for now.
-If you see potential in this paradigm and want to help push it to the next level (kernel, models, UI, visualization, theory, or tooling), reach out.
-Aether is ready to grow.
-
----
+Aether is a personal project under active development.
+It combines local analysis, reconstruction, visualization, and experimental coordination layers.
+Some parts are already usable, but the repository should be read as a development state rather than as a finished or externally validated system.
 
 ## What Aether Is — and Is Not
 
@@ -67,7 +44,7 @@ classifier, without training data, without content interpretation.
 
 **Aether is:**
 - A local anomaly detection tool based on measurable structural metrics
-- A symbiotic operating system layer with integrated privacy guarantees and cryptographically non-invertible fingerprints
+- A local software stack that combines analysis, reconstruction, storage, and visualization
 - A system optimization tool based on process structural profiles
 
 ---

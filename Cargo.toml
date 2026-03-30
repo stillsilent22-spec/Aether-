@@ -3,7 +3,7 @@
 name = "aether_rust_shell"
 version = "0.1.0"
 edition = "2021"
-description = "Aether symbiotic proto-meta-layer OS: local structural data analysis, privacy-preserving with Python module integration and IPC bridge."
+description = "Local structural analysis and reconstruction project with Rust and Python components."
 license = "LicenseRef-Aether-Restricted"
 default-run = "aether_iced"
 include = [

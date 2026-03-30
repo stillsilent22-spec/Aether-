@@ -9,15 +9,15 @@ python start.py            # launch Aether
 
 Solo genesis mode is supported — no second node required to start.
 
-> **Aether is a local, deterministic, label-free analysis system. It measures structural properties of arbitrary data using established information-theoretic methods — Shannon entropy, Zipf fit, FFT periodicity, Benford score, Katz fractal dimension — without cloud services, training data, or black-box models. All computation runs on-device. No raw data leaves the machine.**
+> **Aether ist ein lokales Projekt zur strukturellen Analyse und Rekonstruktion von Daten. Der aktuelle Stand ist ein aktiver Entwicklungsstand, kein fertiges Produkt und kein extern validiertes System.**
 
-> **Aether ist ein lokales, deterministisches Analysesystem ohne Labels. Es misst Struktureigenschaften beliebiger Daten mit etablierten informationstheoretischen Methoden — ohne Cloud, ohne Trainingsdaten, ohne Black-Box-Modelle. Alle Berechnungen laufen lokal. Keine Rohdaten verlassen das Gerät.**
+> **Aether is a local project for structural analysis and reconstruction of data. The current state is an active development snapshot, not a finished product and not an externally validated system.**
 
-**Lokaler Struktur-Analyse-Layer — ohne Labels, ohne Cloud, ohne Halluzinationen.**
+**Lokaler Entwicklungsstand für Struktur-Analyse und Rekonstruktion.**
 
 Aether berechnet messbare Struktureigenschaften beliebiger Daten und macht sie vergleichbar:
 Shannon-Entropie, Zipf-Konformität, Fourier-Periodizität, Benford-Score, fraktale Dimension (Katz),
-Permutation Entropy (Bandt & Pompe). Alle Berechnungen laufen lokal. Keine Rohdaten verlassen das Gerät.
+Permutation Entropy (Bandt & Pompe). Teile des Systems arbeiten lokal; Funktionsumfang und Belastbarkeit befinden sich noch im Ausbau.
 
 → [English version: README_EN.md](README_EN.md)
 
@@ -82,7 +82,7 @@ ohne Trainingsdaten, ohne inhaltliche Interpretation.
 
 **Aether ist:**
 - Ein lokales Anomalieerkennungs-Werkzeug auf Basis messbarer Strukturmetriken
-- Ein symbiotischer Betriebssystem-Layer mit integrierten Datenschutzgarantien und kryptografisch nicht invertierbaren Fingerprints
+- Ein lokaler Software-Stack, der Analyse, Rekonstruktion, Persistenz und Visualisierung zusammenführt
 - Ein Systemoptimierungswerkzeug auf Basis von Prozess-Strukturprofilen
 
 ---
