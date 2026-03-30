@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import socket
@@ -8,6 +8,12 @@ import time
 from pathlib import Path
 from typing import Any, Optional
 
+import hashlib
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_public_key,
+    Encoding,
+    PublicFormat,
+)
 
 LAN_MULTICAST_GROUP = "239.255.42.7"
 LAN_MULTICAST_PORT = 7742
@@ -49,6 +55,34 @@ def _store_remote_node(payload: dict[str, Any]) -> None:
     target = _nodes_dir() / f"{node_id}.json"
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(payload, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _verify_node_record(payload: dict[str, Any]) -> bool:
+    """node_id must be mathematically derived from public_key_pem.
+    Prevents spoofed beacon packets from polluting the node registry."""
+    try:
+        pem = str(payload.get("public_key_pem", "") or "").strip()
+        node_id = str(payload.get("node_id", "") or "").strip()
+        if not pem or not node_id:
+            return False
+        pub = load_pem_public_key(pem.encode("utf-8"))
+        raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        expected_id = hashlib.sha256(raw).hexdigest()[:16]
+        return expected_id == node_id
+    except Exception:
+        return False
+
+
+def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 300.0) -> bool:
+    """Reject replayed old beacon packets."""
+    try:
+        ts = str(payload.get("beacon_ts", "") or "").strip()
+        if not ts:
+            return True  # No timestamp = old format, accept for now
+        beacon_time = float(ts)
+        return abs(time.time() - beacon_time) <= max_age_seconds
+    except Exception:
+        return True
 
 
 def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str]) -> None:
@@ -108,7 +142,9 @@ def _beacon_payload_bytes() -> Optional[bytes]:
     if not payload:
         return None
     try:
-        return json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+        payload_dict = dict(payload)
+        payload_dict["beacon_ts"] = str(time.time())
+        return json.dumps(payload_dict, ensure_ascii=True, sort_keys=True).encode("utf-8")
     except Exception:
         return None
 
@@ -129,6 +165,10 @@ def _receive_once(sock: socket.socket) -> None:
     local_node_id = str(_load_local_node_record().get("node_id", "") or "").strip()
     remote_node_id = str(payload.get("node_id", "") or "").strip()
     if remote_node_id and remote_node_id == local_node_id:
+        return
+    if not _is_fresh(payload):
+        return
+    if not _verify_node_record(payload):
         return
     _store_remote_node(payload)
 
