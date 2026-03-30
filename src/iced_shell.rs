@@ -41,7 +41,7 @@ use std::fs;
 pub enum Tab {
     Home, Control, Symbiont, SwarmOps, Privacy, Chat,
     Browser, YouTube, Data, Anchors, Logs, Settings,
-    ADE, FlowSphere, StructureMap, Rekonstruktion, Launcher, Imprint,
+    ADE, FlowSphere, StructureMap, Gaming, Media, Research, Rekonstruktion, Launcher, Imprint,
 }
 
 impl Tab {
@@ -62,6 +62,9 @@ impl Tab {
             Tab::ADE => "ADE",
             Tab::FlowSphere => "FlowSphere",
             Tab::StructureMap => "Delta Convergence",
+            Tab::Gaming => "Gaming",
+            Tab::Media => "Media",
+            Tab::Research => "Research",
             Tab::Rekonstruktion => "Rekonstruktion",
             Tab::Launcher => "Launcher",
             Tab::Imprint => "Imprint",
@@ -2791,6 +2794,313 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .into()
     }
 
+    fn convergence_signal_pack(&self) -> (f32, f32, f32, f32, f32, f32, f32, f32) {
+        let trust = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.trust_score.clamp(0.0, 1.0))
+            .or_else(|| self.structure_map_state.as_ref().map(|state| state.trust_score.clamp(0.0, 1.0)))
+            .unwrap_or(0.0);
+        let compression = self
+            .compression_state
+            .as_ref()
+            .map(|state| (state.gain_percent / 100.0).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let aelab_exact = self
+            .aelab_state
+            .as_ref()
+            .map(|state| state.lossless.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let reconstruction_exact = self
+            .reconstruction_state
+            .as_ref()
+            .map(|state| {
+                let base = state
+                    .compressibility
+                    .max(state.anchor_coverage)
+                    .max(state.quality_score)
+                    .clamp(0.0, 1.0);
+                if state.verified {
+                    base.max(0.65)
+                } else {
+                    base * 0.45
+                }
+            })
+            .unwrap_or(0.0);
+        let exactness = aelab_exact.max(reconstruction_exact).clamp(0.0, 1.0);
+        let delta_convergence = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| (1.0 - capsule.delta_ratio).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let coherence = self
+            .structure_map_state
+            .as_ref()
+            .map(|state| state.coherence_score.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let noether = self
+            .capsule_state
+            .as_ref()
+            .map(|capsule| capsule.noether_consistency.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let reproducibility = self
+            .reconstruction_state
+            .as_ref()
+            .map(|state| {
+                if state.verified {
+                    (0.55 + 0.45 * state.quality_score.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+                } else {
+                    (0.18 + 0.32 * state.quality_score.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+                }
+            })
+            .unwrap_or(exactness * 0.5);
+        let entries = self.entries().len() as f32;
+        let entry_signal = ((entries + 1.0).ln() / 3.6).clamp(0.0, 1.0);
+        let anchor_signal = self
+            .structure_map_state
+            .as_ref()
+            .map(|state| (state.anchor_count as f32 / 24.0).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let vault_signal = self
+            .aelab_state
+            .as_ref()
+            .map(|state| (((state.vault_total_entries as f32) + 1.0).ln() / 5.5).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let evidence = (0.40 * entry_signal + 0.30 * anchor_signal + 0.30 * vault_signal).clamp(0.0, 1.0);
+        (trust, compression, exactness, delta_convergence, coherence, noether, reproducibility, evidence)
+    }
+
+    fn world_scores(&self, world: Tab) -> (f32, f32, f32, f32) {
+        let (trust, compression, exactness, delta_convergence, coherence, noether, reproducibility, evidence) = self.convergence_signal_pack();
+        match world {
+            Tab::Gaming => {
+                let known = (0.25 * trust + 0.20 * exactness + 0.15 * compression + 0.20 * evidence + 0.20 * delta_convergence).clamp(0.0, 1.0);
+                let readiness = (0.30 * exactness + 0.25 * reproducibility + 0.20 * trust + 0.15 * noether + 0.10 * evidence).clamp(0.0, 1.0);
+                let residual = (1.0 - (0.45 * exactness + 0.25 * compression + 0.15 * delta_convergence + 0.15 * evidence)).clamp(0.0, 1.0);
+                (known, exactness, residual, readiness)
+            }
+            Tab::Media => {
+                let known = (0.20 * trust + 0.20 * compression + 0.20 * exactness + 0.20 * coherence + 0.20 * evidence).clamp(0.0, 1.0);
+                let readiness = (0.25 * exactness + 0.20 * coherence + 0.20 * trust + 0.20 * compression + 0.15 * reproducibility).clamp(0.0, 1.0);
+                let residual = (1.0 - (0.40 * compression + 0.25 * exactness + 0.20 * coherence + 0.15 * evidence)).clamp(0.0, 1.0);
+                (known, exactness, residual, readiness)
+            }
+            Tab::Research => {
+                let known = (0.22 * trust + 0.18 * noether + 0.18 * exactness + 0.18 * evidence + 0.14 * coherence + 0.10 * compression).clamp(0.0, 1.0);
+                let readiness = (0.30 * reproducibility + 0.25 * exactness + 0.20 * trust + 0.15 * noether + 0.10 * evidence).clamp(0.0, 1.0);
+                let residual = (1.0 - (0.38 * exactness + 0.18 * noether + 0.17 * trust + 0.15 * evidence + 0.12 * compression)).clamp(0.0, 1.0);
+                (known, exactness, residual, readiness)
+            }
+            _ => (0.0, 0.0, 1.0, 0.0),
+        }
+    }
+
+    fn world_stage(&self, world: Tab, readiness: f32, exactness: f32) -> (&'static [&'static str], usize) {
+        let labels: &'static [&'static str] = match world {
+            Tab::Gaming => &["Observe", "Simulate", "Verify", "Local", "Stable"],
+            Tab::Media => &["Observe", "Learn", "Repack", "Validate", "Release"],
+            Tab::Research => &["Observe", "Compare", "Explain", "Reproduce", "Consolidate"],
+            _ => &["Observe", "Learn", "Verify", "Use", "Scale"],
+        };
+        let maturity = (0.60 * readiness + 0.40 * exactness).clamp(0.0, 1.0);
+        let index = if maturity < 0.18 {
+            0
+        } else if maturity < 0.38 {
+            1
+        } else if maturity < 0.58 {
+            2
+        } else if maturity < 0.80 {
+            3
+        } else {
+            4
+        };
+        (labels, index)
+    }
+
+    fn view_gaming_world(&self) -> Element<'_, Message> {
+        self.view_world_space(Tab::Gaming)
+    }
+
+    fn view_media_world(&self) -> Element<'_, Message> {
+        self.view_world_space(Tab::Media)
+    }
+
+    fn view_research_world(&self) -> Element<'_, Message> {
+        self.view_world_space(Tab::Research)
+    }
+
+    fn view_world_space(&self, world: Tab) -> Element<'_, Message> {
+        let (title, intro, learning_policy, next_data_hint, actions, accent) = match world {
+            Tab::Gaming => (
+                "Gaming",
+                "Gaming bleibt als Welt erhalten, ohne die bestehenden Analyse-Tabs zu ersetzen: diese Ansicht ordnet nur zusammen, wie viel interaktive Struktur Aether bereits kennt, exakt rekonstruieren kann und spaeter konservativ freigeben darf.",
+                "Live bleibt spaeter konservativ, Lernen bleibt aggressiv im Hintergrund. Neue Sessions sollen Main Vault und Subvault sofort rueckpruefen, ohne den Runtime-Pfad aufzublaehen.",
+                "Mehrwert jetzt: wiederholte Sessions, gleiche Szenen, stabile Renderpfade, Launcher-Starts und weitere Byte-/Frame-Beobachtung heben die konservative Reife am staerksten.",
+                vec![
+                    ("Launcher", Tab::Launcher),
+                    ("Files", Tab::Data),
+                    ("FlowSphere", Tab::FlowSphere),
+                    ("Delta Conv", Tab::StructureMap),
+                ],
+                Color::from_rgb8(0x5A, 0x8C, 0xE8),
+            ),
+            Tab::Media => (
+                "Media",
+                "Media bekommt eine eigene Welt statt in den vorhandenen Tabs zu verschwinden: Sequenzen, Audio und Bewegtbild duerfen offline deutlich aggressiver repacken, solange exakte Rekonstruktion und sauberer Fallback erhalten bleiben.",
+                "Mit jeder neuen Medienanalyse sollte der Bestand sofort auf repackbare Sequenzen, Frames und Segmentfamilien geprueft werden. Ziel ist wachsender Exact-Coverage-Anteil bei schrumpfendem Residual.",
+                "Mehrwert jetzt: weitere Sequenzen, Wiederholungen, Audio-/Videoausschnitte und Drop-Analysen vergroessern die repackbare Flaeche und verbessern die globale Medienbibliothek.",
+                vec![
+                    ("YouTube", Tab::YouTube),
+                    ("Files", Tab::Data),
+                    ("FlowSphere", Tab::FlowSphere),
+                    ("Delta Conv", Tab::StructureMap),
+                ],
+                Color::from_rgb8(0xC7, 0xA0, 0x4A),
+            ),
+            Tab::Research => (
+                "Research",
+                "Research ist die dritte Welt neben Gaming und Media: fuer Arzt-, Klima-, Finanz- und andere Forschungsdaten zaehlen Rueckverfolgbarkeit, Reproduzierbarkeit und rueckwirkende Nachverdichtung alter Bestaende mit neuem Wissen.",
+                "Neue Analysen sollen alte Messreihen, Datensaetze und Archive sofort gegen Main Vault, Subvault und neue Strukturhinweise rueckpruefen, ohne dass bestehende Analysepfade entfernt werden muessen.",
+                "Mehrwert jetzt: wiederholte Messreihen, Vergleichsstaende, strukturierte Archive und weitere Artefakte heben Coverage, Provenienztreue und reproduzierbare Rueckwirkung.",
+                vec![
+                    ("Files", Tab::Data),
+                    ("Anchors", Tab::Anchors),
+                    ("Threat", Tab::ADE),
+                    ("Delta Conv", Tab::StructureMap),
+                ],
+                Color::from_rgb8(0x4C, 0xD9, 0x6E),
+            ),
+            _ => unreachable!(),
+        };
+
+        let (knowledge, exactness, residual, readiness) = self.world_scores(world);
+        let (stage_labels, current_stage_idx) = self.world_stage(world, readiness, exactness);
+        let current_stage = stage_labels[current_stage_idx];
+        let stage_line = stage_labels.join(" -> ");
+        let capsule = self.capsule_state.as_ref();
+        let structure = self.structure_map_state.as_ref();
+        let aelab = self.aelab_state.as_ref();
+        let compression = self.compression_state.as_ref();
+        let reconstruction = self.reconstruction_state.as_ref();
+        let entries = self.entries();
+        let evidence_note = format!(
+            "Artefakte {} | Trust {:.2} | Noether {:.2} | Delta-Konvergenz {:.2} | Lossless {:.2} | Gain {:.2}% | Vault {}",
+            entries.len(),
+            capsule.map(|state| state.trust_score).unwrap_or(0.0),
+            capsule.map(|state| state.noether_consistency).unwrap_or(0.0),
+            capsule.map(|state| (1.0 - state.delta_ratio).clamp(0.0, 1.0)).unwrap_or(0.0),
+            aelab.map(|state| state.lossless).unwrap_or(0.0),
+            compression.map(|state| state.gain_percent).unwrap_or(0.0),
+            aelab.map(|state| state.vault_total_entries).unwrap_or(0),
+        );
+        let next_step = match world {
+            Tab::Gaming if readiness < 0.35 => "Noch im Beobachtungsraum: weitere wiederholte Sessions und gleiche Szenen sind noetig, bevor konservative Freigabe sinnvoll wird.",
+            Tab::Gaming if exactness < 0.55 => "Bekannte Muster wachsen, aber exakte Rekonstruktionsabdeckung ist noch zu niedrig. Weitere Byte-/Render-Wiederholungen waeren der staerkste Hebel.",
+            Tab::Media if residual > 0.45 => "Residual ist noch dominant. Mehr Wiederholung im Material und mehr repackbare Teilsequenzen vergroessern den exakten Medienraum am schnellsten.",
+            Tab::Media => "Medienwissen ist schon verwertbar. Jetzt zahlt vor allem weitere Sequenzvielfalt, damit alte Residuals im Hintergrund rueckwirkend schrumpfen.",
+            Tab::Research if readiness < 0.40 => "Forschungswissen ist noch eher beobachtend. Zusätzliche Vergleichsstaende, Wiederholmessungen und saubere Provenienz liefern hier den groessten Mehrwert.",
+            Tab::Research => "Rueckwirkende Verdichtung wird sinnvoller: neue Messreihen und Vergleichsgruppen helfen jetzt am meisten, um alten Bestand strukturierter zu erklaeren.",
+            _ => next_data_hint,
+        };
+
+        let action_row = actions.into_iter().fold(Row::new().spacing(10), |row, (label, tab)| {
+            row.push(
+                button(text(label).size(12).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(tab))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+            )
+        });
+
+        let metrics = Row::new()
+            .spacing(10)
+            .push(world_metric_card("Known", knowledge, "Wie viel Struktur Aether lokal bereits wiedererkennt.", accent))
+            .push(world_metric_card("Exact", exactness, "Beweisbar exakter Ersatz statt blosses Heuristik-Wissen.", accent))
+            .push(world_metric_card("Residual", 1.0 - residual, "Je hoeher, desto mehr Restdaten schon aus gelerntem Wissen ersetzbar.", accent))
+            .push(world_metric_card("Readiness", readiness, "Freigabe- bzw. Einsatzreife fuer diese Welt.", accent));
+
+        let analysis_hint = format!("Aktuelle Weltstufe: {} | Leiter: {}", current_stage, stage_line);
+        let analysis_detail = format!("{}\n{}\n{}", learning_policy, evidence_note, next_step);
+
+        let mut content = Column::new()
+            .spacing(12)
+            .push(text(title).size(24).color(c(TEXT_H())))
+            .push(text(intro).size(15).color(c(TEXT_M())))
+            .push(analysis_card(self.analysis_progress.max(readiness), &self.analysis_status, &analysis_hint, &analysis_detail))
+            .push(metrics)
+            .push(info_card(
+                "Drag and Drop Intake",
+                match world {
+                    Tab::Gaming => "Droppe ein Spiel oder einen Spielpfad direkt in dieses Fenster. Aether startet den Artefaktpfad, aktiviert Live Render und stoesst gleichzeitig Byte-, Struktur-, Delta- und Rekonstruktionsanalyse an.",
+                    Tab::Media => "Droppe Medienartefakte direkt in dieses Fenster. Aether oeffnet den Pfad mit dem System, aktiviert Live Render und startet parallel die bestehende Datei-, Struktur- und Kompressionsanalyse.",
+                    Tab::Research => "Research bleibt intake-neutral: Drops fuehren weiter in die normale Analyse. Bestehende Dateien, Datasets und Messreihen koennen danach rueckwirkend ueber den Konvergenzpfad nachverdichtet werden.",
+                    _ => "Droppe Artefakte fuer die Analyse in dieses Fenster.",
+                },
+            ))
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(info_card("Current Policy", learning_policy))
+                    .push(info_card("Next Best Input", next_data_hint))
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(info_card("Current Stage", &format!("{}\n{}", current_stage, stage_line)))
+                    .push(info_card("Current Signals", &evidence_note))
+            )
+            .push(
+                Row::new()
+                    .spacing(10)
+                    .push(info_card(
+                        "Retroactive Convergence",
+                        &format!(
+                            "Neue Analysen sollen den Bestand sofort rueckpruefen. Main Vault, Subvault, Residuals und exakte Rekonstruktionspfade bleiben verbunden, ohne die vorhandenen Analyse-Tabs zu ersetzen.\n\nStructure nodes: {} | Anchors: {} | Rebuild verified: {}",
+                            structure.map(|state| state.node_count).unwrap_or(0),
+                            structure.map(|state| state.anchor_count).unwrap_or(0),
+                            reconstruction.map(|state| state.verified).unwrap_or(false),
+                        ),
+                    ))
+                    .push(info_card(
+                        "Integration With Existing Tabs",
+                        "Diese Welt ist nur eine geordnete Sicht auf bereits vorhandene Pfade. Files bleibt Intake, FlowSphere bleibt Musterbild, Delta Convergence bleibt Kompressionspfad, Symbiont und ADE bleiben Analysequellen.",
+                    ))
+            )
+            .push(container(action_row).padding(12).style(panel_frame_style));
+
+        if let Some(last) = &self.last_analysis {
+            content = content.push(info_card(
+                "Latest Local Artifact",
+                &format!(
+                    "{}\nPreview: {}\nAnchors: {}\nProcess: {}",
+                    last.file_name,
+                    last.preview_note,
+                    last.anchor_summary,
+                    last.process_summary,
+                ),
+            ));
+        }
+
+        if let Some(comp) = compression {
+            content = content.push(info_card(
+                "Compression Path",
+                &format!(
+                    "Format {} | Original {} B | Compressed {} B | Changed {} B | Gain {:.2}% | Ratio {:.4}",
+                    comp.format,
+                    comp.original_bytes,
+                    comp.compressed_bytes,
+                    comp.changed_bytes,
+                    comp.gain_percent,
+                    comp.ratio,
+                ),
+            ));
+        }
+
+        container(scrollable(content).height(Length::Fill))
+            .padding(12)
+            .into()
+    }
+
     fn view_private_chat(&self) -> Element<'_, Message> {
         let selected_partner = self.active_private_partner();
         let mut partners = Column::new();
@@ -4485,6 +4795,14 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             .push(focus_button("Aussenbezug", "external_links", Color::from_rgb8(0x59, 0xD5, 0xE9)))
             .spacing(8);
 
+        let broadcast_gate_preview = if self.flow_sphere_broadcast_proposal.is_some() {
+            "Vorschau: Die Analyse hat einen Broadcast-Vorschlag gefunden, wartet aber noch auf deine Zustimmung.".to_owned()
+        } else if self.flow_sphere_broadcast_visible.is_some() {
+            "Vorschau: Ein freigegebener Broadcast ist sichtbar und bleibt an die aktuelle Strukturentscheidung gebunden.".to_owned()
+        } else {
+            broadcast_gate_detail.clone()
+        };
+
         let focus_panel = container(
             Row::new()
                 .push(
@@ -4497,13 +4815,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         text(focus_summary).size(15).color(c(TEXT_H())),
                         text(focus_detail).size(11).color(dim),
                         text(broadcast_gate_summary.clone()).size(10).color(if broadcast_gate_ok { Color::from_rgb8(0x7F, 0xD9, 0xFF) } else { amber }),
-                        text(if self.flow_sphere_broadcast_proposal.is_some() {
-                            "Vorschau: Die Analyse hat einen Broadcast-Vorschlag gefunden, wartet aber noch auf deine Zustimmung."
-                        } else if self.flow_sphere_broadcast_visible.is_some() {
-                            "Vorschau: Ein freigegebener Broadcast ist sichtbar und bleibt an die aktuelle Strukturentscheidung gebunden."
-                        } else {
-                            broadcast_gate_detail.as_str()
-                        })
+                        text(broadcast_gate_preview)
                         .size(10)
                         .color(soft),
                         text("Tipp: Farbchips oder Knoten direkt anklicken, um den Fokus zu wechseln.").size(10).color(soft),
@@ -4855,6 +5167,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             Tab::Anchors => self.view_anchors(),
             Tab::FlowSphere => self.view_flow_sphere(),
             Tab::StructureMap => self.view_delta_convergence(),
+            Tab::Gaming => self.view_gaming_world(),
+            Tab::Media => self.view_media_world(),
+            Tab::Research => self.view_research_world(),
             Tab::ADE => self.view_ade(),
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
@@ -4923,12 +5238,16 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     Message::LiveRenderToggle,
                 ),
                 nav_item("13. Anchors", Tab::Anchors, self.active_tab),
+                text("Worlds").size(12).color(c(TEXT_D())),
+                nav_item("14. Gaming", Tab::Gaming, self.active_tab),
+                nav_item("15. Media", Tab::Media, self.active_tab),
+                nav_item("16. Research", Tab::Research, self.active_tab),
                 text("Workspace").size(12).color(c(TEXT_D())),
-                nav_item("14. Reconstruction", Tab::Rekonstruktion, self.active_tab),
-                nav_item("15. Info", Tab::Imprint, self.active_tab),
+                nav_item("17. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("18. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D())),
-                nav_item("16. Runtime", Tab::Settings, self.active_tab),
-                nav_item("17. Launcher", Tab::Launcher, self.active_tab),
+                nav_item("19. Runtime", Tab::Settings, self.active_tab),
+                nav_item("20. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -4958,6 +5277,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         Tab::Anchors => "Anchors",
                         Tab::FlowSphere => "FlowSphere",
                         Tab::StructureMap => "Delta Convergence",
+                        Tab::Gaming => "Gaming",
+                        Tab::Media => "Media",
+                        Tab::Research => "Research",
                         Tab::ADE => "Threat Analysis",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
@@ -4978,6 +5300,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         Tab::Anchors => "View immutable checkpoints and anchor integrity evidence.",
                         Tab::FlowSphere => "Visual aid for overlapping patterns, attractors, and structural interference.",
                         Tab::StructureMap => "Inspect delta convergence, compression, and the deterministic reconstruction path.",
+                        Tab::Gaming => "Track interactive knowledge growth, runtime readiness, and conservative rollout gates.",
+                        Tab::Media => "Track sequence knowledge, residual shrinkage, and aggressive offline repacking opportunities.",
+                        Tab::Research => "Track reproducibility, provenance, and retroactive convergence across analytical corpora.",
                         Tab::ADE => "Run threat analysis and inspect signal confidence.",
                         Tab::Imprint => "Read version, policy, and legal metadata.",
                         Tab::Rekonstruktion => "Generate or inspect reconstruction outputs from traces.",
@@ -6215,15 +6540,33 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                         "Bitte zuerst lokal anmelden, bevor du Artefakte analysierst.".to_owned();
                     return Task::none();
                 };
+                let drop_world = match self.active_tab {
+                    Tab::Gaming => Some(Tab::Gaming),
+                    Tab::Media => Some(Tab::Media),
+                    _ => None,
+                };
+                let launch_note = if let Some(world) = drop_world {
+                    if !self.live_render_mode {
+                        self.apply_live_render_mode(true);
+                    }
+                    self.active_tab = world;
+                    match launch_dropped_artifact(&path, world) {
+                        Ok(note) => note,
+                        Err(err) => format!("Startpfad nicht verfuegbar ({err}) - Analyse laeuft trotzdem."),
+                    }
+                } else {
+                    self.active_tab = Tab::Data;
+                    "Datei-Analyse gestartet.".to_owned()
+                };
                 self.analysis_running = true;
                 self.analysis_progress = 0.18;
                 self.analysis_status = format!(
-                    "Artefakt erkannt. Strukturanalyse gestartet: {}",
+                    "Artefakt erkannt. {} {}",
+                    launch_note,
                     path.display()
                 );
                 self.hovered_file_label = format!("Drop uebernommen: {}", path.display());
                 self.status_line = self.analysis_status.clone();
-                self.active_tab = Tab::Data;
                 let data_key = self.data_key_fork();
                 return Task::perform(
                     analyze_file_for_register(path, username, data_key),
@@ -9832,6 +10175,62 @@ fn analysis_card<'a>(
     .padding(18)
     .width(Length::Fill)
     .into()
+}
+
+fn world_metric_card<'a>(title: &str, value: f32, detail: &str, accent: Color) -> Element<'a, Message> {
+    container(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(text(title.to_owned()).size(14).color(c(TEXT_H())))
+                    .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
+                    .push(text(format!("{:.0}%", value.clamp(0.0, 1.0) * 100.0)).size(18).color(accent))
+            )
+            .push(progress_bar(0.0..=1.0, value.clamp(0.0, 1.0)))
+            .push(text(detail.to_owned()).size(11).color(c(TEXT_M())))
+            .spacing(8)
+            .width(Length::Fill),
+    )
+    .style(panel_frame_style)
+    .padding(14)
+    .width(Length::Fill)
+    .into()
+}
+
+fn launch_dropped_artifact(path: &Path, world: Tab) -> Result<String, String> {
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| "Pfad ist nicht UTF-8-kompatibel".to_owned())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", path_str])
+            .spawn()
+            .map_err(|err| format!("Windows-Start fehlgeschlagen: {err}"))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(path_str)
+            .spawn()
+            .map_err(|err| format!("open fehlgeschlagen: {err}"))?;
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(path_str)
+            .spawn()
+            .map_err(|err| format!("xdg-open fehlgeschlagen: {err}"))?;
+    }
+
+    Ok(match world {
+        Tab::Gaming => "Spielpfad gestartet; Rendering- und Strukturbeobachtung laufen parallel.".to_owned(),
+        Tab::Media => "Medienpfad gestartet; Rendering-, Struktur- und Kompressionsbeobachtung laufen parallel.".to_owned(),
+        _ => "Artefakt gestartet.".to_owned(),
+    })
 }
 
 /// Erzeugt eine menschenlesbare Erklaerungszeile aus den Analyse-Metriken.

@@ -430,9 +430,11 @@ class AEVault:
         self._entries: Dict[str, VaultEntry] = {}
         self._trees:   Dict[str, Node]       = {}
         self._tick:    int                   = 0   # montoner Zugriffszähler
+        self._chunk_index: Dict[str, str]    = {}
 
         for d in ["main", "sub_vault/inactive", "sub_vault/recovered"]:
             (self.root / d).mkdir(parents=True, exist_ok=True)
+        (self.root / "raw_chunks").mkdir(parents=True, exist_ok=True)
 
         self._load()
 
@@ -477,6 +479,83 @@ class AEVault:
         self._write_index()
         return e
 
+    def store_for_chunk(self, chunk_key: str, tree: Node,
+                        fitness: float, lossless: float,
+                        generation: int = 0) -> Optional["VaultEntry"]:
+        entry = self.store(tree, fitness, lossless, generation,
+                           label=f"chunk_{chunk_key[:8]}")
+        if entry is not None:
+            self._chunk_index[chunk_key] = entry.sig
+            self._save_chunk_index()
+            self.refresh_chunk_resolution(chunk_key)
+        # Wenn neuer Baum besser ist als gespeicherter -> chunk_index
+        # bleibt gleich, VaultEntry wird automatisch upgedated durch store().
+        # Beim nächsten encode_frame() wird entry.lossless >= 1.0 geprüft
+        # -> DNA ersetzt automatisch rohe Bytes ohne manuellen Eingriff.
+        return entry
+
+    def remember_chunk_bytes(self, chunk_key: str, chunk: bytes) -> None:
+        path = self._raw_chunk_path(chunk_key)
+        if not path.exists():
+            path.write_bytes(bytes(chunk))
+
+    def get_raw_chunk(self, chunk_key: str) -> Optional[bytes]:
+        path = self._raw_chunk_path(chunk_key)
+        if not path.exists():
+            return None
+        try:
+            return path.read_bytes()
+        except Exception:
+            return None
+
+    def refresh_chunk_resolution(self, chunk_key: str) -> bool:
+        tree_sig = self._chunk_index.get(chunk_key)
+        if not tree_sig:
+            return False
+        tree = self._trees.get(tree_sig)
+        raw_chunk = self.get_raw_chunk(chunk_key)
+        if tree is None or raw_chunk is None:
+            return False
+
+        from modules.aelab_motor import AEEvolver
+
+        evolver = AEEvolver(data=raw_chunk)
+        if evolver.decode(tree) != raw_chunk:
+            return False
+
+        entry = self._entries.get(tree_sig)
+        if entry is not None and entry.lossless < 1.0:
+            entry.lossless = 1.0
+            self._write_index()
+        self._delete_raw_chunk(chunk_key)
+        self._save_chunk_index()
+        return True
+
+    def refresh_all_chunk_resolutions(self, limit: Optional[int] = None) -> int:
+        upgraded = 0
+        for index, chunk_key in enumerate(list(self._chunk_index.keys())):
+            if limit is not None and index >= limit:
+                break
+            if self.refresh_chunk_resolution(chunk_key):
+                upgraded += 1
+        return upgraded
+
+    def chunk_packet(self, chunk_key: str, raw_chunk: Optional[bytes] = None) -> Optional[dict[str, str]]:
+        if raw_chunk is not None:
+            self.remember_chunk_bytes(chunk_key, raw_chunk)
+        if self.refresh_chunk_resolution(chunk_key):
+            return {"type": "dna", "sig": chunk_key}
+
+        tree_sig = self._chunk_index.get(chunk_key)
+        entry = self._entries.get(tree_sig) if tree_sig else None
+        if entry is not None and entry.lossless >= 1.0:
+            return {"type": "dna", "sig": chunk_key}
+
+        raw = raw_chunk if raw_chunk is not None else self.get_raw_chunk(chunk_key)
+        if raw is None:
+            return None
+        return {"type": "raw", "data": raw.hex()}
+
     # ------------------------------------------------------------------
     # Abrufen
     # ------------------------------------------------------------------
@@ -513,16 +592,22 @@ class AEVault:
         return node_copy(tree) if tree else None
 
     def get_tree_dna(self, sig: str) -> Optional[str]:
-        """
-        Gibt den DNA-String eines gespeicherten Baums zurück.
-
-        Direkter Pfad für evolver.decode_dna():
-            dna = vault.get_tree_dna(sig)
-            if dna:
-                result = evolver.decode_dna(dna)
-        """
-        tree = self.get_tree(sig)
-        return tree_to_dna(tree) if tree else None
+        tree = self._trees.get(sig)
+        if tree is None:
+            tree_sig = self._chunk_index.get(sig)
+            if tree_sig:
+                tree = self._trees.get(tree_sig)
+                if tree is not None and tree_sig in self._entries:
+                    self._tick += 1
+                    self._entries[tree_sig].mark_used(vault_tick=self._tick)
+                    self._write_index()
+        elif sig in self._entries:
+            self._tick += 1
+            self._entries[sig].mark_used(vault_tick=self._tick)
+            self._write_index()
+        if tree is None:
+            return None
+        return tree_to_dna(tree)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -631,6 +716,9 @@ class AEVault:
     def _tree_path(self, sig: str, bucket: str) -> Path:
         return self.root / bucket / f"{sig[:16]}.dna"
 
+    def _raw_chunk_path(self, chunk_key: str) -> Path:
+        return self.root / "raw_chunks" / f"{chunk_key}.raw"
+
     def _save_tree(self, sig: str, tree: Node):
         e = self._entries.get(sig)
         bucket = e.bucket if e else "main"
@@ -647,8 +735,29 @@ class AEVault:
             old_path.rename(new_path)
         e.bucket = new_bucket
 
+    def _delete_raw_chunk(self, chunk_key: str) -> None:
+        path = self._raw_chunk_path(chunk_key)
+        if path.exists():
+            path.unlink(missing_ok=True)
+
+    def _save_chunk_index(self) -> None:
+        path = self.root / "chunk_index.tsv"
+        lines = ["chunk_key\ttree_sig"]
+        for ck, ts in sorted(self._chunk_index.items()):
+            lines.append(f"{ck}\t{ts}")
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
     def _load(self):
         """Lädt alle Bäume und den Index."""
+        chunk_index_path = self.root / "chunk_index.tsv"
+        self._chunk_index = {}
+        if chunk_index_path.exists():
+            for line in chunk_index_path.read_text(
+                    encoding="utf-8").splitlines()[1:]:
+                parts = line.strip().split("\t")
+                if len(parts) == 2:
+                    self._chunk_index[parts[0]] = parts[1]
+
         index_path = self.root / "vault_index.tsv"
         index: Dict[str, VaultEntry] = {}
 
@@ -741,6 +850,11 @@ class AEVault:
                     continue
 
         self._entries = index
+        self._chunk_index = {
+            chunk_key: tree_sig
+            for chunk_key, tree_sig in self._chunk_index.items()
+            if tree_sig in self._entries and tree_sig in self._trees
+        }
         if self._entries:
             self._tick = max(e.access_seq for e in self._entries.values())
 
@@ -811,7 +925,13 @@ class AEVault:
                 path.unlink()
             del self._entries[drop.sig]
             self._trees.pop(drop.sig, None)
+            self._chunk_index = {
+                chunk_key: tree_sig
+                for chunk_key, tree_sig in self._chunk_index.items()
+                if tree_sig != drop.sig
+            }
             all_entries = [e for e in all_entries if e.sig != drop.sig]
+        self._save_chunk_index()
 
 
 # ---------------------------------------------------------------------------

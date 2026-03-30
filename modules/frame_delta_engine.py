@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 # Lazy imports — vermeiden Zirkelimporte bei Swarm-Nutzung
 # from modules.aelab_vault import AEVault
@@ -147,10 +147,10 @@ class FrameDeltaCodec:
         codec = FrameDeltaCodec()
 
         # Enkodieren (Sender / Server)
-        sigs = codec.encode_frame(raw_frame_bytes)   # list[str], 64-hex je Chunk
+        packets = codec.encode_frame(raw_frame_bytes)   # list[dict], raw oder dna je Chunk
 
         # Dekodieren (Empfänger / Client)
-        frame = codec.decode_frame(sigs)             # bytes
+        frame = codec.decode_frame(packets)             # bytes
 
     Stats jederzeit abrufbar:
         print(codec.stats)
@@ -174,94 +174,99 @@ class FrameDeltaCodec:
 
     # ------------------------------------------------------------------ encode
 
-    def encode_frame(self, frame: bytes) -> list[str]:
+    def encode_frame(self, frame: bytes) -> list[dict[str, Any]]:
         """
-        Enkodiert einen Frame als Liste von Vault-Signaturen.
-
-        XOR-Delta wird in Chunks zerlegt. Für jeden Chunk:
-        - Vault-Hit  → bekannte Signatur zurückgeben (kein Datentransfer nötig)
-        - Vault-Miss → GA evolven, Baum im Vault speichern, Signatur zurückgeben
-
-        Returns: list[str], je Element = 64 hex chars (SHA-256 des Chunks)
+        Enkodiert einen Frame.
+        Pro Chunk: DNA wenn lossless_ratio == 1.0, sonst rohe Bytes.
+        Wenn später ein besserer Baum gefunden wird der lossless ist,
+        wird der Chunk beim nächsten Encode automatisch als DNA gesendet.
         """
         xor_delta = _xor_bytes(frame, self._prev_frame)
         self._prev_frame = frame
-
         chunks = _split_chunks(xor_delta, self.chunk_size)
-        sigs: list[str] = []
+        packets: list[dict[str, Any]] = []
 
         for chunk in chunks:
             sig = _chunk_sig(chunk)
-            self.stats.chunks_total    += 1
-            self.stats.bytes_raw       += len(chunk)
-            # Kosten: 64 ASCII-Hex-Bytes pro Signatur (statt 512 Bytes roh)
-            self.stats.bytes_transmitted += 64
+            self.stats.chunks_total += 1
+            self.stats.bytes_raw += len(chunk)
 
-            existing_dna = self.vault.get_tree_dna(sig)
-            if existing_dna is not None:
+            packet = self.vault.chunk_packet(sig, chunk)
+            if packet is None or packet["type"] != "dna":
+                self._evolve_and_store(chunk, sig)
+                packet = self.vault.chunk_packet(sig)
+
+            if packet is not None and packet["type"] == "dna":
+                packets.append(packet)
+                self.stats.bytes_transmitted += 64
                 self.stats.vault_hits += 1
             else:
-                self._evolve_and_store(chunk, sig)
+                packets.append(packet or {"type": "raw", "data": chunk.hex()})
+                self.stats.bytes_transmitted += len(chunk)
                 self.stats.vault_misses += 1
 
-            sigs.append(sig)
-
         self.stats.frames_encoded += 1
-        return sigs
+        return packets
 
     # ------------------------------------------------------------------ decode
 
     def decode_frame(
         self,
-        sigs: list[str],
+        packets: list[dict[str, Any]],
         prev_frame: Optional[bytes] = None,
     ) -> bytes:
-        """
-        Rekonstruiert einen Frame aus Vault-Signaturen.
-
-        prev_frame: Vorheriger Frame (für XOR-Rückwärtsanwendung).
-                    Wenn None, wird intern gespeicherter prev verwendet.
-        Returns: bytes — der rekonstruierte Frame.
-        """
         from modules.aelab_motor import AEEvolver
 
-        prev   = prev_frame if prev_frame is not None else self._prev_frame
+        prev = prev_frame if prev_frame is not None else self._prev_frame
         chunks: list[bytes] = []
 
-        for sig in sigs:
-            dna = self.vault.get_tree_dna(sig)
-            if dna is None:
-                # Unbekannte Signatur → Null-Chunk als Fallback
-                chunks.append(bytes(self.chunk_size))
-                continue
-            evolver = AEEvolver(data=bytes(self.chunk_size))
-            decoded = evolver.decode_dna(dna)
-            # Sicherstellen dass Chunk genau chunk_size Bytes hat
-            chunk = (decoded + bytes(self.chunk_size))[:self.chunk_size]
-            chunks.append(chunk)
+        for pkt in packets:
+            if pkt["type"] == "dna":
+                dna = self.vault.get_tree_dna(pkt["sig"])
+                if dna is None:
+                    chunks.append(bytes(self.chunk_size))
+                    continue
+                evolver = AEEvolver(data=bytes(self.chunk_size))
+                chunk = evolver.decode_dna(dna)
+                chunks.append((chunk + bytes(self.chunk_size))[:self.chunk_size])
+            else:
+                chunks.append(bytes.fromhex(pkt["data"]))
 
         xor_delta = b"".join(chunks)
-        # Inverse XOR: Frame[N] = XOR-Delta ⊕ Frame[N-1]
         frame = _xor_bytes(xor_delta, prev)
         self._prev_frame = frame
         return frame
 
+    def repack_packets(self, packets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Versucht rohe Pakete mit neuem Vault-Wissen nachträglich auf DNA anzuheben."""
+        repacked: list[dict[str, Any]] = []
+
+        for pkt in packets:
+            if pkt.get("type") == "dna":
+                repacked.append(dict(pkt))
+                continue
+
+            raw_chunk = bytes.fromhex(str(pkt.get("data", "")))
+            sig = _chunk_sig(raw_chunk)
+            upgraded = self.vault.chunk_packet(sig, raw_chunk)
+            repacked.append(upgraded or {"type": "raw", "data": raw_chunk.hex()})
+
+        return repacked
+
     # ------------------------------------------------------------------ intern
 
     def _evolve_and_store(self, chunk: bytes, sig: str) -> None:
-        """
-        Evolves einen GA-Baum für den Chunk-Inhalt und speichert ihn im Vault.
-
-        seed = erste 4 Bytes der Signatur → deterministisch, reproduzierbar.
-        """
         from modules.aelab_motor import AEEvolver
-        seed  = int(sig[:8], 16) & 0x7FFF_FFFF
+
+        seed = int(sig[:8], 16) & 0x7FFF_FFFF
         evolver = AEEvolver(data=chunk, seed=seed)
         tree, fit = evolver.run(pop=self.evolve_pop, gens=self.evolve_gens)
         if tree is not None:
-            lossless = evolver.best_lossless
-            self.vault.store(tree, fitness=fit, lossless=lossless,
-                             label=f"frame_chunk_{sig[:8]}")
+            self.vault.store_for_chunk(
+                sig, tree,
+                fitness=fit,
+                lossless=evolver.best_lossless,
+            )
 
     def reset(self) -> None:
         """Setzt den internen Frame-Zustand zurück (neuer Stream)."""
