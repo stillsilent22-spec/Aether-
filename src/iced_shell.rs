@@ -5259,6 +5259,13 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             ..Default::default()
         });
 
+        let shell_sidebar = container(
+            scrollable(shell_sidebar)
+                .height(Length::Fill)
+        )
+        .width(Length::Fixed(220.0))
+        .height(Length::Fill);
+
         let shell_header = container(
             row![
                 column![
@@ -5556,10 +5563,18 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             text("⬡ AETHER").size(12).color(c(ACCENT())),
             quick_button("Control", Tab::Control),
             quick_button("Files", Tab::Data),
+            quick_button("Chat", Tab::Chat),
+            quick_button("Swarm Ops", Tab::SwarmOps),
+            quick_button("Privacy", Tab::Privacy),
             quick_button("FlowSphere", Tab::FlowSphere),
             quick_button("Delta Conv", Tab::StructureMap),
             quick_button("ADE", Tab::ADE),
+            quick_button("Anchors", Tab::Anchors),
+            quick_button("Settings", Tab::Settings),
             quick_button("Logs", Tab::Logs),
+            quick_button("Symbiont", Tab::Symbiont),
+            quick_button("Gaming ↓", Tab::Gaming),
+            quick_button("Media ↓", Tab::Media),
             iced::widget::Space::new(Length::Fill, Length::Shrink),
             button(text(if self.live_render_mode { "Live Render: AUS" } else { "Live Render: AN" }).size(11).color(c(TEXT_H())))
                 .on_press(Message::LiveRenderToggle)
@@ -6543,6 +6558,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 let drop_world = match self.active_tab {
                     Tab::Gaming => Some(Tab::Gaming),
                     Tab::Media => Some(Tab::Media),
+                    Tab::Research => Some(Tab::Research),
                     _ => None,
                 };
                 let launch_note = if let Some(world) = drop_world {
