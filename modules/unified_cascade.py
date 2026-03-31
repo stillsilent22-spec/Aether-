@@ -293,7 +293,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-CASCADE_VERSION = "2"
+CASCADE_VERSION = "3"  # incremented: attractor_stability → perm_entropy (Bandt & Pompe)
 AUDIT_LOG_PATH = Path("logs/cascade_audit.jsonl")
 
 # In-memory: source_id → last CascadeResult (for delta convergence)
@@ -418,7 +418,9 @@ def cascade(
             (_norm(benford_score,       0.0, 1.0) - _norm(prev.benford_score,       0.0, 1.0)) ** 2,
             (_norm(katz_dimension,      0.0, 2.0) - _norm(prev.katz_dimension,      0.0, 2.0)) ** 2,
             (_norm(perm_entropy_val,    0.0, 1.0) - _norm(prev.perm_entropy,        0.0, 1.0)) ** 2,
-        ])) / math.sqrt(5)
+            (_norm(fourier_period,       0.0, 512.0) - _norm(prev.fourier_period,    0.0, 512.0)) ** 2,
+            (_norm(noether_consistency,  0.0, 1.0)  - _norm(prev.noether_consistency, 0.0, 1.0)) ** 2,
+        ])) / math.sqrt(7)
 
     # Noether consistency
     half = len(data) // 2
@@ -452,7 +454,7 @@ def cascade(
         0.15 * benford_score +
         0.10 * min(fourier_period / 128.0, 1.0) +
         0.15 * min(katz_dimension / 2.0, 1.0) +
-        0.10 * perm_entropy_val +
+        0.10 * (1.0 - abs(perm_entropy_val - 0.5) * 2.0) +  # max bei 0.5 (natürliche Mischstruktur)
         0.05 * (1.0 - min(delta_convergence, 1.0)) +
         0.10 * noether_consistency
     ))
@@ -463,7 +465,8 @@ def cascade(
     if benford_score < 0.3:            anomaly_flags.append("BENFORD_VIOLATION")
     if delta_convergence > 0.5:        anomaly_flags.append("HIGH_DELTA")
     if noether_consistency < 0.4:      anomaly_flags.append("NOETHER_BROKEN")
-    if perm_entropy_val > 0.85:        anomaly_flags.append("HIGH_ORDER_STRUCTURE")
+    if perm_entropy_val > 0.85:        anomaly_flags.append("PERM_HIGH_ORDER")
+    if perm_entropy_val < 0.05:        anomaly_flags.append("PERM_LOW_ORDER")
     if katz_dimension > 1.8:           anomaly_flags.append("HIGH_FRACTAL")
 
     result = CascadeResult(
