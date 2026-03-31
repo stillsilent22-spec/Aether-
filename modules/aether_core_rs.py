@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether - optionaler Rust-Kern-Wrapper.
 
@@ -16,7 +18,7 @@ from typing import Sequence
 try:
     import aether_core_rs as _rs  # type: ignore
     _RUST_OK = True
-except ImportError:
+except ImportError as e:
     _rs = None
     _RUST_OK = False
 

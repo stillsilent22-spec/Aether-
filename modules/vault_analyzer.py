@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministische Analyse fuer lokale AELAB-DNA-Vaults."""
 
 from __future__ import annotations
@@ -62,7 +64,7 @@ def _anchor_key(value: float) -> str:
 def _safe_float(token: str) -> float | None:
     try:
         return float(token)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
         return None
 
 
@@ -101,7 +103,7 @@ def parse_dna_file(file_path: Path) -> DNARecord:
         if token.startswith("delta_session_seed="):
             try:
                 delta_session_seed = int(token.split("=", 1)[1] or 0)
-            except Exception:
+            except Exception as e:
                 delta_session_seed = 0
             break
     anchors: list[float] = []

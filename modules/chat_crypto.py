@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import sys as _cc_sys
 import time as _cc_time
 
@@ -43,7 +45,7 @@ try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     _CRYPTO_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     _CRYPTO_AVAILABLE = False
     InvalidToken = Exception  # type: ignore[assignment,misc]
 
@@ -57,7 +59,7 @@ def crypto_available() -> bool:
     try:
         import cryptography  # noqa: F401
         return True
-    except ImportError:
+    except ImportError as e:
         return False
 
 
@@ -82,7 +84,7 @@ def encrypt_text(text: str, key: str) -> str:
     try:
         f = Fernet(key.encode() if isinstance(key, str) else key)
         return f.encrypt(text.encode("utf-8")).decode()
-    except Exception:
+    except Exception as e:
         return ""
 
 
@@ -93,7 +95,7 @@ def decrypt_text(token: str, key: str) -> str:
     try:
         f = Fernet(key.encode() if isinstance(key, str) else key)
         return f.decrypt(token.encode() if isinstance(token, str) else token).decode("utf-8")
-    except Exception:
+    except Exception as e:
         return ""
 
 
@@ -106,7 +108,7 @@ def encrypt_bytes_aes256(data: bytes, key: bytes):
         nonce = _os.urandom(12)
         ct = AESGCM(key32).encrypt(nonce, data, None)
         return nonce, ct
-    except Exception:
+    except Exception as e:
         return b"", b""
 
 
@@ -117,7 +119,7 @@ def decrypt_bytes_aes256(nonce: bytes, ciphertext: bytes, key: bytes) -> bytes:
     try:
         key32 = _hashlib.sha256(key).digest()
         return AESGCM(key32).decrypt(nonce, ciphertext, None)
-    except Exception:
+    except Exception as e:
         return b""
 
 

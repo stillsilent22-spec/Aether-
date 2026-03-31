@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """capability_score.py — Aether OS Readiness / Emergent OS Progress.
 
 Probes every subsystem at startup (or on demand) and assigns a score 0–100.
@@ -178,7 +180,8 @@ def _probe_yggdrasil() -> Probe:
                 p.earned = 10
                 p.note = "Yggdrasil läuft als Prozess"
                 return p
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[capability_score] Fehler: {e}")
             pass
 
         # Config exists means it was already set up
@@ -202,14 +205,14 @@ def _probe_network() -> Probe:
             p.ok = True
             p.earned = 5
             p.note = "Internet erreichbar"
-    except OSError:
+    except OSError as e:
         # Try LAN fallback — even localhost reachable counts
         try:
             import socket as _s
             with _s.create_connection(("127.0.0.1", 80), timeout=0.3):
                 p.earned = 3
                 p.note = "Nur Localhost erreichbar"
-        except OSError:
+        except OSError as e:
             p.note = "Kein Netzwerk erkannt"
     except Exception as exc:
         p.note = str(exc)
@@ -323,7 +326,7 @@ def _probe_ram() -> Probe:
             p.note = f"{available_mb:.0f} MB — eingeschränkter Betrieb"
         else:
             p.note = f"Nur {available_mb:.0f} MB — sehr knapp"
-    except ImportError:
+    except ImportError as e:
         # psutil not available — use platform heuristic
         try:
             if sys.platform.startswith("linux"):
@@ -348,7 +351,7 @@ def _probe_ram() -> Probe:
             else:
                 p.earned = 3
                 p.note = "RAM unbekannt (psutil nicht verfügbar)"
-        except Exception:
+        except Exception as e:
             p.earned = 3
             p.note = "RAM-Erkennung ohne psutil fehlgeschlagen"
     except Exception as exc:

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Lokaler Secret-Speicher mit leichtgewichtiger Schutzhuelle."""
 
 import base64
@@ -26,11 +28,11 @@ def unprotect_local_secret(protected_value: str) -> str:
     payload = value[len(_PROTECTED_PREFIX) :]
     try:
         decoded = base64.urlsafe_b64decode(payload.encode("ascii"))
-    except Exception:
+    except Exception as e:
         return ""
     try:
         return decoded.decode("utf-8")
-    except Exception:
+    except Exception as e:
         return ""
 
 
@@ -55,12 +57,14 @@ class ProtectedSecret:
                     0,
                     _ls_sys.getsizeof(self._cleartext),
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[local_secret_store] Fehler: {e}")
                 pass
         self._cleartext = None
 
     def __del__(self) -> None:
         try:
             self.__exit__()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[local_secret_store] Fehler: {e}")
             pass

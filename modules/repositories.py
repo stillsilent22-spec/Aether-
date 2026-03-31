@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Repository-Klassen fuer die erste Aufteilung der Aether-Registry."""
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ def _safe_json_loads(raw_value: Any, fallback: Any) -> Any:
         return fallback
     try:
         return json.loads(raw)
-    except Exception:
+    except Exception as e:
         return fallback
 
 
@@ -75,7 +77,7 @@ class UserRepository:
         if identity and stored_secret:
             try:
                 secret_value = unprotect_local_secret(stored_secret)
-            except Exception:
+            except Exception as e:
                 secret_value = ""
             if secret_value:
                 if not is_protected_local_secret(stored_secret):

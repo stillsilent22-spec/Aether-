@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Consent, Audit and Security module for Aether Swarm.
 
 Enforces:
@@ -56,7 +58,7 @@ def _sign_entry(payload: Dict[str, Any]) -> str:
         canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
         sig = private_key.sign(canonical)
         return base64.b64encode(sig).decode("ascii")
-    except Exception:
+    except Exception as e:
         return "unsigned"
 
 
@@ -127,7 +129,8 @@ def _read_consent() -> Dict[str, Any]:
                 raw = json.loads(CONSENT_PATH.read_text(encoding="utf-8"))
                 if isinstance(raw, dict):
                     return dict(raw)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[swarm_consent] Fehler: {e}")
             pass
         return {}
 
@@ -236,7 +239,7 @@ def interactive_consent_flow(actor: str = "cli") -> bool:
     print(CONSENT_PROMPT_TEXT)
     try:
         answer = input("Do you consent to Swarm Mode? [yes/no]: ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
+    except (EOFError, KeyboardInterrupt) as e:
         print("\n[CONSENT] Consent flow cancelled.")
         return False
     if answer in ("yes", "y", "ja", "j"):

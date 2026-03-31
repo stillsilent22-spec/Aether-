@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether Internationalisierung (i18n) — Deutsch / English.
 
@@ -351,7 +353,8 @@ def _load_settings(settings_file: Path) -> dict:
     if settings_file.exists():
         try:
             return json.loads(settings_file.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[i18n] Fehler: {e}")
             pass
     return {}
 
@@ -360,7 +363,8 @@ def _save_settings(settings_file: Path, data: dict) -> None:
     try:
         settings_file.parent.mkdir(parents=True, exist_ok=True)
         settings_file.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[i18n] Fehler: {e}")
         pass
 
 
@@ -411,7 +415,8 @@ def t(key: str, **kwargs: object) -> str:
     if kwargs:
         try:
             text = text.format(**kwargs)
-        except (KeyError, ValueError):
+        except (KeyError, ValueError) as e:
+            logger.warning(f"[i18n] Fehler: {e}")
             pass
     return text
 
@@ -470,5 +475,5 @@ def choose_language_tk(parent=None) -> str:
         lang = result[0]
         set_language(lang)
         return lang
-    except Exception:
+    except Exception as e:
         return _LANG

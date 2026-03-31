@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import argparse
 import json
 import sys
@@ -7,7 +9,7 @@ from pathlib import Path
 
 try:
     from .swarm_relay import RelayConfig, get_relay_nodes
-except ImportError:
+except ImportError as e:
     from modules.swarm_relay import RelayConfig, get_relay_nodes  # type: ignore
 
 

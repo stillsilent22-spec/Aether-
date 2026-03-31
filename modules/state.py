@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Authoritative State API for Aether.
 
 Thread-safe, monotone-version state store.  Every write increments the

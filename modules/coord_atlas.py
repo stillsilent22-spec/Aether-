@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """coord_atlas.py — MetaLayer OS Phase D: Koordinaten-Atlas mit Anomalieerkennung.
 
 Speichert historische Pixel-Pfad-Daten, erkennt Abweichungen vom Baseline
@@ -78,7 +80,8 @@ class CoordAtlas:
         if self._conn:
             try:
                 self._conn.close()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[coord_atlas] Fehler: {e}")
                 pass
             self._conn = None
 
@@ -224,7 +227,8 @@ class CoordAtlas:
         try:
             self._conn.execute("DELETE FROM coord_paths WHERE timestamp < ?", (cutoff,))
             self._conn.commit()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[coord_atlas] Fehler: {e}")
             pass
 
     def _load_baseline_from_db(self) -> None:

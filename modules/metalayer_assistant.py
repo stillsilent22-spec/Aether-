@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """metalayer_assistant.py — MetaLayer OS Phase D: Assistant-gefilterte Befunde.
 
 Übersetzt MetaLayer-OS-Erkenntnisse in das Assistant-Konsensformat.
@@ -196,7 +198,8 @@ class MetaLayerAssistantBridge:
                     h_lam  = float(getattr(result, "h_lambda", 3.0))
                     trust  = float(getattr(result, "trust_score", confidence))
                     return h_lam, trust
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[metalayer_assistant] Fehler: {e}")
                 pass
         # Heuristik: h_lambda aus Textlänge + confidence
         text_len = len(title) + len(body)

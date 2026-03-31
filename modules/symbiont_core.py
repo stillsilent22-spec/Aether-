@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """symbiont_core.py — Aether Symbiont: Signal-agnostischer Meta-Ockham Kern.
 
 Verarbeitet beliebige Signaltypen (Code, Text, AST, Binär) als strukturelle
@@ -14,7 +16,7 @@ from typing import Optional, Dict, Any, Union, List
 try:
     import numpy as np
     _NUMPY = True
-except ImportError:
+except ImportError as e:
     _NUMPY = False
 
 
@@ -231,7 +233,7 @@ class AetherSymbiont:
             arr = np.frombuffer(raw, dtype=np.uint8)
             fft = np.fft.fft(arr)
             fourier_energy = float(np.sum(np.abs(fft)**2)) / max(1, len(arr))
-        except Exception:
+        except Exception as e:
             fourier_energy = 0.0
 
         # Benford-Feature (Abweichung von Benfords Gesetz)
@@ -250,7 +252,7 @@ class AetherSymbiont:
             return float(sum(abs(o-e) for o,e in zip(observed,expected)))
         try:
             benford = benford_deviation(list(raw))
-        except Exception:
+        except Exception as e:
             benford = 0.0
 
         # Zipf-Feature (Exponent der Wortverteilung)
@@ -265,14 +267,14 @@ class AetherSymbiont:
             try:
                 coeffs = np.polyfit(np.log(ranks), np.log(freqs), 1)
                 return -coeffs[0]
-            except Exception:
+            except Exception as e:
                 return 0.0
         try:
             if isinstance(signal, str):
                 zipf = zipf_exponent(signal.split())
             else:
                 zipf = zipf_exponent(list(raw))
-        except Exception:
+        except Exception as e:
             zipf = 0.0
 
         # Mandelbrot-Feature (Fraktalität, grob als Varianz der Differenzen)
@@ -284,7 +286,7 @@ class AetherSymbiont:
             return float(np.var(diffs))
         try:
             mandelbrot = mandelbrot_score(np.frombuffer(raw, dtype=np.uint8))
-        except Exception:
+        except Exception as e:
             mandelbrot = 0.0
 
         # Katz-Dimension (Fraktalitätsmaß)
@@ -326,7 +328,7 @@ class AetherSymbiont:
             noether = noether_invariants(arr_np)
             katz = katz_dimension(arr_np)
             attractor = _compute_perm_entropy(arr_np)
-        except Exception:
+        except Exception as e:
             noether = {}
             katz = 0.0
             attractor = 0.0

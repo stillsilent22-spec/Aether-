@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """modules/text_utils.py — Structural text normalisation and feature extraction.
 
 Public API:
@@ -106,7 +108,7 @@ def _reference_model() -> dict[str, Any]:
     for path in sorted(paths, key=lambda item: item.as_posix()):
         try:
             raw_text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
+        except OSError as e:
             continue
         normalized = text_normalize(raw_text)[:200000]
         tokens = _tokenize(normalized)

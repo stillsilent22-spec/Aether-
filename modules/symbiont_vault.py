@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """symbiont_vault.py — Aether Symbiont: AES-256-GCM Delta-Vault.
 
 Brücke zum Rust-seitigen delta_vault (LocalDeltaVault via subprocess).
@@ -114,7 +116,8 @@ class SymbiontVault:
         if self._conn:
             try:
                 self._conn.close()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[symbiont_vault] Fehler: {e}")
                 pass
             self._conn = None
 
@@ -265,7 +268,7 @@ class SymbiontVault:
             )
             self._conn.commit()
             return cur.rowcount
-        except Exception:
+        except Exception as e:
             return 0
 
     # ── Initialisierung ───────────────────────────────────────────────────────

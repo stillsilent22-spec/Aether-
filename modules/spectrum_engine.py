@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Lichtspektrum-Analyse fuer Bild- und Frame-Daten."""
 
 from __future__ import annotations

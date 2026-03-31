@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Invariant Consensus Bridge: Wire mathematical invariants to swarm decisions.
 
@@ -88,7 +90,8 @@ def read_invariant_directives(
         if Path(path).is_file():
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[invariant_consensus_bridge] Fehler: {e}")
         pass
     return {}
 

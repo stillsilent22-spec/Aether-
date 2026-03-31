@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """AetherGuard: deterministic security layer for Aether.
 
 The layer evaluates structural metrics and policy flags with fixed rules.
@@ -19,7 +21,7 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
 def _f(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except Exception as e:
         return float(default)
 
 

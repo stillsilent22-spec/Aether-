@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """meta_ockham.py — Aether Symbiont: Meta-Ockham Razor Engine.
 
 Findet strukturelle Redundanzen, Abstraktions-Inversionen und Twin-Cluster

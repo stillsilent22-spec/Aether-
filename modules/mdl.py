@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Minimum Description Length (MDL) scorer for Aether candidates.
 
 The MDL principle favours hypotheses that compress data well.  Here we

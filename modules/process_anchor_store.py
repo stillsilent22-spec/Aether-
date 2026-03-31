@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether – Prozess-Anker-Store.
 
@@ -169,7 +171,7 @@ class ProcessAnchorStore:
         try:
             yield con
             con.commit()
-        except Exception:
+        except Exception as e:
             con.rollback()
             raise
         finally:
@@ -366,7 +368,7 @@ class ProcessAnchorStore:
                         continue
                     corr = cov / (stdx * stdy)
                     corr = max(-1.0, min(1.0, corr))
-                except Exception:
+                except Exception as e:
                     continue
 
                 if abs(corr) >= min_correlation:

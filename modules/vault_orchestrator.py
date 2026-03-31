@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Subvault Genpool — evolutionary candidate lifecycle for Aether.
 
 Architecture

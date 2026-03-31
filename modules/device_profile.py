@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Adaptive Laufzeitprofile fuer schwache und starke Geraete."""
 
 from __future__ import annotations
@@ -68,7 +70,7 @@ class DeviceProfileEngine:
                 total_gb = float(status.total_phys) / float(1024**3)
                 memory_load = float(status.memory_load)
                 return total_gb, memory_load
-        except Exception:
+        except Exception as e:
             return None, None
         return None, None
 
@@ -112,14 +114,14 @@ class DeviceProfileEngine:
                     return None
                 busy = max(0, total - idle_delta)
                 return float(max(0.0, min(100.0, (busy / total) * 100.0)))
-            except Exception:
+            except Exception as e:
                 return None
         try:
             load = os.getloadavg()[0]
             if cpu_count <= 0:
                 return None
             return float(max(0.0, min(100.0, (load / float(cpu_count)) * 100.0)))
-        except Exception:
+        except Exception as e:
             return None
 
     def detect(self) -> DeviceProfile:

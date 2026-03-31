@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Unabhaengige Trust-Pruefung fuer oeffentliche Aether-DNA-Bundles."""
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ def _clamp(value: Any, minimum: float = 0.0, maximum: float = 1.0) -> float:
     """Normalisiert unklare Eingaben robust in einen festen Bereich."""
     try:
         numeric = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
         numeric = minimum
     if math.isnan(numeric) or math.isinf(numeric):
         numeric = minimum
@@ -56,7 +58,7 @@ class TrustScoreEngine:
             for file_path in root.rglob("*.json"):
                 try:
                     parsed = json.loads(file_path.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as e:
                     continue
                 payload = dict(parsed.get("payload", parsed) or {})
                 records = list(dict(payload.get("dna_share", {}) or {}).get("records", []) or [])
@@ -178,7 +180,7 @@ class TrustScoreEngine:
                 existing = json.loads(self.log_path.read_text(encoding="utf-8"))
                 if not isinstance(existing, list):
                     existing = []
-            except Exception:
+            except Exception as e:
                 existing = []
         else:
             existing = []

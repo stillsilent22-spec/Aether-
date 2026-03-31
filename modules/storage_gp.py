@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministische GP-Entscheidungen fuer den lokalen Dual-Mode-Storage."""
 
 from __future__ import annotations

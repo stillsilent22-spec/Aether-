@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
 
 Führt alle MetaLayer-Subsysteme in einem adaptiven Tick-Loop zusammen.
@@ -21,7 +23,7 @@ from typing import Optional, Callable, Any
 try:
     import psutil
     _PSUTIL = True
-except ImportError:
+except ImportError as e:
     _PSUTIL = False
 
 from modules.process_pixel_mapper   import ProcessPixelMapper
@@ -203,9 +205,10 @@ class MetaLayerOS:
                         status=str(info.get("status") or ""),
                         ppid=int(info.get("ppid") or 0),
                     ))
-                except Exception:
+                except Exception as e:
                     continue
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[metalayer_os] Fehler: {e}")
             pass
         self._latest_snapshots = snapshots
         self._status.process_count = len(snapshots)

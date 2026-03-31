@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """modules/session_guard.py — Entry-point enforcement for Aether.
 
 Every runnable script that is NOT the main registration window must call
@@ -33,7 +35,7 @@ def require_session() -> None:
         settings = json.loads(_SETTINGS_FILE.read_text(encoding="utf-8"))
         if not settings.get("solo_genesis_mode"):
             raise ValueError("solo_genesis_mode not set")
-    except Exception:
+    except Exception as e:
         print(f"[AETHER] Session invalid or incomplete — please re-register.\n  {_ENTRY_HINT}")
         sys.exit(1)
 

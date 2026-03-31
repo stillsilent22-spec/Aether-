@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Phase 3: Windows Prozessdynamik - strukturelle Erfassung als X_t."""
 
 from __future__ import annotations
@@ -8,7 +10,7 @@ from typing import List, Optional
 
 try:
     import psutil
-except ImportError:
+except ImportError as e:
     psutil = None
 
 
@@ -54,7 +56,7 @@ def capture_process_state() -> List[ProcessSnapshot]:
                     io_read=io_counters[0],
                     io_write=io_counters[1],
                 ))
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess) as e:
             continue
     return snapshots
 

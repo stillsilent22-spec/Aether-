@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Lightweight bridge daemon for Rust <-> Python hybrid runtime.
 
 This process is started by the Rust shell and keeps shared status files fresh.
@@ -70,7 +72,7 @@ def _safe_read_json(path: Path) -> Dict[str, Any]:
             raw = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 return dict(raw)
-    except Exception:
+    except Exception as e:
         return {}
     return {}
 
@@ -134,12 +136,12 @@ def _resolve_local_node_id(nodes_dir: Path) -> str:
         for node_path in sorted(nodes_dir.glob("*.json")):
             try:
                 payload = json.loads(node_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
                 continue
             node_id = str(payload.get("node_id", "")).strip()
             if node_id:
                 return node_id
-    except Exception:
+    except Exception as e:
         return "local-node"
     return "local-node"
 
@@ -159,7 +161,7 @@ def _load_local_public_key() -> str:
     try:
         if pub_key_path.is_file():
             return str(pub_key_path.read_text(encoding="utf-8")).strip()
-    except Exception:
+    except Exception as e:
         return ""
     return ""
 
@@ -248,7 +250,8 @@ def _process_swarm_invites(
                             f"{fallback_target.stem}_{int(now_ts)}{fallback_target.suffix}"
                         )
                     shutil.move(str(invite_file), str(fallback_target))
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[hybrid_bridge] Fehler: {e}")
                     pass
     except Exception as exc:
         status["invite_last_error"] = str(exc)
@@ -353,7 +356,7 @@ def main() -> int:
                     sym_proc.terminate()
                     try:
                         sym_proc.wait(timeout=2.0)
-                    except Exception:
+                    except Exception as e:
                         sym_proc.kill()
                 sym_proc = None
 
@@ -438,7 +441,7 @@ def main() -> int:
                 _mem = _psutil.virtual_memory()
                 merged_backend["mem_used_gb"] = round(_mem.used / (1024 ** 3), 2)
                 merged_backend["mem_total_gb"] = round(_mem.total / (1024 ** 3), 2)
-            except Exception:
+            except Exception as e:
                 pass  # keep values from existing_backend if psutil unavailable
 
             merged_backend.update(
@@ -498,7 +501,7 @@ def main() -> int:
             }
             _write_json(HYBRID_STATUS_PATH, status_payload)
             time.sleep(poll_seconds)
-        except KeyboardInterrupt:
+        except KeyboardInterrupt as e:
             break
         except Exception as exc:
             last_error = str(exc)
@@ -523,7 +526,7 @@ def main() -> int:
         sym_proc.terminate()
         try:
             sym_proc.wait(timeout=2.0)
-        except Exception:
+        except Exception as e:
             sym_proc.kill()
 
     _write_json(

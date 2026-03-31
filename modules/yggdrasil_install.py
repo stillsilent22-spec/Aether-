@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Yggdrasil Auto-Download und Setup.
 
 Download nur von offiziellem GitHub Release, SHA256-verifiziert.
@@ -92,7 +94,7 @@ def is_yggdrasil_managed_running() -> bool:
         return False
     try:
         pid = int(YGGDRASIL_PID_PATH.read_text(encoding="utf-8").strip())
-    except Exception:
+    except Exception as e:
         YGGDRASIL_PID_PATH.unlink(missing_ok=True)
         return False
 
@@ -116,7 +118,7 @@ def is_yggdrasil_managed_running() -> bool:
 
         os.kill(pid, 0)
         return True
-    except OSError:
+    except OSError as e:
         YGGDRASIL_PID_PATH.unlink(missing_ok=True)
         return False
 
@@ -148,7 +150,8 @@ def download_and_verify(url: str, expected_sha256: str, dest: Path) -> None:
     if digest != str(expected_sha256 or "").lower():
         try:
             temp_path.unlink()
-        except FileNotFoundError:
+        except FileNotFoundError as e:
+            logger.warning(f"[yggdrasil_install] Fehler: {e}")
             pass
         raise RuntimeError(f"SHA256 mismatch for {url}: expected {expected_sha256}, got {digest}")
 
@@ -185,7 +188,8 @@ def _try_termux_pkg_install() -> "Path | None":
             binary = shutil.which("yggdrasil")
             if binary:
                 return Path(binary)
-    except (subprocess.TimeoutExpired, OSError):
+    except (subprocess.TimeoutExpired, OSError) as e:
+        logger.warning(f"[yggdrasil_install] Fehler: {e}")
         pass
     return None
 
@@ -248,7 +252,8 @@ def _inject_public_peers(config_path: Path) -> None:
         if settings_path.is_file():
             raw = _json.loads(settings_path.read_text(encoding="utf-8"))
             custom_peers = [str(p) for p in (raw.get("yggdrasil_peers") or []) if p]
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[yggdrasil_install] Fehler: {e}")
         pass
 
     # Stabile community peers als Fallback (Stand 2025 â€” bei Bedarf in settings.json ueberschreiben)
@@ -262,7 +267,7 @@ def _inject_public_peers(config_path: Path) -> None:
     try:
         raw_conf = config_path.read_text(encoding="utf-8")
         conf = _json.loads(raw_conf)
-    except Exception:
+    except Exception as e:
         return  # Format unbekannt, nicht anfassen
 
     if not isinstance(conf.get("Peers"), list) or conf["Peers"]:
@@ -314,7 +319,7 @@ def stop_yggdrasil_subprocess() -> None:
         return
     try:
         pid = int(YGGDRASIL_PID_PATH.read_text(encoding="utf-8").strip())
-    except Exception:
+    except Exception as e:
         YGGDRASIL_PID_PATH.unlink(missing_ok=True)
         return
 
@@ -323,7 +328,8 @@ def stop_yggdrasil_subprocess() -> None:
     else:
         try:
             os.kill(pid, 15)
-        except OSError:
+        except OSError as e:
+            logger.warning(f"[yggdrasil_install] Fehler: {e}")
             pass
     YGGDRASIL_PID_PATH.unlink(missing_ok=True)
 

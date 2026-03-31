@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import hashlib, logging, threading, time, json, itertools
 
 _log = logging.getLogger(__name__)

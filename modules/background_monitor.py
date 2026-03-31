@@ -29,14 +29,14 @@ from typing import Callable
 try:
     from .process_monitor import ProcessMonitor, ProcessSnapshot
     from .process_anchor_store import ProcessAnchorStore, RawSnapshot
-except ImportError:
+except ImportError as e:
     from modules.process_monitor import ProcessMonitor, ProcessSnapshot
     from modules.process_anchor_store import ProcessAnchorStore, RawSnapshot
 
 try:
     import psutil
     _PSUTIL_OK = True
-except Exception:
+except Exception as e:
     psutil = None  # type: ignore
     _PSUTIL_OK = False
 
@@ -159,7 +159,8 @@ class BackgroundMonitor:
         # Letzter Aufräum-Lauf
         try:
             self._store.purge_old_snapshots(_MAX_SNAPSHOTS_AGE)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[background_monitor] Fehler: {e}")
             pass
         logger.debug("Monitor loop ended.")
 
@@ -173,7 +174,8 @@ class BackgroundMonitor:
             if self._on_snapshot_batch:
                 try:
                     self._on_snapshot_batch(count)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[background_monitor] Fehler: {e}")
                     pass
 
         # Stündlich: Konsens-Anker
@@ -202,7 +204,8 @@ class BackgroundMonitor:
                 deleted = self._store.purge_old_snapshots(_MAX_SNAPSHOTS_AGE)
                 if deleted:
                     logger.info("Purged %d old snapshots.", deleted)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[background_monitor] Fehler: {e}")
                 pass
             self._last_purge = now
 
@@ -248,9 +251,11 @@ class BackgroundMonitor:
                     )
                     snap.anchor_hash = snap.compute_hash()
                     results.append(snap)
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                    logger.warning(f"[background_monitor] Fehler: {e}")
                     pass
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[background_monitor] Fehler: {e}")
                     pass
         except Exception as exc:
             logger.warning("Error iterating processes: %s", exc)
@@ -289,7 +294,8 @@ def _run_standalone(interval: float = 30.0, db_path: str | None = None) -> None:
     try:
         while True:
             time.sleep(60)
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as e:
+        logger.warning(f"[background_monitor] Fehler: {e}")
         pass
     finally:
         monitor.stop()

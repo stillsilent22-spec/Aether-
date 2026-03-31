@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Unified analysis capsule for drop and live-render structural analysis.
 
 This module builds a signal-agnostic capsule around a single observation pass.
@@ -22,7 +24,7 @@ try:
         detect_zipf_distribution,
     )
     from .trust_engine import TrustScoreEngine
-except ImportError:
+except ImportError as e:
     from godel_loop_renderer import GoedelLoopRenderer
     from invariant_detector import compute_invariant_score, detect_benford_law, detect_zipf_distribution
     from trust_engine import TrustScoreEngine
@@ -34,12 +36,12 @@ except Exception:  # pragma: no cover - optional heavy dependency chain
 
 try:
     from sce_engine import sce_engine
-except ImportError:
+except ImportError as e:
     try:
         import sys, os
         sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
         from sce_engine import sce_engine
-    except Exception:
+    except Exception as e:
         sce_engine = None
 
 
@@ -50,7 +52,7 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except Exception as e:
         return float(default)
 
 
@@ -438,7 +440,8 @@ class AnalysisCapsuleEngine:
         if self._bayes is not None:
             try:
                 return float(self._bayes._posterior(prior, likelihood_true, likelihood_false))
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[analysis_capsule] Fehler: {e}")
                 pass
         numerator = likelihood_true * prior
         denominator = numerator + (likelihood_false * (1.0 - prior))

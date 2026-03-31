@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Log- und Screenshot-System fuer Aether."""
 
 from __future__ import annotations
@@ -84,6 +86,6 @@ class LogSystem:
                 data = json.loads(file_path.read_text(encoding="utf-8"))
                 data["_file"] = file_path.name
                 items.append(data)
-            except (OSError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError) as e:
                 continue
         return items

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Neutrale Alias-Schicht fuer die aktuelle Strukturpunkt-Implementierung."""
 
 from __future__ import annotations

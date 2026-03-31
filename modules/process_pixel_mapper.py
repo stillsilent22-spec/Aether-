@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """process_pixel_mapper.py — MetaLayer OS Phase A: Process-to-Pixel Mapping.
 
 Jedem Benutzerprozess wird seine Screen-Präsenz (Pixel-Region, Blockentropie,
@@ -15,26 +17,26 @@ from typing import Optional, List, Dict, Any
 try:
     import numpy as np
     _NUMPY = True
-except ImportError:
+except ImportError as e:
     _NUMPY = False
 
 try:
     import psutil
     _PSUTIL = True
-except ImportError:
+except ImportError as e:
     _PSUTIL = False
 
 try:
     import mss as _mss_mod
     _MSS = True
-except ImportError:
+except ImportError as e:
     _MSS = False
 
 try:
     import win32gui
     import win32process
     _WIN32 = True
-except ImportError:
+except ImportError as e:
     _WIN32 = False
 
 # ── Konstanten ────────────────────────────────────────────────────────────────
@@ -115,7 +117,7 @@ class ProcessPixelMapper:
         if not process_name and _PSUTIL:
             try:
                 process_name = psutil.Process(pid).name()
-            except Exception:
+            except Exception as e:
                 process_name = "unknown"
 
         bbox = self._hwnd_to_bbox(pid)
@@ -176,7 +178,7 @@ class ProcessPixelMapper:
                     results.append(pmap)
                 if len(results) >= max_count:
                     break
-            except Exception:
+            except Exception as e:
                 continue
         return results
 
@@ -207,12 +209,14 @@ class ProcessPixelMapper:
                     rect = win32gui.GetWindowRect(hwnd)
                     if rect[2] - rect[0] > 0 and rect[3] - rect[1] > 0:
                         found.append(hwnd)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[process_pixel_mapper] Fehler: {e}")
                 pass
             return True
         try:
             win32gui.EnumWindows(_cb, None)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[process_pixel_mapper] Fehler: {e}")
             pass
         return found[0] if found else None
 
@@ -231,7 +235,7 @@ class ProcessPixelMapper:
             if width == 0 or height == 0:
                 return None
             return {"left": left, "top": top, "width": width, "height": height}
-        except Exception:
+        except Exception as e:
             return None
 
     # ── Pixel-Analyse ─────────────────────────────────────────────────────────
@@ -250,7 +254,7 @@ class ProcessPixelMapper:
                 }
                 screenshot = sct.grab(monitor)
                 return bytes(screenshot.raw)
-        except Exception:
+        except Exception as e:
             return b""
 
     def _compute_pixel_blocks(
@@ -275,7 +279,7 @@ class ProcessPixelMapper:
             bytes_per_pixel = 4
         try:
             arr = arr.reshape((height, width, bytes_per_pixel))
-        except ValueError:
+        except ValueError as e:
             return blocks
 
         # Graustufen (Luma)
@@ -359,19 +363,22 @@ class ProcessPixelMapper:
                 score += 0.1
             if ex_style & 0x00200000:   # WS_EX_NOREDIRECTIONBITMAP
                 score += 0.1
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[process_pixel_mapper] Fehler: {e}")
             pass
         try:
             cls_name = win32gui.GetClassName(hwnd)
             if "ApplicationFrameWindow" in cls_name or "Windows.UI" in cls_name:
                 score += 0.15
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[process_pixel_mapper] Fehler: {e}")
             pass
         if _PSUTIL:
             try:
                 cpu = psutil.Process(pid).cpu_percent(interval=None)
                 score += min(0.15, cpu / 200.0)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[process_pixel_mapper] Fehler: {e}")
                 pass
         return min(1.0, score)
 
@@ -402,7 +409,8 @@ class ProcessPixelMapper:
                 h = user32.GetSystemMetrics(1)
                 if w > 0 and h > 0:
                     return int(w) * int(h)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[process_pixel_mapper] Fehler: {e}")
                 pass
         # Fallback: 1920×1080
         return 1920 * 1080

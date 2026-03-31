@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Phase 4: ETW/DXGI Pixel-Koordination pro Prozess — strukturelle Analyse."""
 
 from __future__ import annotations
@@ -16,20 +18,20 @@ try:
     import win32api
     import win32con
     _WIN32_AVAILABLE = True
-except Exception:
+except Exception as e:
     _WIN32_AVAILABLE = False
 
 try:
     import mss as _mss
     _MSS_AVAILABLE = True
-except Exception:
+except Exception as e:
     _mss = None
     _MSS_AVAILABLE = False
 
 try:
     import psutil
     _PSUTIL_AVAILABLE = True
-except Exception:
+except Exception as e:
     psutil = None
     _PSUTIL_AVAILABLE = False
 
@@ -155,7 +157,8 @@ class RenderCoordinator:
             if hasattr(self, "_session_context") and self._session_context:
                 sk = getattr(self._session_context, "session_key", None)
                 session_key = sk.encode() if isinstance(sk, str) else sk
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[render_coordinator] Fehler: {e}")
             pass
         if raw:
             cascade_result = cascade(
@@ -192,7 +195,8 @@ class RenderCoordinator:
                         "pid": int(pid),
                     })
             win32evtlog.CloseEventLog(handle)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[render_coordinator] Fehler: {e}")
             pass
         return events
 
@@ -395,7 +399,7 @@ class RenderCoordinator:
             windows: list[dict[str, int]] = []
             win32gui.EnumWindows(_enum_callback, windows)
             return windows[0] if windows else None
-        except Exception:
+        except Exception as e:
             return None
 
     def _capture_region_mss(self, region: dict[str, int]) -> bytes | None:
@@ -412,7 +416,7 @@ class RenderCoordinator:
                 }
                 screenshot = sct.grab(monitor)
                 return bytes(screenshot.raw)
-        except Exception:
+        except Exception as e:
             return None
 
     def _get_process_name(self, pid: int) -> str:
@@ -421,7 +425,7 @@ class RenderCoordinator:
             return "unknown"
         try:
             return str(psutil.Process(pid).name() or "unknown")
-        except Exception:
+        except Exception as e:
             return "unknown"
 
     @staticmethod

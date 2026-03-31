@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Pluggable Capture Adapter for Aether Swarm.
 
 Default Adapter: Desktop Mirror via mss (cross-platform).
@@ -37,7 +39,7 @@ from typing import Any, Deque, Dict, List, Optional
 try:
     import psutil
     _PSUTIL_OK = True
-except ImportError:
+except ImportError as e:
     _PSUTIL_OK = False
 
 # mss is cross-platform; already listed in requirements.txt
@@ -45,7 +47,7 @@ try:
     import mss
     import mss.tools
     _MSS_OK = True
-except ImportError:
+except ImportError as e:
     _MSS_OK = False
 
 
@@ -133,7 +135,8 @@ def detect_anticheat_running() -> List[str]:
             name = (proc.info.get("name") or "").lower()
             if name in KNOWN_ANTICHEAT_PROCESSES:
                 found.append(name)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[capture_adapter] Fehler: {e}")
         pass
     return found
 

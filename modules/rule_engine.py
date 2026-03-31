@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministic JSON-rule evaluator for Aether metrics.
 
 Rules are plain dicts with the schema::
@@ -92,6 +94,7 @@ def write_decision_log(entry: Dict[str, Any], log_path: Path = None) -> None:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
     except Exception:  # pragma: no cover
+        logger.warning(f"[rule_engine] Fehler: {e}")
         pass
 
 

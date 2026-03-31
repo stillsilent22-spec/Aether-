@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Mehrschichtige Struktur- und Geometrieanalyse fuer lokale Dateien."""
 
 from __future__ import annotations
@@ -104,7 +106,7 @@ class DeepScanEngine:
         units_per_em = 1.0
         try:
             units_per_em = float(getattr(font["head"], "unitsPerEm", 1000) or 1000.0)
-        except Exception:
+        except Exception as e:
             units_per_em = 1000.0
         metrics["units_per_em"] = float(units_per_em)
 
@@ -131,7 +133,7 @@ class DeepScanEngine:
                     if getattr(glyph, "isComposite", lambda: False)():
                         continue
                     coordinates, _end_pts, _flags = glyph.getCoordinates(glyf_table)
-                except Exception:
+                except Exception as e:
                     continue
                 if len(coordinates) < 2:
                     continue
@@ -170,7 +172,7 @@ class DeepScanEngine:
                             break
                     if len(kerning_ratios) >= 64:
                         break
-            except Exception:
+            except Exception as e:
                 kerning_ratios = []
             anchors.extend(kerning_ratios)
             metrics["kerning_ratio_samples"] = int(len(kerning_ratios))

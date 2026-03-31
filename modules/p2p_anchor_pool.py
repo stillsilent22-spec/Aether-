@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Lokale, transportagnostische Quorum-Logik fuer oeffentliche TTD-Anker."""
 
 from __future__ import annotations

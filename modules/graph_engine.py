@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Additive Graph-Feldanalyse fuer lokale AETHER-Attraktoren."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Lokaler append-only Ledger fuer Fingerprint-Attestierungen."""
 
 from __future__ import annotations
@@ -122,11 +124,11 @@ class AetherChain:
                         continue
                     try:
                         payload = json.loads(raw)
-                    except Exception:
+                    except Exception as e:
                         continue
                     if isinstance(payload, dict):
                         entries.append(payload)
-        except Exception:
+        except Exception as e:
             return []
         return entries
 
@@ -153,11 +155,11 @@ class AetherChain:
                         continue
                     try:
                         payload = json.loads(raw)
-                    except Exception:
+                    except Exception as e:
                         continue
                     if isinstance(payload, dict):
                         rejections.append(payload)
-        except Exception:
+        except Exception as e:
             return []
         return rejections
 
@@ -207,7 +209,7 @@ class AetherChain:
         """Normalisiert Floatwerte fuer die lokale Chain auf endliche Bereiche."""
         try:
             numeric = float(value)
-        except Exception:
+        except Exception as e:
             return float(default)
         if not math.isfinite(numeric):
             return float(default)

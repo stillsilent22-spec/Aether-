@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether – Anchor Query Adapter für Assistant.
 

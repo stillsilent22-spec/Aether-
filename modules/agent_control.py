@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Structural control layer for local agent-like background processes."""
 
 from __future__ import annotations
@@ -399,7 +401,7 @@ class AgentControlEngine:
 
         try:
             process = psutil.Process(pid)
-        except Exception:
+        except Exception as e:
             self._controlled.pop(pid, None)
             return "gone", f"{process_name} ({pid}) nicht mehr erreichbar"
 
@@ -407,21 +409,21 @@ class AgentControlEngine:
             state = AppliedControlState(pid=pid, process_name=process_name)
             try:
                 state.original_priority = process.nice()
-            except Exception:
+            except Exception as e:
                 state.original_priority = None
             if hasattr(process, "cpu_affinity"):
                 try:
                     state.original_affinity = list(process.cpu_affinity())
-                except Exception:
+                except Exception as e:
                     state.original_affinity = None
             if hasattr(process, "ionice"):
                 try:
                     state.original_ionice = process.ionice()
-                except Exception:
+                except Exception as e:
                     state.original_ionice = None
             try:
                 state.exe_path = str(process.exe() or "")
-            except Exception:
+            except Exception as e:
                 state.exe_path = ""
             self._controlled[pid] = state
 
@@ -480,7 +482,8 @@ class AgentControlEngine:
                     if target is not None:
                         process.ionice(target)
                         notes.append("io idle")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[agent_control] Fehler: {e}")
                 pass
 
     def _apply_affinity_limit(
@@ -495,7 +498,7 @@ class AgentControlEngine:
         if not affinity:
             try:
                 affinity = list(process.cpu_affinity())
-            except Exception:
+            except Exception as e:
                 return
         if len(affinity) <= 1:
             return
@@ -568,7 +571,7 @@ class AgentControlEngine:
             return f"{state.process_name} ({pid}) -> freigegeben"
         try:
             process = psutil.Process(pid)
-        except Exception:
+        except Exception as e:
             self._remove_firewall_rules(state)
             return f"{state.process_name} ({pid}) -> beendet, Regeln entfernt"
 
@@ -583,19 +586,22 @@ class AgentControlEngine:
             try:
                 process.nice(state.original_priority)
                 notes.append("prioritaet restauriert")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[agent_control] Fehler: {e}")
                 pass
         if state.original_affinity is not None and hasattr(process, "cpu_affinity"):
             try:
                 process.cpu_affinity(list(state.original_affinity))
                 notes.append("cpu restauriert")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[agent_control] Fehler: {e}")
                 pass
         if state.original_ionice is not None and hasattr(process, "ionice"):
             try:
                 process.ionice(state.original_ionice)
                 notes.append("io restauriert")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[agent_control] Fehler: {e}")
                 pass
         if self._remove_firewall_rules(state):
             notes.append("netzregel entfernt")
@@ -625,7 +631,7 @@ class AgentControlEngine:
                 check=False,
                 timeout=4.0,
             )
-        except Exception:
+        except Exception as e:
             return False
         return int(result.returncode) == 0
 

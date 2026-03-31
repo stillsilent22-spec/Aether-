@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether – Privacy Registry mit widerrufbaren Freigaben.
 
@@ -135,7 +137,7 @@ class PrivacyRegistry:
         try:
             yield con
             con.commit()
-        except Exception:
+        except Exception as e:
             con.rollback()
             raise
         finally:

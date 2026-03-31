@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 def build_dna(state):
     """Erzeugt ein DNA-Objekt aus dem aktuellen State."""
     return {

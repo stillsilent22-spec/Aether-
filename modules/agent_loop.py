@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
 
 from __future__ import annotations

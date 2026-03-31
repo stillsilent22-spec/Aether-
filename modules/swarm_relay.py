@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Optionaler Relay-Modus fuer Aether-Nodes.
 
 Wer relay=true setzt, hilft NAT-Nodes sich zu verbinden.
@@ -52,7 +54,7 @@ def get_relay_nodes(nodes_dir: str = "data/swarm/nodes") -> List[Dict[str, Any]]
     for path in sorted(root.glob("*.json")):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             continue
         if not isinstance(payload, dict) or not bool(payload.get("relay", False)):
             continue

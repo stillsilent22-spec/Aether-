@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Scoped screen capture fuer explizite Aether-Dateianalysen."""
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ try:
     else:
         _win32gui = None
         _win32process = None
-except Exception:
+except Exception as e:
     _win32gui = None
     _win32process = None
 
@@ -149,7 +151,7 @@ def _anchor_keys_from_fingerprint(fingerprint: "AetherFingerprint | None") -> li
             continue
         try:
             value = float(entry.get("value", 0.0) or 0.0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError) as e:
             continue
         if abs(value) <= 1e-12:
             continue
@@ -320,7 +322,8 @@ class AssistantAetherVision:
                 if frame:
                     self._current_state = frame
                     self._proactive_check(frame)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[screen_vision_engine] Fehler: {e}")
                 pass
             time.sleep(self.SAMPLE_INTERVAL_MS / 1000.0)
 
@@ -356,7 +359,7 @@ class AssistantAetherVision:
                         "timestamp": int(frame.get("timestamp", 0) or 0),
                     }
                 )
-            except Exception:
+            except Exception as e:
                 return
 
     @property

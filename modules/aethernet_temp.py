@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import hashlib
 import hmac
 import json
@@ -33,12 +35,12 @@ class AethernetTemp:
             for node_path in sorted(NODE_DIR.glob("*.json")):
                 try:
                     payload = json.loads(node_path.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as e:
                     continue
                 node_id = str(payload.get("node_id", "")).strip()
                 if node_id:
                     return node_id
-        except Exception:
+        except Exception as e:
             return "local-node"
         return "local-node"
 
@@ -89,7 +91,7 @@ class AethernetTemp:
     def get_transport_status(self) -> dict[str, Any]:
         try:
             return get_swarm_status()
-        except Exception:
+        except Exception as e:
             return {}
 
     def push_to_github(self, pack: dict, session) -> bool:

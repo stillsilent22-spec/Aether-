@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Leitet eine Yggdrasil IPv6-Adresse aus dem Aether Yggdrasil-Key ab.
 
 Yggdrasil v0.5+ verwendet Ed25519 Keys -> IPv6 im 200::/7 Bereich.

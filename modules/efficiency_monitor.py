@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Leichtgewichtiger CPU-/RAM-Monitor fuer lokale Low-Power-Analysen."""
 
 from __future__ import annotations

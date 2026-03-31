@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import hashlib
 
 def propagate_delta(state: dict, delta: dict) -> dict:

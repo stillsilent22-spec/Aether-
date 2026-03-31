@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from modules.runtime_core import runtime_step, runtime_set_running
 
 def run_loop(runtime: dict, max_ticks: int, delta_provider: callable) -> dict:

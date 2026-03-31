@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from modules.meta_engine import meta_hash_state
 from modules.delta_propagation import compute_delta_hash
 

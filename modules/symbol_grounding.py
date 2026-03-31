@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Symbol Grounding Layer mit persistenter Token- und Beziehungsstruktur."""
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ class SymbolGroundingLayer:
             return {"tokens": {}, "entry_to_token": {}, "semantic_network": []}
         try:
             return json.loads(self.state_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return {"tokens": {}, "entry_to_token": {}, "semantic_network": []}
 
     def _save_state(self) -> None:

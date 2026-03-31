@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """completion_filter.py — Aether Symbiont: Ockham-gefilterter Completion-Ranker.
 
 Nimmt eine Liste von KI-Completion-Kandidaten entgegen, berechnet für jeden

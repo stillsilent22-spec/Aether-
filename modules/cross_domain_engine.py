@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Aether Cross-Domain Pattern Engine
 -----------------------------------
@@ -318,7 +320,7 @@ class CrossDomainEngine:
         try:
             yield con
             con.commit()
-        except Exception:
+        except Exception as e:
             con.rollback()
             raise
         finally:

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Invariant Detector: Mathematical invariant discovery for Aether Swarm.
 

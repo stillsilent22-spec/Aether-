@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from modules.state_machine import state_init, state_step
 from modules.meta_engine import meta_hash_state
 

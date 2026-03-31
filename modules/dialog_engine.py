@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Strukturelle Dialogantworten ohne externes Sprachmodell."""
 
 from __future__ import annotations
@@ -253,7 +255,7 @@ class StructuralDialogEngine:
             return None
         try:
             entries = self.registry.get_assistant_registry_knowledge(limit=48)
-        except Exception:
+        except Exception as e:
             return None
         best_entry: dict[str, Any] | None = None
         best_score = 0.0

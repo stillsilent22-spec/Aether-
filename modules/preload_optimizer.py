@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Adaptive preload recommendations based on vault analysis."""
 
 from __future__ import annotations
@@ -162,13 +164,13 @@ class PreloadOptimizer:
     def _load_vault_analysis(self) -> dict[str, Any]:
         try:
             return json.loads(self.vault_analysis_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return {}
 
     def _load_history(self) -> list[dict[str, Any]]:
         try:
             payload = json.loads(self.history_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return []
         return [dict(item) for item in list(payload or []) if isinstance(item, dict)]
 

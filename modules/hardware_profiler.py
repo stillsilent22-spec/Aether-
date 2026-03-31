@@ -33,7 +33,7 @@ from typing import Any
 try:
     import psutil
     _PSUTIL_OK = True
-except Exception:
+except Exception as e:
     psutil = None  # type: ignore
     _PSUTIL_OK = False
 
@@ -144,7 +144,8 @@ class HardwareProfiler:
     def _fill_cpu(self, p: HardwareProfile) -> None:
         try:
             p.cpu_name = platform.processor() or ""
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
 
         if _PSUTIL_OK and psutil:
@@ -154,7 +155,8 @@ class HardwareProfiler:
                 freq = psutil.cpu_freq()
                 if freq:
                     p.cpu_freq_mhz = float(freq.max or freq.current or 0)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
         # Fallback: /proc/cpuinfo (Linux)
@@ -167,7 +169,8 @@ class HardwareProfiler:
                 m2 = re.search(r"model name\s*:\s*(.+)", text)
                 if m2 and not p.cpu_name:
                     p.cpu_name = m2.group(1).strip()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
     # ------------------------------------------------------------------
@@ -180,7 +183,8 @@ class HardwareProfiler:
                 vm = psutil.virtual_memory()
                 p.ram_total_mb = int(vm.total // (1024 * 1024))
                 p.ram_available_mb = int(vm.available // (1024 * 1024))
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
     # ------------------------------------------------------------------
@@ -192,7 +196,8 @@ class HardwareProfiler:
             try:
                 du = psutil.disk_usage("/")
                 p.disk_free_gb = float(du.free) / (1024 ** 3)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
         # Typ erkennen
@@ -219,7 +224,8 @@ class HardwareProfiler:
                 return "HDD"
             if "nvme" in out:
                 return "NVMe"
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
         return "unknown"
 
@@ -231,7 +237,8 @@ class HardwareProfiler:
                 if rota.exists():
                     val = rota.read_text().strip()
                     return "HDD" if val == "1" else "SSD"
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
         return "unknown"
 
@@ -248,7 +255,8 @@ class HardwareProfiler:
                     stderr=subprocess.DEVNULL, timeout=5, text=True,
                 ).strip()
                 p.gpu_name = out
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
         elif _IS_LINUX:
             try:
@@ -258,7 +266,8 @@ class HardwareProfiler:
                 m = re.search(r"VGA[^\n]*?:\s*(.+)", out)
                 if m:
                     p.gpu_name = m.group(1).strip()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
         elif _IS_MAC:
             try:
@@ -269,7 +278,8 @@ class HardwareProfiler:
                 m = re.search(r"Chipset Model:\s*(.+)", out)
                 if m:
                     p.gpu_name = m.group(1).strip()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
     # ------------------------------------------------------------------
@@ -285,7 +295,7 @@ class HardwareProfiler:
             enabled = ctypes.c_int(0)
             dwm.DwmIsCompositionEnabled(ctypes.byref(enabled))
             p.aero_enabled = bool(enabled.value)
-        except Exception:
+        except Exception as e:
             p.aero_enabled = False
 
     # ------------------------------------------------------------------
@@ -357,7 +367,8 @@ class HardwareOptimizer:
                     reversible=False,
                     auto_applicable=False,
                 ))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
 
         # -- 2. Bloat-Prozesse (hohe CPU-Last) --
@@ -379,7 +390,8 @@ class HardwareOptimizer:
                             rollback_data={"process": bloat, "prev_priority": "normal"},
                             details={"pid": proc.pid, "cpu_percent": cpu},
                         ))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
 
         # -- 3. Windows-Dienste (nur Windows) --
@@ -405,7 +417,8 @@ class HardwareOptimizer:
                         reversible=False,
                         auto_applicable=False,
                     ))
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
         # -- 5. Aero / visuelle Effekte --
@@ -435,7 +448,8 @@ class HardwareOptimizer:
                         reversible=False,
                         auto_applicable=False,
                     ))
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[hardware_profiler] Fehler: {e}")
                 pass
 
         return sorted(suggestions, key=lambda s: {"high": 0, "medium": 1, "low": 2}[s.severity])
@@ -465,8 +479,10 @@ class HardwareOptimizer:
                                 rollback_data={"service": svc_name, "prev_start": int(start_val)},
                                 details={"service_name": svc_name, "description": svc_desc},
                             ))
-                except FileNotFoundError:
+                except FileNotFoundError as e:
+                    logger.warning(f"[hardware_profiler] Fehler: {e}")
                     pass
-        except ImportError:
+        except ImportError as e:
+            logger.warning(f"[hardware_profiler] Fehler: {e}")
             pass
         return suggestions

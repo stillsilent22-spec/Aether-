@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ def _to_number(value: Any) -> float:
         return float(len(value))
     try:
         return float(str(value).strip())
-    except Exception:
+    except Exception as e:
         return float(len(str(value)))
 
 
@@ -971,7 +973,7 @@ class AEAlgorithmVault:
                 + benford_bonus
                 - uncertainty_penalty
             )
-        except Exception:
+        except Exception as e:
             fitness = 0.0
             result = None
             governance = dict(governance)
@@ -1348,7 +1350,7 @@ class AEAlgorithmVault:
             return 0
         try:
             return int(source_payload.get("delta_session_seed", 0) or 0)
-        except Exception:
+        except Exception as e:
             return 0
 
     def _ttd_hash_logged(self, ttd_hash: str) -> bool:
@@ -1362,7 +1364,7 @@ class AEAlgorithmVault:
                 payload = json.loads(line)
                 if str(payload.get("ttd_hash", "") or "") == str(ttd_hash):
                     return True
-        except Exception:
+        except Exception as e:
             return False
         return False
 
@@ -1519,7 +1521,7 @@ class AetherAnchorInterpreter:
         for algorithm in algorithms:
             try:
                 result = algorithm.run(data)
-            except Exception:
+            except Exception as e:
                 continue
             anchor_type = self.classify_anchor(result, data)
             if anchor_type:

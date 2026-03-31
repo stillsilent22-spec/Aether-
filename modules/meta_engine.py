@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import hashlib
 
 def meta_validate_state(state: dict) -> bool:

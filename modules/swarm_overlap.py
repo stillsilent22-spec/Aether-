@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Structural domain-overlap detection for Aether Swarm.
 
 Compares local anchor fingerprint metrics against peer-supplied candidate
@@ -94,7 +96,8 @@ def load_domain_tags() -> List[str]:
             raw = json.loads(DOMAIN_TAGS_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, list):
                 return [str(t).strip().lower() for t in raw if t]
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[swarm_overlap] Fehler: {e}")
         pass
     return []
 
@@ -122,7 +125,7 @@ def _read_local_metrics(limit: int = 100) -> List[Dict[str, Any]]:
         ).fetchall()
         conn.close()
         return [dict(r) for r in rows if r["fingerprint"]]
-    except Exception:
+    except Exception as e:
         return []
 
 
@@ -140,7 +143,8 @@ def _load_peer_candidates() -> List[Dict[str, Any]]:
             raw = json.loads(PEER_CANDIDATES_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, list):
                 return raw
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[swarm_overlap] Fehler: {e}")
         pass
     return []
 
@@ -152,7 +156,8 @@ def _read_existing_events() -> List[Dict[str, Any]]:
                 raw = json.loads(OVERLAP_EVENTS_PATH.read_text(encoding="utf-8"))
                 if isinstance(raw, list):
                     return raw
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[swarm_overlap] Fehler: {e}")
             pass
     return []
 

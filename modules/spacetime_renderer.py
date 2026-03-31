@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
 
 from __future__ import annotations
@@ -177,7 +179,8 @@ class SpacetimeRenderer:
                 pil_image = Image.fromarray(image[:, :, :3], mode="RGB")
                 pil_image = pil_image.resize((target, target), Image.Resampling.BILINEAR)
                 return np.asarray(pil_image, dtype=np.uint8)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[spacetime_renderer] Fehler: {e}")
                 pass
         y_idx = np.linspace(0, max(0, image.shape[0] - 1), target).astype(int)
         x_idx = np.linspace(0, max(0, image.shape[1] - 1), target).astype(int)
@@ -188,7 +191,7 @@ class SpacetimeRenderer:
         """Liest fuer Text-/Code-/Binary-Miniaturen eine kleine Stichprobe."""
         try:
             return file_path.read_bytes()[: max(1024, int(limit))]
-        except Exception:
+        except Exception as e:
             return b""
 
     @staticmethod
@@ -198,7 +201,7 @@ class SpacetimeRenderer:
             try:
                 text = bytes(raw).decode(encoding)
                 break
-            except Exception:
+            except Exception as e:
                 text = ""
         lines = [str(line).rstrip() for line in str(text).splitlines()[:64]]
         return lines or ["Aether", "Miniaturvorschau"]
@@ -315,7 +318,8 @@ class SpacetimeRenderer:
                 offset = ((target - image.width) // 2, (target - image.height) // 2)
                 canvas.paste(image, offset)
                 return np.asarray(canvas, dtype=np.uint8)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[spacetime_renderer] Fehler: {e}")
                 pass
 
         if category == "video" and cv2 is not None and path.is_file():
@@ -328,12 +332,14 @@ class SpacetimeRenderer:
                 if ok and frame is not None:
                     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                     return self._resize_rgb(rgb, target)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[spacetime_renderer] Fehler: {e}")
                 pass
             finally:
                 try:
                     capture.release()
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[spacetime_renderer] Fehler: {e}")
                     pass
 
         if category == "font":

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministische lokale Sicherheits- und Trust-Ueberwachung fuer Aether."""
 
 from __future__ import annotations
@@ -87,7 +89,7 @@ class AetherSecurityMonitor:
             return hashlib.sha256(b"missing:security_static").hexdigest()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             payload = path.read_text(encoding="utf-8", errors="replace")
         return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
 
@@ -252,7 +254,7 @@ class AetherSecurityMonitor:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             anchor_count = int(payload.get("anchor_count", 0) or 0)
             if anchor_count < 0:
@@ -260,7 +262,7 @@ class AetherSecurityMonitor:
             if str(row["source_type"]) == "file":
                 try:
                     reconstructed = self.registry.reconstruct_original(int(row["id"]), session_context=None, prefer_raw=False)
-                except Exception:
+                except Exception as e:
                     reconstructed = b""
                 if not reconstructed or hashlib.sha256(reconstructed).hexdigest() != str(row["file_hash"]):
                     mismatches += 1
@@ -302,7 +304,7 @@ class AetherSecurityMonitor:
             return findings
         try:
             state = json.loads(self.language_state_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return [
                 self._finding(
                     "GP_RULE_TAMPERED",

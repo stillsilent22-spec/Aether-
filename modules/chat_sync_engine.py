@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Verschluesselter Relay-Sync fuer Mehrrechner-Chat."""
 
 from __future__ import annotations
@@ -71,12 +73,13 @@ def local_bind_address() -> str:
     try:
         probe.connect(("8.8.8.8", 80))
         return str(probe.getsockname()[0])
-    except Exception:
+    except Exception as e:
         return "127.0.0.1"
     finally:
         try:
             probe.close()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[chat_sync_engine] Fehler: {e}")
             pass
 
 
@@ -119,7 +122,7 @@ class _RelayStore:
                     )
                     self._events.append(event)
                     self._last_id = max(self._last_id, event.event_id)
-        except Exception:
+        except Exception as e:
             self._events = []
             self._last_id = 0
 
@@ -242,12 +245,12 @@ class ChatRelayServer:
                     return
                 try:
                     length = int(self.headers.get("Content-Length", "0") or 0)
-                except Exception:
+                except Exception as e:
                     length = 0
                 raw = self.rfile.read(max(0, length))
                 try:
                     payload = json.loads(raw.decode("utf-8") or "{}")
-                except Exception:
+                except Exception as e:
                     self._send_json(400, {"ok": False, "error": "invalid_json"})
                     return
                 blob = str(payload.get("blob", "")).strip()

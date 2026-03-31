@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 from modules.diagnostics import diag_state_summary, diag_delta_summary
 
 def render_state_summary(state: dict) -> str:

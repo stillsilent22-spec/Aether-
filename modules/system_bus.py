@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 def bus_dispatch(event: dict, handlers: dict) -> dict:
     if "type" not in event:
         return {"status": "error"}

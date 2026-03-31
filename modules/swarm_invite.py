@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import base64
 import json
 import uuid
@@ -79,7 +81,7 @@ def validate_invite_pack(
             return False
         public_key.verify(base64.b64decode(signature_b64), _canonical_payload(pack))
         return True
-    except Exception:
+    except Exception as e:
         return False
 
 

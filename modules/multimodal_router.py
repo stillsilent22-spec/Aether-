@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import math
 import os
 from collections import Counter

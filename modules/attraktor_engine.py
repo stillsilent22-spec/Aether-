@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Compatibility wrapper for legacy `attraktor` naming.
 
 Canonical module: ``modules.attractor_engine``.

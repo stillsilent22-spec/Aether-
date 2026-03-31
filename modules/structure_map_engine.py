@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministic structure-map projection for capsule results.
 
 This module converts a capsule result into a stable, shareable structure-map
@@ -22,7 +24,7 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except Exception as e:
         return float(default)
 
 

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 attractor_engine.py
 Kanonische Implementierung der Permutation-Entropy-Metrik für Aether.

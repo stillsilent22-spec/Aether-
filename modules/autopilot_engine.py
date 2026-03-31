@@ -26,23 +26,23 @@ from typing import Any
 try:
     from .hardware_profiler import OptimizationSuggestion
     from .process_anchor_store import ProcessAnchorStore
-except ImportError:
+except ImportError as e:
     from modules.hardware_profiler import OptimizationSuggestion
     from modules.process_anchor_store import ProcessAnchorStore
 
 try:
     import psutil
     _PSUTIL_OK = True
-except Exception:
+except Exception as e:
     psutil = None  # type: ignore
     _PSUTIL_OK = False
 
 try:
     from .ethics_engine import OckhamRazorEngine as _OckhamRazorEngine
-except ImportError:
+except ImportError as e:
     try:
         from modules.ethics_engine import OckhamRazorEngine as _OckhamRazorEngine  # type: ignore
-    except ImportError:
+    except ImportError as e:
         _OckhamRazorEngine = None  # type: ignore
 
 _IS_WIN = sys.platform.startswith("win")
@@ -178,7 +178,8 @@ class AutopilotEngine:
             try:
                 obs["cpu_load"] = psutil.cpu_percent(interval=None) / 100.0
                 obs["mem_pressure"] = psutil.virtual_memory().percent / 100.0
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[autopilot_engine] Fehler: {e}")
                 pass
         return obs
 
@@ -286,7 +287,8 @@ class AutopilotEngine:
                         "process": name, "pid": proc.pid,
                         "prev_priority": old_nice,
                     }
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                logger.warning(f"[autopilot_engine] Fehler: {e}")
                 pass
 
         return False, f"process not found: {name}", {}
@@ -304,7 +306,8 @@ class AutopilotEngine:
                     if prev is not None:
                         proc.nice(prev)
                     return True, "priority_restored"
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied) as e:
+                logger.warning(f"[autopilot_engine] Fehler: {e}")
                 pass
         return False, "process not found"
 

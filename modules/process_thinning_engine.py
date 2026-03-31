@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """process_thinning_engine.py — MetaLayer OS Phase B: Process Thinning.
 
 Erkennt redundante und twin-artige Prozesse (gleiche Verhaltenssignatur,
@@ -15,13 +17,13 @@ from typing import Optional, List, Dict, Any, Callable
 try:
     import psutil
     _PSUTIL = True
-except ImportError:
+except ImportError as e:
     _PSUTIL = False
 
 try:
     import numpy as np
     _NUMPY = True
-except ImportError:
+except ImportError as e:
     _NUMPY = False
 
 from modules.process_pixel_mapper import ProcessPixelMap
@@ -317,9 +319,9 @@ class ProcessThinningEngine:
             elif action == "deprioritize":
                 proc.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS if hasattr(psutil, "BELOW_NORMAL_PRIORITY_CLASS") else 10)  # type: ignore[attr-defined]
             return ThinningResult(applied=True, pid=pid, process_name=name, success=True)
-        except psutil.NoSuchProcess:
+        except psutil.NoSuchProcess as e:
             return ThinningResult(applied=True, pid=pid, process_name=name, success=False, error="no_such_process")
-        except psutil.AccessDenied:
+        except psutil.AccessDenied as e:
             return ThinningResult(applied=True, pid=pid, process_name=name, success=False, error="access_denied")
         except Exception as exc:
             return ThinningResult(applied=True, pid=pid, process_name=name, success=False, error=str(exc))
@@ -349,7 +351,7 @@ class ProcessThinningEngine:
             ram_mb = proc.memory_info().rss / (1024 * 1024)
             cpu = proc.cpu_percent(interval=None)
             return round(ram_mb, 2), round(cpu, 2)
-        except Exception:
+        except Exception as e:
             return 0.0, 0.0
 
 

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Optionaler Netzwerktransport fuer oeffentliche TTD-Anker."""
 
 from __future__ import annotations
@@ -50,7 +52,7 @@ class PublicTTDTransport:
         if self.settings_path.is_file():
             try:
                 raw = json.loads(self.settings_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
                 raw = {}
             if isinstance(raw, dict):
                 settings.update({str(key): raw.get(key) for key in settings.keys() if key in raw})
@@ -71,7 +73,7 @@ class PublicTTDTransport:
     def _timeout(self, settings: dict[str, Any]) -> float:
         try:
             return max(2.0, min(60.0, float(settings.get("timeout_seconds", "12") or 12.0)))
-        except Exception:
+        except Exception as e:
             return 12.0
 
     def _request_json(

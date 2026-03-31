@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Phase 4: Windows Prozessdynamik — strukturelle Erfassung als X_t."""
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ _IS_WINDOWS = sys.platform.startswith("win")
 try:
     import psutil
     _PSUTIL_AVAILABLE = True
-except Exception:
+except Exception as e:
     psutil = None
     _PSUTIL_AVAILABLE = False
 
@@ -22,13 +24,13 @@ try:
     import win32con
     import win32security
     _WIN32_AVAILABLE = True
-except Exception:
+except Exception as e:
     _WIN32_AVAILABLE = False
 
 try:
     import ctypes
     _CTYPES_AVAILABLE = True
-except Exception:
+except Exception as e:
     _CTYPES_AVAILABLE = False
 
 
@@ -95,7 +97,7 @@ class ProcessMonitor:
                     io = p.io_counters()
                     io_read = int(io.read_bytes)
                     io_write = int(io.write_bytes)
-                except Exception:
+                except Exception as e:
                     io_read = io_write = 0
                 return ProcessSnapshot(
                     pid=int(pid),
@@ -111,7 +113,7 @@ class ProcessMonitor:
                     ppid=int(p.ppid() or 0),
                     integrity_level=self._get_integrity_level(pid),
                 )
-        except Exception:
+        except Exception as e:
             return None
 
     def monitor_windows_process(self, pid: int) -> dict[str, Any]:
@@ -140,7 +142,7 @@ class ProcessMonitor:
                     snapshots.append(snap)
                 if len(snapshots) >= max_count:
                     break
-            except Exception:
+            except Exception as e:
                 continue
         return snapshots
 
@@ -183,7 +185,7 @@ class ProcessMonitor:
                 rid = int.from_bytes(bytes(buf[-4:]), "little") & 0xF000
                 return self._INTEGRITY_LABELS.get(rid, f"Unknown(0x{rid:04X})")
             return "Unknown"
-        except Exception:
+        except Exception as e:
             return "n/a"
 
     @staticmethod

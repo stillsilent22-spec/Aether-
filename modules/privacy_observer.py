@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Structural Windows privacy observer without content inspection."""
 
 from __future__ import annotations
@@ -177,7 +179,7 @@ class WindowsPrivacyObserver:
                         snapshot_ts=snapshot_ts,
                     )
                 )
-            except Exception:
+            except Exception as e:
                 continue
         signals.sort(key=lambda item: (-float(item.cpu_percent), str(item.name), int(item.pid)))
         return signals[:200]
@@ -200,7 +202,7 @@ class WindowsPrivacyObserver:
                 process_name = ""
                 try:
                     process_name = str(psutil.Process(pid).name() or "")
-                except Exception:
+                except Exception as e:
                     process_name = ""
                 if is_private_context(process_name, ""):
                     continue
@@ -232,7 +234,7 @@ class WindowsPrivacyObserver:
                         snapshot_ts=snapshot_ts,
                     )
                 )
-            except Exception:
+            except Exception as e:
                 continue
         return signals
 
@@ -282,7 +284,8 @@ class WindowsPrivacyObserver:
                 snapshot = self.take_snapshot()
                 try:
                     callback(snapshot)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[privacy_observer] Fehler: {e}")
                     pass
                 time.sleep(self.snapshot_interval_sec)
 
@@ -297,7 +300,7 @@ class WindowsPrivacyObserver:
         for file_path in files[:-50]:
             try:
                 file_path.unlink()
-            except Exception:
+            except Exception as e:
                 continue
 
     def _connections_by_pid(self) -> dict[int, int]:
@@ -309,7 +312,7 @@ class WindowsPrivacyObserver:
                 pid = int(getattr(conn, "pid", 0) or 0)
                 if pid > 0:
                     counts[pid] += 1
-        except Exception:
+        except Exception as e:
             return {}
         return dict(counts)
 
@@ -324,7 +327,7 @@ class WindowsPrivacyObserver:
                     int(getattr(io, "read_bytes", 0) or 0),
                     int(getattr(io, "write_bytes", 0) or 0),
                 )
-            except Exception:
+            except Exception as e:
                 continue
         return result
 
@@ -339,7 +342,7 @@ class WindowsPrivacyObserver:
             if not host or host == ip_address:
                 return "unknown"
             return host
-        except (FuturesTimeoutError, Exception):
+        except (FuturesTimeoutError, Exception) as e:
             return "unknown"
 
     @staticmethod
@@ -369,7 +372,7 @@ class WindowsPrivacyObserver:
     def _iso_from_timestamp(timestamp: float) -> str:
         try:
             return datetime.fromtimestamp(float(timestamp), tz=timezone.utc).isoformat()
-        except Exception:
+        except Exception as e:
             return ""
 
     def _autostart_names(self) -> list[str]:
@@ -386,7 +389,7 @@ class WindowsPrivacyObserver:
                 continue
             try:
                 handle = winreg.OpenKey(root, subkey)
-            except Exception:
+            except Exception as e:
                 continue
             index = 0
             while True:
@@ -395,11 +398,12 @@ class WindowsPrivacyObserver:
                     if name and not is_private_context(name, ""):
                         names.append(str(name))
                     index += 1
-                except OSError:
+                except OSError as e:
                     break
             try:
                 winreg.CloseKey(handle)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[privacy_observer] Fehler: {e}")
                 pass
         return sorted(set(names))
 
@@ -413,7 +417,7 @@ class WindowsPrivacyObserver:
                 timeout=6.0,
                 check=False,
             )
-        except Exception:
+        except Exception as e:
             return []
         names: list[str] = []
         for line in str(result.stdout or "").splitlines():
@@ -431,7 +435,7 @@ class WindowsPrivacyObserver:
             count, _values, _modified = winreg.QueryInfoKey(handle)
             winreg.CloseKey(handle)
             return int(count)
-        except Exception:
+        except Exception as e:
             return 0
 
     @staticmethod
@@ -452,6 +456,6 @@ class WindowsPrivacyObserver:
 
         try:
             ctypes.windll.user32.EnumWindows(enum_proc, 0)
-        except Exception:
+        except Exception as e:
             return set()
         return result

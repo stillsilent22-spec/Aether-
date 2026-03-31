@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministische lokale Tkinter-GUI fuer Aether."""
 
 from __future__ import annotations
@@ -7,7 +9,7 @@ try:
     import tkinter as tk
     from tkinter import filedialog, ttk
     _HAS_TKINTER = True
-except ImportError:
+except ImportError as e:
     tk = None  # type: ignore
     filedialog = None  # type: ignore
     ttk = None  # type: ignore
@@ -190,7 +192,8 @@ class AetherGUI:
     def _on_close(self) -> None:
         try:
             self.registry.close()
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[gui] Fehler: {e}")
             pass
         if self.root is not None:
             self.root.destroy()

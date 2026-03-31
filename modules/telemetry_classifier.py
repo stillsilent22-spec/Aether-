@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import hashlib
 import json
 import math
@@ -176,7 +178,8 @@ class TelemetryClassifier:
                 payload = signal.to_dict()
                 if isinstance(payload, dict):
                     return dict(payload)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[telemetry_classifier] Fehler: {e}")
                 pass
         result: dict[str, Any] = {}
         for name in (
@@ -224,6 +227,7 @@ class TelemetryClassifier:
                 score += 0.20
             if conn_count > 5 and interval_std < 2.0:
                 score += 0.10
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[telemetry_classifier] Fehler: {e}")
             pass
         return min(1.0, float(score))

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Beobachter-Pipeline fuer Kameraanker, Metriken und Delta-Logs."""
 
 from __future__ import annotations
@@ -128,12 +130,12 @@ class ObserverEngine:
             for node_path in sorted(nodes_dir.glob("*.json")):
                 try:
                     payload = json.loads(node_path.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as e:
                     continue
                 node_id = str(payload.get("node_id", "")).strip()
                 if node_id:
                     return node_id
-        except Exception:
+        except Exception as e:
             return "local-node"
         return "local-node"
 
@@ -163,7 +165,7 @@ class ObserverEngine:
                     if key in aether
                 })
                 return merged
-        except Exception:
+        except Exception as e:
             return dict(defaults)
         return dict(defaults)
 
@@ -378,7 +380,7 @@ class ObserverEngine:
             return self._default_learning_state()
         try:
             envelope = json.loads(source_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return self._default_learning_state()
         payload = decrypt_device_scoped_payload(
             envelope=dict(envelope or {}),
@@ -392,7 +394,8 @@ class ObserverEngine:
             if source_path == legacy_path:
                 try:
                     self.save_learning_state(session_context, state)
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[observer_engine] Fehler: {e}")
                     pass
         return state
 
@@ -412,7 +415,8 @@ class ObserverEngine:
         if legacy_path != path and legacy_path.is_file():
             try:
                 legacy_path.unlink()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[observer_engine] Fehler: {e}")
                 pass
         return normalized
 
@@ -1084,7 +1088,7 @@ class ObserverEngine:
                 raw_value = entry.get(key)
                 try:
                     digit = leading_digit(float(raw_value))
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as e:
                     continue
                 if digit in counts:
                     counts[digit] += 1
@@ -1366,7 +1370,7 @@ class ObserverEngine:
                     )
                 ) if region else pyautogui.screenshot()
                 return np.asarray(screenshot, dtype=np.uint8)
-            except Exception:
+            except Exception as e:
                 return None
         try:
             with mss.mss() as sct:
@@ -1375,13 +1379,13 @@ class ObserverEngine:
             if frame.ndim == 3 and frame.shape[2] >= 3:
                 return frame[:, :, :3][:, :, ::-1]
             return frame
-        except Exception:
+        except Exception as e:
             if pyautogui is None:
                 return None
             try:
                 screenshot = pyautogui.screenshot()
                 return np.asarray(screenshot, dtype=np.uint8)
-            except Exception:
+            except Exception as e:
                 return None
 
     def _process_snapshot(self) -> dict[str, object]:
@@ -1390,29 +1394,29 @@ class ObserverEngine:
         process = psutil.Process()
         try:
             cpu_percent = float(process.cpu_percent(interval=0.05))
-        except Exception:
+        except Exception as e:
             cpu_percent = 0.0
         try:
             memory_info = process.memory_info()
             rss = int(getattr(memory_info, "rss", 0) or 0)
             vms = int(getattr(memory_info, "vms", 0) or 0)
-        except Exception:
+        except Exception as e:
             rss = 0
             vms = 0
         try:
             io_info = process.io_counters()
             read_bytes = int(getattr(io_info, "read_bytes", 0) or 0)
             write_bytes = int(getattr(io_info, "write_bytes", 0) or 0)
-        except Exception:
+        except Exception as e:
             read_bytes = 0
             write_bytes = 0
         try:
             open_files = len(process.open_files())
-        except Exception:
+        except Exception as e:
             open_files = 0
         try:
             connections = len(process.net_connections(kind="all"))
-        except Exception:
+        except Exception as e:
             connections = 0
         return {
             "available": True,

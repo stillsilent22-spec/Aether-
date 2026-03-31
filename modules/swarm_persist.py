@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Extended persistence layer for Aether Swarm.
 
 Provides SQLite-backed storage for:

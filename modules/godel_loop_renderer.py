@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Deterministic Goedel strange-loop renderer for structural self-observation.
 
 This renderer computes structure metrics for:
@@ -22,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
-    except Exception:
+    except Exception as e:
         return float(default)
 
 
@@ -42,14 +44,15 @@ class GoedelLoopRenderer:
             if path.is_file():
                 try:
                     return path.read_bytes()
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"[godel_loop_renderer] Fehler: {e}")
                     pass
             return input_source.encode("utf-8", errors="replace")
         if isinstance(input_source, Path):
             if input_source.is_file():
                 try:
                     return input_source.read_bytes()
-                except Exception:
+                except Exception as e:
                     return b""
             return str(input_source).encode("utf-8", errors="replace")
         if isinstance(input_source, (dict, list, tuple)):

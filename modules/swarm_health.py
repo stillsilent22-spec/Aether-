@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import json
 import logging
 import sqlite3
@@ -20,7 +22,7 @@ def _is_solo_genesis_mode() -> bool:
         from pathlib import Path
         s = json.loads(Path("data/settings.json").read_text(encoding="utf-8"))
         return bool(s.get("solo_genesis_mode", False))
-    except Exception:
+    except Exception as e:
         return False
 
 
@@ -80,7 +82,7 @@ def get_swarm_status(
                 if str(payload.get("role", "")).strip().lower() == "genesis":
                     genesis_key_ok = bool(str(payload.get("public_key_pem", "")).strip())
                     break
-            except Exception:
+            except Exception as e:
                 continue
 
         # Probe each known node's HTTP endpoint to count actually reachable nodes
@@ -95,7 +97,7 @@ def get_swarm_status(
                 with urllib.request.urlopen(ping_url, timeout=1.0) as resp:
                     if 200 <= int(resp.status) < 300:
                         reachable_count += 1
-            except Exception:
+            except Exception as e:
                 continue
 
         candidate_count = get_candidate_count(db_path=consensus_db)
@@ -117,7 +119,7 @@ def get_swarm_status(
             for pack_file in anchor_path.glob("*.pack"):
                 try:
                     pack = json.loads(pack_file.read_text(encoding="utf-8"))
-                except Exception:
+                except Exception as e:
                     continue
                 if "cascade_version" in pack and pack["cascade_version"] != CASCADE_VERSION:
                     version_mismatches += 1
@@ -132,7 +134,8 @@ def get_swarm_status(
                 )
                 health_score = max(0.0, float(health_score) - 0.30)
                 alert_level = "critical"
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[swarm_health] Fehler: {e}")
             pass
 
         summary = (

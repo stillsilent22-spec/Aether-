@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 aelab_vault.py
 Deterministischer, auditierbarer Vault für den AELab Motor.
@@ -187,7 +189,7 @@ def tree_from_dna(s: str) -> Optional[Node]:
                 int(kv["b"]),
                 int(kv["c"]),
             )
-        except (KeyError, ValueError, IndexError):
+        except (KeyError, ValueError, IndexError) as e:
             continue
 
     if not raw:
@@ -505,7 +507,7 @@ class AEVault:
             return None
         try:
             return path.read_bytes()
-        except Exception:
+        except Exception as e:
             return None
 
     def refresh_chunk_resolution(self, chunk_key: str) -> bool:
@@ -800,7 +802,7 @@ class AEVault:
                             has_prime    = int(row.get("has_prime",0)),
                         )
                         index[e.sig] = e
-                    except (KeyError, ValueError):
+                    except (KeyError, ValueError) as e:
                         continue
 
         for bucket in ["main", "sub_vault/inactive", "sub_vault/recovered"]:
@@ -822,7 +824,7 @@ class AEVault:
                         index[sig] = e
                     else:
                         index[sig].bucket = bucket
-                except Exception:
+                except Exception as e:
                     continue
 
             # Legacy: .json migrieren → sofort als .dna neu schreiben, .json löschen
@@ -846,7 +848,7 @@ class AEVault:
                     dna_path = json_file.with_suffix(".dna")
                     dna_path.write_text(tree_to_dna(tree), encoding="utf-8")
                     json_file.unlink(missing_ok=True)
-                except Exception:
+                except Exception as e:
                     continue
 
         self._entries = index

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """frame_delta_engine.py — Kollaborativer XOR-Delta Frame-Codec.
 
 Architektur (Swarm Delta Streaming Codec):

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """pixel_coord_optimizer.py — MetaLayer OS Phase B: Pixel-Koordinatenpfad-Optimierung.
 
 Analysiert den logischen Render-Pfad jedes Prozesses durch den DWM-Compositor
@@ -13,14 +15,14 @@ from typing import Optional, List, Dict, Tuple, Any
 try:
     import psutil
     _PSUTIL = True
-except ImportError:
+except ImportError as e:
     _PSUTIL = False
 
 try:
     import win32gui
     import win32process
     _WIN32 = True
-except ImportError:
+except ImportError as e:
     _WIN32 = False
 
 from modules.process_pixel_mapper import ProcessPixelMapper, ProcessPixelMap
@@ -146,7 +148,7 @@ class PixelCoordOptimizer:
         if not process_name and _PSUTIL:
             try:
                 process_name = psutil.Process(pid).name()
-            except Exception:
+            except Exception as e:
                 process_name = "unknown"
 
         layers = list(PATH_LAYERS_DEFAULT)
@@ -287,7 +289,8 @@ class PixelCoordOptimizer:
                 base += 1   # UWP: Zusatz-Kompositing via CoreWindow
             if ex_style & 0x00200000:   # WS_EX_NOREDIRECTIONBITMAP
                 base -= 2   # Direkte Flip-Ausgabe → weniger Hops
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[pixel_coord_optimizer] Fehler: {e}")
             pass
         return max(1, base)
 
@@ -307,7 +310,8 @@ class PixelCoordOptimizer:
             # Composition-Batch unnötig wenn Prozess keine transparenten Bereiche hat
             if not (ex_style & 0x00080000) and "composition_batch" in layers:
                 removable.append("composition_batch")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[pixel_coord_optimizer] Fehler: {e}")
             pass
         return removable
 
@@ -332,12 +336,14 @@ class PixelCoordOptimizer:
                     rect = win32gui.GetWindowRect(hwnd)
                     if rect[2] - rect[0] > 0 and rect[3] - rect[1] > 0:
                         found.append(hwnd)
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[pixel_coord_optimizer] Fehler: {e}")
                 pass
             return True
         try:
             win32gui.EnumWindows(_cb, None)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[pixel_coord_optimizer] Fehler: {e}")
             pass
         return found[0] if found else None
 
@@ -354,6 +360,6 @@ class PixelCoordOptimizer:
                 if user_short in SYSTEM_USERS:
                     continue
                 pids.append(int(info["pid"]))
-            except Exception:
+            except Exception as e:
                 continue
         return pids

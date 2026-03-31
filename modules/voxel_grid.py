@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Strukturpunkt-Raster fuer CSV-Import, Heatmaps und Delta-Export."""
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ def _safe_float(value: object, default: float = 0.0) -> float:
                 return float(default)
             return float(normalized)
         return float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as e:
         return float(default)
 
 
@@ -155,7 +157,7 @@ class StructureGrid:
 
         try:
             dialect = csv.Sniffer().sniff(text[:4096], delimiters=",;\t")
-        except csv.Error:
+        except csv.Error as e:
             dialect = csv.excel
 
         reader = csv.DictReader(io.StringIO(text), dialect=dialect)

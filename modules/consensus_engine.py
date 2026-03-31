@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+logger = logging.getLogger(__name__)
 import json
 import sqlite3
 from datetime import datetime, timezone
@@ -65,7 +67,7 @@ def _normalize_metrics(metrics: Optional[Dict[str, Any]]) -> Dict[str, Any]:
                 normalized[str(key)] = round(float(value), 12)
             else:
                 normalized[str(key)] = value
-        except Exception:
+        except Exception as e:
             normalized[str(key)] = 0.0
     return normalized
 

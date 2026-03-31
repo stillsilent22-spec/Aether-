@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 def monitor_runtime(runtime: dict) -> dict:
     return {"running": bool(runtime.get("running", False)), "tick": int(runtime.get("tick", 0)), "history_length": len(runtime.get("history", []))}
 

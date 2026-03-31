@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Rust bus bridge via CLI subprocess and shared JSONL transport."""
 
 from __future__ import annotations
@@ -77,7 +79,8 @@ class RustBusBridge:
         if process is not None:
             try:
                 process.terminate()
-            except Exception:
+            except Exception as e:
+                logger.warning(f"[bus_bridge] Fehler: {e}")
                 pass
 
     def publish(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -98,7 +101,7 @@ class RustBusBridge:
                 check=False,
                 timeout=4.0,
             )
-        except Exception:
+        except Exception as e:
             return
 
     def recent_events(self, seconds: float = 60.0) -> list[dict[str, Any]]:
@@ -123,7 +126,7 @@ class RustBusBridge:
                 text=True,
                 encoding="utf-8",
             )
-        except Exception:
+        except Exception as e:
             self._available = False
             self._running = False
             return
@@ -137,7 +140,7 @@ class RustBusBridge:
                 continue
             try:
                 payload = json.loads(line)
-            except Exception:
+            except Exception as e:
                 continue
             event_type = str(payload.get("event_type", "") or "")
             if self.event_filter and event_type not in self.event_filter:
@@ -152,6 +155,6 @@ class RustBusBridge:
                 self._recent_events.append(dict(event))
             try:
                 callback(dict(event))
-            except Exception:
+            except Exception as e:
                 continue
         self._running = False

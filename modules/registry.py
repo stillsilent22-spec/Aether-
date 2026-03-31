@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Persistente SQLite-Registry fuer Aether."""
 
 from __future__ import annotations
@@ -807,11 +809,11 @@ class AetherRegistry:
         self_metrics_raw = str(row["self_metrics_json"]).strip()
         try:
             manifest = json.loads(manifest_raw) if manifest_raw else {}
-        except Exception:
+        except Exception as e:
             manifest = {}
         try:
             self_metrics = json.loads(self_metrics_raw) if self_metrics_raw else {}
-        except Exception:
+        except Exception as e:
             self_metrics = {}
         return {
             "baseline_node_id": str(row["baseline_node_id"]),
@@ -921,7 +923,7 @@ class AetherRegistry:
         if identity and stored_secret:
             try:
                 secret_value = unprotect_local_secret(stored_secret)
-            except Exception:
+            except Exception as e:
                 secret_value = ""
             if secret_value:
                 if not is_protected_local_secret(stored_secret):
@@ -1234,7 +1236,7 @@ class AetherRegistry:
         payload_raw = str(row["payload_json"]).strip()
         try:
             payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             payload = {}
         payload.update(dict(payload_update))
         self.connection.execute(
@@ -1346,7 +1348,7 @@ class AetherRegistry:
         payload_raw = str(row["payload_json"]).strip()
         try:
             payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             payload = {}
         return {
             "mode": "delta_plus_encrypted_raw",
@@ -1590,7 +1592,7 @@ class AetherRegistry:
         for row in rows:
             try:
                 payload = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 continue
             if not bool(payload.get("confirmed_lossless", False)):
                 continue
@@ -1750,7 +1752,7 @@ class AetherRegistry:
         for row in rows:
             try:
                 payload = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 payload = {}
             result.append(
                 {
@@ -1891,7 +1893,7 @@ class AetherRegistry:
                 continue
             try:
                 payload = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 payload = {}
             if not payload:
                 payload = {
@@ -1973,7 +1975,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             result.append(
                 {
@@ -2117,7 +2119,7 @@ class AetherRegistry:
                 key=key,
                 aad=aad,
             )
-        except Exception:
+        except Exception as e:
             return reconstructed
         expected_hash = str(row["file_hash"])
         if hashlib.sha256(decrypted).hexdigest() != expected_hash:
@@ -2443,7 +2445,7 @@ class AetherRegistry:
         payload_raw = str(row["payload_json"]).strip()
         try:
             payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             payload = {}
         return {
             "id": int(row["id"]),
@@ -2645,7 +2647,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             is_private_row = bool(int(row["is_private"]))
             is_group_row = bool(int(row["is_group"]))
@@ -2671,7 +2673,7 @@ class AetherRegistry:
                             message_text = decrypt_text(str(row["encrypted_payload"]), private_key)
                         if str(row["encrypted_reply_text"]).strip():
                             reply_text = decrypt_text(str(row["encrypted_reply_text"]), private_key)
-                except (InvalidToken, PermissionError, RuntimeError, ValueError):
+                except (InvalidToken, PermissionError, RuntimeError, ValueError) as e:
                     message_text = UNREADABLE_CHAT_TEXT
                     reply_text = UNREADABLE_CHAT_TEXT if str(row["encrypted_reply_text"]).strip() else ""
             result.append(
@@ -2757,7 +2759,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 member_payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 member_payload = {}
             snapshot_members.append(
                 {
@@ -2774,7 +2776,7 @@ class AetherRegistry:
         payload_raw = str(group_row["payload_json"]).strip()
         try:
             group_payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             group_payload = {}
         return {
             "group_id": str(group_row["group_id"]),
@@ -3000,7 +3002,7 @@ class AetherRegistry:
         payload_raw = str(row["payload_json"]).strip()
         try:
             group_payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             group_payload = {}
         return {
             "group_id": str(row["group_id"]),
@@ -3254,7 +3256,7 @@ class AetherRegistry:
         payload_raw = str(group_row["payload_json"]).strip()
         try:
             payload = json.loads(payload_raw) if payload_raw else {}
-        except Exception:
+        except Exception as e:
             payload = {}
         current_mode = str(payload.get("analysis_mode", "shared") or "shared").lower()
         next_mode = "individual" if current_mode == "shared" else "shared"
@@ -3345,7 +3347,7 @@ class AetherRegistry:
             member_count = int(row["member_count"]) if row["member_count"] is not None else 0
             try:
                 group_payload = json.loads(str(row["payload_json"])) if str(row["payload_json"]).strip() else {}
-            except Exception:
+            except Exception as e:
                 group_payload = {}
             channels.append(
                 {
@@ -3402,7 +3404,7 @@ class AetherRegistry:
         if row is not None:
             try:
                 supporter_ids = [int(item) for item in json.loads(str(row["supporter_ids_json"]))]
-            except Exception:
+            except Exception as e:
                 supporter_ids = []
         if int(user_id) not in supporter_ids:
             supporter_ids.append(int(user_id))
@@ -3954,7 +3956,7 @@ class AetherRegistry:
             return {}
         try:
             parsed = json.loads(TRUSTED_PUBLISHERS_PATH.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             return {}
         return dict(parsed or {}) if isinstance(parsed, dict) else {}
 
@@ -4008,7 +4010,7 @@ class AetherRegistry:
         try:
             public_key = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
             public_key.verify(base64.b64decode(signature_b64), canonical_json(payload).encode("utf-8"))
-        except (ValueError, InvalidSignature):
+        except (ValueError, InvalidSignature) as e:
             raise ValueError("Trusted-Publisher-Signatur ist ungueltig oder manipuliert.") from None
 
     def _validate_aether_dna_share_payload(self, payload: dict[str, Any], wrapper: dict[str, Any] | None = None) -> None:
@@ -4109,11 +4111,11 @@ class AetherRegistry:
         for row in rows:
             try:
                 feature_vector = json.loads(str(row["feature_vector"]))
-            except Exception:
+            except Exception as e:
                 feature_vector = []
             try:
                 payload_json = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 payload_json = {}
             loaded[int(row["id"])] = {
                 "id": int(row["id"]),
@@ -4166,7 +4168,7 @@ class AetherRegistry:
         for row in rows:
             try:
                 payload = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 continue
             if not bool(payload.get("confirmed_lossless", False)):
                 continue
@@ -4239,7 +4241,7 @@ class AetherRegistry:
         for row in rows:
             try:
                 payload = json.loads(str(row["payload_json"]))
-            except Exception:
+            except Exception as e:
                 continue
             if not bool(payload.get("confirmed_lossless", False)):
                 continue
@@ -4309,7 +4311,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             snapshots.append(
                 {
@@ -4588,7 +4590,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             if payload:
                 graph_records.append(payload)
@@ -5271,13 +5273,13 @@ class AetherRegistry:
             }
         try:
             index_payload = json.loads(index_path.read_text(encoding="utf-8"))
-        except Exception:
+        except Exception as e:
             index_payload = {}
         latest_wrapper: dict[str, Any] = {}
         if latest_path.is_file():
             try:
                 latest_wrapper = json.loads(latest_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
                 latest_wrapper = {}
         return {
             "exists": True,
@@ -5614,7 +5616,7 @@ class AetherRegistry:
             payload_raw = str(row["payload_json"]).strip()
             try:
                 payload = json.loads(payload_raw) if payload_raw else {}
-            except Exception:
+            except Exception as e:
                 payload = {}
             events.append(
                 {
@@ -5744,7 +5746,7 @@ class AetherRegistry:
         """Schliesst die Datenbankverbindung sauber."""
         try:
             self.connection.close()
-        except sqlite3.Error:
+        except sqlite3.Error as e:
             return
 
 

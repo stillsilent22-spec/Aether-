@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Persist privacy telemetry verdicts into the local DNA vault."""
 
 from __future__ import annotations

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Android platform detector and config."""
 import os, sys
 

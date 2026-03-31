@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 aelab_engine.py
 Brücke zwischen AELab-Motor/Vault und der Aether-Pipeline.

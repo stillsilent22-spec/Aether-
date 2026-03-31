@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """UI Adapter for Aether Swarm Mode.
 
 Provides lightweight UI clients that send IPC commands to SwarmController:
@@ -69,7 +71,8 @@ def format_status(status: Dict[str, Any]) -> str:
             lines.append(f"|  Sampling:      {fps_str:<46s}|")
             lines.append(f"|  CPU Load:      {cpu_str:<46s}|")
             lines.append(f"|  Frames:        {frames_str:<46s}|")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[swarm_ui_adapter] Fehler: {e}")
             pass
 
     # Consent state
@@ -80,7 +83,8 @@ def format_status(status: Dict[str, Any]) -> str:
         if cs.get("revoked"):
             consent_str = "REVOKED"
         lines.append(f"|  Consent:       {consent_str:<46s}|")
-    except Exception:
+    except Exception as e:
+        logger.warning(f"[swarm_ui_adapter] Fehler: {e}")
         pass
 
     lines.append(f"|  IPC:           {IPC_HOST}:{IPC_PORT:<41s}|")

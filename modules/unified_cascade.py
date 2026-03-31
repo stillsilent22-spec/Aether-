@@ -1,4 +1,6 @@
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 from typing import Any, Callable, Dict, List, Optional
 
 import importlib
@@ -8,7 +10,7 @@ def _try_import(name: str):
     for candidate in (name, f"modules.{name}"):
         try:
             return importlib.import_module(candidate)
-        except Exception:
+        except Exception as e:
             continue
     return None
 
