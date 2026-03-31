@@ -85,6 +85,34 @@ def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 300.0) -> bool:
         return True
 
 
+
+
+def _revoked_nodes_path() -> Path:
+    return _root_dir() / "config" / "revoked_nodes.json"
+
+def _load_revoked_nodes() -> set:
+    p = _revoked_nodes_path()
+    try:
+        if not p.exists():
+            return set()
+        data = json.loads(p.read_text(encoding='utf-8'))
+        if isinstance(data, dict):
+            lst = data.get('revoked', []) or data.get('node_ids', []) or []
+            return set(str(x) for x in lst)
+        if isinstance(data, list):
+            return set(str(x) for x in data)
+    except Exception:
+        pass
+    return set()
+
+def _is_revoked(node_id: str) -> bool:
+    try:
+        if not node_id:
+            return False
+        return str(node_id).strip() in _load_revoked_nodes()
+    except Exception:
+        return False
+
 def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str]) -> None:
     if not interface_name:
         return
@@ -165,6 +193,8 @@ def _receive_once(sock: socket.socket) -> None:
     local_node_id = str(_load_local_node_record().get("node_id", "") or "").strip()
     remote_node_id = str(payload.get("node_id", "") or "").strip()
     if remote_node_id and remote_node_id == local_node_id:
+        return
+    if _is_revoked(remote_node_id):
         return
     if not _is_fresh(payload):
         return
