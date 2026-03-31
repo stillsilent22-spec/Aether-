@@ -147,20 +147,29 @@ def main() -> int:
 	if not ensure_dependencies():
 		return 1
 
+	
 	try:
-		from aether_dropper import AetherDropper
+		from modules.runtime_core import init_runtime
+	except ModuleNotFoundError:
+		import sys as _sys, os as _os
+		_sys.path.insert(0, _os.path.dirname(__file__))
+		from runtime_core import init_runtime
+	try:
+		from modules.unified_cascade import run_full_pipeline
+		print("[START] Pipeline bereit.")
 	except Exception as exc:
-		print("\nStart fehlgeschlagen: AetherDropper konnte nicht geladen werden.")
-		print(f"Grund: {exc}")
+		print(f"[START] Pipeline konnte nicht geladen werden: {exc}")
 		return 1
 
+	print("[START] Aether laeuft. Druecke Ctrl+C zum Beenden.")
 	try:
-		AetherDropper().run()
-	except Exception as exc:
-		print("\nAether wurde gestartet, ist aber mit einem Laufzeitfehler abgebrochen.")
-		print(f"Grund: {exc}")
-		return 1
+		import time
+		while True:
+			time.sleep(10)
+	except KeyboardInterrupt:
+		print("[START] Aether gestoppt.")
 	return 0
+
 
 
 if __name__ == "__main__":

@@ -1,3 +1,6 @@
+from __future__ import annotations
+from typing import Any, Callable, Dict, List, Optional
+
 import importlib
 
 # Dynamisches Laden der Engines wie im Dropper
@@ -19,7 +22,7 @@ swarm_bridge = _try_import("swarm_loop_bridge")
 import shutil
 import zipfile
 import zlib
-from typing import Callable
+from typing import Callable, Optional, List, Dict, Any, Tuple, Set
 from datetime import datetime
 from pathlib import Path
 import json
@@ -44,8 +47,8 @@ def create_backup(src_path: Path) -> Path:
     shutil.copy2(src_path, destination)
     return destination
 
-def extract_archive(filepath: Path, output_dir: Path, log_fn: Callable[[str], None] | None = None) -> list[str]:
-    extracted: list[str] = []
+def extract_archive(filepath: Path, output_dir: Path, log_fn: Optional[Callable[[str], None]] = None) -> List[str]:
+    extracted: List[str] = []
     suffix = filepath.suffix.lower()
     def write_member(member_name: str, data: bytes) -> None:
         target = output_dir / member_name
@@ -68,7 +71,7 @@ def extract_archive(filepath: Path, output_dir: Path, log_fn: Callable[[str], No
     return extracted
 
 # --- Zentrale deterministische Pipeline ---
-def run_full_pipeline(file_path: Path, log_fn: Callable[[str], None] | None = None) -> dict:
+def run_full_pipeline(file_path: Path, log_fn: Optional[Callable[[str], None]] = None) -> dict:
     """
     Führt alle Schritte der deterministischen Pipeline aus:
     1. Backup
@@ -292,7 +295,7 @@ CASCADE_VERSION = "2"
 AUDIT_LOG_PATH = Path("logs/cascade_audit.jsonl")
 
 # In-memory: source_id → last CascadeResult (for delta convergence)
-_prev_results: dict[str, "CascadeResult"] = {}
+_prev_results: Dict[str, "CascadeResult"] = {}
 
 
 @dataclass
@@ -320,13 +323,13 @@ class CascadeResult:
 
     # Derived
     trust_score: float       # weighted composite ∈ [0, 1]
-    anomaly_flags: list[str]
+    anomaly_flags: List[str]
 
     # Delta — encrypted, never plaintext
     delta_encrypted_hex: str  # XOR(raw_delta, session_key) as hex — empty if no session_key
     delta_hash: str           # SHA256(raw_delta) — public, for verification
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
     def canonical_json(self) -> str:
@@ -490,7 +493,7 @@ def cascade(
     _prev_results[source_id] = result
     return result
 
-def cascade_to_swarm_kpi(result: CascadeResult) -> dict[str, float]:
+def cascade_to_swarm_kpi(result: CascadeResult) -> Dict[str, float]:
     """
     Extract the KPI dict that swarm_loop.rs expects for aggregation.
     Does NOT include delta_encrypted_hex — that never leaves the device.

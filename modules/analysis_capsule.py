@@ -34,8 +34,13 @@ except Exception:  # pragma: no cover - optional heavy dependency chain
 
 try:
     from sce_engine import sce_engine
-except Exception:  # pragma: no cover - root-level helper may be unavailable in some tests
-    sce_engine = None  # type: ignore[assignment]
+except ImportError:
+    try:
+        import sys, os
+        sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+        from sce_engine import sce_engine
+    except Exception:
+        sce_engine = None
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
