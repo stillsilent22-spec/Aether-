@@ -1,0 +1,10 @@
+﻿{
+    "role":  "genesis",
+    "aether_version":  "master-v27",
+    "node_id":  "04a71e392d0b7582",
+    "yggdrasil_addr":  "202:a904:a772:bc31:d395:489b:a7d0:8c1e",
+    "registered_at":  "2026-03-31T14:08:29Z",
+    "relay":  true,
+    "schema":  "aether.swarm.node.v2",
+    "public_key_pem":  "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAnsvZ99f4v0XYDzx01wPiWCcWBMZeMYpybn33FKmrCUU=\n-----END PUBLIC KEY-----"
+}

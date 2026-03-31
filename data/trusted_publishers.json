@@ -1,0 +1,21 @@
+{
+  "schema": "aether.trusted_publishers.v1",
+  "admin_publisher_id": "tryharder997",
+  "default_publisher_id": "stillsilent22-spec/Aether-",
+  "publishers": {
+    "tryharder997": {
+      "enabled": true,
+      "signature_scheme": "ed25519",
+      "public_key": "Vfwiv1cBFCS8jaPlBoipoKRK6DEyCXhRn9wg8BXG4lg=",
+      "node_id": "6c9e2fcad95e2bd0",
+      "role": "genesis",
+      "notes": "Admin / Genesis Node. Kann Anker ohne Quorum pushen. Einzige Instanz mit dieser Berechtigung."
+    },
+    "stillsilent22-spec/Aether-": {
+      "enabled": true,
+      "signature_scheme": "ed25519",
+      "public_key": "Vfwiv1cBFCS8jaPlBoipoKRK6DEyCXhRn9wg8BXG4lg=",
+      "notes": "Offizieller GitHub-Mirror-Publisher."
+    }
+  }
+}
