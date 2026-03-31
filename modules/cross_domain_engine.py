@@ -1,4 +1,4 @@
-﻿"""
+"""
 Aether Cross-Domain Pattern Engine
 -----------------------------------
 Erkennt domaenenuebergreifende Muster durch DBSCAN-Clustering von Ankern aus

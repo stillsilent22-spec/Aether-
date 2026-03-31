@@ -1,4 +1,4 @@
-﻿import sys as _cc_sys
+import sys as _cc_sys
 import time as _cc_time
 
 class EphemeralKey:

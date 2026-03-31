@@ -1,4 +1,4 @@
-﻿"""
+"""
 Tests fuer CrossDomainEngine und i18n-Erststart-Texte.
 
 Abgedeckte Klassen / Funktionen:

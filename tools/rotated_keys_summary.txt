@@ -1,0 +1,31 @@
+Rotated keys written to: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated
+original: C:\Users\kalle\.aether_key_backups\20260331T062707Z\full_read_keys\node_private.key
+  old_node_id: a7639c8335bd163a
+  new_node_id: e410ceb91641abb9
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_private.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_private.key.rotated.pub.pem
+original: C:\Users\kalle\.aether_key_backups\20260331T062707Z\full_read_keys\node_public.key
+  old_node_id: a7639c8335bd163a
+  new_node_id: 0d6a3c8ac04de373
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_public.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_public.key.rotated.pub.pem
+original: C:\Users\kalle\.aether_key_backups\20260331T062707Z\full_read_keys\node_secret.key
+  old_node_id: a7639c8335bd163a
+  new_node_id: 0cd0a49fd8aabec7
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_secret.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_secret.key.rotated.pub.pem
+original: C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_private.key
+  old_node_id: 41adb81dbc4a6164
+  new_node_id: 6268307bd9757d6c
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_private.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_private.key.rotated.pub.pem
+original: C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_public.key
+  old_node_id: 41adb81dbc4a6164
+  new_node_id: c82f98898d5e3f46
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_public.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_public.key.rotated.pub.pem
+original: C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_secret.key
+  old_node_id: 41adb81dbc4a6164
+  new_node_id: 413616ab27cc02f3
+  rotated_private: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_secret.key.rotated.pem
+  rotated_public: C:\Users\kalle\.aether_key_backups\20260331T063848Z-rotated\node_secret.key.rotated.pub.pem

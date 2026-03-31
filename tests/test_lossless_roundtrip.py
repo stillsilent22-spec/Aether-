@@ -1,4 +1,4 @@
-﻿"""Pytest-kompatible End-to-End-Checks fuer konditional lossless Roundtrips."""
+"""Pytest-kompatible End-to-End-Checks fuer konditional lossless Roundtrips."""
 
 from __future__ import annotations
 

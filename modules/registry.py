@@ -1,4 +1,4 @@
-﻿"""Persistente SQLite-Registry fuer Aether."""
+"""Persistente SQLite-Registry fuer Aether."""
 
 from __future__ import annotations
 

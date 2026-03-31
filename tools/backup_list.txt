@@ -1,0 +1,10 @@
+﻿
+FullName                                                                           
+--------                                                                           
+C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys                 
+C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_private.key
+C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_public.key 
+C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_public.pem 
+C:\Users\kalle\.aether_key_backups\20260331T062848Z\generated_keys\node_secret.key 
+
+

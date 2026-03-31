@@ -77,9 +77,7 @@ def yggdrasil_binary_path() -> Path:
 
 
 def is_yggdrasil_available() -> bool:
-import os
-if os.environ.get("AETHER_PLATFORM") == "android":
-return True
+
     """True, wenn Yggdrasil lokal oder im PATH verfuegbar ist."""
     local_binary = yggdrasil_binary_path()
     if local_binary.is_file() and os.access(local_binary, os.X_OK):
@@ -208,7 +206,7 @@ def _inject_public_peers(config_path: Path) -> None:
     except Exception:
         pass
 
-    # Stabile community peers als Fallback (Stand 2025 — bei Bedarf in settings.json ueberschreiben)
+    # Stabile community peers als Fallback (Stand 2025 â€” bei Bedarf in settings.json ueberschreiben)
     default_peers = [
         "tls://ygg.maru.hk:18395",
         "tls://vpn1.ht4.ca:5122",

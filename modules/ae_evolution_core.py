@@ -1,4 +1,4 @@
-﻿"""AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
+"""AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
 
 from __future__ import annotations
 

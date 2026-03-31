@@ -1,4 +1,4 @@
-﻿"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Strukturanalyse."""
+"""Kleiner lokaler Selbsttest fuer Chunking, Low-Power und Strukturanalyse."""
 
 from __future__ import annotations
 

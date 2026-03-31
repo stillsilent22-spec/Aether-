@@ -1,4 +1,4 @@
-﻿"""Deterministische lokale Tkinter-GUI fuer Aether."""
+"""Deterministische lokale Tkinter-GUI fuer Aether."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""metalayer_assistant.py — MetaLayer OS Phase D: Assistant-gefilterte Befunde.
+"""metalayer_assistant.py — MetaLayer OS Phase D: Assistant-gefilterte Befunde.
 
 Übersetzt MetaLayer-OS-Erkenntnisse in das Assistant-Konsensformat.
 Alle Ausgaben durchlaufen die Assistant-Pipeline (h_lambda-Gate, Trust-Score).

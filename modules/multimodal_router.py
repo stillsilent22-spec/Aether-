@@ -1,4 +1,4 @@
-﻿import os
+import os
 from analysis_engine import entropy, gini
 from modules.text_utils import text_normalize, text_reduce
 

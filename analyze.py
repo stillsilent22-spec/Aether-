@@ -1,4 +1,4 @@
-﻿"""
+"""
 analyze.py — Aether Datei- und Text-Analyse (lokal, ohne Netzwerk/LLM)
 
 Aufruf:

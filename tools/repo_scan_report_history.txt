@@ -1,0 +1,2 @@
+﻿tools/full_read/tools/repo_scan_report.json
+tools/repo_scan_report.json

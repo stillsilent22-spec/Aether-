@@ -1,4 +1,4 @@
-﻿"""Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
+"""Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
 
 from __future__ import annotations
 

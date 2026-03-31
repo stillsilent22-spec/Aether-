@@ -1,4 +1,4 @@
-﻿"""Strukturelle Dialogantworten ohne externes Sprachmodell."""
+"""Strukturelle Dialogantworten ohne externes Sprachmodell."""
 
 from __future__ import annotations
 

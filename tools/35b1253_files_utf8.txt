@@ -1,0 +1,2 @@
+﻿35b1253 2026-03-30 15:06:35 +0200 feat: complete tab bar, scrollable sidebar, media/gaming/research drop zones
+src/iced_shell.rs

@@ -1,4 +1,4 @@
-﻿"""Lightweight bridge daemon for Rust <-> Python hybrid runtime.
+"""Lightweight bridge daemon for Rust <-> Python hybrid runtime.
 
 This process is started by the Rust shell and keeps shared status files fresh.
 It can also launch the Symbiont JSON-RPC server as a child process.

@@ -1,0 +1,4 @@
+﻿  backup-before-history-cleanup-20260330231351
+* master
+  remotes/origin/master
+FOUND_IN_ORIGIN

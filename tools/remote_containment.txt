@@ -1,0 +1,44 @@
+﻿Remote containment check for exposing commits: 2026-03-31T08:34:08.9812494+02:00
+
+==COMMIT== b13181fb09cf7df2e959c7903ec9cb2caa6accee
+  origin/fix/lan-beacon-verify
+NO_TAGS_CONTAIN
+
+==COMMIT== 9032ffb45d896548b7348ef7185ac53ddc988810
+  origin/fix/lan-beacon-verify
+NO_TAGS_CONTAIN
+
+==COMMIT== a0d518ff56a5227a98d7f03a2870c7a654404e0b
+  origin/fix/lan-beacon-verify
+NO_TAGS_CONTAIN
+
+==COMMIT== 3dc4ef044eabeac84f99ebf4469e5ca97b721e6b
+  origin/fix/lan-beacon-verify
+NO_TAGS_CONTAIN
+
+==COMMIT== 28484ebb2633974d78653a317dfa280be60895ef
+  origin/fix/lan-beacon-verify
+  origin/master
+NO_TAGS_CONTAIN
+
+==COMMIT== dfb8a70079095942262cb04e1162264dfffba3f4
+  origin/fix/lan-beacon-verify
+  origin/master
+NO_TAGS_CONTAIN
+
+==COMMIT== f2c55f5012bf0e4294101d21a420bbf20cbcd452
+  origin/fix/lan-beacon-verify
+  origin/master
+NO_TAGS_CONTAIN
+
+==COMMIT== 0a52b03a0d39235f9d72573cd6b5e4d17d3bf902
+  origin/fix/lan-beacon-verify
+  origin/master
+NO_TAGS_CONTAIN
+
+==COMMIT== 9598bee71dd8debcc49af53b01dbe2d599e179bc
+  origin/feature/swarm-core
+  origin/fix/lan-beacon-verify
+  origin/master
+NO_TAGS_CONTAIN
+CHECKS_DONE

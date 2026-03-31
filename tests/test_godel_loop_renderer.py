@@ -1,4 +1,4 @@
-﻿from modules.godel_loop_renderer import GoedelLoopRenderer
+from modules.godel_loop_renderer import GoedelLoopRenderer
 
 
 def test_godel_loop_is_deterministic_for_same_input() -> None:

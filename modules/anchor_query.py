@@ -1,4 +1,4 @@
-﻿"""
+"""
 Aether – Anchor Query Adapter für Assistant.
 
 Macht Basis-, Konsens- und Meta-Anker über eine einheitliche API

@@ -1,4 +1,4 @@
-﻿"""Adaptive preload recommendations based on vault analysis."""
+"""Adaptive preload recommendations based on vault analysis."""
 
 from __future__ import annotations
 

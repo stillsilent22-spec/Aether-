@@ -1,4 +1,4 @@
-﻿"""metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
+"""metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
 
 Führt alle MetaLayer-Subsysteme in einem adaptiven Tick-Loop zusammen.
 Takt-Intervalle (konfiguierbar):

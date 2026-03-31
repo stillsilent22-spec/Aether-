@@ -1,4 +1,4 @@
-﻿"""
+"""
 Erweiterte Tests für EthicsEngine — verschiedene Textarten und Integrationstests.
 
 Getestete Metriken:

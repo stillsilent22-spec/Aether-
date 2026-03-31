@@ -1,4 +1,4 @@
-﻿"""
+"""
 Aether Internationalisierung (i18n) — Deutsch / English.
 
 Verwendung:

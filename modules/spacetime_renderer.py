@@ -1,4 +1,4 @@
-﻿"""2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
+"""2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
 
 from __future__ import annotations
 

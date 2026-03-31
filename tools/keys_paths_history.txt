@@ -1,0 +1,2 @@
+﻿data/publisher_keys/.gitkeep
+tools/full_read/data/publisher_keys/.gitkeep

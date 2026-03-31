@@ -1,0 +1,9 @@
+﻿491c287 2026-03-29 23:26:28 +0200 feat: DNA-Rekonstruktion aus Rust-Shell via IPC
+dfb8a70 2026-03-29 22:53:08 +0200 aether: master patch v27 + clean state genesis hardening
+31ac432 2026-03-26 17:44:01 +0100 Fix iced_shell.rs: build errors, struct placement, imports, and block closures
+0973d96 2026-03-26 12:03:19 +0100 Fix iced_shell.rs: Macro-Entfernung, Blockstruktur, Build-Fixes
+f7ee7ff 2026-03-24 19:27:48 +0100 feat: SCE Engine as Cybernetic Controller + FlowSphere Dual-Mode Rendering (Local Attraktoren / Global Swarm Nodes)
+d2f31f3 2026-03-24 03:37:00 +0100 feat: add plain_note UI line + fix missing crypto/telemetry module stubs
+cb0a076 2026-03-20 15:03:51 +0100 feat: Aether Flow Sphere + ADE Panel (Rust/iced)
+0074c20 2026-03-20 07:08:00 +0100 feat: add Rekonstruktion tab with local AEF reconstruction UI
+b1fe5e5 2026-03-19 11:32:35 +0100 feat: add State, RuleEngine, MDL, VaultOrchestrator + Ockham/StructureMap layers

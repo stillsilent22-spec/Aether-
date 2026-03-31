@@ -1,4 +1,4 @@
-﻿"""Scoped screen capture fuer explizite Aether-Dateianalysen."""
+"""Scoped screen capture fuer explizite Aether-Dateianalysen."""
 
 from __future__ import annotations
 

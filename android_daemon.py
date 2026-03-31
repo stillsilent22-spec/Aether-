@@ -1,4 +1,4 @@
-﻿import os, sys, time
+import os, sys, time
 os.environ['AETHER_PLATFORM'] = 'android'
 os.environ['AETHER_UI_ENABLED'] = '0'
 os.environ['AETHER_WORKER_MODE'] = '1'

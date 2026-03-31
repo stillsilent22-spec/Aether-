@@ -1,0 +1,49 @@
+﻿3dc4ef0 2026-03-30 23:13:02 +0200 chore(redact): redact sensitive data from repo scan reports
+37e7423 2026-03-30 17:15:33 +0200 feat: tab-Beschreibungen auf Deutsch uebersetzt (alle 21 Tabs)
+2f04ab5 2026-03-30 16:08:53 +0200 feat: capability score + headless daemon + emergent OS progress bar
+35b1253 2026-03-30 15:06:35 +0200 feat: complete tab bar, scrollable sidebar, media/gaming/research drop zones
+ead393d 2026-03-30 12:35:58 +0200 aether: enable yggdrasil discovery and cleanup
+35d59a8 2026-03-30 10:22:29 +0200 aether: code review, cleanup, scientific tone
+93cfa22 2026-03-30 01:32:39 +0200 aether: code review, cleanup, scientific tone
+f401b4a 2026-03-30 01:29:04 +0200 aether: code review, cleanup, scientific tone
+74fe3e8 2026-03-30 01:27:27 +0200 aether: code review, cleanup, scientific tone
+bc02b2f 2026-03-30 01:19:14 +0200 aether: code review, cleanup, scientific tone
+b76fd75 2026-03-30 00:35:00 +0200 aether: code review, cleanup, scientific tone
+4a4e9c9 2026-03-30 00:27:09 +0200 aether: code review, cleanup, scientific tone
+dd762da 2026-03-29 23:45:01 +0200 aether: code review, cleanup, scientific tone
+491c287 2026-03-29 23:26:28 +0200 feat: DNA-Rekonstruktion aus Rust-Shell via IPC
+dfb8a70 2026-03-29 22:53:08 +0200 aether: master patch v27 + clean state genesis hardening
+7c4d828 2026-03-29 21:43:15 +0200 aether: code review, cleanup, scientific tone
+043f0f7 2026-03-29 13:17:50 +0200 aether: code review, cleanup, scientific tone
+b3cbe8e 2026-03-28 16:10:28 +0100 Refine FlowSphere focus interactions
+603068b 2026-03-28 08:02:44 +0100 Integrate assistant capsule and AELab shell pipeline
+2bd5fa4 2026-03-27 11:44:23 +0100 Fix: Tab::label braces and cleanup for release build
+75d8e74 2026-03-26 22:06:11 +0100 Committing all staged changes
+31ac432 2026-03-26 17:44:01 +0100 Fix iced_shell.rs: build errors, struct placement, imports, and block closures
+0973d96 2026-03-26 12:03:19 +0100 Fix iced_shell.rs: Macro-Entfernung, Blockstruktur, Build-Fixes
+86e97fa 2026-03-25 20:15:42 +0100 Implementiere vollst├ñndige Audit-, Batch-, Chat/Collab-Analyse inkl. Katz-Dimension, Attraktor-Stabilit├ñt und UI-Erweiterungen
+05c33ca 2026-03-25 09:37:50 +0100 Integrate solo_bootstrap.py: startup, UI, server, CI, docs, and alert suppression
+30058a1 2026-03-24 22:07:42 +0100 refactor: clean reconstruction engine and split dashboard search module
+c54895f 2026-03-24 19:54:59 +0100 fix: 7 critical fixes (trust-score, flow-sphere global mode, browser status, YouTube KI-analysis, Symbiont docs, runtime tooltips, search help)
+f7ee7ff 2026-03-24 19:27:48 +0100 feat: SCE Engine as Cybernetic Controller + FlowSphere Dual-Mode Rendering (Local Attraktoren / Global Swarm Nodes)
+b6f51b3 2026-03-24 14:01:47 +0100 fix(core): delta idle-guard, anchor cache, and live-render diagnostics
+ded7cc9 2026-03-24 12:35:00 +0100 fix(ui): harden live rendering tick path and throttle process sampling
+309bbd2 2026-03-24 08:38:32 +0100 feat(ui+security): wire live render controls, godel probe, and deterministic AetherGuard layer
+d2f31f3 2026-03-24 03:37:00 +0100 feat: add plain_note UI line + fix missing crypto/telemetry module stubs
+882d726 2026-03-24 00:59:53 +0100 feat: harden swarm transport and monitoring
+9598bee 2026-03-24 00:10:55 +0100 feat: sync workspace state
+e36f32b 2026-03-22 11:29:28 +0100 feat(ui): add localized control workflow and overlay guidance
+dc81d11 2026-03-21 22:06:51 +0100 Rust: fix 4 compile errors (Canvas into, scrollable container wrap, nav lifetime)
+ea4afc5 2026-03-21 20:53:49 +0100 Rust: SwarmBootstrap startup probe + UI integration (login card + performance tab)
+caefc5e 2026-03-21 15:11:39 +0100 fix: wire hardware::detect() at startup to auto-select optimal RuntimeProfile
+608a0e5 2026-03-21 14:15:45 +0100 fix: keep planned Home UI routing and update Row width API
+0ef9675 2026-03-21 13:50:17 +0100 refactor: remove legacy home UI implementation block
+8fad817 2026-03-21 13:35:58 +0100 fix: route Home tab to planned UI instead of legacy cyber view
+7411e37 2026-03-21 11:14:41 +0100 feat: complete ui redesign (dark charcoal + vivid purple theme)
+e3f8434 2026-03-21 09:07:59 +0100 Fix dashboard browser autoload and add live runtime diagnostics
+945fe25 2026-03-20 17:20:08 +0100 feat: full UI redesign - AetherLogo, ShanwayRobot, neon tabs, modern cards, tutorial banner
+72d3419 2026-03-20 16:37:46 +0100 fix: AEF drop encoding + Rekon error banner
+cb0a076 2026-03-20 15:03:51 +0100 feat: Aether Flow Sphere + ADE Panel (Rust/iced)
+0074c20 2026-03-20 07:08:00 +0100 feat: add Rekonstruktion tab with local AEF reconstruction UI
+b1fe5e5 2026-03-19 11:32:35 +0100 feat: add State, RuleEngine, MDL, VaultOrchestrator + Ockham/StructureMap layers
+1b03039 2026-03-15 21:20:49 +0100 Initial commit: Replace all files with current directory contents
