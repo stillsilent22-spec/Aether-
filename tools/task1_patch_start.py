@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import sys
 p = Path('start.py')
 s = p.read_text(encoding='utf-8')

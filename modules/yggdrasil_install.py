@@ -157,9 +157,54 @@ def download_and_verify(url: str, expected_sha256: str, dest: Path) -> None:
         dest.chmod(dest.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _is_termux() -> bool:
+    """True wenn das Skript in einer Termux-Umgebung laeuft."""
+    return (
+        "TERMUX_VERSION" in os.environ
+        or os.path.isdir("/data/data/com.termux")
+        or os.environ.get("AETHER_PLATFORM", "").startswith("android")
+    )
+
+
+def _try_termux_pkg_install() -> "Path | None":
+    """Versucht Yggdrasil ueber den Termux pkg-Manager zu installieren.
+
+    Gibt den Pfad zum installierten Binary zurueck oder None bei Misserfolg.
+    """
+    pkg = shutil.which("pkg")
+    if pkg is None:
+        return None
+    try:
+        result = subprocess.run(
+            [pkg, "install", "-y", "yggdrasil"],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode == 0:
+            binary = shutil.which("yggdrasil")
+            if binary:
+                return Path(binary)
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
 def install_yggdrasil(dest_dir: str = "bin") -> Path:
     """Erkennt die Plattform, laedt Yggdrasil herunter und versucht es lokal bereitzustellen."""
     platform_key = detect_platform()
+
+    # Android/Termux: pkg bevorzugen, Fallback auf linux-arm64 Binary aus GitHub Releases
+    if platform_key == "android-arm64":
+        if _is_termux():
+            print("[YGGDRASIL] Android/Termux erkannt – versuche pkg install yggdrasil ...")
+            termux_binary = _try_termux_pkg_install()
+            if termux_binary is not None:
+                print(f"[YGGDRASIL] pkg install yggdrasil erfolgreich: {termux_binary}")
+                return termux_binary
+            print("[YGGDRASIL] pkg install fehlgeschlagen – fallback auf linux-arm64 Binary.")
+        platform_key = "linux-arm64"
+
     if platform_key not in YGGDRASIL_RELEASES:
         raise RuntimeError(
             f"Platform '{platform_key}' nicht unterstuetzt.\n"
@@ -294,26 +339,46 @@ def _prepare_local_binary(platform_key: str, artifact_path: Path, target_binary:
     return None
 
 
-def _extract_from_deb(artifact_path: Path, target_binary: Path) -> Path | None:
-    ar_binary = shutil.which("ar")
-    if ar_binary is None:
+def _find_yggdrasil_in_extracted(root: Path, target_binary: Path) -> "Path | None":
+    """Sucht das yggdrasil-Binary in einem entpackten Verzeichnis und kopiert es ans Ziel."""
+    candidates = sorted(root.glob("**/usr/bin/yggdrasil"))
+    if not candidates:
+        candidates = sorted(root.glob("**/yggdrasil"))
+    if not candidates:
         return None
+    shutil.copy2(candidates[0], target_binary)
+    target_binary.chmod(target_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return target_binary
+
+
+def _extract_from_deb(artifact_path: Path, target_binary: Path) -> "Path | None":
+    target_binary.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="aether-ygg-deb-") as temp_dir:
         temp_root = Path(temp_dir)
+
+        # Methode 1: dpkg-deb --extract (verfuegbar auf Debian/Ubuntu und in Termux)
+        dpkg_deb = shutil.which("dpkg-deb")
+        if dpkg_deb is not None:
+            result = subprocess.run(
+                [dpkg_deb, "--extract", str(artifact_path), str(temp_root)],
+                capture_output=True,
+            )
+            if result.returncode == 0:
+                found = _find_yggdrasil_in_extracted(temp_root, target_binary)
+                if found is not None:
+                    return found
+
+        # Methode 2: ar (binutils)
+        ar_binary = shutil.which("ar")
+        if ar_binary is None:
+            return None
         subprocess.run([ar_binary, "x", str(artifact_path)], cwd=str(temp_root), check=True, capture_output=True)
         data_archive = next(iter(sorted(temp_root.glob("data.tar.*"))), None)
         if data_archive is None:
             return None
         with tarfile.open(data_archive, "r:*") as archive:
             archive.extractall(path=temp_root)
-        candidates = sorted(temp_root.glob("**/usr/bin/yggdrasil"))
-        if not candidates:
-            candidates = sorted(temp_root.glob("**/yggdrasil"))
-        if not candidates:
-            return None
-        shutil.copy2(candidates[0], target_binary)
-        target_binary.chmod(target_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-        return target_binary
+        return _find_yggdrasil_in_extracted(temp_root, target_binary)
 
 
 def _extract_from_msi(artifact_path: Path, target_binary: Path) -> Path | None:

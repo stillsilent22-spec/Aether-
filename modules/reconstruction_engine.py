@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Verlustfreie Rekonstruktion aus Delta-Logs."""
 
 from __future__ import annotations
@@ -288,6 +290,7 @@ class VaultAnchorStore:
                 conn.commit()
                 return int(cursor.rowcount or 0) > 0
         except sqlite3.Error:
+            logger.warning("[reconstruction_engine] Stiller Fehler")
             return False
 
     def confirm_lossless(self, anchor_hash: str) -> None:
@@ -579,6 +582,7 @@ class LosslessReconstructionEngine:
         try:
             reconstructed = self.replay(delta_log)
         except VaultMissError as exc:
+            logger.warning(f"[reconstruction_engine] Fehler: {exc}")
             return ReconstructionResult(
                 delta_log=list(delta_log),
                 reconstructed_bytes=b"",
@@ -691,6 +695,7 @@ def _parse_iso_timestamp(value: str) -> datetime:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
     except Exception:
+        logger.warning("[reconstruction_engine] Stiller Fehler")
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
@@ -1199,6 +1204,7 @@ class UniversalAdapter(BaseModalityAdapter):
             payload.decode('utf-8')
             return 'text'
         except UnicodeDecodeError:
+            logger.warning("[reconstruction_engine] Stiller Fehler")
             pass
         # Binary fallback
         return 'binary'

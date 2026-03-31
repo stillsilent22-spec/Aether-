@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """P2P Sync Layer for Aether Swarm (opt-in).
 
 Provides pluggable peer-to-peer fingerprint and metadata exchange.
@@ -198,6 +200,7 @@ class P2PLayer:
                 if isinstance(data, dict):
                     return bool(data.get("consented", False))
         except Exception:
+            logger.warning("[swarm_p2p] Stiller Fehler")
             pass
         return False  # Kein Consent ohne explizite Zustimmung
 
@@ -262,6 +265,7 @@ class P2PLayer:
                 json.dumps(msg, ensure_ascii=True, indent=2), encoding="utf-8"
             )
         except Exception:
+            logger.warning("[swarm_p2p] Stiller Fehler")
             pass
         # Send via AethernetTransport if available
         if self._transport is not None:
@@ -331,6 +335,7 @@ class P2PLayer:
                 if isinstance(local_payload, dict):
                     own_node_id = str(local_payload.get("node_id", own_node_id) or own_node_id)
         except Exception:
+            logger.warning("[swarm_p2p] Stiller Fehler")
             pass
 
         relay_addrs: List[str] = []
@@ -344,6 +349,7 @@ class P2PLayer:
                 _lp = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
                 own_ygg = str(_lp.get("yggdrasil_addr", "") or "")
         except Exception:
+            logger.warning("[swarm_p2p] Stiller Fehler")
             pass
         genesis_seed = str(self._config.get("genesis_yggdrasil_addr", "") or "").strip()
         if genesis_seed and genesis_seed != own_ygg:

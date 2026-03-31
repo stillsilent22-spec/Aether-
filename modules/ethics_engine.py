@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import re as _re
 import math as _math
 from collections import Counter as _Counter
@@ -315,6 +317,7 @@ def _clip01(value) -> float:
     try:
         return float(max(0.0, min(1.0, float(value))))
     except Exception:
+        logger.warning("[ethics_engine] Stiller Fehler")
         return 0.0
 
 
@@ -582,6 +585,7 @@ def analyze_code_structure(code: str) -> dict:
                     flags.append("zipf_violation")
                     score -= 0.10 * min(1.0, zipf_dev)
         except Exception:
+            logger.warning("[ethics_engine] Stiller Fehler")
             pass
 
     return {

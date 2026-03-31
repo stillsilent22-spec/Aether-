@@ -1,0 +1,6 @@
+# Aether Android/Termux Requirements
+# Nur was auf ARM64/Termux ohne Compiler funktioniert
+numpy>=1.26.0
+cryptography>=42.0.0
+psutil>=5.9.8
+# scipy, matplotlib, tkinter, opencv, sounddevice: NICHT auf Android

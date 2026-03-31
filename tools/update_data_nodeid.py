@@ -1,4 +1,4 @@
-﻿import os,sys,shutil,time
+import os,sys,shutil,time
 from pathlib import Path
 old='6c9e2fcad95e2bd0'
 new='d19ef200316f7f4f'

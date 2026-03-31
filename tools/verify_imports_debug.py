@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 p = Path('modules/analysis_capsule.py')
 s = p.read_text(encoding='utf-8')
 old_block = """try:

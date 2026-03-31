@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Dateianalyse fuer Aether."""
 
 from __future__ import annotations
@@ -373,6 +375,7 @@ class AnalysisEngine:
         try:
             progress_callback(str(stage), self._clamp(float(progress), 0.0, 1.0), str(detail or ""))
         except Exception:
+            logger.warning("[analysis_engine] Stiller Fehler")
             return
 
     def _progress_scope(
@@ -483,6 +486,7 @@ class AnalysisEngine:
                 detector = magic.Magic(mime=True)
                 return str(detector.from_buffer(raw[:65536]))
             except Exception:
+                logger.warning("[analysis_engine] Stiller Fehler")
                 pass
         for signature, mime_type, _family in MAGIC_SIGNATURES:
             if raw.startswith(signature):
@@ -679,6 +683,7 @@ class AnalysisEngine:
                 try:
                     clip.close()
                 except Exception:
+                    logger.warning("[analysis_engine] Stiller Fehler")
                     pass
             except Exception:
                 missing_dependencies.append("moviepy")
@@ -803,6 +808,7 @@ class AnalysisEngine:
         try:
             font.close()
         except Exception:
+            logger.warning("[analysis_engine] Stiller Fehler")
             pass
         return {
             "category": category,
@@ -1120,6 +1126,7 @@ class AnalysisEngine:
         try:
             return self.registry.get_resonance_reference_vectors(limit=320)
         except Exception:
+            logger.warning("[analysis_engine] Stiller Fehler")
             return []
 
     def _compute_ethics(

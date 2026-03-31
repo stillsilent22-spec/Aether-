@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import os,sys,json,time,hashlib
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization

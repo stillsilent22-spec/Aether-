@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 SwarmLoopBridge: submits CascadeResult KPIs to swarm_loop.rs via
 the existing IPC channel (port 7387).
@@ -28,6 +30,7 @@ def _load_node_id() -> str:
             if d.get("role") == "genesis":
                 return str(d["node_id"])
         except Exception:
+            logger.warning("[swarm_loop_bridge] Stiller Fehler")
             pass
     return "unknown"
 
@@ -38,6 +41,7 @@ def _sign(payload: bytes) -> str:
         key = load_pem_private_key(KEY_PATH.read_bytes(), password=None)
         return key.sign(payload).hex()
     except Exception:
+        logger.warning("[swarm_loop_bridge] Stiller Fehler")
         return "unsigned"
 
 
@@ -54,6 +58,7 @@ def _load_admin_publisher_id() -> str:
         )
         return str(config.get("admin_publisher_id", ""))
     except Exception:
+        logger.warning("[swarm_loop_bridge] Stiller Fehler")
         return ""
 
 
@@ -72,6 +77,7 @@ def _verify_genesis_authorization(node_id: str) -> bool:
         registered_node_id = str(admin_entry.get("node_id", ""))
         return bool(registered_node_id) and registered_node_id == node_id
     except Exception:
+        logger.warning("[swarm_loop_bridge] Stiller Fehler")
         return False  # fail-closed: im Zweifel kein Bypass
 
 
@@ -219,4 +225,5 @@ def _submit_to_ipc(report: dict[str, Any]) -> dict[str, Any]:
         sock.close()
         return json.loads(data.decode("utf-8").strip())
     except Exception as e:
+        logger.warning(f"[swarm_loop_bridge] Fehler: {e}")
         return {"ok": False, "error": str(e)}

@@ -1,4 +1,4 @@
-﻿try:
+try:
     from modules.lan_beacon import start
     from modules.capability_score import probe_and_write
     from modules.unified_cascade import run_full_pipeline

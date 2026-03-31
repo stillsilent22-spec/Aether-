@@ -1,4 +1,6 @@
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
 import subprocess
@@ -19,6 +21,7 @@ def _has_origin_remote() -> bool:
         )
         return result.returncode == 0 and bool((result.stdout or "").strip())
     except Exception:
+        logger.warning("[swarm_sync] Stiller Fehler")
         return False
 
 

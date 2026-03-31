@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from datetime import datetime
 p = Path('src/lib.rs')
 if not p.exists():

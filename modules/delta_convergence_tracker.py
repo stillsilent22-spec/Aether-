@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 Delta-Konvergenz-Tracker — Aether Beweis-Modul.
 
@@ -286,6 +288,7 @@ class DeltaConvergenceTracker:
                         except ValueError:
                             continue
         except Exception:
+            logger.warning("[delta_convergence_tracker] Stiller Fehler")
             pass
         self._anchor_cache = anchors[:1000]
         self._anchor_cache_mtime = current_mtime

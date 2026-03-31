@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Persistent Background Agent for Aether Swarm.
 
 Subscribes to SwarmController and manages the capture + analysis lifecycle:
@@ -227,6 +229,7 @@ class SwarmAgent:
                 raw = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
                 return bool(raw.get("swarm_mode", False))
         except Exception:
+            logger.warning("[swarm_agent] Stiller Fehler")
             pass
         return False
 
@@ -255,6 +258,7 @@ class SwarmAgent:
                 try:
                     self._capture.stop()
                 except Exception:
+                    logger.warning("[swarm_agent] Stiller Fehler")
                     pass
                 self._capture = None
             self._capture_active = False
@@ -318,6 +322,7 @@ class SwarmAgent:
             try:
                 return float(psutil.cpu_percent(interval=None))
             except Exception:
+                logger.warning("[swarm_agent] Stiller Fehler")
                 pass
         return 0.0
 
@@ -359,6 +364,7 @@ def _load_agent_config() -> Dict[str, Any]:
             raw = json.loads(settings_path.read_text(encoding="utf-8"))
             return dict(raw.get("swarm_agent", {}))
     except Exception:
+        logger.warning("[swarm_agent] Stiller Fehler")
         pass
     return {}
 
@@ -411,6 +417,7 @@ def run_agent_daemon() -> None:
                 INTERBUS_DIR.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(health, ensure_ascii=True, indent=2), encoding="utf-8")
             except Exception:
+                logger.warning("[swarm_agent] Stiller Fehler")
                 pass
             time.sleep(5.0)
     finally:

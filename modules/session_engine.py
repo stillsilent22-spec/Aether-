@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import gc as _gc
 import hashlib as _hashlib
 import sys as _sys
@@ -80,6 +82,7 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj[:] = b"\x00" * len(obj)
             except Exception:
+                logger.warning("[session_engine] Stiller Fehler")
                 pass
         elif isinstance(obj, (bytes, str)):
             return
@@ -89,6 +92,7 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj.clear()
             except Exception:
+                logger.warning("[session_engine] Stiller Fehler")
                 pass
         elif isinstance(obj, list):
             for item in list(obj):
@@ -96,13 +100,16 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj.clear()
             except Exception:
+                logger.warning("[session_engine] Stiller Fehler")
                 pass
     except Exception:
+        logger.warning("[session_engine] Stiller Fehler")
         pass
     finally:
         try:
             _gc.collect()
         except Exception:
+            logger.warning("[session_engine] Stiller Fehler")
             pass
 
 def _session_cleanup_patch(self) -> None:
@@ -113,6 +120,7 @@ def _session_cleanup_patch(self) -> None:
         try:
             from .security_engine import secure_zeroize
         except Exception:
+            logger.warning("[session_engine] Stiller Fehler")
             return
     for attr in ("live_session_key", "live_session_fingerprint",
                  "raw_storage_key_hex", "raw_storage_key_fingerprint"):
@@ -120,6 +128,7 @@ def _session_cleanup_patch(self) -> None:
             secure_zeroize(getattr(self, attr, ""))
             setattr(self, attr, "")
         except Exception:
+            logger.warning("[session_engine] Stiller Fehler")
             pass
 
 # Monkey-patch cleanup + __del__ onto SessionContext
@@ -130,6 +139,7 @@ def _session_del_patch(self) -> None:
     try:
         self.cleanup()
     except Exception:
+        logger.warning("[session_engine] Stiller Fehler")
         pass
 
 

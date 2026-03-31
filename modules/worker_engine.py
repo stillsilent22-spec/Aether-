@@ -1,4 +1,6 @@
-import hashlib, threading, time, json, itertools
+import hashlib, logging, threading, time, json, itertools
+
+_log = logging.getLogger(__name__)
 from typing import List, Optional, Dict, Set
 from collections import defaultdict
 
@@ -87,7 +89,8 @@ class WorkerEngine:
                 self.compute_invariant_chain()
                 if self.peer_list:
                     self.observe_signal(self.node_id, self.peer_list[:min(2, len(self.peer_list))])
-            except: pass
+            except Exception as exc:
+                _log.warning("[WorkerEngine] daemon_loop error: %s", exc)
             time.sleep(interval)
 
 _engine = None
