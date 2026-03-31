@@ -132,7 +132,10 @@ def read_status() -> Dict[str, Any]:
 #  SwarmController                                                              #
 # --------------------------------------------------------------------------- #
 
+import os
+
 class SwarmController:
+_ANDROID = os.environ.get("AETHER_PLATFORM") == "android"
     """Thread-safe atomic controller for Swarm Mode."""
 
     def __init__(self, db_path: Optional[str] = None) -> None:

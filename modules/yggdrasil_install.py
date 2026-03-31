@@ -77,6 +77,9 @@ def yggdrasil_binary_path() -> Path:
 
 
 def is_yggdrasil_available() -> bool:
+import os
+if os.environ.get("AETHER_PLATFORM") == "android":
+return True
     """True, wenn Yggdrasil lokal oder im PATH verfuegbar ist."""
     local_binary = yggdrasil_binary_path()
     if local_binary.is_file() and os.access(local_binary, os.X_OK):

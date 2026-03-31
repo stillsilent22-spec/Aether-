@@ -34,7 +34,7 @@ crc32fast = "1.4"
 ed25519-dalek = "2"
 eframe = "0.30"
 flate2 = "1.0"
-iced = { version = "0.13", features = ["tokio", "canvas"] }
+iced = { version = "0.13", features = ["tokio", "canvas"], optional = true }
 image = { version = "0.25", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 interprocess = "2.2"
 rand = "0.8"
@@ -73,4 +73,6 @@ strip = true
 panic = "abort"
 
 [features]
-default = []
+default = ["ui"]
+ui = ["iced"]
+android_worker = []
