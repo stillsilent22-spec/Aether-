@@ -6,6 +6,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+import os
+
+_IS_ANDROID = (
+    os.environ.get("AETHER_PLATFORM") == "android"
+    or os.path.exists("/data/data/com.termux")
+    or os.path.exists("/system/build.prop")
+)
+
 
 def _needs_bootstrap() -> bool:
 	settings = Path("data/settings.json")
@@ -25,7 +33,16 @@ if _needs_bootstrap():
 
 
 ROOT = Path(__file__).resolve().parent
-REQUIREMENTS_FILE = ROOT / "requirements.txt"
+
+if _IS_ANDROID:
+	REQUIREMENTS_FILE = ROOT / "requirements_android.txt"
+	CORE_IMPORTS = {
+		"numpy": "numpy",
+		"cryptography": "cryptography",
+		"psutil": "psutil",
+	}
+else:
+	REQUIREMENTS_FILE = ROOT / "requirements.txt"
 
 CORE_IMPORTS = {
 	"numpy": "numpy",

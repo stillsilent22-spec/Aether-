@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 p = Path('aether_dropper.py')
 content = '''"""Compatibility shim — AetherDropper wurde durch modules/unified_cascade.py ersetzt.
 Diese Datei existiert nur damit:

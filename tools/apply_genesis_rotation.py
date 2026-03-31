@@ -1,4 +1,4 @@
-﻿import json, subprocess, time, shutil, sys, os
+import json, subprocess, time, shutil, sys, os
 from pathlib import Path
 root = Path.cwd()
 node_json_path = root / 'data' / 'swarm' / 'node.json'

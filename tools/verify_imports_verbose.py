@@ -1,4 +1,4 @@
-﻿print('PY_START')
+print('PY_START')
 try:
     import sys
     print('sys ok')

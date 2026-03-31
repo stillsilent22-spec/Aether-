@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import json
-import tkinter as tk
+try:
+    import tkinter as tk
+    from tkinter import filedialog, ttk
+    _HAS_TKINTER = True
+except ImportError:
+    tk = None  # type: ignore
+    filedialog = None  # type: ignore
+    ttk = None  # type: ignore
+    _HAS_TKINTER = False
 from pathlib import Path
-from tkinter import filedialog, ttk
 from typing import Any
 
 from .analysis_engine import AnalysisEngine, AetherFingerprint

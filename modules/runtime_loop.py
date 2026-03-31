@@ -1,4 +1,4 @@
-from runtime_core import runtime_step, runtime_set_running
+from modules.runtime_core import runtime_step, runtime_set_running
 
 def run_loop(runtime: dict, max_ticks: int, delta_provider: callable) -> dict:
     runtime = runtime_set_running(runtime, True)

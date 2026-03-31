@@ -1,4 +1,4 @@
-from diagnostics import diag_state_summary, diag_delta_summary
+from modules.diagnostics import diag_state_summary, diag_delta_summary
 
 def render_state_summary(state: dict) -> str:
     s = diag_state_summary(state)

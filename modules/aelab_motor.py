@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """
 aelab_motor.py
 AELab Architect – reiner Algorithmus-Kern, portiert aus AELab.cpp
@@ -77,6 +79,7 @@ class _DeltaSession:
         try:
             self.close()
         except Exception:
+            logger.warning("[aelab_motor] Stiller Fehler")
             pass
 
     def __enter__(self):

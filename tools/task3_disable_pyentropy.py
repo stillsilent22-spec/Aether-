@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 p = Path('src/py_entropy.rs')
 if p.exists():
     backup = p.with_suffix('.rs.bak')

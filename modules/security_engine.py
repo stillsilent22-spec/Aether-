@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 import gc as _gc
 import sys as _sys
 import ctypes as _ctypes
@@ -44,6 +46,7 @@ class SecurityManager:
             if raw is not None:
                 username = str(raw).strip()
         except Exception:
+            logger.warning("[security_engine] Stiller Fehler")
             pass
 
         # --- CLI-Fallback ---
@@ -64,6 +67,7 @@ class SecurityManager:
                     user_id = int(record.get("user_id", 0) or 0)
                     user_role = str(record.get("role", "operator") or "operator")
             except Exception:
+                logger.warning("[security_engine] Stiller Fehler")
                 pass
 
         return SecuritySession(
@@ -85,6 +89,7 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj[:] = b"\x00" * len(obj)
             except Exception:
+                logger.warning("[security_engine] Stiller Fehler")
                 pass
         elif isinstance(obj, (bytes, str)):
             return
@@ -94,6 +99,7 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj.clear()
             except Exception:
+                logger.warning("[security_engine] Stiller Fehler")
                 pass
         elif isinstance(obj, list):
             for item in list(obj):
@@ -101,13 +107,16 @@ def secure_zeroize(obj: _Any) -> None:
             try:
                 obj.clear()
             except Exception:
+                logger.warning("[security_engine] Stiller Fehler")
                 pass
     except Exception:
+        logger.warning("[security_engine] Stiller Fehler")
         pass
     finally:
         try:
             _gc.collect()
         except Exception:
+            logger.warning("[security_engine] Stiller Fehler")
             pass
 
 
@@ -145,6 +154,7 @@ def encrypt_device_scoped_payload(
         token = _se_Fernet(key).encrypt(_se_json.dumps(payload).encode("utf-8")).decode()
         return {"v": 1, "purpose": purpose, "token": token}
     except Exception as exc:
+        logger.warning(f"[security_engine] Fehler: {exc}")
         return {"v": 1, "purpose": purpose, "token": "", "error": str(exc)}
 
 
@@ -162,6 +172,7 @@ def decrypt_device_scoped_payload(
         raw = _se_Fernet(key).decrypt(envelope["token"].encode("utf-8")).decode("utf-8")
         return _se_json.loads(raw)
     except Exception:
+        logger.warning("[security_engine] Stiller Fehler")
         return {}
 
 

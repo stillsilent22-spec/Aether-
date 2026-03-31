@@ -1,4 +1,6 @@
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import json
 import socket
@@ -44,6 +46,7 @@ def _load_local_node_record() -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -70,6 +73,7 @@ def _verify_node_record(payload: dict[str, Any]) -> bool:
         expected_id = hashlib.sha256(raw).hexdigest()[:16]
         return expected_id == node_id
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return False
 
 
@@ -82,6 +86,7 @@ def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 300.0) -> bool:
         beacon_time = float(ts)
         return abs(time.time() - beacon_time) <= max_age_seconds
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return True
 
 
@@ -102,6 +107,7 @@ def _load_revoked_nodes() -> set:
         if isinstance(data, list):
             return set(str(x) for x in data)
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         pass
     return set()
 
@@ -111,6 +117,7 @@ def _is_revoked(node_id: str) -> bool:
             return False
         return str(node_id).strip() in _load_revoked_nodes()
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return False
 
 def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str]) -> None:
@@ -122,6 +129,7 @@ def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str])
     try:
         sock.setsockopt(socket.SOL_SOCKET, bind_to_device, interface_name.encode("ascii", errors="ignore") + b"\0")
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         pass
 
 
@@ -145,6 +153,7 @@ def _create_listener(port: int, interface_name: Optional[str] = None) -> Optiona
             try:
                 sock.close()
             except Exception:
+                logger.warning("[lan_beacon] Stiller Fehler")
                 pass
         return None
 
@@ -161,6 +170,7 @@ def _create_sender(interface_name: Optional[str] = None) -> Optional[socket.sock
             try:
                 sock.close()
             except Exception:
+                logger.warning("[lan_beacon] Stiller Fehler")
                 pass
         return None
 
@@ -174,6 +184,7 @@ def _beacon_payload_bytes() -> Optional[bytes]:
         payload_dict["beacon_ts"] = str(time.time())
         return json.dumps(payload_dict, ensure_ascii=True, sort_keys=True).encode("utf-8")
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return None
 
 
@@ -181,12 +192,15 @@ def _receive_once(sock: socket.socket) -> None:
     try:
         data, _addr = sock.recvfrom(65535)
     except socket.timeout:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return
     try:
         payload = json.loads(data.decode("utf-8"))
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         return
     if not isinstance(payload, dict):
         return
@@ -214,6 +228,7 @@ def _lan_sender_loop() -> None:
                 try:
                     sock.sendto(payload, (LAN_MULTICAST_GROUP, LAN_MULTICAST_PORT))
                 except Exception:
+                    logger.warning("[lan_beacon] Stiller Fehler")
                     pass
             time.sleep(BEACON_INTERVAL_SECONDS)
     finally:
@@ -240,6 +255,7 @@ def _get_yggdrasil_interface() -> Optional[str]:
         if interface_name:
             return interface_name
     except Exception:
+        logger.warning("[lan_beacon] Stiller Fehler")
         pass
     try:
         available = {name for _, name in socket.if_nameindex()}
@@ -273,6 +289,7 @@ def _yggdrasil_overlay_loop() -> None:
                     try:
                         sender.sendto(payload, (LAN_MULTICAST_GROUP, YGGDRASIL_MULTICAST_PORT))
                     except Exception:
+                        logger.warning("[lan_beacon] Stiller Fehler")
                         pass
                 next_send = now + BEACON_INTERVAL_SECONDS
             _receive_once(listener)

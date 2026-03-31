@@ -1,1 +1,1 @@
-﻿print('hi-from-test')
+print('hi-from-test')

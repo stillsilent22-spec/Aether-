@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Vault-, Chain- und Signaturlogik fuer Aether-Zusatzpanels."""
 
 from __future__ import annotations
@@ -586,6 +588,7 @@ class AetherAugmentor:
                 secret_key = derive_fernet_key(f"{shared_secret}|{self.session_context.session_id}|peer_delta")
                 result["internal_payload"] = json.loads(decrypt_text(token, secret_key))
             except Exception:
+                logger.warning("[vault_chain] Stiller Fehler")
                 return {}
         return result
 
@@ -774,6 +777,7 @@ class AetherAugmentor:
             try:
                 latest_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding="utf-8")
             except Exception:
+                logger.warning("[vault_chain] Stiller Fehler")
                 pass
             return summary
         if not latest_path.is_file():
@@ -787,6 +791,7 @@ class AetherAugmentor:
         try:
             payload = json.loads(latest_path.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("[vault_chain] Stiller Fehler")
             return {
                 "schema": "aether.public_ttd_anchor.pool.v2",
                 "public_anchors": [],
@@ -838,6 +843,7 @@ class AetherAugmentor:
         try:
             latest_path.write_text(json.dumps(summary, ensure_ascii=True, indent=2), encoding="utf-8")
         except Exception:
+            logger.warning("[vault_chain] Stiller Fehler")
             pass
         return summary
 

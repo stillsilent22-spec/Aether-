@@ -1,5 +1,24 @@
+import math
 import os
-from analysis_engine import entropy, gini
+from collections import Counter
+
+
+def entropy(data: bytes) -> float:
+    if not data:
+        return 0.0
+    counts = Counter(data)
+    total = len(data)
+    return -sum((c / total) * math.log2(c / total) for c in counts.values())
+
+
+def gini(data: bytes) -> float:
+    if not data:
+        return 0.0
+    vals = sorted(Counter(data).values())
+    n = len(data)
+    cumsum = sum((2 * (i + 1) - len(vals) - 1) * v for i, v in enumerate(vals))
+    return cumsum / (len(vals) * n)
+
 from modules.text_utils import text_normalize, text_reduce
 
 def route_text_input(text: str) -> dict:

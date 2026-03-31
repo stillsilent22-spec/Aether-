@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 from datetime import datetime
 p = Path('modules/unified_cascade.py')
 if not p.exists():

@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Atomic Global Controller for Aether Swarm Mode.
 
 IPC: localhost TCP socket (port 7387) with JSON line-protocol.
@@ -124,6 +126,7 @@ def read_status() -> Dict[str, Any]:
             if isinstance(raw, dict):
                 return dict(raw)
     except Exception:
+        logger.warning("[swarm_controller] Stiller Fehler")
         pass
     return {"swarm_mode": False, "mode": "offline", "schema_version": SCHEMA_VERSION}
 
@@ -261,6 +264,7 @@ class SwarmController:
         try:
             self._conn.close()
         except Exception:
+            logger.warning("[swarm_controller] Stiller Fehler")
             pass
 
     def _ipc_server_loop(self) -> None:
@@ -311,11 +315,13 @@ class SwarmController:
             try:
                 conn.sendall((json.dumps({"ok": False, "error": str(err)}) + "\n").encode("utf-8"))
             except Exception:
+                logger.warning("[swarm_controller] Stiller Fehler")
                 pass
         finally:
             try:
                 conn.close()
             except Exception:
+                logger.warning("[swarm_controller] Stiller Fehler")
                 pass
 
     def _file_cmd_poll_loop(self) -> None:
@@ -343,6 +349,7 @@ class SwarmController:
                 # Consume the command (truncate)
                 CMD_PATH.write_text("{}", encoding="utf-8")
             except Exception:
+                logger.warning("[swarm_controller] Stiller Fehler")
                 pass
 
 
@@ -365,6 +372,7 @@ def send_command(cmd: str, host: str = IPC_HOST, port: int = IPC_PORT, timeout: 
         sock.close()
         return json.loads(data.decode("utf-8").strip())
     except Exception as err:
+        logger.warning(f"[swarm_controller] Fehler: {err}")
         return {"ok": False, "error": str(err), "fallback": "file"}
 
 
@@ -386,9 +394,11 @@ def send_command_via_file(cmd: str) -> Dict[str, Any]:
                     if isinstance(raw, dict) and "ok" in raw:
                         return raw
                 except Exception:
+                    logger.warning("[swarm_controller] Stiller Fehler")
                     pass
         return {"ok": False, "error": "timeout"}
     except Exception as err:
+        logger.warning(f"[swarm_controller] Fehler: {err}")
         return {"ok": False, "error": str(err)}
 
 

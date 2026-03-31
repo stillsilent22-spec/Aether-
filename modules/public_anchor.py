@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 """Oeffentliche Verankerung mit lokalem Receipt- und Retry-Pfad."""
 
 from __future__ import annotations
@@ -62,6 +64,7 @@ class PublicBlockchainAnchor:
         try:
             payload = json.loads(self.queue_path.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("[public_anchor] Stiller Fehler")
             return []
         return payload if isinstance(payload, list) else []
 
@@ -202,6 +205,7 @@ class PublicBlockchainAnchor:
                 return "", "blockcypher_no_tx_hash", True
             return tx_hash, "", False
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            logger.warning(f"[public_anchor] Fehler: {exc}")
             return "", f"blockcypher: {exc}", True
 
     def _pin_ipfs(self, block_payload: dict[str, Any], settings: dict[str, str]) -> tuple[str, str, bool]:
@@ -232,6 +236,7 @@ class PublicBlockchainAnchor:
                 return "", "pinata_no_cid", True
             return cid, "", False
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            logger.warning(f"[public_anchor] Fehler: {exc}")
             return "", f"pinata: {exc}", True
 
     def _execute_attempt(self, block_payload: dict[str, Any], settings: dict[str, str]) -> dict[str, Any]:
@@ -293,6 +298,7 @@ class PublicBlockchainAnchor:
         try:
             raw = json.loads(self.settings_path.read_text(encoding="utf-8"))
         except Exception:
+            logger.warning("[public_anchor] Stiller Fehler")
             return dict(DEFAULT_SETTINGS)
         settings = dict(DEFAULT_SETTINGS)
         if isinstance(raw, dict):
@@ -335,6 +341,7 @@ class PublicBlockchainAnchor:
                     if isinstance(payload, dict):
                         receipts.append(payload)
         except Exception:
+            logger.warning("[public_anchor] Stiller Fehler")
             return []
         normalized_limit = max(1, int(limit))
         return receipts[-normalized_limit:][::-1]

@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 p=Path('modules/unified_cascade.py')
 s=p.read_text(encoding='utf-8')
 if 'from typing import Callable' in s and 'Optional' not in s:

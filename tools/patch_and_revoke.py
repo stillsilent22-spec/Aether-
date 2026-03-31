@@ -1,4 +1,4 @@
-﻿from pathlib import Path
+from pathlib import Path
 import json,sys,subprocess
 root = Path.cwd()
 lan = root / 'modules' / 'lan_beacon.py'

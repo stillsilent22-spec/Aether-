@@ -1,4 +1,6 @@
 from __future__ import annotations
+import logging
+logger = logging.getLogger(__name__)
 
 import base64
 import json
@@ -68,6 +70,7 @@ class AethernetTransport:
             payload = json.loads(node_path.read_text(encoding="utf-8"))
             return str(payload.get("public_key_pem", "") or "").strip()
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return ""
 
     def _sign_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -122,6 +125,7 @@ class AethernetTransport:
             if skew > float(self.SIGNATURE_MAX_SKEW_SECONDS):
                 return False
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return False
 
         now_ts = time.time()
@@ -144,6 +148,7 @@ class AethernetTransport:
             self._seen_nonces[nonce] = now_ts
             return True
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return False
 
     @staticmethod
@@ -155,6 +160,7 @@ class AethernetTransport:
             with urllib.request.urlopen(base_url.rstrip("/") + "/ping", timeout=timeout) as response:
                 return 200 <= int(response.status) < 300
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return False
 
     def _update_peer_probe_state(self, peer_path: Path, payload: Dict[str, Any], reachable: bool) -> None:
@@ -175,6 +181,7 @@ class AethernetTransport:
                 encoding="utf-8",
             )
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return
 
     def refresh_peer_states(self) -> Dict[str, int]:
@@ -328,6 +335,7 @@ class AethernetTransport:
                         if isinstance(payload, dict):
                             return payload
                     except Exception:
+                        logger.warning("[aethernet_transport] Stiller Fehler")
                         return None
                     return None
 
@@ -390,6 +398,7 @@ class AethernetTransport:
                                 self._send_json(200, payload)
                                 return
                             except Exception:
+                                logger.warning("[aethernet_transport] Stiller Fehler")
                                 pass
                         self._send_json(404, {"ok": False})
                         return
@@ -463,6 +472,7 @@ class AethernetTransport:
             s.close()
             return str(ip)
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return "127.0.0.1"
 
     def _beacon_payload(self) -> bytes:
@@ -488,6 +498,7 @@ class AethernetTransport:
                 try:
                     existing = json.loads(peer_path.read_text(encoding="utf-8"))
                 except Exception:
+                    logger.warning("[aethernet_transport] Stiller Fehler")
                     pass
             existing.update(
                 {
@@ -523,6 +534,7 @@ class AethernetTransport:
                 try:
                     sock.sendto(beacon_bytes, ("255.255.255.255", beacon_port))
                 except Exception:
+                    logger.warning("[aethernet_transport] Stiller Fehler")
                     pass
                 time.sleep(30)
 
@@ -601,6 +613,7 @@ class AethernetTransport:
         try:
             from modules.consensus_engine import get_consensus_anchors, submit_candidate
         except Exception:
+            logger.warning("[aethernet_transport] Stiller Fehler")
             return
         peer_urls = self.discover_lan_nodes()
         if not peer_urls:
@@ -632,6 +645,7 @@ class AethernetTransport:
                     )
                     urllib.request.urlopen(req, timeout=2.0)
                 except Exception:
+                    logger.warning("[aethernet_transport] Stiller Fehler")
                     pass
             try:
                 with urllib.request.urlopen(
@@ -649,6 +663,8 @@ class AethernetTransport:
                             db_path=consensus_db,
                         )
                     except Exception:
+                        logger.warning("[aethernet_transport] Stiller Fehler")
                         pass
             except Exception:
+                logger.warning("[aethernet_transport] Stiller Fehler")
                 pass
