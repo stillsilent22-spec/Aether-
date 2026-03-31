@@ -125,3 +125,8 @@ data/anchors/genesis_*.pack
 bin/downloads/
 target_release_verify/
 vault/
+
+# Ignore keys under tools (moved to secure backup)
+tools/**/keys/
+tools/**/keys/*
+
