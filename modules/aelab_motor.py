@@ -78,8 +78,8 @@ class _DeltaSession:
     def __del__(self):
         try:
             self.close()
-        except Exception:
-            logger.warning("[aelab_motor] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[aelab_motor] Stiller Fehler: {e}")
             pass
 
     def __enter__(self):

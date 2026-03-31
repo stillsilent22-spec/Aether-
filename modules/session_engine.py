@@ -81,8 +81,8 @@ def secure_zeroize(obj: _Any) -> None:
         elif isinstance(obj, memoryview):
             try:
                 obj[:] = b"\x00" * len(obj)
-            except Exception:
-                logger.warning("[session_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[session_engine] Stiller Fehler: {e}")
                 pass
         elif isinstance(obj, (bytes, str)):
             return
@@ -91,44 +91,44 @@ def secure_zeroize(obj: _Any) -> None:
                 secure_zeroize(value)
             try:
                 obj.clear()
-            except Exception:
-                logger.warning("[session_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[session_engine] Stiller Fehler: {e}")
                 pass
         elif isinstance(obj, list):
             for item in list(obj):
                 secure_zeroize(item)
             try:
                 obj.clear()
-            except Exception:
-                logger.warning("[session_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[session_engine] Stiller Fehler: {e}")
                 pass
-    except Exception:
-        logger.warning("[session_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[session_engine] Stiller Fehler: {e}")
         pass
     finally:
         try:
             _gc.collect()
-        except Exception:
-            logger.warning("[session_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[session_engine] Stiller Fehler: {e}")
             pass
 
 def _session_cleanup_patch(self) -> None:
     """Zeroizt alle sensitiven Session-Keys. Nur Windows. Fail-silent."""
     try:
         from modules.security_engine import secure_zeroize
-    except Exception:
+    except Exception as e:
         try:
             from .security_engine import secure_zeroize
-        except Exception:
-            logger.warning("[session_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[session_engine] Stiller Fehler: {e}")
             return
     for attr in ("live_session_key", "live_session_fingerprint",
                  "raw_storage_key_hex", "raw_storage_key_fingerprint"):
         try:
             secure_zeroize(getattr(self, attr, ""))
             setattr(self, attr, "")
-        except Exception:
-            logger.warning("[session_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[session_engine] Stiller Fehler: {e}")
             pass
 
 # Monkey-patch cleanup + __del__ onto SessionContext
@@ -138,8 +138,8 @@ SessionContext.cleanup = _session_cleanup_patch
 def _session_del_patch(self) -> None:
     try:
         self.cleanup()
-    except Exception:
-        logger.warning("[session_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[session_engine] Stiller Fehler: {e}")
         pass
 
 

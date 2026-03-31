@@ -17,10 +17,10 @@ DEFAULT_NODES_DIR = ROOT / "data" / "swarm" / "nodes"
 
 
 def _run_runtime() -> int:
-    from runtime_core import init_runtime
-    from runtime_loop import run_loop, simple_delta_provider
-    from renderer_visual import render_state_summary, render_timeline
-    from monitoring_engine import monitor_runtime
+    from modules.runtime_core import init_runtime
+    from modules.runtime_loop import run_loop, simple_delta_provider
+    from modules.renderer_visual import render_state_summary, render_timeline
+    from modules.monitoring_engine import monitor_runtime
 
     runtime = init_runtime()
     print("Aether Runtime gestartet")

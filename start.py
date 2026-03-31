@@ -43,24 +43,23 @@ if _IS_ANDROID:
 	}
 else:
 	REQUIREMENTS_FILE = ROOT / "requirements.txt"
-
-CORE_IMPORTS = {
-	"numpy": "numpy",
-	"scipy": "scipy",
-	"matplotlib": "matplotlib",
-	"sounddevice": "sounddevice",
-	"tkinterdnd2": "tkinterdnd2",
-	"opencv-python": "cv2",
-	"pillow": "PIL",
-	"cryptography": "cryptography",
-	"fonttools": "fontTools",
-	"mss": "mss",
-	"pydub": "pydub",
-	"moviepy": "moviepy",
-	"PyMuPDF": "fitz",
-	"psutil": "psutil",
-	"speechrecognition": "speech_recognition",
-}
+	CORE_IMPORTS = {
+		"numpy": "numpy",
+		"scipy": "scipy",
+		"matplotlib": "matplotlib",
+		"sounddevice": "sounddevice",
+		"tkinterdnd2": "tkinterdnd2",
+		"opencv-python": "cv2",
+		"pillow": "PIL",
+		"cryptography": "cryptography",
+		"fonttools": "fontTools",
+		"mss": "mss",
+		"pydub": "pydub",
+		"moviepy": "moviepy",
+		"PyMuPDF": "fitz",
+		"psutil": "psutil",
+		"speechrecognition": "speech_recognition",
+	}
 
 OPTIONAL_IMPORTS = {
 	"pywebview": "webview",

@@ -63,8 +63,8 @@ class PublicBlockchainAnchor:
             return []
         try:
             payload = json.loads(self.queue_path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.warning("[public_anchor] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[public_anchor] Stiller Fehler: {e}")
             return []
         return payload if isinstance(payload, list) else []
 
@@ -297,8 +297,8 @@ class PublicBlockchainAnchor:
             return dict(DEFAULT_SETTINGS)
         try:
             raw = json.loads(self.settings_path.read_text(encoding="utf-8"))
-        except Exception:
-            logger.warning("[public_anchor] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[public_anchor] Stiller Fehler: {e}")
             return dict(DEFAULT_SETTINGS)
         settings = dict(DEFAULT_SETTINGS)
         if isinstance(raw, dict):
@@ -336,12 +336,12 @@ class PublicBlockchainAnchor:
                         continue
                     try:
                         payload = json.loads(raw)
-                    except Exception:
+                    except Exception as e:
                         continue
                     if isinstance(payload, dict):
                         receipts.append(payload)
-        except Exception:
-            logger.warning("[public_anchor] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[public_anchor] Stiller Fehler: {e}")
             return []
         normalized_limit = max(1, int(limit))
         return receipts[-normalized_limit:][::-1]

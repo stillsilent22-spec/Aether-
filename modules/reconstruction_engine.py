@@ -18,7 +18,7 @@ from collections import Counter
 import numpy as np
 try:
     from numpy.fft import rfft
-except Exception:
+except Exception as e:
     rfft = None  # type: ignore[assignment]
 try:
     import networkx as nx
@@ -28,15 +28,15 @@ except ImportError:  # networkx ist optional — nur fuer detect_attractor() noe
     _NX_AVAILABLE = False
 try:
     from .render_coordinator import RenderCoordinator
-except ImportError:
+except ImportError as e:
     from modules.render_coordinator import RenderCoordinator  # type: ignore
 try:
     from .optimize_engine import OptimizeEngine
-except ImportError:
+except ImportError as e:
     from modules.optimize_engine import OptimizeEngine  # type: ignore
 try:
     from .process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot
-except ImportError:
+except ImportError as e:
     from modules.process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot  # type: ignore
 
 
@@ -289,8 +289,8 @@ class VaultAnchorStore:
                 )
                 conn.commit()
                 return int(cursor.rowcount or 0) > 0
-        except sqlite3.Error:
-            logger.warning("[reconstruction_engine] Stiller Fehler")
+        except sqlite3.Error as e:
+            logger.warning(f"[reconstruction_engine] Stiller Fehler: {e}")
             return False
 
     def confirm_lossless(self, anchor_hash: str) -> None:
@@ -416,7 +416,7 @@ class LosslessReconstructionEngine:
                 raw_value = entry.get(key)
                 try:
                     value = abs(int(raw_value))
-                except (TypeError, ValueError):
+                except (TypeError, ValueError) as e:
                     continue
                 if value >= 1:
                     magnitudes.append(value)
@@ -694,8 +694,8 @@ def _parse_iso_timestamp(value: str) -> datetime:
         if parsed.tzinfo is None:
             return parsed.replace(tzinfo=timezone.utc)
         return parsed.astimezone(timezone.utc)
-    except Exception:
-        logger.warning("[reconstruction_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[reconstruction_engine] Stiller Fehler: {e}")
         return datetime.fromtimestamp(0, tz=timezone.utc)
 
 
@@ -1203,8 +1203,8 @@ class UniversalAdapter(BaseModalityAdapter):
         try:
             payload.decode('utf-8')
             return 'text'
-        except UnicodeDecodeError:
-            logger.warning("[reconstruction_engine] Stiller Fehler")
+        except UnicodeDecodeError as e:
+            logger.warning(f"[reconstruction_engine] Stiller Fehler: {e}")
             pass
         # Binary fallback
         return 'binary'

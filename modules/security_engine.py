@@ -23,7 +23,7 @@ class SecurityManager:
         """Loginmaske: tkinter-Dialog mit CLI-Fallback. Gibt SecuritySession zurueck."""
         try:
             from .session_engine import SecuritySession
-        except ImportError:
+        except ImportError as e:
             from modules.session_engine import SecuritySession  # type: ignore
 
         username = ""
@@ -45,15 +45,15 @@ class SecurityManager:
             root.destroy()
             if raw is not None:
                 username = str(raw).strip()
-        except Exception:
-            logger.warning("[security_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[security_engine] Stiller Fehler: {e}")
             pass
 
         # --- CLI-Fallback ---
         if not username:
             try:
                 username = input("Aether Login — Benutzername: ").strip()
-            except Exception:
+            except Exception as e:
                 username = "local"
 
         if not username:
@@ -66,8 +66,8 @@ class SecurityManager:
                 if record:
                     user_id = int(record.get("user_id", 0) or 0)
                     user_role = str(record.get("role", "operator") or "operator")
-            except Exception:
-                logger.warning("[security_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[security_engine] Stiller Fehler: {e}")
                 pass
 
         return SecuritySession(
@@ -88,8 +88,8 @@ def secure_zeroize(obj: _Any) -> None:
         elif isinstance(obj, memoryview):
             try:
                 obj[:] = b"\x00" * len(obj)
-            except Exception:
-                logger.warning("[security_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[security_engine] Stiller Fehler: {e}")
                 pass
         elif isinstance(obj, (bytes, str)):
             return
@@ -98,25 +98,25 @@ def secure_zeroize(obj: _Any) -> None:
                 secure_zeroize(value)
             try:
                 obj.clear()
-            except Exception:
-                logger.warning("[security_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[security_engine] Stiller Fehler: {e}")
                 pass
         elif isinstance(obj, list):
             for item in list(obj):
                 secure_zeroize(item)
             try:
                 obj.clear()
-            except Exception:
-                logger.warning("[security_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[security_engine] Stiller Fehler: {e}")
                 pass
-    except Exception:
-        logger.warning("[security_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[security_engine] Stiller Fehler: {e}")
         pass
     finally:
         try:
             _gc.collect()
-        except Exception:
-            logger.warning("[security_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[security_engine] Stiller Fehler: {e}")
             pass
 
 
@@ -126,7 +126,7 @@ def secure_zeroize(obj: _Any) -> None:
 try:
     from cryptography.fernet import Fernet as _se_Fernet
     _SE_CRYPTO = True
-except ImportError:
+except ImportError as e:
     _SE_CRYPTO = False
 
 import hashlib as _se_hashlib
@@ -171,8 +171,8 @@ def decrypt_device_scoped_payload(
         key = _se_derive_key(purpose, session_salt, sid)
         raw = _se_Fernet(key).decrypt(envelope["token"].encode("utf-8")).decode("utf-8")
         return _se_json.loads(raw)
-    except Exception:
-        logger.warning("[security_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[security_engine] Stiller Fehler: {e}")
         return {}
 
 

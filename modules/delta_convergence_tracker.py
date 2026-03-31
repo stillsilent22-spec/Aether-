@@ -273,7 +273,7 @@ class DeltaConvergenceTracker:
             current_mtime = max(
                 (f.stat().st_mtime for f in dna_files), default=0.0
             )
-        except Exception:
+        except Exception as e:
             current_mtime = 0.0
             dna_files = []
         if current_mtime != 0.0 and current_mtime == self._anchor_cache_mtime:
@@ -285,10 +285,10 @@ class DeltaConvergenceTracker:
                     for part in line.strip().split():
                         try:
                             anchors.append(float(part))
-                        except ValueError:
+                        except ValueError as e:
                             continue
-        except Exception:
-            logger.warning("[delta_convergence_tracker] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[delta_convergence_tracker] Stiller Fehler: {e}")
             pass
         self._anchor_cache = anchors[:1000]
         self._anchor_cache_mtime = current_mtime
@@ -305,7 +305,7 @@ class DeltaConvergenceTracker:
                         DeltaMeasurement(**m) for m in data.get("measurements", [])
                     ],
                 )
-        except Exception:
+        except Exception as e:
             self._series = {}
 
     def _save_history(self) -> None:

@@ -29,8 +29,8 @@ def _load_node_id() -> str:
             d = json.loads(f.read_text(encoding="utf-8"))
             if d.get("role") == "genesis":
                 return str(d["node_id"])
-        except Exception:
-            logger.warning("[swarm_loop_bridge] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_loop_bridge] Stiller Fehler: {e}")
             pass
     return "unknown"
 
@@ -40,8 +40,8 @@ def _sign(payload: bytes) -> str:
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
         key = load_pem_private_key(KEY_PATH.read_bytes(), password=None)
         return key.sign(payload).hex()
-    except Exception:
-        logger.warning("[swarm_loop_bridge] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_loop_bridge] Stiller Fehler: {e}")
         return "unsigned"
 
 
@@ -57,8 +57,8 @@ def _load_admin_publisher_id() -> str:
             Path("data/trusted_publishers.json").read_text(encoding="utf-8")
         )
         return str(config.get("admin_publisher_id", ""))
-    except Exception:
-        logger.warning("[swarm_loop_bridge] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_loop_bridge] Stiller Fehler: {e}")
         return ""
 
 
@@ -76,8 +76,8 @@ def _verify_genesis_authorization(node_id: str) -> bool:
         admin_entry = dict(publishers.get(admin_id, {}))
         registered_node_id = str(admin_entry.get("node_id", ""))
         return bool(registered_node_id) and registered_node_id == node_id
-    except Exception:
-        logger.warning("[swarm_loop_bridge] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_loop_bridge] Stiller Fehler: {e}")
         return False  # fail-closed: im Zweifel kein Bypass
 
 

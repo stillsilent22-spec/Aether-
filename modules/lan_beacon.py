@@ -45,8 +45,8 @@ def _load_local_node_record() -> dict[str, Any]:
     path = _node_record_path()
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return {}
     return payload if isinstance(payload, dict) else {}
 
@@ -72,8 +72,8 @@ def _verify_node_record(payload: dict[str, Any]) -> bool:
         raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
         expected_id = hashlib.sha256(raw).hexdigest()[:16]
         return expected_id == node_id
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return False
 
 
@@ -85,8 +85,8 @@ def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 300.0) -> bool:
             return True  # No timestamp = old format, accept for now
         beacon_time = float(ts)
         return abs(time.time() - beacon_time) <= max_age_seconds
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return True
 
 
@@ -106,8 +106,8 @@ def _load_revoked_nodes() -> set:
             return set(str(x) for x in lst)
         if isinstance(data, list):
             return set(str(x) for x in data)
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         pass
     return set()
 
@@ -116,8 +116,8 @@ def _is_revoked(node_id: str) -> bool:
         if not node_id:
             return False
         return str(node_id).strip() in _load_revoked_nodes()
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return False
 
 def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str]) -> None:
@@ -128,8 +128,8 @@ def _apply_interface_binding(sock: socket.socket, interface_name: Optional[str])
         return
     try:
         sock.setsockopt(socket.SOL_SOCKET, bind_to_device, interface_name.encode("ascii", errors="ignore") + b"\0")
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         pass
 
 
@@ -148,12 +148,12 @@ def _create_listener(port: int, interface_name: Optional[str] = None) -> Optiona
         _join_multicast_group(sock)
         sock.settimeout(1.0)
         return sock
-    except Exception:
+    except Exception as e:
         if sock is not None:
             try:
                 sock.close()
-            except Exception:
-                logger.warning("[lan_beacon] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
                 pass
         return None
 
@@ -165,12 +165,12 @@ def _create_sender(interface_name: Optional[str] = None) -> Optional[socket.sock
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 1)
         _apply_interface_binding(sock, interface_name)
         return sock
-    except Exception:
+    except Exception as e:
         if sock is not None:
             try:
                 sock.close()
-            except Exception:
-                logger.warning("[lan_beacon] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
                 pass
         return None
 
@@ -183,24 +183,24 @@ def _beacon_payload_bytes() -> Optional[bytes]:
         payload_dict = dict(payload)
         payload_dict["beacon_ts"] = str(time.time())
         return json.dumps(payload_dict, ensure_ascii=True, sort_keys=True).encode("utf-8")
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return None
 
 
 def _receive_once(sock: socket.socket) -> None:
     try:
         data, _addr = sock.recvfrom(65535)
-    except socket.timeout:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except socket.timeout as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return
     try:
         payload = json.loads(data.decode("utf-8"))
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return
     if not isinstance(payload, dict):
         return
@@ -227,8 +227,8 @@ def _lan_sender_loop() -> None:
             if payload is not None:
                 try:
                     sock.sendto(payload, (LAN_MULTICAST_GROUP, LAN_MULTICAST_PORT))
-                except Exception:
-                    logger.warning("[lan_beacon] Stiller Fehler")
+                except Exception as e:
+                    logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
                     pass
             time.sleep(BEACON_INTERVAL_SECONDS)
     finally:
@@ -254,12 +254,12 @@ def _get_yggdrasil_interface() -> Optional[str]:
         interface_name = str(payload.get("InterfaceName", "") or "").strip()
         if interface_name:
             return interface_name
-    except Exception:
-        logger.warning("[lan_beacon] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         pass
     try:
         available = {name for _, name in socket.if_nameindex()}
-    except Exception:
+    except Exception as e:
         available = set()
     for name in ["tun0", "tun1", "tap0", "aether0"]:
         if name in available:
@@ -288,8 +288,8 @@ def _yggdrasil_overlay_loop() -> None:
                 if payload is not None:
                     try:
                         sender.sendto(payload, (LAN_MULTICAST_GROUP, YGGDRASIL_MULTICAST_PORT))
-                    except Exception:
-                        logger.warning("[lan_beacon] Stiller Fehler")
+                    except Exception as e:
+                        logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
                         pass
                 next_send = now + BEACON_INTERVAL_SECONDS
             _receive_once(listener)

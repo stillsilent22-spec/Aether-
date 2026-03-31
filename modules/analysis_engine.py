@@ -109,7 +109,7 @@ def _safe_decode_text(raw: bytes) -> str:
     for encoding in ("utf-8", "utf-16", "latin-1"):
         try:
             return raw.decode(encoding)
-        except Exception:
+        except Exception as e:
             continue
     return raw.decode("utf-8", errors="ignore")
 
@@ -261,7 +261,7 @@ class AetherFingerprint:
                 self.local_chain_attested_at = str(receipt.get("submitted_at", ""))
                 return bool(self.local_chain_tx_hash)
             return False
-        except Exception:
+        except Exception as e:
             print("Warnung: Blockchain-Uebertragung konnte nicht abgeschlossen werden.")
             return False
 
@@ -374,8 +374,8 @@ class AnalysisEngine:
             return
         try:
             progress_callback(str(stage), self._clamp(float(progress), 0.0, 1.0), str(detail or ""))
-        except Exception:
-            logger.warning("[analysis_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[analysis_engine] Stiller Fehler: {e}")
             return
 
     def _progress_scope(
@@ -485,8 +485,8 @@ class AnalysisEngine:
             try:
                 detector = magic.Magic(mime=True)
                 return str(detector.from_buffer(raw[:65536]))
-            except Exception:
-                logger.warning("[analysis_engine] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[analysis_engine] Stiller Fehler: {e}")
                 pass
         for signature, mime_type, _family in MAGIC_SIGNATURES:
             if raw.startswith(signature):
@@ -682,10 +682,10 @@ class AnalysisEngine:
                 }
                 try:
                     clip.close()
-                except Exception:
-                    logger.warning("[analysis_engine] Stiller Fehler")
+                except Exception as e:
+                    logger.warning(f"[analysis_engine] Stiller Fehler: {e}")
                     pass
-            except Exception:
+            except Exception as e:
                 missing_dependencies.append("moviepy")
         summary = {
             "frame_count": int(frame_count),
@@ -807,8 +807,8 @@ class AnalysisEngine:
         ]
         try:
             font.close()
-        except Exception:
-            logger.warning("[analysis_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[analysis_engine] Stiller Fehler: {e}")
             pass
         return {
             "category": category,
@@ -828,7 +828,7 @@ class AnalysisEngine:
                 for name in names[:8]:
                     try:
                         preview_entries.append(archive.read(name)[:4096])
-                    except Exception:
+                    except Exception as e:
                         continue
             summary = {"entry_count": int(len(names)), "entries": names[:32]}
             streams = [self._stream_entry("archive_manifest", "\n".join(names).encode("utf-8"), kind="metadata")]
@@ -869,7 +869,7 @@ class AnalysisEngine:
                 canonical = json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2)
                 summary = {"root_type": type(payload).__name__, "size": int(len(canonical))}
                 streams.append(self._stream_entry("json_canonical", canonical.encode("utf-8"), kind="text"))
-            except Exception:
+            except Exception as e:
                 missing_data.append("json_parse_failed")
         elif suffix in {".sqlite", ".db"}:
             try:
@@ -880,12 +880,12 @@ class AnalysisEngine:
                 for table in tables[:16]:
                     try:
                         counts[str(table)] = int(cursor.execute(f"SELECT COUNT(*) FROM \"{table}\"").fetchone()[0])
-                    except Exception:
+                    except Exception as e:
                         counts[str(table)] = 0
                 summary = {"tables": tables[:32], "table_counts": counts}
                 streams.append(self._stream_entry("sqlite_schema", _json_bytes(summary), kind="metadata"))
                 connection.close()
-            except Exception:
+            except Exception as e:
                 missing_data.append("sqlite_parse_failed")
         elif suffix == ".csv":
             text = _safe_decode_text(raw)
@@ -1125,8 +1125,8 @@ class AnalysisEngine:
             return []
         try:
             return self.registry.get_resonance_reference_vectors(limit=320)
-        except Exception:
-            logger.warning("[analysis_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[analysis_engine] Stiller Fehler: {e}")
             return []
 
     def _compute_ethics(
@@ -1781,7 +1781,7 @@ class AnalysisEngine:
                 familiarity = min(1.0, float(depth_report.get("samples", 0) or 0.0) / 64.0)
                 learning_ratio = float(learning_curve.get("improvement_ratio", 0.0) or 0.0)
                 learning_score = max(0.0, min(1.0, 0.5 + (learning_ratio * 2.5)))
-            except Exception:
+            except Exception as e:
                 depth_ratio = 0.0
                 familiarity = 0.0
                 learning_score = 0.35
@@ -2077,6 +2077,7 @@ class AnalysisEngine:
                     write_log=True,
                 )
             except Exception:  # pragma: no cover — never crash the pipeline
+                logger.warning(f"[analysis_engine] Fehler: {e}")
                 pass
         if callback is not None:
             callback(fingerprint)

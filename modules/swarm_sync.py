@@ -20,8 +20,8 @@ def _has_origin_remote() -> bool:
             text=True,
         )
         return result.returncode == 0 and bool((result.stdout or "").strip())
-    except Exception:
-        logger.warning("[swarm_sync] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_sync] Stiller Fehler: {e}")
         return False
 
 
@@ -63,7 +63,7 @@ def discover_nodes() -> dict[str, str]:
             node_id = str(data.get("node_id", ""))
             if node_id:
                 nodes[node_id] = str(data.get("public_key_pem", ""))
-        except Exception:
+        except Exception as e:
             continue
     return nodes
 

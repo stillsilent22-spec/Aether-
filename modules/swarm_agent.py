@@ -40,7 +40,7 @@ if str(ROOT) not in sys.path:
 try:
     import psutil
     _PSUTIL_OK = True
-except ImportError:
+except ImportError as e:
     _PSUTIL_OK = False
 
 from modules.capture_adapter import CaptureAdapterBase, FrameData, StubCaptureAdapter, make_capture_adapter
@@ -228,8 +228,8 @@ class SwarmAgent:
             if STATUS_PATH.is_file():
                 raw = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
                 return bool(raw.get("swarm_mode", False))
-        except Exception:
-            logger.warning("[swarm_agent] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_agent] Stiller Fehler: {e}")
             pass
         return False
 
@@ -243,7 +243,7 @@ class SwarmAgent:
                     ring_size=self._ring_size,
                     max_fps=self._max_fps,
                 )
-            except Exception:
+            except Exception as e:
                 # Fallback to stub if desktop capture unavailable
                 self._capture = StubCaptureAdapter(ring_size=self._ring_size, max_fps=self._max_fps)
             self._pipeline.reset()
@@ -257,8 +257,8 @@ class SwarmAgent:
             if self._capture is not None:
                 try:
                     self._capture.stop()
-                except Exception:
-                    logger.warning("[swarm_agent] Stiller Fehler")
+                except Exception as e:
+                    logger.warning(f"[swarm_agent] Stiller Fehler: {e}")
                     pass
                 self._capture = None
             self._capture_active = False
@@ -321,8 +321,8 @@ class SwarmAgent:
         if _PSUTIL_OK:
             try:
                 return float(psutil.cpu_percent(interval=None))
-            except Exception:
-                logger.warning("[swarm_agent] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[swarm_agent] Stiller Fehler: {e}")
                 pass
         return 0.0
 
@@ -363,8 +363,8 @@ def _load_agent_config() -> Dict[str, Any]:
         if settings_path.is_file():
             raw = json.loads(settings_path.read_text(encoding="utf-8"))
             return dict(raw.get("swarm_agent", {}))
-    except Exception:
-        logger.warning("[swarm_agent] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_agent] Stiller Fehler: {e}")
         pass
     return {}
 
@@ -402,7 +402,7 @@ def run_agent_daemon() -> None:
     signal.signal(signal.SIGINT, _shutdown)
     try:
         signal.signal(signal.SIGTERM, _shutdown)
-    except AttributeError:
+    except AttributeError as e:
         pass  # SIGTERM not available on Windows
 
     agent.start()
@@ -416,8 +416,8 @@ def run_agent_daemon() -> None:
                 path = INTERBUS_DIR / "swarm_agent_health.json"
                 INTERBUS_DIR.mkdir(parents=True, exist_ok=True)
                 path.write_text(json.dumps(health, ensure_ascii=True, indent=2), encoding="utf-8")
-            except Exception:
-                logger.warning("[swarm_agent] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[swarm_agent] Stiller Fehler: {e}")
                 pass
             time.sleep(5.0)
     finally:

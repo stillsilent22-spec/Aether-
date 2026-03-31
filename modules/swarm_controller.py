@@ -125,8 +125,8 @@ def read_status() -> Dict[str, Any]:
             raw = json.loads(STATUS_PATH.read_text(encoding="utf-8"))
             if isinstance(raw, dict):
                 return dict(raw)
-    except Exception:
-        logger.warning("[swarm_controller] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
         pass
     return {"swarm_mode": False, "mode": "offline", "schema_version": SCHEMA_VERSION}
 
@@ -263,8 +263,8 @@ class SwarmController:
         self._cmd_poll_thread = None
         try:
             self._conn.close()
-        except Exception:
-            logger.warning("[swarm_controller] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
             pass
 
     def _ipc_server_loop(self) -> None:
@@ -282,9 +282,9 @@ class SwarmController:
         while not self._stop_event.is_set():
             try:
                 conn, addr = srv.accept()
-            except socket.timeout:
+            except socket.timeout as e:
                 continue
-            except Exception:
+            except Exception as e:
                 break
             threading.Thread(
                 target=self._handle_client, args=(conn, addr), daemon=True
@@ -307,21 +307,21 @@ class SwarmController:
                 obj = json.loads(raw)
                 cmd = str(obj.get("cmd", "")).strip()
                 actor = str(obj.get("actor", str(addr[0]))).strip()
-            except Exception:
+            except Exception as e:
                 cmd, actor = raw, str(addr[0])
             response = self.dispatch(cmd, actor=actor)
             conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
         except Exception as err:
             try:
                 conn.sendall((json.dumps({"ok": False, "error": str(err)}) + "\n").encode("utf-8"))
-            except Exception:
-                logger.warning("[swarm_controller] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
                 pass
         finally:
             try:
                 conn.close()
-            except Exception:
-                logger.warning("[swarm_controller] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
                 pass
 
     def _file_cmd_poll_loop(self) -> None:
@@ -348,8 +348,8 @@ class SwarmController:
                     )
                 # Consume the command (truncate)
                 CMD_PATH.write_text("{}", encoding="utf-8")
-            except Exception:
-                logger.warning("[swarm_controller] Stiller Fehler")
+            except Exception as e:
+                logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
                 pass
 
 
@@ -393,8 +393,8 @@ def send_command_via_file(cmd: str) -> Dict[str, Any]:
                     raw = json.loads(result_path.read_text(encoding="utf-8"))
                     if isinstance(raw, dict) and "ok" in raw:
                         return raw
-                except Exception:
-                    logger.warning("[swarm_controller] Stiller Fehler")
+                except Exception as e:
+                    logger.warning(f"[swarm_controller] Stiller Fehler: {e}")
                     pass
         return {"ok": False, "error": "timeout"}
     except Exception as err:

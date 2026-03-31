@@ -71,7 +71,7 @@ def derive_peer_id(public_key_path: Optional[str] = None) -> str:
             public_key_path = str(ROOT / "keys" / "node_public.key")
         key_bytes = Path(public_key_path).read_bytes()
         return "peer-" + hashlib.sha256(key_bytes).hexdigest()[:32]
-    except Exception:
+    except Exception as e:
         # Fallback: generate stable random PeerID stored locally
         pid_path = ROOT / "data" / "peer_id.txt"
         if pid_path.is_file():
@@ -199,8 +199,8 @@ class P2PLayer:
                 data = json.loads(consent_path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     return bool(data.get("consented", False))
-        except Exception:
-            logger.warning("[swarm_p2p] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_p2p] Stiller Fehler: {e}")
             pass
         return False  # Kein Consent ohne explizite Zustimmung
 
@@ -264,8 +264,8 @@ class P2PLayer:
             P2P_GOSSIP_PATH.write_text(
                 json.dumps(msg, ensure_ascii=True, indent=2), encoding="utf-8"
             )
-        except Exception:
-            logger.warning("[swarm_p2p] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_p2p] Stiller Fehler: {e}")
             pass
         # Send via AethernetTransport if available
         if self._transport is not None:
@@ -334,8 +334,8 @@ class P2PLayer:
                 local_payload = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
                 if isinstance(local_payload, dict):
                     own_node_id = str(local_payload.get("node_id", own_node_id) or own_node_id)
-        except Exception:
-            logger.warning("[swarm_p2p] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_p2p] Stiller Fehler: {e}")
             pass
 
         relay_addrs: List[str] = []
@@ -348,8 +348,8 @@ class P2PLayer:
             if LOCAL_NODE_JSON_PATH.is_file():
                 _lp = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
                 own_ygg = str(_lp.get("yggdrasil_addr", "") or "")
-        except Exception:
-            logger.warning("[swarm_p2p] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[swarm_p2p] Stiller Fehler: {e}")
             pass
         genesis_seed = str(self._config.get("genesis_yggdrasil_addr", "") or "").strip()
         if genesis_seed and genesis_seed != own_ygg:
@@ -362,7 +362,7 @@ class P2PLayer:
         for node_path in sorted(path.glob("*.json")):
             try:
                 payload = json.loads(node_path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception as e:
                 continue
             if not isinstance(payload, dict):
                 continue
@@ -488,6 +488,6 @@ def make_p2p_layer(
             config = raw.get("swarm_p2p", {})
         else:
             config = {}
-    except Exception:
+    except Exception as e:
         config = {}
     return P2PLayer(node_id=node_id, aethernet_transport=aethernet_transport, config=config)

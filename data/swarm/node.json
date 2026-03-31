@@ -1,6 +1,6 @@
 {
-  "aether_version": "master-v27",
-  "node_id": "6c9e2fcad95e2bd0",
+  "aether_version": "master-v29",
+  "node_id": "413616ab27cc02f3",
   "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAtq+8H5xKy8JNHsmTzE6qmPLVgFwQC40+NW7VEDBlHDo=\n-----END PUBLIC KEY-----\n",
   "registered_at": "2026-03-31T06:49:13Z",
   "relay": true,

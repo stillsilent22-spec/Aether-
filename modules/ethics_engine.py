@@ -6,7 +6,7 @@ from collections import Counter as _Counter
 try:
     import numpy as _np
     _NP_OK = True
-except Exception:
+except Exception as e:
     _NP_OK = False
 
 _STOP = {"der","die","das","und","in","ist","ein","eine","mit","auf","den",
@@ -120,7 +120,7 @@ def ethics_score(text: str, entropy_mean=None) -> float:
 try:
     from dataclasses import dataclass as _dataclass, field as _field
     _DC_OK = True
-except ImportError:
+except ImportError as e:
     _DC_OK = False
 
 if _DC_OK:
@@ -219,7 +219,7 @@ class EthicsEngine:
                 volatility = min(1.0, (variance ** 0.5) / 3.0)
             else:
                 volatility = 0.0
-        except Exception:
+        except Exception as e:
             volatility = 0.0
 
         periodicity_norm = max(0.0, min(1.0, 1.0 - abs(int(periodicity) - 24) / 48.0))
@@ -249,7 +249,7 @@ class EthicsEngine:
                     ]
                     dist = sum((a - b) ** 2 for a, b in zip(current, ref_vec)) ** 0.5
                     best_distance = dist if best_distance is None else min(best_distance, dist)
-                except Exception:
+                except Exception as e:
                     continue
             if best_distance is not None:
                 resonance_score = max(0.0, min(1.0, 1.0 - (best_distance / 2.0)))
@@ -316,8 +316,8 @@ else:
 def _clip01(value) -> float:
     try:
         return float(max(0.0, min(1.0, float(value))))
-    except Exception:
-        logger.warning("[ethics_engine] Stiller Fehler")
+    except Exception as e:
+        logger.warning(f"[ethics_engine] Stiller Fehler: {e}")
         return 0.0
 
 
@@ -584,8 +584,8 @@ def analyze_code_structure(code: str) -> dict:
                 if zipf_dev > 0.7:
                     flags.append("zipf_violation")
                     score -= 0.10 * min(1.0, zipf_dev)
-        except Exception:
-            logger.warning("[ethics_engine] Stiller Fehler")
+        except Exception as e:
+            logger.warning(f"[ethics_engine] Stiller Fehler: {e}")
             pass
 
     return {
