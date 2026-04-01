@@ -52,73 +52,80 @@ export class SymbiontPanel {
                         } else if (this._activeTab === 'chat') {
                             await this._handleChatCollab();
                         }
-                            private async _handleChatCollab(): Promise<void> {
-                                // Simpler Chat/Collab-Tab für Profile-Sharing (Copy/Paste)
-                                const html = this._buildTabsHtml(`
-                                    <h2>Chat/Collab: Profile teilen & vergleichen</h2>
-                                    <div style="margin-bottom:12px;">
-                                        <button id="btn-export-profile">Eigenes Profil kopieren</button>
-                                    </div>
-                                    <textarea id="profileInput" rows="8" style="width:100%;font-family:monospace;resize:vertical;" placeholder="Profil-JSON hier einfügen..."></textarea>
-                                    <div style="margin-top:8px;">
-                                        <button id="btn-compare-profile">Vergleichen</button>
-                                    </div>
-                                    <div id="chat-result" style="margin-top:18px;"></div>
-                                    <script>
-                                    const vscode = acquireVsCodeApi();
-                                    document.getElementById('btn-export-profile').addEventListener('click', () => {
-                                        vscode.postMessage({ command: 'exportOwnProfile' });
-                                    });
-                                    document.getElementById('btn-compare-profile').addEventListener('click', () => {
-                                        const input = document.getElementById('profileInput').value;
-                                        vscode.postMessage({ command: 'compareProfile', data: input });
-                                    });
-                                    window.addEventListener('message', event => {
-                                        const msg = event.data;
-                                        if (msg.type === 'ownProfile') {
-                                            navigator.clipboard.writeText(msg.data);
-                                            alert('Eigenes Profil kopiert!');
-                                        }
-                                        if (msg.type === 'compareResult') {
-                                            document.getElementById('chat-result').innerHTML = '<pre style="background:#222;color:#eee;padding:8px;border-radius:6px;">'+JSON.stringify(msg.data,null,2)+'</pre>';
-                                        }
-                                    });
-                                    </script>
-                                `);
-                                this._panel.webview.html = html;
-                            }
-
-                            // Exportiert das aktuellste eigene Profil (z.B. letztes aus Batch)
-                            private async _handleExportOwnProfile(): Promise<void> {
-                                // Hier als Demo: letztes Profil aus Audit-Log
-                                const lastProfile = this._client.exportAuditLog();
-                                this._panel.webview.postMessage({ type: 'ownProfile', data: lastProfile });
-                            }
-
-                            // Vergleicht eingefügtes Profil mit lokalem (z.B. letztem Batch-Profil)
-                            private async _handleCompareProfile(profileJson: string): Promise<void> {
-                                try {
-                                    const remoteProfile = JSON.parse(profileJson);
-                                    // Hier als Demo: vergleiche mit letztem Profil aus Audit-Log
-                                    const audit = JSON.parse(this._client.exportAuditLog());
-                                    const localProfile = Array.isArray(audit) ? audit.reverse().find(e => e.result && e.result.signal_id) : null;
-                                    if (!localProfile) throw new Error('Kein lokales Profil gefunden.');
-                                    // Sende beide Profile an Backend zum Vergleich (nutze delta)
-                                    const result = await this._client.sendRequest('aether/diff', {
-                                        snapshot_id_a: localProfile.result.signal_id,
-                                        snapshot_id_b: remoteProfile.signal_id || remoteProfile.result?.signal_id || ''
-                                    });
-                                    this._panel.webview.postMessage({ type: 'compareResult', data: result });
-                                } catch (err) {
-                                    this._panel.webview.postMessage({ type: 'compareResult', data: { error: String(err) } });
-                                }
-                            }
+                        break;
+                    case 'exportOwnProfile':
+                        await this._handleExportOwnProfile();
+                        break;
+                    case 'compareProfile':
+                        await this._handleCompareProfile(msg.data);
                         break;
                     case 'batchFiles':
                         await this._handleBatchFiles(msg.data);
                         break;
                 }
-                private async _handleBatchCompare(): Promise<void> {
+            },
+            null,
+            this._disposables,
+        );
+    }
+
+    private async _handleChatCollab(): Promise<void> {
+        const html = this._buildTabsHtml(`
+            <h2>Chat/Collab: Profile teilen &amp; vergleichen</h2>
+            <div style="margin-bottom:12px;">
+                <button id="btn-export-profile">Eigenes Profil kopieren</button>
+            </div>
+            <textarea id="profileInput" rows="8" style="width:100%;font-family:monospace;resize:vertical;" placeholder="Profil-JSON hier einfügen..."></textarea>
+            <div style="margin-top:8px;">
+                <button id="btn-compare-profile">Vergleichen</button>
+            </div>
+            <div id="chat-result" style="margin-top:18px;"></div>
+            <script>
+            const vscode = acquireVsCodeApi();
+            document.getElementById('btn-export-profile').addEventListener('click', () => {
+                vscode.postMessage({ command: 'exportOwnProfile' });
+            });
+            document.getElementById('btn-compare-profile').addEventListener('click', () => {
+                const input = document.getElementById('profileInput').value;
+                vscode.postMessage({ command: 'compareProfile', data: input });
+            });
+            window.addEventListener('message', event => {
+                const msg = event.data;
+                if (msg.type === 'ownProfile') {
+                    navigator.clipboard.writeText(msg.data);
+                    alert('Eigenes Profil kopiert!');
+                }
+                if (msg.type === 'compareResult') {
+                    document.getElementById('chat-result').innerHTML = '<pre style="background:#222;color:#eee;padding:8px;border-radius:6px;">'+JSON.stringify(msg.data,null,2)+'</pre>';
+                }
+            });
+            </script>
+        `);
+        this._panel.webview.html = html;
+    }
+
+    private async _handleExportOwnProfile(): Promise<void> {
+        const lastProfile = this._client.exportAuditLog();
+        this._panel.webview.postMessage({ type: 'ownProfile', data: lastProfile });
+    }
+
+    private async _handleCompareProfile(profileJson: string): Promise<void> {
+        try {
+            const remoteProfile = JSON.parse(profileJson);
+            const audit = JSON.parse(this._client.exportAuditLog());
+            const localProfile = Array.isArray(audit) ? audit.reverse().find((e: any) => e.result && e.result.signal_id) : null;
+            if (!localProfile) { throw new Error('Kein lokales Profil gefunden.'); }
+            const result = await this._client.sendRequest('aether/diff', {
+                snapshot_id_a: localProfile.result.signal_id,
+                snapshot_id_b: remoteProfile.signal_id || remoteProfile.result?.signal_id || '',
+            });
+            this._panel.webview.postMessage({ type: 'compareResult', data: result });
+        } catch (err) {
+            this._panel.webview.postMessage({ type: 'compareResult', data: { error: String(err) } });
+        }
+    }
+
+    private async _handleBatchCompare(): Promise<void> {
                     // Zeige Drag & Drop UI
                     const html = this._buildTabsHtml(`
                         <h2>Batch-Vergleich</h2>
@@ -153,31 +160,22 @@ export class SymbiontPanel {
                         </script>
                     `);
                     this._panel.webview.html = html;
-                }
+    }
 
-                private async _handleBatchFiles(fileArrays: number[][]): Promise<void> {
+    private async _handleBatchFiles(fileArrays: number[][]): Promise<void> {
                     // Sende an Backend, zeige Ergebnis
                     try {
                         const result = await this._client.sendRequest('aether/batch_profile_compare', { signals: fileArrays });
                         const html = this._buildTabsHtml(`
                             <h2>Batch-Vergleich Ergebnis</h2>
                             <pre style="max-height: 60vh; overflow:auto; background:#222; color:#eee; padding:8px; border-radius:6px;">${JSON.stringify(result, null, 2)}</pre>
-                            <button id="batch-back">Neue Analyse</button>
+                            <button id="batch-back" onclick="acquireVsCodeApi().postMessage({command:'switchTab',data:'batch'})">Neue Analyse</button>
                         `);
                         this._panel.webview.html = html;
-                        setTimeout(() => {
-                            const btn = document.getElementById('batch-back');
-                            if (btn) btn.addEventListener('click', () => this._handleBatchCompare());
-                        }, 100);
                     } catch (err) {
                         const html = this._buildTabsHtml('<p>Batch-Analyse fehlgeschlagen.</p>');
                         this._panel.webview.html = html;
                     }
-                }
-            },
-            null,
-            this._disposables,
-        );
     }
 
     public static createOrShow(extensionUri: vscode.Uri, client: SymbiontLanguageClient, repoRoot: string): void {
@@ -316,9 +314,8 @@ export class SymbiontPanel {
         await this._handleStatus();
     }
 
-        private _buildTabsHtml(body: string): string {
-                // Tabs: Status | Audit-Log
-                const tabBar = `
+    private _buildTabsHtml(body: string): string {
+        const tabBar = `
                 <div style="display:flex; gap:12px; margin-bottom:18px;">
                     <button id="tab-status" style="padding:6px 16px; border-radius:6px; border:none; background:${this._activeTab === 'status' ? '#24c163' : '#444'}; color:#fff; font-weight:600;">Status</button>
                     <button id="tab-audit" style="padding:6px 16px; border-radius:6px; border:none; background:${this._activeTab === 'audit' ? '#24c163' : '#444'}; color:#fff; font-weight:600;">Audit-Log</button>
@@ -326,10 +323,7 @@ export class SymbiontPanel {
                     <button id="tab-chat" style="padding:6px 16px; border-radius:6px; border:none; background:${this._activeTab === 'chat' ? '#24c163' : '#444'}; color:#fff; font-weight:600;">Chat/Collab</button>
                 </div>
                 `;
-                        document.getElementById('tab-chat')?.addEventListener('click', () => {
-                            vscode.postMessage({ command: 'switchTab', data: 'chat' });
-                        });
-                return `<!DOCTYPE html>
+        return `<!DOCTYPE html>
 <html lang="de">
 <head>
     <meta charset="UTF-8">
