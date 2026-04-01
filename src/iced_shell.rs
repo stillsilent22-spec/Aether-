@@ -119,7 +119,7 @@ pub struct CascadeMetrics {
 }
 
 impl CascadeMetrics {
-    fn from_capsule_state(capsule: &CapsuleViewState, structure_map: &StructureMapViewState) -> Self {
+    fn from_capsule_state(capsule: &CapsuleViewState, _structure_map: &StructureMapViewState) -> Self {
         Self {
             entropy: capsule.entropy as f64,
             zipf_alpha: capsule.zipf_alpha as f64,
@@ -10561,6 +10561,7 @@ fn fallback_capsule_state(
         zipf_alpha: 0.0,
         benford_score: 0.0,
         katz_dimension: 1.0,
+        perm_entropy: 0.0,
         sce_score: symmetry.clamp(0.0, 1.0),
         bayes_confidence: symmetry.clamp(0.0, 1.0),
         trust_score: (0.65 * symmetry + 0.35 * (1.0 - drift).clamp(0.0, 1.0)).clamp(0.0, 1.0),
