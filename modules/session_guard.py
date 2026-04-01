@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 logger = logging.getLogger(__name__)
 """modules/session_guard.py — Entry-point enforcement for Aether.
@@ -8,7 +10,6 @@ block.  The function exits with a clear error message when no valid registered
 session exists, preventing modules from being used in isolation without first
 going through the bootstrap/registration window (python start.py).
 """
-from __future__ import annotations
 
 import json
 import sys

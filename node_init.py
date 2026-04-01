@@ -87,7 +87,7 @@ def repair_genesis_key(node_id: str) -> None:
 def main() -> None:
     if "--repair" in sys.argv:
         # Determine node_id from existing swarm records instead of hardcoding
-        node_id_to_repair: str = "6c9e2fcad95e2bd0"  # fallback only
+        node_id_to_repair: str = "b94981667890ea26"  # genesis fallback
         if SWARM_DIR.exists():
             candidates = list(SWARM_DIR.glob("*.json"))
             if candidates:
