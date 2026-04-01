@@ -72,8 +72,9 @@ def get_swarm_status(
     try:
         node_path = Path(nodes_dir)
         anchor_path = Path(anchor_dir)
-        node_files = list(node_path.glob("*.json")) if node_path.exists() else []
-        anchor_files = list(anchor_path.glob("*.pack")) if anchor_path.exists() else []
+        node_files = list(node_path.glob("*.json")) if node_path.exists() else []        local_node = Path("data/swarm/node.json")
+        if local_node.exists():
+            node_files.append(local_node)        anchor_files = list(anchor_path.glob("*.pack")) if anchor_path.exists() else []
 
         genesis_key_ok = False
         for file_path in node_files:

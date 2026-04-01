@@ -6495,7 +6495,7 @@ On warning: always check Logs and ADE for details.",
                         self.selected_private_partner = None;
                         self.refresh_security_snapshot(true, "login");
                         self.status_line = format!(
-                            "Anmeldung erfolgreich. Data-Key aktiv: {}",
+                            "Anmeldung erfolgreich als GENESIS NODE! Session-Key: {}",
                             self.data_key_fingerprint
                         );
                     }
@@ -6525,7 +6525,7 @@ On warning: always check Logs and ADE for details.",
                             self.selected_private_partner = None;
                             self.refresh_security_snapshot(true, "register");
                             self.status_line = format!(
-                                "Registrierung abgeschlossen. Data-Key aktiv: {}",
+                                "Registrierung abgeschlossen als GENESIS NODE! Session-Key: {}",
                                 self.data_key_fingerprint
                             );
                         }
