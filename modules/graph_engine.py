@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Additive Graph-Feldanalyse fuer lokale AETHER-Attraktoren."""
 
-from __future__ import annotations
 
 import hashlib
 import math

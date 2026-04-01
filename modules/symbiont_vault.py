@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """symbiont_vault.py — Aether Symbiont: AES-256-GCM Delta-Vault.
@@ -6,7 +7,6 @@ Brücke zum Rust-seitigen delta_vault (LocalDeltaVault via subprocess).
 Speichert/Lädt StructuralProfile-Snapshots als verschlüsselte Deltas.
 Fallback auf SQLite-basierten Python-Vault wenn Rust-Binary nicht verfügbar.
 """
-from __future__ import annotations
 
 import hashlib
 import json

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Yggdrasil Auto-Download und Setup.
@@ -5,7 +6,6 @@ logger = logging.getLogger(__name__)
 Download nur von offiziellem GitHub Release, SHA256-verifiziert.
 """
 
-from __future__ import annotations
 
 import hashlib
 import os

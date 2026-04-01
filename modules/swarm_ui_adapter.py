@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """UI Adapter for Aether Swarm Mode.
@@ -16,7 +17,6 @@ Usage (CLI):
     python -m modules.swarm_ui_adapter revoke
 """
 
-from __future__ import annotations
 
 import json
 import sys

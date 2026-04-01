@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Log- und Screenshot-System fuer Aether."""
 
-from __future__ import annotations
 
 import json
 from datetime import datetime, timezone

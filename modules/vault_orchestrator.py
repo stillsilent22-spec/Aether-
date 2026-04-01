@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Subvault Genpool — evolutionary candidate lifecycle for Aether.
@@ -16,7 +17,6 @@ ones.  :func:`orchestrate_cycle` ties everything together: it samples
 candidates, scores them via :mod:`mdl`, applies rules, and advances the
 lifecycle.
 """
-from __future__ import annotations
 
 import hashlib
 import os

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """symbiont_core.py — Aether Symbiont: Signal-agnostischer Meta-Ockham Kern.
@@ -5,7 +6,6 @@ logger = logging.getLogger(__name__)
 Verarbeitet beliebige Signaltypen (Code, Text, AST, Binär) als strukturelle
 Einheiten — ohne semantische Annahmen. Berechnet StructuralProfile und Delta.
 """
-from __future__ import annotations
 
 import hashlib
 import math

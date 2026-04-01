@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """P2P Sync Layer for Aether Swarm (opt-in).
@@ -19,7 +20,6 @@ Privacy guarantees:
 Opt-in via settings.json. Bootstrap enables swarm_p2p by default for fresh nodes.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -10,7 +11,6 @@ Maps invariant_detector.compute_invariant_score() → swarm consensus:
   - Mandelbrot β → cache coherence strategy
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -23,7 +24,6 @@ Verwendung:
         print(c.cluster_id[:8], c.relevance_score, c.domain_summary())
 """
 
-from __future__ import annotations
 
 import json
 import math

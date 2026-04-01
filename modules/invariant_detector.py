@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -16,7 +17,6 @@ These invariants guide:
   - Consensus quorum sizing (Fourier periodicity → sync cycle length)
 """
 
-from __future__ import annotations
 
 import json
 import math

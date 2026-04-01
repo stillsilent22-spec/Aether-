@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Structural control layer for local agent-like background processes."""
 
-from __future__ import annotations
 
 import os
 import statistics

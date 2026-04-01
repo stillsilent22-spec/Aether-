@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Deterministic structure-map projection for capsule results.
@@ -6,7 +7,6 @@ This module converts a capsule result into a stable, shareable structure-map
 payload that can be consumed by UI layers without re-implementing layout logic.
 """
 
-from __future__ import annotations
 
 import hashlib
 import math

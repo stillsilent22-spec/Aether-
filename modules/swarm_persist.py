@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Extended persistence layer for Aether Swarm.
@@ -18,7 +19,6 @@ Schema version: 1
 Migration: additive-only (no column drops). Each migration is idempotent.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -18,7 +19,6 @@ Bei bekannten Datenstrukturen (Vault-Seed vorhanden) ist der Aufruf schnell
 (pop=20, gens=10) gestartet – der beste Baum wird im Vault gespeichert.
 """
 
-from __future__ import annotations
 
 import hashlib
 import threading

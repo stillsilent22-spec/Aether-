@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """AetherGuard: deterministic security layer for Aether.
@@ -6,7 +7,6 @@ The layer evaluates structural metrics and policy flags with fixed rules.
 Same input produces the same verdict, score, and fingerprint.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

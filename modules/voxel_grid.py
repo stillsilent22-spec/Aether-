@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Strukturpunkt-Raster fuer CSV-Import, Heatmaps und Delta-Export."""
 
-from __future__ import annotations
 
 import csv
 import io

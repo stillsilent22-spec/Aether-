@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Aether – Autopilot-Engine mit Rollback-System.
 
@@ -13,7 +14,6 @@ Sicherheits-Invarianten:
   - Rollback immer möglich solange log-Eintrag existiert.
 """
 
-from __future__ import annotations
 
 import json
 import logging

@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Vault-, Chain- und Signaturlogik fuer Aether-Zusatzpanels."""
 
-from __future__ import annotations
 
 import hashlib
 import hmac

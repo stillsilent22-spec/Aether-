@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Beobachter-Pipeline fuer Kameraanker, Metriken und Delta-Logs."""
 
-from __future__ import annotations
 
 import hashlib
 import json

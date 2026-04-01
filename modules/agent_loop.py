@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Steuernder Agent-Loop fuer sparse Clusterbereiche im Embeddingraum."""
 
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass

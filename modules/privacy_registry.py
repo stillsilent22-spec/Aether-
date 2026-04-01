@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -15,7 +16,6 @@ Datenschutzprinzipien:
   - Alle Änderungen werden append-only geloggt
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

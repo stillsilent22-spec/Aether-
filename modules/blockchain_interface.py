@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Lokaler append-only Ledger fuer Fingerprint-Attestierungen."""
 
-from __future__ import annotations
 
 import hashlib
 import json

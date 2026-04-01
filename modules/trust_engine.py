@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Unabhaengige Trust-Pruefung fuer oeffentliche Aether-DNA-Bundles."""
 
-from __future__ import annotations
 
 import argparse
 import json

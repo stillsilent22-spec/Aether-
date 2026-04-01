@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Structural domain-overlap detection for Aether Swarm.
@@ -23,7 +24,6 @@ Data flow:
   5. The Rust shell polls that file on Tick and shows requests in the Chat tab.
 """
 
-from __future__ import annotations
 
 import json
 import sqlite3

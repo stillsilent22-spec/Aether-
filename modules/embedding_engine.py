@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Cross-Domain-Embeddings fuer anchor-basierte Vault-Vektoren."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Sequence

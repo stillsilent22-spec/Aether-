@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Scoped screen capture fuer explizite Aether-Dateianalysen."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path

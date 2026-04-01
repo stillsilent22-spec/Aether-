@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """frame_delta_engine.py — Kollaborativer XOR-Delta Frame-Codec.
@@ -19,7 +20,6 @@ Warum die Kompressionsrate mit steigender Nutzerzahl sinkt:
 Referenzarchitektur: ähnlich Google NNVE / Meta Neural Video Codecs,
 aber dezentral (kein Zentralserver), lokal (kein Cloud-Zwang), open.
 """
-from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -31,7 +32,6 @@ Verwendung:
     vault.tick()                       # Decay + Lifecycle
 """
 
-from __future__ import annotations
 
 import csv
 import hashlib

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """metalayer_os.py — MetaLayer OS Phase C: Koordinierender Tick-Loop.
@@ -12,7 +13,6 @@ Takt-Intervalle (konfiguierbar):
 
 Alle Aktionen sind nicht-blockierend (asyncio).
 """
-from __future__ import annotations
 
 import asyncio
 import logging

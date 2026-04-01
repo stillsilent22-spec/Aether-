@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -12,7 +13,6 @@ Privacy-Garantie:
   - Alle Daten können jederzeit vollständig gelöscht werden.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

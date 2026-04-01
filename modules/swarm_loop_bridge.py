@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -7,7 +8,6 @@ the existing IPC channel (port 7387).
 Enforces CASCADE_VERSION check before submission.
 Genesis/Admin node can submit without quorum via role="genesis".
 """
-from __future__ import annotations
 
 import hashlib
 import json

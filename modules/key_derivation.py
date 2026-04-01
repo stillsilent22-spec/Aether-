@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """HKDF-Ableitungsbaum fuer Aether.
@@ -6,7 +7,6 @@ Master Key -> alle Child Keys via HKDF-SHA256.
 Master Key verlaesst niemals den lokalen Speicher.
 """
 
-from __future__ import annotations
 
 import ctypes
 from typing import Dict

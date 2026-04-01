@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """pixel_coord_optimizer.py — MetaLayer OS Phase B: Pixel-Koordinatenpfad-Optimierung.
@@ -6,7 +7,6 @@ Analysiert den logischen Render-Pfad jedes Prozesses durch den DWM-Compositor
 und schlägt Optimierungen vor (kürzere Hop-Sequenzen, Batch-Compositing).
 Alle Pfade werden in einer CoordMatrix zusammengeführt.
 """
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field

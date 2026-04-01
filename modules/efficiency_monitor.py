@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Leichtgewichtiger CPU-/RAM-Monitor fuer lokale Low-Power-Analysen."""
 
-from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any

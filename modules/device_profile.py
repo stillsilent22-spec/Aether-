@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Adaptive Laufzeitprofile fuer schwache und starke Geraete."""
 
-from __future__ import annotations
 
 import os
 import platform

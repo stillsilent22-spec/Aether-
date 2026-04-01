@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Authoritative State API for Aether.
@@ -5,7 +6,6 @@ logger = logging.getLogger(__name__)
 Thread-safe, monotone-version state store.  Every write increments the
 logical clock ``t`` so callers can detect stale reads.
 """
-from __future__ import annotations
 
 import copy
 import threading

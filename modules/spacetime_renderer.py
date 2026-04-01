@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """2D-Dateivorschau und Miniatur-Renderer fuer AetherFingerprints."""
 
-from __future__ import annotations
 
 import math
 import hashlib

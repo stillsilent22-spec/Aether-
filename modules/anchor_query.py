@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -9,7 +10,6 @@ abfragbar — ohne dass Assistant direkt auf SQLite zugreift.
 Privacy-Garantie: Keine Rohdaten, nur strukturelle Metadaten.
 """
 
-from __future__ import annotations
 
 import time
 from pathlib import Path

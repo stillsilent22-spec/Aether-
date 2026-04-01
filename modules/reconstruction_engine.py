@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Verlustfreie Rekonstruktion aus Delta-Logs."""
 
-from __future__ import annotations
 
 import json
 import math

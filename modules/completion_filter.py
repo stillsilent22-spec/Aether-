@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """completion_filter.py — Aether Symbiont: Ockham-gefilterter Completion-Ranker.
@@ -6,7 +7,6 @@ Nimmt eine Liste von KI-Completion-Kandidaten entgegen, berechnet für jeden
 einen strukturellen OckhamScore und sortiert nach dem Razor-Prinzip:
 niedrigster Razor-Score (strukturell einfachste + kohärenteste Antwort) gewinnt.
 """
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -17,7 +18,6 @@ Kein Lyapunov-Exponent. Keine Wiederkehrzählung.
 Formel: PE = 1 - H_perm / log2(order!)
 """
 
-from __future__ import annotations
 import math
 from itertools import permutations as _iter_perms
 

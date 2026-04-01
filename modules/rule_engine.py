@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Deterministic JSON-rule evaluator for Aether metrics.
@@ -26,7 +27,6 @@ Example::
     engine = RuleEngine(rules)
     result = engine.evaluate({"entropy_mean": 7.5}, candidate_id="abc123")
 """
-from __future__ import annotations
 
 import json
 import os

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Minimum Description Length (MDL) scorer for Aether candidates.
@@ -20,7 +21,6 @@ inputs that happen to compress well with one algorithm but not the other.
 A positive score means the candidate *reduces* the compressed description
 length of the context — i.e. it is a useful addition.
 """
-from __future__ import annotations
 
 import lzma
 import zlib

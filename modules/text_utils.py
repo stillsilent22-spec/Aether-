@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """modules/text_utils.py — Structural text normalisation and feature extraction.
@@ -7,7 +8,6 @@ Public API:
     text_reduce(text)            → structural feature dict (entropy, anchors, …)
     interference_score(a, b)     → float [0,1] — structural divergence between two texts
 """
-from __future__ import annotations
 
 import hashlib
 import math

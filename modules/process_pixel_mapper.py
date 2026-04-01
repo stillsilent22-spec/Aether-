@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """process_pixel_mapper.py — MetaLayer OS Phase A: Process-to-Pixel Mapping.
@@ -6,7 +7,6 @@ Jedem Benutzerprozess wird seine Screen-Präsenz (Pixel-Region, Blockentropie,
 Koordinatenpfad) zugeordnet. Keine Screenshot-Flut — nur das jeweilige
 Prozessfenster wird per mss scoped erfasst, nie der gesamte Bildschirm.
 """
-from __future__ import annotations
 
 import hashlib
 import math

@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Adaptive preload recommendations based on vault analysis."""
 
-from __future__ import annotations
 
 import json
 import math

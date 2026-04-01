@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -14,7 +15,6 @@ Keine Simulation der Physik — echte Messung gegen echte Vault-Daten.
 Nur stdlib + math. Keine externen Abhängigkeiten.
 """
 
-from __future__ import annotations
 
 import json
 import math

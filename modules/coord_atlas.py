@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """coord_atlas.py — MetaLayer OS Phase D: Koordinaten-Atlas mit Anomalieerkennung.
@@ -6,7 +7,6 @@ Speichert historische Pixel-Pfad-Daten, erkennt Abweichungen vom Baseline
 und exportiert den Atlas-Zustand als kryptographischen Anker (SHA-256).
 Persistenz via SQLite (90-Tage-Fenster).
 """
-from __future__ import annotations
 
 import hashlib
 import json

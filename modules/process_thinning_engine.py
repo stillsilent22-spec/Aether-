@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """process_thinning_engine.py — MetaLayer OS Phase B: Process Thinning.
@@ -6,7 +7,6 @@ Erkennt redundante und twin-artige Prozesse (gleiche Verhaltenssignatur,
 unterschiedliche PIDs) und schlägt Konsolidierungsmaßnahmen vor.
 Jede Aktion erfordert explizite Nutzer-Zustimmung (consent).
 """
-from __future__ import annotations
 
 import hashlib
 import math

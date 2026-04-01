@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import logging
 logger = logging.getLogger(__name__)
 """capability_score.py — Aether OS Readiness / Emergent OS Progress.
@@ -21,8 +23,6 @@ Architecture tiers (based on accumulated score):
   75 – 99 %  Aether OS       — Rust GUI + all subsystems loaded
   100 %      Aether OS [Aktiv] — all probes green, vault + peers confirmed
 """
-
-from __future__ import annotations
 
 import importlib.util
 import json

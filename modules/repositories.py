@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Repository-Klassen fuer die erste Aufteilung der Aether-Registry."""
 
-from __future__ import annotations
 
 import hashlib
 import json

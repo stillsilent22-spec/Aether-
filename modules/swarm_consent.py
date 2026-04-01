@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Consent, Audit and Security module for Aether Swarm.
@@ -16,7 +17,6 @@ Privacy guarantee:
   - Audit entries contain only: timestamp, event_type, actor, peer_id, signature.
 """
 
-from __future__ import annotations
 
 import base64
 import hashlib

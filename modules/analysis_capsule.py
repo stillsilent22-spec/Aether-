@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Unified analysis capsule for drop and live-render structural analysis.
@@ -7,7 +8,6 @@ It keeps local deltas private, exposes shareable invariant anchors, and computes
 the core structural metrics used across Aether.
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

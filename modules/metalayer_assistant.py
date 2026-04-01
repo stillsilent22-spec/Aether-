@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """metalayer_assistant.py — MetaLayer OS Phase D: Assistant-gefilterte Befunde.
@@ -5,7 +6,6 @@ logger = logging.getLogger(__name__)
 Übersetzt MetaLayer-OS-Erkenntnisse in das Assistant-Konsensformat.
 Alle Ausgaben durchlaufen die Assistant-Pipeline (h_lambda-Gate, Trust-Score).
 """
-from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field

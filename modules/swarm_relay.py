@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Optionaler Relay-Modus fuer Aether-Nodes.
@@ -7,7 +8,6 @@ Relay-Nodes erscheinen in node.json mit "relay": true.
 Sie leiten nur verschluesselte Pakete weiter, sehen keinen Inhalt.
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Deterministische lokale Tkinter-GUI fuer Aether."""
 
-from __future__ import annotations
 
 import json
 try:

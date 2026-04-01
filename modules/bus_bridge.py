@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Rust bus bridge via CLI subprocess and shared JSONL transport."""
 
-from __future__ import annotations
 
 import json
 import os

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Atomic Global Controller for Aether Swarm Mode.
@@ -17,7 +18,6 @@ SWARM_MODE is persisted transactionally in SQLite (data/swarm_ctrl.db).
 Status is exposted to JSON at data/interbus/swarm_status.json for UIs/Agents.
 """
 
-from __future__ import annotations
 
 import json
 import socket

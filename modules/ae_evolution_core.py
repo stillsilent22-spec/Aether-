@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """AE-Evolution-Core fuer internen, begrenzten Hintergrundbetrieb."""
 
-from __future__ import annotations
 
 import copy
 import hashlib

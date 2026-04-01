@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Phase 4: Windows Prozessdynamik — strukturelle Erfassung als X_t."""
 
-from __future__ import annotations
 
 import sys
 import time

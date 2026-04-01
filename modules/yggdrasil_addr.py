@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Leitet eine Yggdrasil IPv6-Adresse aus dem Aether Yggdrasil-Key ab.
@@ -7,7 +8,6 @@ Die Adresse ist deterministisch: gleicher Key = gleiche Adresse.
 Keine IP-Lookups, kein Netzwerkzugriff fuer die Ableitung.
 """
 
-from __future__ import annotations
 
 import ipaddress
 

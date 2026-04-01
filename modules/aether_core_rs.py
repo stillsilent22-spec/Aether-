@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -8,7 +9,6 @@ Wenn lokal bereits ein kompatibles Modul `aether_core_rs` installiert ist,
 wird es verwendet; ansonsten bleibt der Python-Pfad der kanonische Standard.
 """
 
-from __future__ import annotations
 
 import math as _math
 from collections import Counter as _Counter

@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Aether – Hintergrundüberwachung (Cross-Platform).
 
@@ -16,7 +17,6 @@ Privacy:
   - Alle Daten bleiben lokal.
 """
 
-from __future__ import annotations
 
 import logging
 import signal

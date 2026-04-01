@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Deterministic Goedel strange-loop renderer for structural self-observation.
@@ -12,7 +13,6 @@ Stop criteria (Goedel-Stop):
   - cycle: repeated fingerprint
 """
 
-from __future__ import annotations
 
 import hashlib
 import json

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -13,7 +14,6 @@ Sprache wird in data/settings.json gespeichert und beim naechsten
 Start automatisch geladen.
 """
 
-from __future__ import annotations
 
 import json
 from pathlib import Path

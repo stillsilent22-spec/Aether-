@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """meta_ockham.py — Aether Symbiont: Meta-Ockham Razor Engine.
@@ -6,7 +7,6 @@ Findet strukturelle Redundanzen, Abstraktions-Inversionen und Twin-Cluster
 in beliebigen Signal-Mengen. Wendet das Ockham-Prinzip rein strukturell an:
 die einfachere Variante gewinnt — ohne semantische Annahmen.
 """
-from __future__ import annotations
 
 import math
 import time

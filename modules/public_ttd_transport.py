@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Optionaler Netzwerktransport fuer oeffentliche TTD-Anker."""
 
-from __future__ import annotations
 
 import json
 import uuid

@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Dateianalyse fuer Aether."""
 
-from __future__ import annotations
 
 import hashlib
 import io

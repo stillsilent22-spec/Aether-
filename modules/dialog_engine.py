@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Strukturelle Dialogantworten ohne externes Sprachmodell."""
 
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass

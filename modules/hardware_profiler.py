@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 Aether – Hardware-Profiler und Optimierungs-Engine für alte Hardware.
 
@@ -17,7 +18,6 @@ Privacy:
   - Seriennummern und Geräteidentifier werden nicht erfasst.
 """
 
-from __future__ import annotations
 
 import logging
 import os

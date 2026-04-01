@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Pluggable Capture Adapter for Aether Swarm.
@@ -22,7 +23,6 @@ processes are detected (reduces sampling rate to 0).
 Stub: GpuHookCaptureAdapter is present but raises NotImplementedError (lab-only).
 """
 
-from __future__ import annotations
 
 import collections
 import hashlib

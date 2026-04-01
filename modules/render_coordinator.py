@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Phase 4: ETW/DXGI Pixel-Koordination pro Prozess — strukturelle Analyse."""
 
-from __future__ import annotations
 
 import hashlib
 import sys

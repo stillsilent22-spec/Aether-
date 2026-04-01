@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Persistent Background Agent for Aether Swarm.
@@ -23,7 +24,6 @@ Lifecycle:
   - is_running()  → True while agent loop is active
 """
 
-from __future__ import annotations
 
 import json
 import sys

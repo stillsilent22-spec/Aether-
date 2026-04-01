@@ -1,3 +1,4 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -12,7 +13,6 @@ Verwendung:
     result = evolver.decode(best_tree)
 """
 
-from __future__ import annotations
 
 import math
 import random

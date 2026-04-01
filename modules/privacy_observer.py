@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Structural Windows privacy observer without content inspection."""
 
-from __future__ import annotations
 
 import ctypes
 import json

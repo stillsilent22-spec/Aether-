@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 """Lokale, transportagnostische Quorum-Logik fuer oeffentliche TTD-Anker."""
 
-from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
