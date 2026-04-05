@@ -203,10 +203,11 @@ class P2PLayer:
         return self._peer_id
 
     def _is_consented(self) -> bool:
-        """Prueft ob der Nutzer aktiv der Schwarm-Teilnahme zugestimmt hat.
+        """Prueft ob Swarm-Teilnahme aktiv ist (opt-out Modell).
 
-        Liest data/swarm_consent.json. Standard ist False — der Nutzer muss
-        explizit zustimmen ('Swarm aktivieren' im SwarmOps-Tab).
+        Liest data/swarm_consent.json. Standard ist True — kein File = Teilnahme aktiv.
+        Abschalten nur explizit über 'Swarm deaktivieren' im SwarmOps-Tab oder
+        durch revoked=true in der JSON.
         Genesis-Nodes koennen consent_ok=true im Bootstrap setzen.
         """
         consent_path = ROOT / "data" / "swarm_consent.json"

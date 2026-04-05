@@ -940,7 +940,7 @@ fn read_swarm_consent() -> bool {
             return true;
         }
     }
-    true // opt-in by default
+    true // opt-out: kein File = Swarm standardmäßig aktiv
 }
 
 fn write_swarm_consent(enabled: bool) -> Result<(), String> {

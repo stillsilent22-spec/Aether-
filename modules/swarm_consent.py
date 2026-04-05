@@ -10,7 +10,7 @@ Enforces:
      to logs/swarm_audit.jsonl (Ed25519) + persisted in swarm_metrics.db.
   3. Anti-cheat safe mode: reduce or pause capture when AC processes detected.
   4. Rate limiting: prevent looped enable/disable storms.
-  5. Opt-out: consent can be revoked; revocation clears persisted data.
+  5. Opt-out: Swarm-Teilnahme ist standardmäßig aktiv. Abschalten jederzeit in Einstellungen.
 
 Privacy guarantee:
   - Consent JSON never contains raw frame data.
@@ -144,11 +144,13 @@ def _write_consent(state: Dict[str, Any]) -> None:
 
 
 def has_consent() -> bool:
-    """Gibt True zurueck wenn Consent vorliegt.
+    """Gibt True zurueck wenn Swarm-Teilnahme aktiv ist.
 
-    Default-on: Wenn noch keine Consent-Datei existiert, wird Consent automatisch
-    als erteilt gewertet und persistent gespeichert (opt-out Modell).
-    Nutzer koennen Consent jederzeit widerrufen.
+    Opt-out: Anker und Invarianten enthalten keine sensiblen Rohdaten —
+    nur SHA256-Fingerprints und aggregierte Metriken. Swarm ist standardmässig
+    aktiv, da ohne Swarm-Teilnahme das kybernetische System nicht funktioniert
+    (kein Quorum, kein Trust-Scoring, keine zirkuläre Kausalität zwischen Nodes).
+    Abschalten jederzeit in den Einstellungen möglich.
     """
     state = _read_consent()
     # Explizites Revoke immer respektieren
@@ -160,7 +162,7 @@ def has_consent() -> bool:
         return bool(state.get("consent_ok"))
     if "approved" in state:
         return bool(state.get("approved"))
-    # Kein File vorhanden: Default-on — automatisch Consent setzen und speichern
+    # Kein File vorhanden: Opt-out — automatisch Consent setzen und speichern
     record_consent(actor="auto_default")
     return True
 

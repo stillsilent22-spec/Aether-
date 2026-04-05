@@ -390,16 +390,20 @@ def _handle_compute_request(conn: socket.socket, addr: Any) -> None:
                 return
 
         # Consent gate — re-checked per request, never cached
+        # Opt-out: kein File = Consent gilt als erteilt
         try:
             consent_path = ROOT / "data" / "swarm_consent.json"
-            consented = False
+            consented = True  # opt-out default
             if consent_path.exists():
                 cdata = json.loads(consent_path.read_text(encoding="utf-8"))
-                consented = bool(
-                    cdata.get("consented") or cdata.get("consent_ok") or cdata.get("approved")
-                )
+                if bool(cdata.get("revoked", False)):
+                    consented = False
+                else:
+                    consented = bool(
+                        cdata.get("consented") or cdata.get("consent_ok") or cdata.get("approved") or True
+                    )
         except Exception:
-            consented = False
+            consented = True  # im Fehlerfall: opt-out
         if not consented:
             conn.sendall(json.dumps({"ok": False, "error": "consent_not_given"}).encode() + b"\n")
             return
