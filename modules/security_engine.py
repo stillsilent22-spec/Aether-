@@ -183,9 +183,46 @@ def public_ttd_share_policy(scope: str = "metrics_only") -> dict:
     }
 
 
+def _is_genesis_hardware_bound(session_like: _Any) -> bool:
+    """True nur wenn alle drei Bedingungen zutreffen:
+      1. username == GENESIS_PUBLISHER_ID (Identitaetspruefung)
+      2. is_genesis_node(GENESIS_NODE_ID) in trusted_publishers.json (kryptografisch)
+      3. device_lock.json bindet diese Hardware an GENESIS_NODE_ID (hardware-gebunden)
+    Fail-closed: jede Exception oder fehlende Datei ergibt False.
+    """
+    try:
+        from modules.registry import (
+            is_genesis_node as _check_genesis,
+            GENESIS_NODE_ID as _GENESIS_ID,
+            GENESIS_PUBLISHER_ID as _PUB_ID,
+        )
+        import hmac as _dev_hmac
+        username = str(getattr(session_like, "username", "") or "").strip()
+        if not _dev_hmac.compare_digest(username, _PUB_ID):
+            return False
+        if not _check_genesis(_GENESIS_ID):
+            return False
+        from modules.device_lock import _DEVICE_LOCK_PATH, compute_device_fingerprint
+        import json as _dev_json
+        if not _DEVICE_LOCK_PATH.is_file():
+            return False
+        stored = _dev_json.loads(_DEVICE_LOCK_PATH.read_text(encoding="utf-8"))
+        stored_node = str(stored.get("node_id", "")).strip()
+        stored_fp = str(stored.get("device_fingerprint", "")).strip()
+        curr_fp = compute_device_fingerprint()
+        return (
+            _dev_hmac.compare_digest(stored_node, _GENESIS_ID)
+            and _dev_hmac.compare_digest(stored_fp, curr_fp)
+        )
+    except Exception:
+        return False
+
+
 def public_ttd_quorum_policy(session_like: _Any) -> dict:
     role = str(getattr(session_like, "user_role", "operator") or "operator").strip().lower()
-    auto_trusted = role == "admin"
+    # auto_trusted: role=genesis + genesis publisher username + cryptographic check + hardware binding.
+    # Kein 'admin' — Genesis ist der einzige privilegierte Node. Privileg = Quorum-Bypass, nie Trust-Score.
+    auto_trusted = role == "genesis" and _is_genesis_hardware_bound(session_like)
     return {
         "uploader_role": role or "operator",
         "quorum_threshold": 1 if auto_trusted else 3,

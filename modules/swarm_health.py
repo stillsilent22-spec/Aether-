@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import logging
 from pathlib import Path
@@ -7,11 +8,22 @@ from typing import Any, Dict
 import urllib.error
 import urllib.request
 
+from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat, load_pem_public_key
+
 from modules.consensus_engine import get_candidate_count, get_consensus_anchors
 from modules.invariant_observer import get_last_estimated_saving
 from modules.registry import GENESIS_NODE_ID as _GENESIS_NODE_ID, TRUSTED_PUBLISHERS_PATH as _PUBLISHERS_PATH
 
 logger = logging.getLogger(__name__)
+
+
+def _public_key_b64_from_pem(public_key_pem: str) -> str:
+    try:
+        public_key = load_pem_public_key(public_key_pem.encode("utf-8"))
+        raw = public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return base64.b64encode(raw).decode("ascii")
+    except Exception:
+        return ""
 
 
 def _is_solo_genesis_mode() -> bool:
@@ -89,12 +101,17 @@ def get_swarm_status(
                 # and the public_key entry in trusted_publishers.json must be present
                 try:
                     manifest = json.loads(_PUBLISHERS_PATH.read_text(encoding="utf-8"))
-                    tp_entry = (manifest.get("publishers") or {}).get("tryharder997") or {}
+                    admin_publisher_id = str(
+                        manifest.get("admin_publisher_id", "") or "tryharder997"
+                    ).strip() or "tryharder997"
+                    tp_entry = (manifest.get("publishers") or {}).get(admin_publisher_id) or {}
                     tp_pubkey = str(tp_entry.get("public_key", "") or "").strip()
                     tp_node_id = str(tp_entry.get("node_id", "") or "").strip()
-                    keys_match = bool(tp_pubkey and pubkey == tp_pubkey)
-                    id_match = bool(tp_node_id and (node_id == tp_node_id or node_id == _GENESIS_NODE_ID))
-                    genesis_key_ok = bool(keys_match or id_match)
+                    local_pubkey_b64 = _public_key_b64_from_pem(pubkey)
+                    expected_node_id = tp_node_id or _GENESIS_NODE_ID
+                    keys_match = bool(tp_pubkey and local_pubkey_b64 and local_pubkey_b64 == tp_pubkey)
+                    id_match = bool(expected_node_id and node_id == expected_node_id)
+                    genesis_key_ok = bool((keys_match and id_match) or (id_match and not tp_pubkey))
                 except Exception:
                     # Fallback: at minimum require non-empty public_key and matching node_id
                     genesis_key_ok = bool(pubkey and (not node_id or node_id == _GENESIS_NODE_ID))

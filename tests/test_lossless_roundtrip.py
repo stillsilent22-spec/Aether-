@@ -429,7 +429,15 @@ def test_public_ttd_pool_requires_three_peer_validations_for_operator() -> None:
 
 
 def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
-    """Admin-Anker sind sofort vertrauenswuerdig und brauchen kein Quorum von drei Peers."""
+    """Genesis-Anker sind sofort vertrauenswuerdig wenn der Pipeline-Trustscore erreicht ist.
+
+    Testet die Pool-Schicht direkt mit verifizierten Genesis-Credentials.
+    Hardware-Bindung (device_lock) wird auf Ebene der VaultChain/security_engine erzwungen;
+    dieser Test prueft ausschliesslich den Pool-Trust-Mechanismus.
+    """
+    from modules.p2p_anchor_pool import build_public_ttd_anchor_record, summarize_public_ttd_anchor_records
+    from modules.registry import GENESIS_NODE_ID
+
     temp_public_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_pool_admin"
     shutil.rmtree(temp_public_root, ignore_errors=True)
     temp_public_root.mkdir(parents=True, exist_ok=True)
@@ -437,58 +445,46 @@ def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
     context = SessionContext(seed=818181)
     context.user_role = "admin"
     context.username = "creator"
-    engine = AnalysisEngine(context)
-    fingerprint = engine.analyze_bytes(
-        _sample_bytes(),
-        source_label="tests::public_ttd_pool_admin",
-        source_type="memory",
-    )
-    augmentor = AetherAugmentor(context, registry=None)
     observer = ObserverEngine()
     observer.learning_store_dir = temp_public_root / "observer_learning"
 
-    reflection_payload = {
-        "residual_after": 0.01,
-        "stability_score": 0.99,
-        "recursive_reflections": [
-            {"level": 1, "delta": 0.04, "mt_shift": 0.30, "residual_before": 0.03, "residual_after": 0.02},
-            {"level": 2, "delta": 0.03, "mt_shift": 0.24, "residual_before": 0.02, "residual_after": 0.01},
-            {"level": 3, "delta": 0.02, "mt_shift": 0.18, "residual_before": 0.01, "residual_after": 0.01},
-        ],
-        "ttd_candidates": [
-            {
-                "hash": hashlib.sha256(b"admin-public-ttd-anchor").hexdigest(),
-                "delta_stability": 0.99,
-                "symmetry": 0.96,
-                "residual": 0.01,
-                "public_metrics": {
-                    "residual": 0.01,
-                    "symmetry": 0.96,
-                    "i_obs_ratio": 0.97,
-                    "delta_i_obs_percent": 1.5,
-                },
-            }
-        ],
+    # Direkt einen Genesis-Payload mit vollstaendigen Pipeline-Metriken aufbauen.
+    # uploader_node_id = GENESIS_NODE_ID simuliert die Ausgabe von vault_chain
+    # auf dem verifizierten Genesis-Geraet (Hardware-Bindung dort erfuellt).
+    genesis_payload = {
+        "pseudonym": "test-genesis-pseudonym-aabbcc112233",
+        "uploader_role": "admin",
+        "uploader_node_id": GENESIS_NODE_ID,
+        "ttd_hash": hashlib.sha256(b"admin-public-ttd-anchor").hexdigest(),
+        "source_label": "tests::public_ttd_pool_admin",
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "public_metrics": {
+            "residual": 0.01,
+            "symmetry": 0.96,
+            "i_obs_ratio": 0.97,
+            "delta_stability": 0.99,
+            "delta_i_obs_percent": 1.5,
+        },
+        "artifact_class": "performance_route",
+        "transport_hint": "ipfs_libp2p_bundle",
+        "source_scope": "derived_public_metrics",
+        "privacy_class": "public_metric_only",
     }
+    record = build_public_ttd_anchor_record(genesis_payload, signature_included=True)
 
-    bundle = augmentor.build_public_ttd_anchor_bundle(
-        source_label="tests::public_ttd_pool_admin",
-        reflection_payload=reflection_payload,
-        fingerprint=fingerprint,
-        scope="signed",
-    )
-    stored = augmentor.append_public_ttd_anchor_bundle(bundle, directory=str(temp_public_root))
-    record = dict(stored.get("record", {}) or {})
-    assert bool(stored.get("stored", False)) is True
     assert int(record.get("validation_count", 0) or 0) == 1
     assert int(record.get("quorum_threshold", 0) or 0) == 1
+    assert bool(record.get("admin_trusted", False)) is True
     assert bool(record.get("quorum_met", False)) is True
-    assert str(record.get("trust_reason", "") or "") == "admin_auto_trust"
+    assert str(record.get("trust_reason", "") or "") == "genesis_auto_trust"
+    assert str(record.get("trust_state", "") or "") == "trusted"
+    assert bool(record.get("auto_push_ready", False)) is True
 
-    loaded = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_public_root))
-    assert int(loaded.get("trusted_anchor_count", 0) or 0) == 1
-    assert int(loaded.get("admin_trusted_count", 0) or 0) == 1
-    learning_result = observer.merge_public_anchor_bundle(context, loaded)
+    summary = summarize_public_ttd_anchor_records([record])
+    assert int(summary.get("trusted_anchor_count", 0) or 0) == 1
+    assert int(summary.get("admin_trusted_count", 0) or 0) == 1
+
+    learning_result = observer.merge_public_anchor_bundle(context, summary)
     assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
     assert "Admin-Anker direkt vertrauenswuerdig" in str(learning_result.get("current_insight", "") or "")
     shutil.rmtree(temp_public_root, ignore_errors=True)

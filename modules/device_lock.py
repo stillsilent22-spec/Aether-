@@ -230,18 +230,46 @@ class DeviceLockError(Exception):
 # Swarm-Level: Peer-Pruefung (1 node_id pro device_fingerprint)
 # ---------------------------------------------------------------------------
 
-def _load_swarm_device_registry() -> dict[str, str]:
-    """Laedt die Swarm-weite (node_id -> device_fingerprint) Map."""
+def _normalize_swarm_identity_entries(raw_entries: object) -> dict[str, dict[str, str]]:
+    normalized: dict[str, dict[str, str]] = {}
+    if not isinstance(raw_entries, dict):
+        return normalized
+    for raw_node_id, raw_entry in raw_entries.items():
+        node_id = str(raw_node_id or "").strip()
+        if not node_id:
+            continue
+        if isinstance(raw_entry, str):
+            normalized[node_id] = {
+                "device_fingerprint": str(raw_entry or "").strip(),
+                "account_username": "",
+                "yggdrasil_addr": "",
+                "network_entry_id": "",
+                "identity_lock": "",
+            }
+            continue
+        if isinstance(raw_entry, dict):
+            normalized[node_id] = {
+                "device_fingerprint": str(raw_entry.get("device_fingerprint", "") or "").strip(),
+                "account_username": str(raw_entry.get("account_username", "") or "").strip(),
+                "yggdrasil_addr": str(raw_entry.get("yggdrasil_addr", "") or "").strip(),
+                "network_entry_id": str(raw_entry.get("network_entry_id", "") or "").strip(),
+                "identity_lock": str(raw_entry.get("identity_lock", "") or "").strip(),
+            }
+    return normalized
+
+
+def _load_swarm_device_registry() -> dict[str, dict[str, str]]:
+    """Laedt die Swarm-weite Node-Identity-Registry."""
     if not _SWARM_LOCK_PATH.is_file():
         return {}
     try:
         data = json.loads(_SWARM_LOCK_PATH.read_text(encoding="utf-8"))
-        return dict(data.get("entries", {}) or {})
+        return _normalize_swarm_identity_entries(data.get("entries", {}))
     except Exception:
         return {}
 
 
-def _save_swarm_device_registry(entries: dict[str, str]) -> None:
+def _save_swarm_device_registry(entries: dict[str, dict[str, str]]) -> None:
     _SWARM_LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
     _SWARM_LOCK_PATH.write_text(
         json.dumps({"schema": _SCHEMA + ".swarm", "entries": entries}, indent=2, sort_keys=True),
@@ -267,7 +295,8 @@ def peer_allowed(node_id: str, device_fingerprint: str) -> bool:
     registry = _load_swarm_device_registry()
 
     # Check 1: Ist die node_id schon von einem ANDEREN Device gesehen worden?
-    existing_fp = registry.get(node_id, "")
+    existing_entry = registry.get(node_id, {})
+    existing_fp = str(existing_entry.get("device_fingerprint", "") or "").strip()
     if existing_fp and not hmac.compare_digest(existing_fp, device_fingerprint):
         logger.warning(
             f"[device_lock] ABGELEHNT: node_id={node_id[:16]}... taucht von zweitem Geraet auf "
@@ -276,7 +305,10 @@ def peer_allowed(node_id: str, device_fingerprint: str) -> bool:
         return False
 
     # Check 2: Hat dieses Device bereits eine ANDERE node_id registriert?
-    for registered_node, registered_fp in registry.items():
+    for registered_node, registered_entry in registry.items():
+        registered_fp = str(registered_entry.get("device_fingerprint", "") or "").strip()
+        if not registered_fp:
+            continue
         if hmac.compare_digest(registered_fp, device_fingerprint):
             if not hmac.compare_digest(registered_node, node_id):
                 logger.warning(
@@ -286,10 +318,127 @@ def peer_allowed(node_id: str, device_fingerprint: str) -> bool:
                 return False
 
     # Alles ok — registrieren
-    if node_id not in registry or not registry[node_id]:
-        registry[node_id] = device_fingerprint
+    if node_id not in registry or not str(registry[node_id].get("device_fingerprint", "") or "").strip():
+        entry = dict(registry.get(node_id, {}))
+        entry["device_fingerprint"] = device_fingerprint
+        entry.setdefault("account_username", "")
+        entry.setdefault("yggdrasil_addr", "")
+        entry.setdefault("network_entry_id", "")
+        entry.setdefault("identity_lock", "")
+        registry[node_id] = entry
         _save_swarm_device_registry(registry)
 
+    return True
+
+
+def peer_account_allowed(
+    node_id: str,
+    device_fingerprint: str,
+    account_username: str = "",
+    yggdrasil_addr: str = "",
+    identity_lock: str = "",
+    network_entry_id: str = "",
+) -> bool:
+    """Erweitert peer_allowed um Username-, Ygg-/Hardware- und DHT-Entry-Lock-Konsistenz.
+
+    network_entry_id ist der DHT-Peer-ID des Knotens (Fallback wenn kein Yg-Addr).
+    Beide Felder koennen alternativ als Netzwerk-Einstiegs-Identitaet dienen.
+    """
+    node_id = str(node_id or "").strip()
+    device_fingerprint = str(device_fingerprint or "").strip()
+    account_username = str(account_username or "").strip()
+    yggdrasil_addr = str(yggdrasil_addr or "").strip()
+    identity_lock = str(identity_lock or "").strip()
+    network_entry_id = str(network_entry_id or "").strip()
+
+    if not peer_allowed(node_id, device_fingerprint):
+        return False
+
+    if not node_id:
+        return True
+
+    registry = _load_swarm_device_registry()
+    entry = dict(registry.get(node_id, {}))
+    existing_username = str(entry.get("account_username", "") or "").strip()
+    existing_ygg = str(entry.get("yggdrasil_addr", "") or "").strip()
+    existing_lock = str(entry.get("identity_lock", "") or "").strip()
+    existing_network_entry_id = str(entry.get("network_entry_id", "") or "").strip()
+
+    if existing_username and account_username and existing_username.lower() != account_username.lower():
+        logger.warning(
+            f"[device_lock] ABGELEHNT: node_id={node_id[:16]}... versucht zweiten Usernamen "
+            f"(neu={account_username}, alt={existing_username})"
+        )
+        return False
+
+    if existing_ygg and yggdrasil_addr and existing_ygg.lower() != yggdrasil_addr.lower():
+        logger.warning(
+            f"[device_lock] ABGELEHNT: node_id={node_id[:16]}... meldet andere Yggdrasil-Adresse "
+            f"(neu={yggdrasil_addr}, alt={existing_ygg})"
+        )
+        return False
+
+    if existing_network_entry_id and network_entry_id and existing_network_entry_id.lower() != network_entry_id.lower():
+        logger.warning(
+            f"[device_lock] ABGELEHNT: node_id={node_id[:16]}... meldet andere AetherNet-DHT-Peer-ID "
+            f"(neu={network_entry_id[:16]}, alt={existing_network_entry_id[:16]})"
+        )
+        return False
+
+    if existing_lock and identity_lock and existing_lock != identity_lock:
+        logger.warning(
+            f"[device_lock] ABGELEHNT: node_id={node_id[:16]}... meldet anderen Identity-Lock"
+        )
+        return False
+
+    if account_username:
+        for registered_node, registered_entry in registry.items():
+            if registered_node == node_id:
+                continue
+            registered_username = str(registered_entry.get("account_username", "") or "").strip()
+            if not registered_username or registered_username.lower() != account_username.lower():
+                continue
+            registered_fp = str(registered_entry.get("device_fingerprint", "") or "").strip()
+            registered_ygg = str(registered_entry.get("yggdrasil_addr", "") or "").strip()
+            registered_lock = str(registered_entry.get("identity_lock", "") or "").strip()
+            registered_network_entry_id = str(registered_entry.get("network_entry_id", "") or "").strip()
+            if registered_fp and device_fingerprint and registered_fp != device_fingerprint:
+                logger.warning(
+                    f"[device_lock] ABGELEHNT: Username '{account_username}' ist bereits an eine andere Hardware gebunden."
+                )
+                return False
+            if registered_ygg and yggdrasil_addr and registered_ygg.lower() != yggdrasil_addr.lower():
+                logger.warning(
+                    f"[device_lock] ABGELEHNT: Username '{account_username}' ist bereits an eine andere Yggdrasil-Identitaet gebunden."
+                )
+                return False
+            if registered_network_entry_id and network_entry_id and registered_network_entry_id.lower() != network_entry_id.lower():
+                logger.warning(
+                    f"[device_lock] ABGELEHNT: Username '{account_username}' ist bereits an eine andere AetherNet-DHT-Peer-ID gebunden."
+                )
+                return False
+            if registered_lock and identity_lock and registered_lock != identity_lock:
+                logger.warning(
+                    f"[device_lock] ABGELEHNT: Username '{account_username}' ist bereits an einen anderen Identity-Lock gebunden."
+                )
+                return False
+            if registered_node != node_id:
+                logger.warning(
+                    f"[device_lock] ABGELEHNT: Username '{account_username}' ist bereits an node '{registered_node[:16]}...' gebunden."
+                )
+                return False
+
+    if account_username:
+        entry["account_username"] = account_username
+    if yggdrasil_addr:
+        entry["yggdrasil_addr"] = yggdrasil_addr
+    if network_entry_id:
+        entry["network_entry_id"] = network_entry_id
+    if identity_lock:
+        entry["identity_lock"] = identity_lock
+    entry["device_fingerprint"] = device_fingerprint
+    registry[node_id] = entry
+    _save_swarm_device_registry(registry)
     return True
 
 

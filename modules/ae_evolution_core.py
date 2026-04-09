@@ -12,7 +12,67 @@ import random
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Optional
+
+
+# ---------------------------------------------------------------------------
+# Deterministischer AELab-Setpoint-Controller
+#
+# Triggert AE-Evolution wenn delta_ratio den Setpoint überschreitet.
+# Setpoint = konservativer Ausgangswert 0.40; kann durch Vault-Histogramm
+# nach unten korrigiert werden (Median der historischen delta_ratio-Werte).
+# Niemals vorhersagen: Trigger reagiert nur auf gemessene delta_ratio.
+# ---------------------------------------------------------------------------
+
+_AE_SETPOINT_DEFAULT: float = 0.40
+_AE_SETPOINT_MIN: float = 0.15  # Untergrenze: unter 15% delta ist immer okay
+_AE_SETPOINT_MAX: float = 0.70  # Obergrenze: über 70% delta = definitiv Evolution nötig
+
+
+def should_trigger_ae_evolution(
+    delta_ratio: float,
+    bits_per_joule: float,
+    bpj_reference: float,
+    vault_delta_median: float = _AE_SETPOINT_DEFAULT,
+    network_delta_median: Optional[float] = None,
+) -> tuple[bool, str]:
+    """Entscheidet deterministisch ob AELab-Evolution getriggert werden soll.
+
+    Verwendet network_delta_median als Setpoint wenn vorhanden (globaler Wert,
+    peer-aggregiert via aggregate_network_metrics()). Fällt auf vault_delta_median
+    zurück wenn keine Netz-Metrik verfügbar ist.
+
+    Trigger-Bedingungen (ODER-verknüpft, jede einzeln auditierbar):
+        1. delta_ratio > setpoint  (Haupttrigger)
+        2. bits_per_joule < bpj_reference * 0.70  (Effizienzabfall > 30%)
+
+    Rückgabe: (trigger: bool, reason: str)
+      reason enthält immer 'setpoint_source=network|vault' für Auditierbarkeit.
+    """
+    # Setpoint: globaler Netz-Median hat Vorrang (robuster gegen lokale Ausreißer)
+    if network_delta_median is not None:
+        raw_setpoint = float(network_delta_median)
+        setpoint_source = "network"
+    else:
+        raw_setpoint = float(vault_delta_median)
+        setpoint_source = "vault"
+    setpoint = float(max(_AE_SETPOINT_MIN, min(_AE_SETPOINT_MAX, raw_setpoint)))
+
+    d = max(0.0, min(1.0, float(delta_ratio)))
+    bpj = float(bits_per_joule)
+    bpj_ref = float(bpj_reference)
+
+    if d > setpoint:
+        return True, (
+            f"delta_ratio={d:.4f} > setpoint={setpoint:.4f} "
+            f"setpoint_source={setpoint_source}"
+        )
+    if bpj_ref > 0.0 and bpj < bpj_ref * 0.70:
+        return True, (
+            f"bits_per_joule={bpj:.2f} < 70% of reference={bpj_ref:.2f} "
+            f"setpoint_source={setpoint_source}"
+        )
+    return False, f"no_trigger setpoint_source={setpoint_source}"
 
 
 def _json_safe(value: Any) -> Any:

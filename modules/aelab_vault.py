@@ -460,6 +460,8 @@ class AEVault:
                 e.mark_used(influenced_best=True, vault_tick=self._tick)
                 self._save_tree(sig, tree)
                 self._write_index()
+                if e.lossless >= 1.0 and e.anchors > 0:
+                    self._submit_to_quorum_pool(e)
             return e
 
         metrics = extract_metrics(tree, fitness, lossless)
@@ -479,6 +481,8 @@ class AEVault:
         self._save_tree(sig, tree)
         self._enforce_limits()
         self._write_index()
+        if e.lossless >= 1.0 and e.anchors > 0:
+            self._submit_to_quorum_pool(e)
         return e
 
     def store_for_chunk(self, chunk_key: str, tree: Node,
@@ -652,6 +656,10 @@ class AEVault:
 
         self._write_index()
 
+        # Passiver Hybrid-Pass: alle 5 Ticks automatisch
+        if self._tick % 5 == 0:
+            self.pool_refine_idle(max_attempts=2)
+
     def promote_to_main(self, sig: str):
         """Eintrag in main-Vault hochstufen."""
         if sig not in self._entries: return
@@ -660,6 +668,176 @@ class AEVault:
         e.bucket = "main"
         self._move_tree(sig, "main")
         self._write_index()
+
+    # ------------------------------------------------------------------
+    # Passiver Hybrid-Pool  (portiert von HybridizeSubVaultDNA in AELab.cpp)
+    # ------------------------------------------------------------------
+    def pool_refine_idle(self, max_attempts: int = 3, rng=None) -> int:
+        """
+        Kreuzt zwei schwache/inaktive Vault-Einträge ohne neue Datei-Analyse.
+        Verbessert vorhandene Einträge retroaktiv durch geteilte Invarianten.
+        Gibt Anzahl der tatsächlich verbesserten Einträge zurück.
+
+        Portiert von HybridizeSubVaultDNA() (AELab.cpp, Zeile 2889).
+        Läuft im Idle-Slot — nicht bei jeder Analyse, nur zwischen Drops.
+        """
+        import random as _random
+        from modules.aelab_motor import crossover, node_size, node_depth
+
+        if rng is None:
+            rng = _random.Random()
+
+        # Kandidatenpool: inaktiv + utility niedrig, aber Baum vorhanden
+        donors = [
+            (sig, e)
+            for sig, e in self._entries.items()
+            if sig in self._trees and e.utility_score >= 0.03
+            and (not e.active or e.utility_score < 0.30)
+        ]
+        if len(donors) < 2:
+            return 0
+
+        improved = 0
+
+        for _ in range(max_attempts):
+            if len(donors) < 2:
+                break
+            idx_a = rng.randrange(len(donors))
+            idx_b = rng.randrange(len(donors))
+            if idx_a == idx_b:
+                idx_b = (idx_b + 1) % len(donors)
+
+            sig_a, entry_a = donors[idx_a]
+            sig_b, entry_b = donors[idx_b]
+            tree_a = self._trees[sig_a]
+            tree_b = self._trees[sig_b]
+
+            # Kreuzung
+            try:
+                child = crossover(tree_a, tree_b, rng, max_depth=8)
+            except Exception:
+                continue
+
+            if child is None or node_size(child) < 2:
+                continue
+            if node_depth(child) > 9:
+                continue
+
+            child_sig = tree_signature(child)
+
+            # Schon vorhanden → überspringen
+            if child_sig in self._entries:
+                continue
+
+            # Metriken für das Kind ableiten
+            # Fitness: geometrisches Mittel der Eltern — konservativ
+            child_fitness  = math.sqrt(entry_a.fitness  * entry_b.fitness)
+            child_lossless = math.sqrt(entry_a.lossless * entry_b.lossless)
+
+            # Ist das Kind zumindest so gut wie der schwächere Elternteil?
+            min_parent_fitness = min(entry_a.fitness, entry_b.fitness)
+            if child_fitness < min_parent_fitness * 0.50:
+                continue
+
+            child_metrics = extract_metrics(child, child_fitness, child_lossless)
+            child_entry = VaultEntry(
+                sig          = child_sig,
+                label        = f"hyb_{child_sig[:8]}",
+                bucket       = "sub_vault/inactive",
+                fitness      = round(child_fitness,  8),
+                lossless     = round(child_lossless, 8),
+                generation_created = 0,
+                **{k: child_metrics[k] for k in child_metrics},
+            )
+            child_entry.init_lifecycle()
+            # Hybrid startet mit reduziertem Score + höherem Decay (wie in C++)
+            child_entry.utility_score = max(0.03, min(0.25,
+                child_entry.utility_score * 0.35
+            ))
+            child_entry.decay_rate = min(0.0060,
+                child_entry.decay_rate * 1.30
+            )
+            child_entry.active     = False
+            child_entry.reactivated = False
+
+            self._entries[child_sig] = child_entry
+            self._trees[child_sig]   = child
+            self._save_tree(child_sig, child)
+            improved += 1
+
+            # Eltern für zukünftige Kreuzungen aktualisieren
+            donors[idx_a] = (sig_a, entry_a)
+            donors[idx_b] = (sig_b, entry_b)
+
+        if improved > 0:
+            self._enforce_limits()
+            self._write_index()
+
+        return improved
+
+    # ------------------------------------------------------------------
+    # Quorum-Pool-Bridge
+    # ------------------------------------------------------------------
+    def _local_pseudonym(self) -> str:
+        """Stabiles, lokales Pseudonym fuer Quorum-Submissions (nie personenbezogen)."""
+        id_path = Path("data") / "node_id.txt"
+        try:
+            id_path.parent.mkdir(parents=True, exist_ok=True)
+            if id_path.exists():
+                raw = id_path.read_text(encoding="utf-8").strip()
+                if raw:
+                    return raw
+            import secrets as _sec
+            pseudo = "ae_" + _sec.token_hex(8)
+            id_path.write_text(pseudo, encoding="utf-8")
+            return pseudo
+        except Exception:
+            return hashlib.sha256(str(self.root.resolve()).encode()).hexdigest()[:16]
+
+    def _submit_to_quorum_pool(self, entry: "VaultEntry") -> None:
+        """
+        Reicht einen lossless=1.0-Baum als lokalen Quorum-Kandidaten ein.
+        Schreibt einen Pool-Record nach data/public_ttd_anchor_pool/history/.
+        Kein Netzwerkzugriff — rein lokale Persistenz.
+        Nur der SHA-256-Baum-Hash (ttd_hash) verlaesst den Vault — nie Rohdaten oder Deltas.
+        """
+        try:
+            from modules.p2p_anchor_pool import build_public_ttd_anchor_record
+            from datetime import datetime, timezone as _tz
+            pseudonym = self._local_pseudonym()
+            payload = {
+                "ttd_hash":      entry.sig,
+                "source_label":  entry.label,
+                "timestamp":     datetime.now(_tz.utc).isoformat(),
+                "pseudonym":     pseudonym,
+                "uploader_role": "operator",
+                "transport_hint": "lan_udp_beacon",
+                "public_metrics": {
+                    "residual":            round(max(0.0, 1.0 - entry.lossless), 12),
+                    "symmetry":            round(entry.coherence, 12),
+                    "i_obs_ratio":         round(entry.adaptability, 12),
+                    "delta_stability":     round(entry.stability, 12),
+                    "delta_i_obs_percent": round(entry.novelty * 100.0, 12),
+                    "recursive_count":     int(entry.depth),
+                },
+            }
+            record = build_public_ttd_anchor_record(payload, signature_included=False)
+            ts = datetime.now(_tz.utc).strftime("%Y%m%dT%H%M%SZ")
+            history_dir = Path("data") / "public_ttd_anchor_pool" / "history"
+            history_dir.mkdir(parents=True, exist_ok=True)
+            out_path = history_dir / f"dna_{entry.sig[:12]}_{ts}.json"
+            envelope = {
+                "payload":            payload,
+                "payload_hash":       hashlib.sha256(
+                    json.dumps(payload, ensure_ascii=True, sort_keys=True).encode("utf-8")
+                ).hexdigest(),
+                "signature":          "",
+                "signature_included": False,
+                "record":             record,
+            }
+            out_path.write_text(json.dumps(envelope, ensure_ascii=True, indent=2), encoding="utf-8")
+        except Exception:
+            pass  # fail-silent: Quorum-Submit blockiert nie den Vault
 
     # ------------------------------------------------------------------
     # Audit

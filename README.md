@@ -83,17 +83,128 @@ Expression trees (DNA format) are evolved via a genetic algorithm
 to losslessly represent 512-byte structural patterns.
 π, e, φ emerge naturally when structurally useful — never hardcoded.
 
+## AELab — Adaptive Evolution Laboratory
+
+AELab ist die interne Lernschicht von Aether. Sie analysiert jeden Byte-Stream
+vor dem Vault-Commit und entscheidet ob der strukturelle Befund ausreicht.
+
+### Funktionen
+
+| Funktion | Beschreibung |
+|----------|-------------|
+| `analyze(raw)` | Führt den vollständigen 9-Metrik-Durchlauf aus und gibt `commit_allowed` zurück |
+| `initialize(vault_path)` | Lädt bestehende AELab-Session oder erstellt neue |
+| `_DeltaSession` | Hält XOR-Delta-Zustand für einen laufenden Stream |
+| `build_algo_token()` | Baut ein signierbares Token aus dem AELab-Ergebnis |
+
+### Metriken und Schwellenwerte (AELab-intern)
+
+| Metrik | Schwellenwert | Effekt bei Unterschreitung |
+|--------|--------------|--------------------------|
+| `lossless` | ≥ 0.95 | Commit gesperrt — Anker nicht vault-würdig |
+| `trust_score` | ≥ 0.65 | Kein Swarm-Beitrag für diesen Anker |
+| `has_anchor` | `true` | Pflicht für Vault-Commit |
+| `commit_allowed` | kombiniertes Gate | Steuert gesamten Pipeline-Commit |
+
+AELab arbeitet **vor** der Kompression. Erst wenn `commit_allowed = true` wird
+der Anker gespeichert und der Algo-Token weitergegeben. Das verhindert dass
+strukturell schwache Daten das Vault kontaminieren.
+
+### Genesis-Invarianten (Prior für neue Knoten)
+
+Neue Knoten erhalten beim ersten Start einen eingeimpften Prior:
+
+| Invariante | Wert | Quelle |
+|-----------|------|--------|
+| Benford conformance | 0.85 | Empirischer Mittelwert natürlicher Daten |
+| Zipf α | 1.07 | Klassischer Sprachexponent (Piantadosi 2014) |
+| Mandelbrot β | 1.40 | Fraktale Selbstähnlichkeit |
+| Fourier period | 24.0 | Circadianisches Tagesmuster |
+| invariant_strength | 0.72 | Startgewicht (niedrig, damit eigene Messungen dominieren) |
+
+Der Prior wird automatisch durch eigene Messungen ersetzt sobald ≥ 32 Samples
+vorliegen (`source: measured` überschreibt `source: genesis_prior`).
+
+---
+
+## Emergentes Netzwerk — Hardware-abgeleitete P2P-Freischaltung
+
+Aether leitet aus der lokalen Hardware automatisch ab welcher Netzwerk-Tier
+möglich ist. Es gibt keine manuelle Konfiguration — die Ebene emergiert.
+
+### Netzwerk-Tiers
+
+| Tier | Name | Voraussetzung | Funktionen |
+|------|------|--------------|------------|
+| 0 | LocalOnly | < 256 MB RAM, Win 9x | Nur lokale Analyse, kein Netz |
+| 1 | LanBeacon | ≥ 256 MB, Win 2000+ | UDP-Announce im LAN, passiv sichtbar |
+| 2 | LanP2P | ≥ 512 MB, ≥ 2 Kerne | Gossip + Leader-Election im LAN |
+| 3 | YggdrasilP2P | ≥ 1 GB, Win Vista+, RPi 3+ | Yggdrasil IPv6-Overlay, geräteübergreifend |
+| 4 | FullDht | ≥ 4 GB, ≥ 4 Kerne, modern | Kademlia-DHT, Relay-Knoten |
+
+### Plattform-Erkennung
+
+| Plattform | Erkennung | Mindest-Tier |
+|-----------|----------|-------------|
+| Windows 9x / ME | NT-Registry `CurrentVersion` 4.x | LocalOnly |
+| Windows 2000 | NT 5.0 | LanBeacon |
+| Windows XP | NT 5.1/5.2 | LanBeacon → LanP2P (≥ 512 MB) |
+| Windows Vista/7 | NT 6.0/6.1 | LanP2P → YggdrasilP2P (≥ 2 GB) |
+| Windows 8/10/11 | NT 6.2+ | YggdrasilP2P → FullDht |
+| Raspberry Pi Zero/1 | `/proc/cpuinfo` Model | LanBeacon |
+| Raspberry Pi 2/3 | `/proc/cpuinfo` Model | LanP2P |
+| Raspberry Pi 4/5 | `/proc/cpuinfo` Model | YggdrasilP2P |
+| Linux Legacy (Kernel < 4) | `/proc/version` | LanP2P (max) |
+| Linux Modern (Kernel ≥ 4) | `/proc/version` | bis FullDht |
+
+### Startbooster (Tier-Watchdog)
+
+Geräte die beim Start nicht für P2P qualifiziert sind laufen nicht einfach stumm:
+
+1. **StealthBeacon** startet sofort — Gerät ist im LAN sichtbar ohne Gossip-Overhead
+2. **Tier-Watchdog** (One-Shot-Pattern) prüft alle 90 Sekunden ob RAM/CPU freier geworden ist
+3. Bei Tier-Upgrade → P2P startet automatisch nach, kein Neustart nötig
+4. Nach 10 erfolglosen Checks → Watchdog beendet sich, Gerät bleibt auf StealthBeacon
+
+### Yggdrasil-Integration
+
+Yggdrasil v0.5.8 wird automatisch verwaltet wenn `tier_rank ≥ 3`:
+- Ed25519-Key → deterministisch abgeleitete IPv6-Adresse (200::/7)
+- Genesis-Node-Adresse als fester Einstiegspunkt eingebaut
+- Auf schwacher Hardware wird Yggdrasil übersprungen — kein erzwungener Start
+- DHT (Tier 4) erweitert die Peer-Tabelle via Kademlia-ähnlichem Lookup
+
 ## Network Transport
 
 - LAN-first: UDP beacon discovery on port 7386
 - Overlay: Yggdrasil v0.5.8 (Ed25519 → IPv6 in 200::/7, deterministic)
+- DHT: Kademlia-style peer table on Tier 4 nodes
 - Fallback: GitHub as anchor bootstrap layer
 
 ## Hardware Targets
 
-Desktop: Windows, Linux, macOS (x86-64, ARM64)
-Legacy: Windows Vista/7 32-bit, Raspberry Pi 1/Zero, Python 3.6+
+Desktop: Windows 8/10/11, Linux, macOS (x86-64, ARM64)
+Legacy: Windows Vista/7 32-bit, Windows XP (LanP2P max), Raspberry Pi 1/Zero/2/3/4
 Android: Native APK (Kotlin, API 21+, no Python required)
+Headless: `daemon_headless.py` — Python 3.6+, stdlib-only core, no numpy/GUI required
+Ultra-Legacy: `legacy_bootstrap.py` — local-only fairness path for Win9x / very old Python runtimes
+
+## Fair Inclusion Boot Paths
+
+Aether now writes `data/interbus/startup_route.json` before the runtime path is chosen.
+
+- `start.py` keeps the full desktop/runtime path for modern systems.
+- `daemon_headless.py` is selected automatically for Windows 2000/XP and weak Vista/7 32-bit systems, with `requirements_legacy.txt` as the lightweight package profile.
+- `legacy_bootstrap.py` provides the ultra-legacy local path for Win9x-class environments or Python runtimes too old for the normal headless daemon.
+
+The capability score mirrors this decision in `progression_track` and `progression_mode`, so weak nodes visibly grow from `ultra-legacy-local` or `legacy-headless-vault-first` toward stronger swarm roles instead of failing at install time.
+
+LAN ist dabei nur eine Zwischenstufe. Das eigentliche Ziel bleibt die Aufnahme ins P2P-Aethernet:
+
+- Tier 1/2 liefern Sichtbarkeit, lokale Kooperation und erste Gossip-Reife.
+- Tier 3 bedeutet native Yggdrasil-Kompatibilität und echtes Overlay-P2P.
+- Tier 4 bedeutet emergente DHT-Rolle: mit genug Mitgliedern und Reichweite entsteht aus Aether + Yggdrasil eine eigene, verteilte Peer-Struktur.
+- Schwache Legacy-Knoten bleiben trotzdem kompatibel, aber eher als symbiotische Relay-/Overlay-Kandidaten statt als isolierte LAN-Endpunkte.
 
 ## Build
 
@@ -101,6 +212,13 @@ Android: Native APK (Kotlin, API 21+, no Python required)
 # Python backend
 pip install -r requirements.txt
 python start.py
+
+# Legacy / headless package profile
+pip install -r requirements_legacy.txt
+python start.py
+
+# Ultra-legacy local bootstrap
+python legacy_bootstrap.py
 
 # Rust UI
 cargo build --release

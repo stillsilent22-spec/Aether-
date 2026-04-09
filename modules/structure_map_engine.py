@@ -131,8 +131,11 @@ class StructureMapEngine:
                 node.amp,
                 interference=node.interference,
             )
-        heatmap = grid.build_heatmap_grid(size=self._grid_size).tolist()
-        scene_points = [list(point) for point in grid.render_points(limit=self._max_points)]
+        heatmap = grid.build_heatmap_grid(size=self._grid_size)
+        if hasattr(heatmap, "tolist"):
+            heatmap = heatmap.tolist()
+        scene_points_raw = grid.render_points(limit=self._max_points)
+        scene_points = [list(point) for point in scene_points_raw]
         source_hash = str(capsule.envelope.source_hash)
         region_label = "REGION {}-{}".format(source_hash[:4], source_hash[-4:]) if source_hash else "REGION LOCAL"
         return StructureMapSnapshot(

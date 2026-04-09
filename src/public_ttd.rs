@@ -12,6 +12,22 @@ use uuid::Uuid;
 pub const PUBLIC_TTD_POOL_SCHEMA: &str = "aether.public_ttd_anchor.pool.v2";
 pub const PUBLIC_TTD_QUORUM_DEFAULT: u32 = 3;
 
+fn default_artifact_class() -> String {
+    "performance_route".to_owned()
+}
+
+fn default_share_channel() -> String {
+    "auto_push".to_owned()
+}
+
+fn default_source_scope() -> String {
+    "derived_public_metrics".to_owned()
+}
+
+fn default_privacy_class() -> String {
+    "public_metric_only".to_owned()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PublicTtdMetrics {
     pub residual: f32,
@@ -40,6 +56,18 @@ pub struct PublicTtdAnchorRecord {
     pub deltas_included: bool,
     pub internal_only: bool,
     pub transport_hint: String,
+    #[serde(default = "default_artifact_class")]
+    pub artifact_class: String,
+    #[serde(default = "default_share_channel")]
+    pub share_channel: String,
+    #[serde(default = "default_source_scope")]
+    pub source_scope: String,
+    #[serde(default = "default_privacy_class")]
+    pub privacy_class: String,
+    #[serde(default)]
+    pub user_confirmation_required: bool,
+    #[serde(default)]
+    pub auto_push_ready: bool,
     pub quorum_threshold: u32,
     pub admin_trusted: bool,
     pub quorum_met: bool,
@@ -61,6 +89,18 @@ pub struct PublicTtdAnchorView {
     pub trust_reason: String,
     pub uploader_role: String,
     pub pseudonym: String,
+    #[serde(default = "default_artifact_class")]
+    pub artifact_class: String,
+    #[serde(default = "default_share_channel")]
+    pub share_channel: String,
+    #[serde(default = "default_source_scope")]
+    pub source_scope: String,
+    #[serde(default = "default_privacy_class")]
+    pub privacy_class: String,
+    #[serde(default)]
+    pub user_confirmation_required: bool,
+    #[serde(default)]
+    pub auto_push_ready: bool,
     pub raw_data_included: bool,
     pub deltas_included: bool,
     pub internal_only: bool,
@@ -78,6 +118,10 @@ pub struct PublicTtdPoolSummary {
     pub candidate_anchor_count: usize,
     pub quorum_validated_count: usize,
     pub admin_trusted_count: usize,
+    #[serde(default)]
+    pub auto_push_ready_count: usize,
+    #[serde(default)]
+    pub consent_required_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +132,9 @@ pub struct PublicTtdSubmission {
     pub pseudonym: String,
     pub uploader_role: String,
     pub signature_included: bool,
+    pub artifact_class: String,
+    pub source_scope: String,
+    pub privacy_class: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,9 +200,7 @@ pub struct PublicTtdTransport {
 
 impl PublicTtdPoolStore {
     pub fn new_default() -> Self {
-        let base = PathBuf::from("data")
-            .join("rust_shell")
-            .join("public_ttd_anchor_pool");
+        let base = crate::data_path("rust_shell/public_ttd_anchor_pool");
         Self {
             records_path: base.join("anchor_records.json"),
             summary_path: base.join("pool_summary.json"),
@@ -181,11 +226,12 @@ impl PublicTtdPoolStore {
     pub fn summary_line(&self) -> String {
         let summary = self.load_summary();
         format!(
-            "Public TTD Pool | trusted {} | candidate {} | quorum {} | admin {}",
+            "Public TTD Pool | trusted {} | candidate {} | quorum {} | admin {} | auto-push {}",
             summary.trusted_anchor_count,
             summary.candidate_anchor_count,
             summary.quorum_validated_count,
-            summary.admin_trusted_count
+            summary.admin_trusted_count,
+            summary.auto_push_ready_count,
         )
     }
 
@@ -221,6 +267,9 @@ impl PublicTtdPoolStore {
                         pseudonym: record.uploader_pseudonym.clone(),
                         uploader_role: record.uploader_role.clone(),
                         signature_included: record.signed_validation_count > 0,
+                        artifact_class: record.artifact_class.clone(),
+                        source_scope: record.source_scope.clone(),
+                        privacy_class: record.privacy_class.clone(),
                     };
                     *existing = merge_public_ttd_anchor_record(existing, &synthetic);
                 } else {
@@ -253,10 +302,7 @@ impl PublicTtdPoolStore {
 impl PublicTtdTransport {
     pub fn new_default() -> Self {
         Self {
-            settings_path: PathBuf::from("data")
-                .join("rust_shell")
-                .join("public_ttd_anchor_pool")
-                .join("network_settings.json"),
+            settings_path: crate::data_path("rust_shell/public_ttd_anchor_pool/network_settings.json"),
         }
     }
 
@@ -538,6 +584,14 @@ pub fn summarize_public_ttd_anchor_records(
         .iter()
         .filter(|record| record.admin_trusted)
         .count();
+    let auto_push_ready_count = trusted_records
+        .iter()
+        .filter(|record| record.auto_push_ready)
+        .count();
+    let consent_required_count = normalized
+        .iter()
+        .filter(|record| record.user_confirmation_required)
+        .count();
     PublicTtdPoolSummary {
         schema: PUBLIC_TTD_POOL_SCHEMA.to_owned(),
         updated_at: utc_now(),
@@ -549,6 +603,8 @@ pub fn summarize_public_ttd_anchor_records(
         candidate_anchor_count: candidate_records.len(),
         quorum_validated_count,
         admin_trusted_count,
+        auto_push_ready_count,
+        consent_required_count,
     }
 }
 
@@ -575,6 +631,20 @@ fn build_public_ttd_anchor_record(submission: &PublicTtdSubmission) -> PublicTtd
         deltas_included: false,
         internal_only: false,
         transport_hint: "ipfs_libp2p_bundle".to_owned(),
+        artifact_class: normalize_public_artifact_class(&submission.artifact_class),
+        share_channel: share_channel_for_artifact(&submission.artifact_class),
+        source_scope: if submission.source_scope.trim().is_empty() {
+            default_source_scope()
+        } else {
+            submission.source_scope.clone()
+        },
+        privacy_class: if submission.privacy_class.trim().is_empty() {
+            default_privacy_class()
+        } else {
+            submission.privacy_class.clone()
+        },
+        user_confirmation_required: false,
+        auto_push_ready: false,
         quorum_threshold: quorum_threshold_for_role(&submission.uploader_role),
         admin_trusted: false,
         quorum_met: false,
@@ -641,6 +711,28 @@ fn merge_public_ttd_anchor_record(
         deltas_included: false,
         internal_only: false,
         transport_hint: record.transport_hint.clone(),
+        artifact_class: if submission.artifact_class.trim().is_empty() {
+            record.artifact_class.clone()
+        } else {
+            normalize_public_artifact_class(&submission.artifact_class)
+        },
+        share_channel: if submission.artifact_class.trim().is_empty() {
+            record.share_channel.clone()
+        } else {
+            share_channel_for_artifact(&submission.artifact_class)
+        },
+        source_scope: if submission.source_scope.trim().is_empty() {
+            record.source_scope.clone()
+        } else {
+            submission.source_scope.clone()
+        },
+        privacy_class: if submission.privacy_class.trim().is_empty() {
+            record.privacy_class.clone()
+        } else {
+            submission.privacy_class.clone()
+        },
+        user_confirmation_required: record.user_confirmation_required,
+        auto_push_ready: record.auto_push_ready,
         quorum_threshold: quorum_threshold_for_role(&record.uploader_role),
         admin_trusted: false,
         quorum_met: false,
@@ -652,6 +744,14 @@ fn merge_public_ttd_anchor_record(
 
 fn apply_trust_state(mut record: PublicTtdAnchorRecord) -> PublicTtdAnchorRecord {
     record.uploader_role = normalize_public_role(&record.uploader_role);
+    record.artifact_class = normalize_public_artifact_class(&record.artifact_class);
+    record.share_channel = share_channel_for_artifact(&record.artifact_class);
+    if record.source_scope.trim().is_empty() {
+        record.source_scope = default_source_scope();
+    }
+    if record.privacy_class.trim().is_empty() {
+        record.privacy_class = default_privacy_class();
+    }
     record.quorum_threshold = quorum_threshold_for_role(&record.uploader_role);
     record.validation_count = record.validation_pseudonyms.len() as u32;
     record.admin_trusted = record.uploader_role == "admin";
@@ -675,6 +775,8 @@ fn apply_trust_state(mut record: PublicTtdAnchorRecord) -> PublicTtdAnchorRecord
     record.raw_data_included = false;
     record.deltas_included = false;
     record.internal_only = false;
+    record.user_confirmation_required = record.share_channel == "consent_required";
+    record.auto_push_ready = record.artifact_class == "performance_route" && record.quorum_met;
     record.public_metrics = canonical_metrics(record.public_metrics);
     record.latest_metrics = canonical_metrics(record.latest_metrics);
     record
@@ -693,6 +795,12 @@ fn public_ttd_anchor_view(record: &PublicTtdAnchorRecord) -> PublicTtdAnchorView
         trust_reason: record.trust_reason.clone(),
         uploader_role: record.uploader_role.clone(),
         pseudonym: record.uploader_pseudonym.clone(),
+        artifact_class: record.artifact_class.clone(),
+        share_channel: record.share_channel.clone(),
+        source_scope: record.source_scope.clone(),
+        privacy_class: record.privacy_class.clone(),
+        user_confirmation_required: record.user_confirmation_required,
+        auto_push_ready: record.auto_push_ready,
         raw_data_included: false,
         deltas_included: false,
         internal_only: false,
@@ -728,6 +836,12 @@ fn extract_records_from_bundle(bundle: &Value) -> Vec<PublicTtdAnchorRecord> {
                 deltas_included: false,
                 internal_only: false,
                 transport_hint: "ipfs_libp2p_bundle".to_owned(),
+                artifact_class: view.artifact_class,
+                share_channel: view.share_channel,
+                source_scope: view.source_scope,
+                privacy_class: view.privacy_class,
+                user_confirmation_required: view.user_confirmation_required,
+                auto_push_ready: view.auto_push_ready,
                 quorum_threshold: view.quorum_threshold,
                 admin_trusted: false,
                 quorum_met: view.quorum_met,
@@ -745,6 +859,22 @@ fn normalize_public_role(role: &str) -> String {
         "admin".to_owned()
     } else {
         "operator".to_owned()
+    }
+}
+
+fn normalize_public_artifact_class(artifact_class: &str) -> String {
+    let normalized = artifact_class.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "collaborative_discovery" | "public_field_observation" | "performance_route" => normalized,
+        _ => default_artifact_class(),
+    }
+}
+
+fn share_channel_for_artifact(artifact_class: &str) -> String {
+    match normalize_public_artifact_class(artifact_class).as_str() {
+        "performance_route" => "auto_push".to_owned(),
+        "public_field_observation" => "passive_observation".to_owned(),
+        _ => "consent_required".to_owned(),
     }
 }
 
@@ -875,6 +1005,9 @@ mod tests {
             pseudonym: "P1".to_owned(),
             uploader_role: "operator".to_owned(),
             signature_included: false,
+            artifact_class: "performance_route".to_owned(),
+            source_scope: "derived_public_metrics".to_owned(),
+            privacy_class: "public_metric_only".to_owned(),
         };
         let first = build_public_ttd_anchor_record(&submission);
         assert!(!first.quorum_met);
@@ -895,5 +1028,6 @@ mod tests {
         );
         assert!(third.quorum_met);
         assert_eq!(third.trust_state, "trusted");
+        assert!(third.auto_push_ready);
     }
 }

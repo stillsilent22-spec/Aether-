@@ -12,9 +12,9 @@ pub struct SwarmStartupStatus {
 }
 
 pub fn probe_swarm_startup() -> SwarmStartupStatus {
-    let node_secret_path = Path::new("keys").join("node_secret.key");
-    let nodes_dir = Path::new("data").join("swarm").join("nodes");
-    let anchors_dir = Path::new("data").join("anchors");
+    let node_secret_path = crate::app_root().join("keys").join("node_secret.key");
+    let nodes_dir = crate::data_path("swarm/nodes");
+    let anchors_dir = crate::data_path("anchors");
 
     if !node_secret_path.exists() {
         return SwarmStartupStatus {

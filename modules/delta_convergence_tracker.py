@@ -36,6 +36,8 @@ class DeltaMeasurement:
     shannon_limit_estimate: float
     node_count: int
     anchor_hit_rate: float
+    # ── Rein observational — KEIN Einfluss auf delta_ratio / h_lambda / Pipeline ──
+    bits_per_joule: float = 0.0 # Effizienz: wie viele Bits spart der Anker-Codec pro Joule?
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -48,6 +50,7 @@ class DeltaMeasurement:
             "shannon_limit_estimate": round(self.shannon_limit_estimate, 6),
             "node_count": self.node_count,
             "anchor_hit_rate": round(self.anchor_hit_rate, 6),
+            "bits_per_joule": round(self.bits_per_joule, 1),
         }
 
 
@@ -56,6 +59,11 @@ class ConvergenceSeries:
     series_id: str
     created_at: float
     measurements: list[DeltaMeasurement] = field(default_factory=list)
+    # Entstehungsdatum aus Datei-Metadaten — nur für Zeitgraph-Tab.
+    # Kein Einfluss auf Metriken, Fingerprint, Gossip oder Anker.
+    # Wird NUR gesetzt wenn temporal_metadata_consent=true in settings.json.
+    # Wird auf None zurückgesetzt wenn Consent deaktiviert wird.
+    source_date: float | None = None
 
     def delta_slope(self) -> float:
         if len(self.measurements) < 2:
@@ -71,11 +79,40 @@ class ConvergenceSeries:
     def is_converging(self) -> bool:
         return self.delta_slope() < -0.001
 
+    def ipe_slope(self) -> float:
+        """Steigung der bits_per_joule-Reihe (rein observational).
+        Positiv = Netz wird effizienter. Niemals in Pipeline-Metriken verwenden."""
+        bpj = [m.bits_per_joule for m in self.measurements if m.bits_per_joule > 0.0]
+        n = len(bpj)
+        if n < 2:
+            return 0.0
+        x_mean = (n - 1) / 2
+        y_mean = sum(bpj) / n
+        num = sum((i - x_mean) * (bpj[i] - y_mean) for i in range(n))
+        den = sum((i - x_mean) ** 2 for i in range(n))
+        return num / den if den > 0 else 0.0
+
+    def ipe_trend_label(self) -> str:
+        """Kurzes Label für die ICE Shell — nie als Entscheidungsgrundlage."""
+        slope = self.ipe_slope()
+        bpj_values = [m.bits_per_joule for m in self.measurements if m.bits_per_joule > 0.0]
+        if not bpj_values:
+            return "no_data"
+        current = bpj_values[-1]
+        if slope > 1000 and current > 10_000:
+            return "improving_fast"
+        if slope > 100:
+            return "improving"
+        if slope < -1000:
+            return "degrading"
+        return "stable"
+
     def convergence_summary(self) -> dict[str, Any]:
         if not self.measurements:
             return {"status": "no_data"}
         first = self.measurements[0]
         last = self.measurements[-1]
+        bpj_values = [m.bits_per_joule for m in self.measurements if m.bits_per_joule > 0.0]
         return {
             "series_id": self.series_id,
             "measurements": len(self.measurements),
@@ -89,6 +126,11 @@ class ConvergenceSeries:
             "shannon_limit": round(last.shannon_limit_estimate, 4),
             "h_lambda_current": round(last.h_lambda, 4),
             "anchor_pool_growth": last.anchor_pool_size - first.anchor_pool_size,
+            # ── Observational IPE — nie in Pipeline verwenden ──
+            "ipe_bits_per_joule_current": round(last.bits_per_joule, 1),
+            "ipe_bits_per_joule_mean": round(sum(bpj_values) / max(1, len(bpj_values)), 1),
+            "ipe_slope": round(self.ipe_slope(), 2),
+            "ipe_trend": self.ipe_trend_label(),
         }
 
 
@@ -212,6 +254,30 @@ class DeltaConvergenceTracker:
     def get_all_summaries(self) -> list[dict[str, Any]]:
         return [s.convergence_summary() for s in self._series.values()]
 
+    def record_source_date(self, series_id: str, source_date: float | None) -> None:
+        """Setzt das Entstehungsdatum für eine Serie (Zeitgraph-Tab only).
+
+        Darf NUR aufgerufen werden wenn has_temporal_metadata_consent() True ist.
+        Setzt source_date auf der ConvergenceSeries — kein Einfluss auf Metriken.
+        """
+        if series_id in self._series:
+            self._series[series_id].source_date = source_date
+            self._save_history()
+
+    def clear_source_dates(self) -> None:
+        """Löscht alle source_date-Felder aus allen Serien.
+
+        Wird aufgerufen wenn temporal_metadata_consent deaktiviert wird.
+        Ändert keine Metriken — nur source_date wird auf None gesetzt.
+        """
+        changed = False
+        for series in self._series.values():
+            if series.source_date is not None:
+                series.source_date = None
+                changed = True
+        if changed:
+            self._save_history()
+
     # ------------------------------------------------------------------
     # Intern
     # ------------------------------------------------------------------
@@ -304,6 +370,7 @@ class DeltaConvergenceTracker:
                     measurements=[
                         DeltaMeasurement(**m) for m in data.get("measurements", [])
                     ],
+                    source_date=data.get("source_date"),  # None wenn nicht gesetzt
                 )
         except Exception as e:
             self._series = {}
@@ -314,6 +381,8 @@ class DeltaConvergenceTracker:
                 "series_id": sid,
                 "created_at": s.created_at,
                 "measurements": [m.to_dict() for m in s.measurements[-500:]],
+                # source_date: nur gespeichert wenn Consent aktiv war — bereinigt mit clear_source_dates()
+                **(({"source_date": s.source_date}) if s.source_date is not None else {}),
             }
             for sid, s in self._series.items()
         }

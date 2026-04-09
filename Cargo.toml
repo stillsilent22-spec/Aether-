@@ -14,7 +14,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dirs = "5"
 ed25519-dalek = { version = "2", features = ["serde", "rand_core"] }
 hex = "0.4"
-iced = { version = "0.13", features = ["tokio", "canvas"] }
+iced = { version = "0.13", features = ["tokio", "canvas"], optional = true }
 rand = "0.8"
 reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
 serde = { version = "1.0", features = ["derive"] }
@@ -23,6 +23,21 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["fs", "macros", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 x25519-dalek = { version = "2", features = ["serde", "static_secrets"] }
+aes-gcm = "0.10"
+crc32fast = "1"
+flate2 = "1"
+zeroize = { version = "1", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Foundation",
+] }
 
 [features]
 default = ["ui"]

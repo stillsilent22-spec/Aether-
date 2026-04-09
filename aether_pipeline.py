@@ -32,6 +32,44 @@ try:
 except Exception:
     _reconstruction_engine = None
 
+# ---------------------------------------------------------------------------
+# Pipeline-Transport Singleton — lazy init, nur für push_algo_token
+# ---------------------------------------------------------------------------
+_pipeline_transport_singleton = None
+_pipeline_transport_lock = None
+
+def _get_pipeline_transport():
+    """Lazy-init AethernetTransport für AlgoToken-Push aus der Pipeline."""
+    global _pipeline_transport_singleton, _pipeline_transport_lock
+    import threading
+    if _pipeline_transport_lock is None:
+        _pipeline_transport_lock = threading.Lock()
+    with _pipeline_transport_lock:
+        if _pipeline_transport_singleton is None:
+            try:
+                import json as _json
+                from pathlib import Path as _P
+                settings_path = _P("data/settings.json")
+                node_id = ""
+                if settings_path.exists():
+                    _s = _json.loads(settings_path.read_text(encoding="utf-8"))
+                    node_id = str(_s.get("node_id", "") or "").strip()
+                if not node_id:
+                    node_path = _P("data/rust_shell/users.json")
+                    if node_path.exists():
+                        _u = _json.loads(node_path.read_text(encoding="utf-8"))
+                        users = _u if isinstance(_u, list) else [_u]
+                        for u in users:
+                            if u.get("node_id"):
+                                node_id = str(u["node_id"])
+                                break
+                if node_id:
+                    from modules.aethernet_transport import AethernetTransport
+                    _pipeline_transport_singleton = AethernetTransport(node_id=node_id)
+            except Exception:
+                pass
+        return _pipeline_transport_singleton
+
 
 def _assert_rust_shell_trigger() -> None:
     """
@@ -171,9 +209,40 @@ class AetherPipeline:
         self.capsule_engine = AnalysisCapsuleEngine()
         self.structure_map_engine = StructureMapEngine()
 
+    def _build_performance_route_candidate(self, result: Dict[str, Any], capsule: Any) -> Dict[str, Any]:
+        public_metrics = {
+            "trust_score": round(float(capsule.metrics.trust_score), 12),
+            "noether_consistency": round(float(capsule.metrics.noether_consistency), 12),
+            "delta_ratio": round(float(capsule.metrics.delta_ratio), 12),
+            "entropy": round(float(capsule.metrics.entropy), 12),
+            "symmetry": round(float(capsule.metrics.symmetry), 12),
+            "periodicity": round(float(capsule.metrics.periodicity), 12),
+            "segment_count": int(capsule.envelope.segment_count),
+        }
+        route_seed = {
+            "sha256": str(result.get("sha256", "") or ""),
+            "source_hash": str(capsule.envelope.source_hash),
+            "source_scope": str(capsule.envelope.source_scope),
+            "public_metrics": public_metrics,
+        }
+        route_hash = hashlib.sha256(
+            json.dumps(route_seed, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "artifact_class": "performance_route",
+            "route_hash": route_hash,
+            "source_scope": str(capsule.envelope.source_scope),
+            "privacy_class": "public_metric_only",
+            "share_channel": "auto_push",
+            "user_confirmation_required": False,
+            "genesis_override_allowed": True,
+            "quorum_required": True,
+            "public_metrics": public_metrics,
+        }
+
     def _build_result(self, source_label: str, raw: bytes, capsule: Any) -> Dict[str, Any]:
         structure_map = self.structure_map_engine.build_from_capsule(capsule).to_dict()
-        return {
+        result = {
             "file": str(source_label),
             "size_bytes": int(len(raw)),
             "sha256": hashlib.sha256(raw).hexdigest(),
@@ -198,7 +267,18 @@ class AetherPipeline:
             "noether_consistency": float(capsule.metrics.noether_consistency),
             "godel_loop": dict(capsule.godel_loop),
             "anomaly_flags": list(capsule.anomaly_flags),
+            "signal_policy": {
+                "source_scope": str(capsule.envelope.source_scope),
+                "privacy_class": str(capsule.envelope.privacy_class),
+                "artifact_class": str(capsule.envelope.artifact_class),
+                "segment_scheduler": str(capsule.envelope.segment_scheduler),
+                "segment_count": int(capsule.envelope.segment_count),
+                "segment_size_bytes": int(capsule.envelope.segment_size_bytes),
+                "segment_manifest_hash": str(capsule.envelope.segment_manifest_hash),
+            },
         }
+        result["performance_route_candidate"] = self._build_performance_route_candidate(result, capsule)
+        return result
 
     def _augment_result(self, result: Dict[str, Any], raw: bytes) -> None:
         result["reconstruction"] = self._build_reconstruction_summary(result)
@@ -245,16 +325,64 @@ class AetherPipeline:
             # ── AlgoToken (nur wenn Gate bestanden) ─────────────────────────
             if result["vault_commit_allowed"]:
                 from modules.algo_share import build_algo_token
-                from pathlib import Path
-                domain = str(Path(result.get("file", "")).suffix.lstrip(".") or "generic")
+                from pathlib import Path as _Path
+                domain = str(_Path(result.get("file", "")).suffix.lstrip(".") or "generic")
                 token = build_algo_token(aelab_result, domain_hint=domain)
                 if token:
                     result["algo_token"] = token.to_dict()
+                    # AlgoToken sofort peer-to-peer senden — kein Quorum nötig
+                    try:
+                        from modules.aethernet_transport import AethernetTransport as _AT
+                        _transport = _get_pipeline_transport()
+                        if _transport is not None:
+                            _transport.push_algo_token(aelab_result, domain_hint=domain)
+                    except Exception:
+                        pass
         else:
             result["vault_commit_allowed"] = False
 
         # ── Compression (nach aelab — braucht commit_gate Ergebnis) ──────────
         result["compression"] = self._build_compression_summary(raw, result.get("aelab", {}))
+
+        # ── Pipeline-Metriken ins Gossip-Netz einspeisen ──────────────────────
+        # Nur bereits berechnete Werte — keine Vorhersagen, keine Imputationen.
+        # ── Pipeline-Metriken ins Gossip-Netz einspeisen + AE-Evolution prüfen ──
+        try:
+            # capsule.to_dict() → result["capsule"]["metrics"] (nicht result["metrics"])
+            cap_metrics = result.get("capsule", {}).get("metrics", {})
+            delta_ratio = float(result.get("delta_ratio", cap_metrics.get("delta_ratio", 0.0)) or 0.0)
+            h_lambda = float(cap_metrics.get("h_lambda", 0.0) or 0.0)
+            shannon_limit = float(cap_metrics.get("shannon_limit_estimate", 8.0) or 8.0)
+            # Shannon-Lücke: wie weit h_lambda noch von der theoretischen Grenze entfernt ist
+            shannon_gap_pct = round((h_lambda / max(0.001, shannon_limit)) * 100.0, 4)
+            anchor_cov = float(result.get("compression", {}).get("coverage_ratio", 0.0) or 0.0)
+            trust_score = float(result.get("trust", 0.0) or 0.0)
+
+            from modules.swarm_p2p import set_pipeline_metrics
+            set_pipeline_metrics({
+                "delta_ratio":     round(delta_ratio, 6),
+                "h_lambda":        round(h_lambda, 6),
+                "shannon_gap_pct": round(shannon_gap_pct, 4),
+                "anchor_coverage": round(anchor_cov, 6),
+                "trust_score":     round(trust_score, 6),
+            })
+
+            # ── AE-Evolution-Trigger (deterministisch) ────────────────────────
+            # bpj_reference = 0.0 für Datei-Analyse (nur live-render hat echte BPJ-Werte)
+            # → BPJ-Zweig feuert nicht (bpj_ref > 0.0 Guard greift)
+            from modules.ae_evolution_core import should_trigger_ae_evolution
+            from modules.swarm_p2p import get_last_network_metrics
+            net = get_last_network_metrics()
+            net_delta_median = net.get("delta_ratio") if net.get("peer_count", 0) >= 2 else None
+            _trig, _reason = should_trigger_ae_evolution(
+                delta_ratio=delta_ratio,
+                bits_per_joule=0.0,    # file-analysis: kein cpu_joules Tracking
+                bpj_reference=0.0,
+                network_delta_median=net_delta_median,
+            )
+            result["ae_evolution_trigger"] = {"trigger": _trig, "reason": _reason}
+        except Exception:
+            pass
 
     def _build_compression_summary(self, raw: bytes, aelab_result: dict) -> Dict[str, Any]:
         """
@@ -383,6 +511,18 @@ class AetherPipeline:
         capsule = self.capsule_engine.from_file(file_path)
         result = self._build_result(str(file_path), raw, capsule)
         self._augment_result(result, raw)
+        # ── Temporal-Metadata-Consent: source_date isoliert extrahieren ──────
+        # Läuft NACH _augment_result; kein Einfluss auf Fingerprint/Gossip/Anker.
+        # Ergebnis landet NUR im "source_date"-Feld des Pipeline-Outputs —
+        # ausschließlich für den Zeitgraph-Tab auswertbar.
+        try:
+            from modules.analysis_engine import has_temporal_metadata_consent, extract_source_date
+            if has_temporal_metadata_consent():
+                result["source_date"] = extract_source_date(file_path)
+            else:
+                result["source_date"] = None
+        except Exception:
+            result["source_date"] = None
         # Audit-Log
         self.append_audit(result)
         return result

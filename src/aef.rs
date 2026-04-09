@@ -239,11 +239,7 @@ pub struct VaultStore {
 
 impl VaultStore {
     pub fn load_default() -> Result<Self, AefError> {
-        Self::load_from(
-            PathBuf::from("data")
-                .join("rust_shell")
-                .join("vault_store.json"),
-        )
+        Self::load_from(crate::data_path("rust_shell/vault_store.json"))
     }
 
     pub fn load_from(path: PathBuf) -> Result<Self, AefError> {
@@ -355,9 +351,7 @@ impl VaultStore {
 impl Default for VaultStore {
     fn default() -> Self {
         Self {
-            path: PathBuf::from("data")
-                .join("rust_shell")
-                .join("vault_store.json"),
+            path: crate::data_path("rust_shell/vault_store.json"),
             version: 1,
             entries: Vec::new(),
         }

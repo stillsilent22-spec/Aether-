@@ -3,7 +3,9 @@ from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
 import hashlib
+import json
 import threading
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
@@ -79,6 +81,74 @@ def hash_region(data: bytes, x: int, y: int, w: int, h: int) -> str:
         return hashlib.sha256(b"").hexdigest()
 
 
+# ---------------------------------------------------------------------------
+# Adaptiver Setpoint-Controller (deterministisch + auditierbar)
+#
+# Formel reagiert NUR auf bereits gemessene Werte — keine Vorhersagen.
+# Jeder Threshold-Wechsel kann anhand der Eingangswerte vollständig
+# rekonstruiert werden (deterministische Auditierbarkeit).
+#
+# Terme:
+#   shannon_term   : weit vom Shannon-Limit → mehr teilen (threshold sinkt)
+#   coverage_term  : viel bereits bekannt   → selektiver teilen (threshold steigt)
+#   delta_term     : System in Flux         → noch nicht teilen (threshold steigt)
+#   bpj_slope_term : Effizienz fällt        → neue AlgoTokens nötig (threshold sinkt)
+#
+# Bounds: [THRESHOLD_MIN=0.50, THRESHOLD_MAX=0.98]
+# ---------------------------------------------------------------------------
+
+_THRESHOLD_BASE: float = 0.85
+_THRESHOLD_MIN: float = 0.50
+_THRESHOLD_MAX: float = 0.98
+
+# AELab-Evolution triggern wenn delta_ratio diesen Setpoint überschreitet.
+AE_EVOLUTION_SETPOINT: float = 0.40
+
+
+def compute_adaptive_threshold(
+    shannon_gap_pct: float,
+    anchor_coverage: float,
+    delta_ratio: float,
+    bpj_slope: float = 0.0,
+    network_metrics: Optional[Dict[str, Any]] = None,
+) -> float:
+    """Berechnet den adaptiven share_threshold deterministisch aus Systemmetriken.
+
+    network_metrics (aus P2PLayer.aggregate_network_metrics()) hat Vorrang vor
+    lokalen Werten — Netz-Median ist robuster gegen lokale Ausreißer.
+    Fehlende Netz-Felder fallen auf den übergebenen lokalen Wert zurück.
+    Keine Vorhersagen: reagiert nur auf bereits gemessene Werte.
+
+    Args:
+        shannon_gap_pct  : lokaler Abstand zum Shannon-Limit [0..100]
+        anchor_coverage  : lokaler Anchor-Abdeckungsgrad     [0..1]
+        delta_ratio      : lokale delta_ratio                [0..1]
+        bpj_slope        : lokale bits_per_joule-Steigung
+        network_metrics  : Dict aus aggregate_network_metrics() — Netz-Mediane
+
+    Rückgabe: threshold in [_THRESHOLD_MIN, _THRESHOLD_MAX]
+    """
+    nm = network_metrics or {}
+    # Netz-Median hat Vorrang; lokaler Wert ist Fallback
+    g_raw = nm.get("shannon_gap_pct", shannon_gap_pct)
+    c_raw = nm.get("anchor_coverage", anchor_coverage)
+    d_raw = nm.get("delta_ratio", delta_ratio)
+    s_raw = nm.get("bpj_slope", bpj_slope)
+
+    g = max(0.0, min(100.0, float(g_raw))) / 100.0
+    c = max(0.0, min(1.0, float(c_raw)))
+    d = max(0.0, min(1.0, float(d_raw)))
+    s = float(s_raw)
+
+    shannon_term   = -0.10 * g                               # weit vom Limit → mehr teilen
+    coverage_term  = +0.08 * c                               # hohe Abdeckung → selektiver
+    delta_term     = +0.06 * d                               # hoher Delta → warten
+    bpj_slope_term = -0.05 * max(0.0, min(1.0, -s / 1000.0))  # fallende Effizienz → mehr teilen
+
+    raw = _THRESHOLD_BASE + shannon_term + coverage_term + delta_term + bpj_slope_term
+    return float(max(_THRESHOLD_MIN, min(_THRESHOLD_MAX, raw)))
+
+
 class InvariantObserver:
     """Beobachtet Frames, trennt Invarianten von Deltas und meldet stabile Regionen dem Schwarm."""
 
@@ -101,6 +171,62 @@ class InvariantObserver:
         self._stable_region_total = 0
         self._observed_region_total = 0
         self._last_estimated_saving: float = 0.0
+        # Audit-Trail für Threshold-Änderungen (deterministisch nachvollziehbar)
+        self._threshold_audit_path: Optional[str] = None
+
+    def set_threshold_audit_path(self, path: str) -> None:
+        """Setzt den Pfad für das Threshold-Audit-Log (JSONL)."""
+        self._threshold_audit_path = str(path)
+
+    def update_share_threshold(
+        self,
+        shannon_gap_pct: float,
+        anchor_coverage: float,
+        delta_ratio: float,
+        bpj_slope: float = 0.0,
+        network_metrics: Optional[Dict[str, Any]] = None,
+    ) -> float:
+        """Berechnet und setzt share_threshold adaptiv. Schreibt jeden Wechsel ins Audit-Log.
+
+        network_metrics (aus P2PLayer.aggregate_network_metrics()) — wenn vorhanden,
+        werden Netz-Mediane bevorzugt. Lokale Werte dienen als Fallback.
+        Determinismus: gleiche Inputs → gleicher Threshold, immer.
+        Keine Vorhersagen: reagiert nur auf bereits gemessene Metriken.
+        """
+        new_threshold = compute_adaptive_threshold(
+            shannon_gap_pct=shannon_gap_pct,
+            anchor_coverage=anchor_coverage,
+            delta_ratio=delta_ratio,
+            bpj_slope=bpj_slope,
+            network_metrics=network_metrics,
+        )
+        old_threshold = self.share_threshold
+        changed = abs(new_threshold - old_threshold) > 1e-6
+        self.share_threshold = new_threshold
+
+        if self._threshold_audit_path and changed:
+            nm = network_metrics or {}
+            entry = {
+                "ts": int(time.time() * 1000),
+                "node_id": self.node_id,
+                "threshold_old": round(old_threshold, 6),
+                "threshold_new": round(new_threshold, 6),
+                "source": "network" if nm else "local",
+                "network_peer_count": int(nm.get("peer_count", 0)),
+                "inputs_effective": {
+                    "shannon_gap_pct": round(float(nm.get("shannon_gap_pct", shannon_gap_pct)), 4),
+                    "anchor_coverage": round(float(nm.get("anchor_coverage", anchor_coverage)), 4),
+                    "delta_ratio":     round(float(nm.get("delta_ratio", delta_ratio)), 4),
+                    "bpj_slope":       round(float(nm.get("bpj_slope", bpj_slope)), 4),
+                },
+            }
+            try:
+                with open(self._threshold_audit_path, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(entry, ensure_ascii=True, sort_keys=True) + "\n")
+            except Exception as err:
+                _log.warning("threshold audit write failed: %s", err)
+
+        return new_threshold
 
     def _region_id(self, process_name: str, index: int) -> str:
         """Leitet aus Prozessname und Region-Index eine stabile Region-ID ab."""

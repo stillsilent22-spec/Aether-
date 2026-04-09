@@ -272,6 +272,21 @@ class ObserverEngine:
         new_anchors, delta = observer.observe_frame(frame)
         shareable = observer.get_shareable_anchors()
 
+        # ── Adaptiver share_threshold (Netz-Mediane, deterministisch) ────────
+        try:
+            from modules.swarm_p2p import get_last_network_metrics
+            net_metrics = get_last_network_metrics()
+            anchor_cov = float(len(shareable)) / max(1, len(observer._anchors))
+            observer.update_share_threshold(
+                shannon_gap_pct=float(frame.entropy / 8.0 * 100.0),
+                anchor_coverage=anchor_cov,
+                delta_ratio=float(len(list(getattr(delta, "changed_regions", []) or [])))
+                            / max(1, len(region_hashes)),
+                network_metrics=net_metrics if net_metrics.get("peer_count", 0) > 0 else None,
+            )
+        except Exception:
+            pass
+
         pushed_count = 0
         push_mode = "none"
         for anchor in shareable:
@@ -693,7 +708,7 @@ class ObserverEngine:
         trusted_anchor_count = int(payload.get("trusted_anchor_count", len(public_anchors)) or len(public_anchors))
         pending_quorum_count = int(payload.get("candidate_anchor_count", 0) or 0)
         quorum_validated_count = int(payload.get("quorum_validated_count", 0) or 0)
-        admin_trusted_count = int(payload.get("admin_trusted_count", 0) or 0)
+        genesis_trusted_count = int(payload.get("genesis_trusted_count", 0) or 0)
         previous_state = self.load_learning_state(session_context)
         previous_count = int(len(list(previous_state.get("public_anchor_hashes", []) or [])))
         updated = self.update_learning_state(session_context, reflection_payload={}, imported_public_anchors=public_anchors)
@@ -717,9 +732,9 @@ class ObserverEngine:
                 f"Anker von 3 Peers validiert -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
                 f"I_obs +{i_obs_gain:.2f}%."
             )
-        elif imported_count > 0 and admin_trusted_count > 0:
+        elif imported_count > 0 and genesis_trusted_count > 0:
             current_insight = (
-                f"Admin-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
+                f"Genesis-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
                 f"I_obs +{i_obs_gain:.2f}%."
             )
         elif pending_quorum_count > 0 and imported_count <= 0:
@@ -737,7 +752,7 @@ class ObserverEngine:
             "trusted_anchor_count": int(trusted_anchor_count),
             "pending_quorum_count": int(pending_quorum_count),
             "quorum_validated_count": int(quorum_validated_count),
-            "admin_trusted_count": int(admin_trusted_count),
+            "genesis_trusted_count": int(genesis_trusted_count),
             "last_global_learn_delta": float(updated.get("last_global_learn_delta", 0.0) or 0.0),
             "symmetry_gain_percent": float(symmetry_gain),
             "i_obs_gain_percent": float(i_obs_gain),

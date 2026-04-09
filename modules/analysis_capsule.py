@@ -8,6 +8,7 @@ the core structural metrics used across Aether.
 
 
 import hashlib
+import json
 import logging
 import math
 import threading
@@ -55,6 +56,9 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(default)
 
 
+DEFAULT_SEGMENT_SIZE_BYTES = 4 * 1024 * 1024
+
+
 @dataclass
 class CapsuleSpec:
     trigger: str
@@ -65,6 +69,10 @@ class CapsuleSpec:
     share_invariants: bool = True
     retain_local_delta: bool = True
     domain_hint: str = "generic"
+    source_scope: str = "explicit_local_signal"
+    privacy_class: str = "explicit_user_signal"
+    artifact_class: str = "private_signal"
+    segment_size_bytes: int = DEFAULT_SEGMENT_SIZE_BYTES
 
 
 @dataclass
@@ -74,6 +82,13 @@ class SignalEnvelope:
     source_type: str
     source_label: str
     domain_hint: str
+    source_scope: str
+    privacy_class: str
+    artifact_class: str
+    segment_scheduler: str
+    segment_count: int
+    segment_size_bytes: int
+    segment_manifest_hash: str
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -82,6 +97,13 @@ class SignalEnvelope:
             "source_type": str(self.source_type),
             "source_label": str(self.source_label),
             "domain_hint": str(self.domain_hint),
+            "source_scope": str(self.source_scope),
+            "privacy_class": str(self.privacy_class),
+            "artifact_class": str(self.artifact_class),
+            "segment_scheduler": str(self.segment_scheduler),
+            "segment_count": int(self.segment_count),
+            "segment_size_bytes": int(self.segment_size_bytes),
+            "segment_manifest_hash": str(self.segment_manifest_hash),
         }
 
 
@@ -140,6 +162,10 @@ class AnalysisCapsuleResult:
                 "source_type": str(self.spec.source_type),
                 "source_label": str(self.spec.source_label),
                 "domain_hint": str(self.spec.domain_hint),
+                "source_scope": str(self.spec.source_scope),
+                "privacy_class": str(self.spec.privacy_class),
+                "artifact_class": str(self.spec.artifact_class),
+                "segment_size_bytes": int(self.spec.segment_size_bytes),
                 "share_invariants": bool(self.spec.share_invariants),
                 "retain_local_delta": bool(self.spec.retain_local_delta),
             },
@@ -176,6 +202,9 @@ class AnalysisCapsuleEngine:
             source_type="file",
             source_label=str(path),
             domain_hint=str(path.suffix.lower().lstrip(".") or "file"),
+            source_scope="explicit_file_drop",
+            privacy_class="explicit_user_signal",
+            artifact_class="private_signal",
         )
         return self.from_bytes(raw, spec=spec, previous_signal=previous_signal)
 
@@ -190,6 +219,9 @@ class AnalysisCapsuleEngine:
             source_type="runtime_signal",
             source_label=str(source_label),
             domain_hint="live",
+            source_scope="runtime_opt_in",
+            privacy_class="runtime_opt_in_signal",
+            artifact_class="private_signal",
         )
         return self.from_bytes(raw, spec=spec, previous_signal=previous_signal)
 
@@ -200,12 +232,25 @@ class AnalysisCapsuleEngine:
         previous_signal: Optional[bytes] = None,
     ) -> AnalysisCapsuleResult:
         signal = bytes(raw or b"")
+        source_hash = hashlib.sha256(signal).hexdigest()
+        segment_summary = self._segment_summary(
+            size_bytes=len(signal),
+            source_hash=source_hash,
+            segment_size_bytes=int(spec.segment_size_bytes or DEFAULT_SEGMENT_SIZE_BYTES),
+        )
         envelope = SignalEnvelope(
-            source_hash=hashlib.sha256(signal).hexdigest(),
+            source_hash=source_hash,
             size_bytes=len(signal),
             source_type=str(spec.source_type),
             source_label=str(spec.source_label),
             domain_hint=str(spec.domain_hint),
+            source_scope=str(spec.source_scope),
+            privacy_class=str(spec.privacy_class),
+            artifact_class=str(spec.artifact_class),
+            segment_scheduler=str(segment_summary["segment_scheduler"]),
+            segment_count=int(segment_summary["segment_count"]),
+            segment_size_bytes=int(segment_summary["segment_size_bytes"]),
+            segment_manifest_hash=str(segment_summary["segment_manifest_hash"]),
         )
         entropy = self._entropy(signal)
         boltzmann_entropy = self._boltzmann_entropy(signal)
@@ -286,6 +331,27 @@ class AnalysisCapsuleEngine:
             godel_loop=godel_loop,
             anomaly_flags=anomaly_flags,
         )
+
+    @staticmethod
+    def _segment_summary(size_bytes: int, source_hash: str, segment_size_bytes: int) -> Dict[str, Any]:
+        normalized_segment_size = max(64 * 1024, int(segment_size_bytes or DEFAULT_SEGMENT_SIZE_BYTES))
+        segment_count = max(1, math.ceil(max(0, int(size_bytes)) / float(normalized_segment_size))) if size_bytes else 1
+        manifest = {
+            "scheduler": "deterministic_segment_v1",
+            "size_bytes": int(size_bytes),
+            "segment_size_bytes": normalized_segment_size,
+            "segment_count": int(segment_count),
+            "source_hash": str(source_hash),
+        }
+        manifest_hash = hashlib.sha256(
+            json.dumps(manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return {
+            "segment_scheduler": str(manifest["scheduler"]),
+            "segment_count": int(segment_count),
+            "segment_size_bytes": int(normalized_segment_size),
+            "segment_manifest_hash": str(manifest_hash),
+        }
 
     @staticmethod
     def _entropy(data: bytes) -> float:

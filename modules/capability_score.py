@@ -32,11 +32,13 @@ import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional, Tuple
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
 SCORE_PATH = Path("data") / "interbus" / "capability_score.json"
+STARTUP_ROUTE_PATH = Path("data") / "interbus" / "startup_route.json"
+HW_CAPABILITY_PATH = Path("data") / "interbus" / "hw_capability.json"
 
 STAGES = [
     (0,   "Basis-Daemon"),
@@ -44,6 +46,16 @@ STAGES = [
     (50,  "Standard"),
     (75,  "Aether OS"),
     (100, "Aether OS [Aktiv]"),
+]
+
+# Contribution-Stufen — wachsen unbegrenzt über 100% hinaus.
+# contribution_index = (abgeschlossene Tasks) + (geteilte AlgoTokens × 2) + (Vorhersage-Obs. / 100)
+CONTRIBUTION_STAGES = [
+    (0,    "Aether OS [Aktiv]"),
+    (10,   "Netz-Beitragender"),
+    (50,   "Symbiont [Aktiv]"),
+    (200,  "Katalysator [Aktiv]"),
+    (1000, "Netz-Architekt [Aktiv]"),
 ]
 
 
@@ -58,13 +70,106 @@ class Probe:
     ok: bool = False
     note: str = ""
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "ok": self.ok,
             "weight": self.weight,
             "earned": self.earned,
             "note": self.note,
         }
+
+
+def _load_startup_route() -> Dict[str, Any]:
+    try:
+        if not STARTUP_ROUTE_PATH.exists():
+            return {}
+        payload = json.loads(STARTUP_ROUTE_PATH.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_hw_capability() -> Dict[str, Any]:
+    try:
+        if not HW_CAPABILITY_PATH.exists():
+            return {}
+        payload = json.loads(HW_CAPABILITY_PATH.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _network_emergence_metadata(
+    startup_route: Dict[str, Any],
+    hw_capability: Dict[str, Any],
+    base_mode: str,
+    shell_ready: bool,
+    overlay_ready: bool,
+    full_member_ready: bool,
+) -> Dict[str, Any]:
+    startup_mode = str(startup_route.get("mode", "full") or "full")
+    native_rank = max(0, min(4, int(hw_capability.get("native_tier_rank", hw_capability.get("tier_rank", 0)) or 0)))
+    native_label = str(hw_capability.get("native_network_tier", hw_capability.get("network_tier", "LocalOnly")) or "LocalOnly")
+
+    if native_rank >= 4:
+        network_end_goal = "FullDht"
+        overlay_path = "native-yggdrasil-dht"
+        relay_bridge_required = False
+        symbiont_role = "dht-seed"
+    elif native_rank >= 3:
+        network_end_goal = "YggdrasilP2P"
+        overlay_path = "native-yggdrasil"
+        relay_bridge_required = False
+        symbiont_role = "overlay-peer"
+    elif startup_mode == "ultra_legacy":
+        network_end_goal = "RelayBridgeToAethernet"
+        overlay_path = "ultra-legacy-bootstrap"
+        relay_bridge_required = True
+        symbiont_role = "local-symbiont"
+    elif native_rank >= 1:
+        network_end_goal = "RelayBridgeToAethernet"
+        overlay_path = "relay-bridge"
+        relay_bridge_required = True
+        symbiont_role = "relay-compatible-symbiont"
+    else:
+        network_end_goal = "AethernetCompatibility"
+        overlay_path = "local-bootstrap"
+        relay_bridge_required = True
+        symbiont_role = "local-symbiont"
+
+    emergent_network_role = "local-bootstrap"
+    if full_member_ready:
+        if network_end_goal == "FullDht":
+            emergent_network_role = "full-dht-candidate"
+        elif overlay_path.startswith("native-yggdrasil"):
+            emergent_network_role = "overlay-full-member"
+        else:
+            emergent_network_role = "relay-full-member"
+    elif overlay_ready or overlay_path.startswith("native-yggdrasil"):
+        emergent_network_role = "overlay-candidate"
+    elif base_mode in {"lan-p2p-ready", "shell-ready"}:
+        emergent_network_role = "relay-bridge-candidate" if relay_bridge_required else "lan-to-overlay-candidate"
+    elif base_mode == "lan-beacon-ready":
+        emergent_network_role = "visibility-staging"
+
+    aethernet_goal_message = "LAN ist nur Zwischenstufe; Ziel ist echte Aufnahme ins P2P-Aethernet."
+    if network_end_goal == "FullDht":
+        aethernet_goal_message = "Ziel ist FullDht: Yggdrasil-Overlay plus emergente DHT-Rolle, sobald genug Mitglieder und Reichweite vorhanden sind."
+    elif network_end_goal == "YggdrasilP2P":
+        aethernet_goal_message = "Ziel ist YggdrasilP2P: LAN dient nur als Vorstufe, danach traegt der Knoten nativ im Overlay-Aethernet."
+    elif relay_bridge_required:
+        aethernet_goal_message = "LAN ist nicht das Endziel; der Knoten bleibt symbiotisch Aethernet-kompatibel und wird ueber Relay-/Overlay-Bruecken ins groessere Netz eingebunden."
+
+    return {
+        "native_network_tier": native_label,
+        "native_tier_rank": native_rank,
+        "network_end_goal": network_end_goal,
+        "overlay_path": overlay_path,
+        "relay_bridge_required": relay_bridge_required,
+        "symbiont_role": symbiont_role,
+        "emergent_network_role": emergent_network_role,
+        "aethernet_goal_message": aethernet_goal_message,
+    }
 
 
 # ── Individual probe functions ───────────────────────────────────────────────
@@ -276,14 +381,15 @@ def _probe_vault() -> Probe:
 def _probe_peers() -> Probe:
     p = Probe("peers", "Swarm Peers bekannt", weight=5)
     try:
-        nodes_path = Path("data") / "nodes"
-        swarm_path = Path("data") / "swarm"
-        paths = list((nodes_path.glob("*.json") if nodes_path.is_dir() else [])) + \
-                list((swarm_path.glob("*.json") if swarm_path.is_dir() else []))
+        nodes_path = Path("data") / "swarm" / "nodes"
+        local_node_path = Path("data") / "swarm" / "node.json"
+        paths = list(nodes_path.glob("*.json")) if nodes_path.is_dir() else []
+        if local_node_path.is_file():
+            paths.append(local_node_path)
         if paths:
             p.ok = True
             p.earned = 5
-            p.note = f"{len(paths)} Peer-Dateien"
+            p.note = f"{len(paths)} Peer-Dateien im Swarm-Verzeichnis"
         else:
             p.note = "Noch keine Peers bekannt"
     except Exception as exc:
@@ -475,7 +581,7 @@ def _probe_swarm_reachable_peers() -> Probe:
 
 # ── Score computation ────────────────────────────────────────────────────────
 
-def _stage(percent: int) -> tuple[str, int]:
+def _stage(percent: int) -> Tuple[str, int]:
     """Return (stage_label, stage_index) for a given integer percent 0–100."""
     idx = 0
     label = STAGES[0][1]
@@ -486,7 +592,192 @@ def _stage(percent: int) -> tuple[str, int]:
     return label, idx
 
 
-def run_probes() -> dict[str, Any]:
+def _progression_metadata(probes: Dict[str, Probe], stage_index: int, startup_route: Dict[str, Any]) -> Dict[str, Any]:
+    """Leitet die praktische Aethernet-Aufstiegslogik aus den Probe-Ergebnissen ab.
+
+    Trennt klar zwischen:
+      - lokaler Shell-Reife,
+      - Overlay-/Yggdrasil-Reife,
+      - vollwertiger Mitgliedschaft im verteilten Netz.
+
+    WICHTIG: Diese Marker beschreiben nur die erreichte Reife. Die native
+    Hardware-/OS-Grenze bleibt separat im hw_capability-Tier verankert.
+    """
+    python_probe = probes.get("python_runtime")
+    rust_probe = probes.get("rust_binary")
+    gpu_probe = probes.get("gpu_display")
+    ygg_probe = probes.get("yggdrasil")
+    network_probe = probes.get("network")
+    invariants_probe = probes.get("swarm_invariants")
+    peers_probe = probes.get("swarm_reachable_peers")
+    startup_mode = str(startup_route.get("mode", "full") or "full")
+    startup_reason = str(startup_route.get("reason", "default_full_runtime") or "default_full_runtime")
+    requirements_profile = str(startup_route.get("requirements_profile", startup_mode) or startup_mode)
+    recommended_entrypoint = str(startup_route.get("recommended_entrypoint", "start.py") or "start.py")
+    hw_capability = _load_hw_capability()
+
+    shell_ready = bool(
+        python_probe and python_probe.earned >= 3
+        and rust_probe and rust_probe.earned >= 10
+        and gpu_probe and gpu_probe.earned >= 8
+    )
+    overlay_ready = bool(
+        ygg_probe and ygg_probe.earned >= 10
+        and network_probe and network_probe.earned >= 3
+    )
+    swarm_learning_active = bool(
+        invariants_probe and invariants_probe.earned > 0
+        or peers_probe and peers_probe.earned > 0
+    )
+    full_member_ready = bool(
+        overlay_ready
+        and stage_index >= 3
+        and invariants_probe and invariants_probe.earned >= 6
+        and peers_probe and peers_probe.earned >= 6
+    )
+
+    if full_member_ready:
+        base_mode = "full-member"
+        next_goal = "Volles Aethernet aktiv; Fokus auf Quorum, Relay und DHT-Stabilitaet."
+    elif overlay_ready:
+        base_mode = "overlay-ready"
+        next_goal = "Shell und Yggdrasil sind bereit; mit mehr geteilten Invarianten folgt Vollmitgliedschaft."
+    elif shell_ready:
+        base_mode = "shell-ready"
+        next_goal = "Rust-Shell ist lokal nutzbar; als Naechstes Yggdrasil/Overlay bereitstellen."
+    elif stage_index >= 2:
+        base_mode = "lan-p2p-ready"
+        next_goal = "Lokaler und LAN-basierter Austausch ist tragfaehig; Shell oder Overlay koennen spaeter dazukommen."
+    elif stage_index >= 1:
+        base_mode = "lan-beacon-ready"
+        next_goal = "Knoten ist sichtbar und lernt weiter; naechster Schritt ist leichter P2P-/Gossip-Betrieb."
+    else:
+        base_mode = "vault-first"
+        next_goal = "Lokal lernen, Invarianten sammeln und schrittweise sichtbarer im Netz werden."
+
+    progression_track = "full-runtime"
+    progression_mode = base_mode
+    fair_inclusion_path = False
+
+    if startup_mode == "ultra_legacy":
+        progression_track = "ultra-legacy"
+        progression_mode = "ultra-legacy-local"
+        fair_inclusion_path = True
+        next_goal = "Ultra-Legacy-Pfad aktiv; lokal lernen, Vault pflegen und mit neuerer Laufzeit spaeter Headless oder LAN freischalten."
+    elif startup_mode == "headless":
+        progression_track = "legacy-headless"
+        progression_mode = "legacy-headless-" + base_mode
+        fair_inclusion_path = True
+        if full_member_ready:
+            next_goal = "Headless-Fairnesspfad aktiv; der Knoten traegt bereits voll zum Netz bei, auch ohne schweren UI-Stack."
+        elif overlay_ready:
+            next_goal = "Headless-Fairnesspfad aktiv; Overlay steht, mit mehr geteilten Invarianten folgt Vollmitgliedschaft."
+        elif stage_index >= 2:
+            next_goal = "Headless-Fairnesspfad aktiv; LAN/P2P steht, jetzt ueber AE/Vault weiter Invarianten und Peer-Reichweite aufbauen."
+        else:
+            next_goal = "Headless-Fairnesspfad aktiv; lokal lernen, Vault staerken und Schritt fuer Schritt sichtbarer im Netz werden."
+    elif startup_mode == "android":
+        progression_track = "android"
+        progression_mode = "android-" + base_mode
+
+    emergence = _network_emergence_metadata(
+        startup_route,
+        hw_capability,
+        base_mode,
+        shell_ready,
+        overlay_ready,
+        full_member_ready,
+    )
+
+    return {
+        "shell_ready": shell_ready,
+        "overlay_ready": overlay_ready,
+        "full_member_ready": full_member_ready,
+        "swarm_learning_active": swarm_learning_active,
+        "startup_mode": startup_mode,
+        "startup_reason": startup_reason,
+        "requirements_profile": requirements_profile,
+        "recommended_entrypoint": recommended_entrypoint,
+        "progression_track": progression_track,
+        "base_progression_mode": base_mode,
+        "progression_mode": progression_mode,
+        "next_goal": next_goal,
+        "fair_inclusion_path": fair_inclusion_path,
+        "native_network_tier": emergence["native_network_tier"],
+        "native_tier_rank": emergence["native_tier_rank"],
+        "network_end_goal": emergence["network_end_goal"],
+        "overlay_path": emergence["overlay_path"],
+        "relay_bridge_required": emergence["relay_bridge_required"],
+        "symbiont_role": emergence["symbiont_role"],
+        "emergent_network_role": emergence["emergent_network_role"],
+        "aethernet_goal_message": emergence["aethernet_goal_message"],
+    }
+
+
+def _compute_contribution_index() -> Dict[str, Any]:
+    """Berechnet den Contribution-Index — wächst unbegrenzt über 100% hinaus.
+
+    Quellen:
+      - Abgeschlossene Swarm-Tasks (task_broker.py / task_results.json)
+      - Geteilte AlgoTokens (algo_share.py / algo_tokens.json)
+      - Vorhersage-Beobachtungen (prediction_engine.py / chunk_transitions.json)
+
+    Skala: keine Obergrenze. Wächst kontinuierlich mit jedem Beitrag.
+    """
+    tasks_completed = 0
+    algo_shares = 0
+    prediction_obs = 0
+    prefetch_accuracy = 0.0
+
+    try:
+        p = Path("data") / "interbus" / "task_results.json"
+        if p.is_file():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            tasks_completed = int(data.get("completed_count", 0))
+    except Exception:
+        pass
+
+    try:
+        p = Path("data") / "swarm" / "algo_tokens.json"
+        if p.is_file():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            algo_shares = int(data.get("share_count", 0))
+    except Exception:
+        pass
+
+    try:
+        p = Path("data") / "interbus" / "chunk_transitions.json"
+        if p.is_file():
+            data = json.loads(p.read_text(encoding="utf-8"))
+            prediction_obs = int(data.get("total_observations", 0))
+            hits   = int(data.get("prefetch_hits",   0))
+            misses = int(data.get("prefetch_misses", 0))
+            total  = hits + misses
+            if total > 0:
+                prefetch_accuracy = hits / total
+    except Exception:
+        pass
+
+    # Gewichtete Summe: Tasks sind am wertvollsten (schwer), Observations leicht
+    index = tasks_completed + (algo_shares * 2) + (prediction_obs // 100)
+
+    # Contribution-Stufe bestimmen
+    contribution_stage = CONTRIBUTION_STAGES[0][1]
+    for threshold, label in CONTRIBUTION_STAGES:
+        if index >= threshold:
+            contribution_stage = label
+
+    return {
+        "contribution_index":   index,
+        "contribution_stage":   contribution_stage,
+        "tasks_completed":      tasks_completed,
+        "algo_shares":          algo_shares,
+        "prediction_obs":       prediction_obs,
+        "prefetch_accuracy":    round(prefetch_accuracy, 3),
+    }
+
+
+def run_probes() -> Dict[str, Any]:
     """Execute all probes and return the consolidated capability report.
 
     Gewichtungsphilosophie
@@ -498,7 +789,7 @@ def run_probes() -> dict[str, Any]:
     sie steigen mit jedem Knoten der Invarianten teilt.  Dadurch kann
     ein Raspberry Pi Zero mit 15 echten Peers trotzdem 90 %+ erreichen.
     """
-    probes: list[Probe] = [
+    probes: List[Probe] = [
         _probe_python_runtime(),          # 5  — fest
         _probe_rust_binary(),             # 10 — fest (5 Pkt. mit Headless-Daemon)
         _probe_gpu_display(),             # 10 — fest
@@ -530,6 +821,9 @@ def run_probes() -> dict[str, Any]:
     percent = max(0, min(100, percent))
 
     stage_label, stage_index = _stage(percent)
+    startup_route = _load_startup_route()
+    progression = _progression_metadata({pr.key: pr for pr in probes}, stage_index, startup_route)
+    contribution = _compute_contribution_index()
 
     return {
         "score":       total_earned,
@@ -538,6 +832,34 @@ def run_probes() -> dict[str, Any]:
         "percent_int": percent,
         "stage":       stage_label,
         "stage_index": stage_index,
+        "shell_ready": progression["shell_ready"],
+        "overlay_ready": progression["overlay_ready"],
+        "full_member_ready": progression["full_member_ready"],
+        "swarm_learning_active": progression["swarm_learning_active"],
+        "startup_mode": progression["startup_mode"],
+        "startup_reason": progression["startup_reason"],
+        "requirements_profile": progression["requirements_profile"],
+        "recommended_entrypoint": progression["recommended_entrypoint"],
+        "progression_track": progression["progression_track"],
+        "base_progression_mode": progression["base_progression_mode"],
+        "progression_mode": progression["progression_mode"],
+        "next_goal": progression["next_goal"],
+        "fair_inclusion_path": progression["fair_inclusion_path"],
+        "native_network_tier": progression["native_network_tier"],
+        "native_tier_rank": progression["native_tier_rank"],
+        "network_end_goal": progression["network_end_goal"],
+        "overlay_path": progression["overlay_path"],
+        "relay_bridge_required": progression["relay_bridge_required"],
+        "symbiont_role": progression["symbiont_role"],
+        "emergent_network_role": progression["emergent_network_role"],
+        "aethernet_goal_message": progression["aethernet_goal_message"],
+        # Contribution-Index: wächst unbegrenzt über 100% hinaus
+        "contribution_index":  contribution["contribution_index"],
+        "contribution_stage":  contribution["contribution_stage"],
+        "tasks_completed":     contribution["tasks_completed"],
+        "algo_shares":         contribution["algo_shares"],
+        "prediction_obs":      contribution["prediction_obs"],
+        "prefetch_accuracy":   contribution["prefetch_accuracy"],
         "probes":      {pr.key: pr.to_dict() for pr in probes},
         "platform":    platform.system(),
         "python":      f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
@@ -545,7 +867,7 @@ def run_probes() -> dict[str, Any]:
     }
 
 
-def write_score(result: dict[str, Any] | None = None) -> dict[str, Any]:
+def write_score(result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run probes (or use supplied result) and write to SCORE_PATH. Returns result."""
     if result is None:
         result = run_probes()
@@ -559,7 +881,7 @@ def write_score(result: dict[str, Any] | None = None) -> dict[str, Any]:
     return result
 
 
-def probe_and_write() -> dict[str, Any]:
+def probe_and_write() -> Dict[str, Any]:
     """Convenience entry point: run all probes and persist the result."""
     return write_score()
 

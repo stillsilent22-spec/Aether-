@@ -64,14 +64,14 @@ HIDDEN_CHAT_TEXT = "[verschluesselt]"
 RAW_STORAGE_CIPHER = "AES-256-GCM"
 TRUSTED_PUBLISHERS_PATH = Path("data") / "trusted_publishers.json"
 TRUSTED_PUBLISHER_KEY_DIR = Path("data") / "publisher_keys"
-TRUSTED_ANCHOR_UPLOAD_MIN_SCORE = 0.72
+TRUSTED_ANCHOR_UPLOAD_MIN_SCORE = 0.65
 
 # Genesis identity — admin/genesis role is ONLY valid for this node.
 # Bound to the Ed25519 public key in trusted_publishers.json (entry "tryharder997").
 # node_id = short fingerprint of the genesis public key.
 # Changing this constant voids genesis authority.
 GENESIS_PUBLISHER_ID: str = "tryharder997"
-GENESIS_NODE_ID: str = "b94981667890ea26"
+GENESIS_NODE_ID: str = "7a280b7e3ab3e042"
 
 
 def is_genesis_node(node_id: str) -> bool:

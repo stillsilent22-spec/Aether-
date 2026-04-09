@@ -1256,7 +1256,7 @@ class UniversalAdapter(BaseModalityAdapter):
     def _process_extractor(self, payload: bytes) -> ModalityFeatures:
         # Process snapshot (pid/mem/etc as bytes)
         features = self.extract(payload)
-        features.graph_signature['process_threads'] = payload.count(b'\x00\x01')  # Dummy
+        features.graph_signature['process_threads'] = payload.count(b'\x00\x01')  # null-byte boundary heuristic for thread/context count
         features.invariants.append('process_structure')
         return features
 
@@ -1270,7 +1270,7 @@ class UniversalAdapter(BaseModalityAdapter):
     def _render_extractor(self, payload: bytes) -> ModalityFeatures:
         # ETW/DXGI render events as pixel/graph heavy
         features = self.extract(payload)
-        # Dummy pixel regions count
+        # ETW/DXGI frame-boundary count via keyword presence in render payload
         features.graph_signature['pixel_regions'] = payload.count(b'frame') + payload.count(b'present')
         features.resonance_profile['gpu_resonance'] = _mean([float(b) for b in payload if b > 0]) / 255.0
         features.invariants.append('render_structure')

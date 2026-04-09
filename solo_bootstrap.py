@@ -3,7 +3,7 @@ Einmaliger Bootstrap für jeden neuen Node.
 Läuft VOR dem Module-Load — importiert nichts aus modules/.
 
 GENESIS-INVARIANTE (NIE BRECHEN):
-  GENESIS_NODE_ID = "b94981667890ea26"
+    GENESIS_NODE_ID = "7a280b7e3ab3e042"
   solo_genesis_mode wird hier NIEMALS auf True gesetzt.
   Die genesis-Rolle wird hier NIEMALS vergeben.
 
@@ -25,7 +25,7 @@ from cryptography.hazmat.primitives.serialization import (
     load_pem_private_key,
 )
 
-GENESIS_NODE_ID = "b94981667890ea26"
+GENESIS_NODE_ID = "7a280b7e3ab3e042"
 
 
 def is_yggdrasil_available() -> bool:
@@ -44,6 +44,18 @@ def _base() -> Path:
     return Path(__file__).parent
 
 
+def _local_genesis_binding_present(base: Path) -> bool:
+    """Erlaubt das reservierte Genesis-Keypair nur auf einer autorisierten Genesis-Installation."""
+    if (base / "data" / "keys" / "genesis_node.key").exists():
+        return True
+    node_json_path = base / "data" / "swarm" / "node.json"
+    try:
+        payload = json.loads(node_json_path.read_text(encoding="utf-8"))
+        return str(payload.get("role", "") or "").strip().lower() == "genesis"
+    except Exception:
+        return False
+
+
 def run_bootstrap(dry_run: bool = False) -> dict:
     """
     Idempotent: zweimaliger Aufruf ändert nichts wenn Node-Daten schon existieren.
@@ -53,8 +65,8 @@ def run_bootstrap(dry_run: bool = False) -> dict:
     """
     base = _base()
     node_json_path = base / "data" / "swarm" / "node.json"
-    private_key_path = base / "keys" / "node_private.key"
-    public_key_path = base / "keys" / "node_public.key"
+    private_key_path = base / "data" / "keys" / "node_private.key"
+    public_key_path = base / "data" / "keys" / "node_public.key"
 
     # SCHRITT 2 — Idempotenz-Check: bereits bootstrapped?
     if node_json_path.exists() and private_key_path.exists():
@@ -82,14 +94,16 @@ def run_bootstrap(dry_run: bool = False) -> dict:
     node_id = hashlib.sha256(pub_bytes).hexdigest()[:16]
 
     # SCHRITT 5 — Genesis-Kollisions-Check
-    if node_id == GENESIS_NODE_ID:
-        raise RuntimeError("Keypair-Kollision mit Genesis-Node. Starte neu.")
+    if node_id == GENESIS_NODE_ID and not _local_genesis_binding_present(base):
+        raise RuntimeError(
+            "Keypair kollidiert mit der reservierten Genesis-Identitaet. Dieses Geraet ist nicht als Genesis autorisiert."
+        )
 
     if dry_run:
         return {"node_id": node_id, "role": "peer", "created_at": ""}
 
     # SCHRITT 6 — Keys speichern (nur wenn noch nicht vorhanden)
-    (base / "keys").mkdir(parents=True, exist_ok=True)
+    (base / "data" / "keys").mkdir(parents=True, exist_ok=True)
     if not private_key_path.exists():
         private_pem = private_key.private_bytes(
             Encoding.PEM, PrivateFormat.PKCS8, NoEncryption()
@@ -104,12 +118,28 @@ def run_bootstrap(dry_run: bool = False) -> dict:
         )
         public_key_path.write_bytes(public_pem)
 
+    # SCHRITT 6b — Hardware-Bindung (device_fingerprint, privacy-preserving SHA-256)
+    device_fingerprint = ""
+    try:
+        from modules.device_lock import initialize_binding
+        device_fingerprint = initialize_binding(node_id)
+    except Exception:
+        # Fallback wenn modules/ noch nicht verfügbar (z.B. erster Bootstrap vor pip install)
+        import socket as _sock
+        _seed = f"{_sock.gethostname()}|{node_id}".encode("utf-8")
+        device_fingerprint = hashlib.sha256(_seed).hexdigest()
+
     # SCHRITT 7 — node.json schreiben (aether.swarm.node.v2)
     (base / "data" / "swarm").mkdir(parents=True, exist_ok=True)
     registered_at = datetime.now(timezone.utc).isoformat()
     pub_pem_str = private_key.public_key().public_bytes(
         Encoding.PEM, PublicFormat.SubjectPublicKeyInfo
     ).decode("utf-8")
+
+    # Alias-Username: deterministisch aus node_id, änderbar später via GUI/Registrierung.
+    # Gilt als "alias" (claim_mode=alias) bis der Nutzer sich im Netz registriert.
+    alias_username = f"aether_{node_id[:8]}"
+
     node_payload = {
         "schema": "aether.swarm.node.v2",
         "node_id": node_id,
@@ -118,6 +148,8 @@ def run_bootstrap(dry_run: bool = False) -> dict:
         "role": "peer",
         "relay": False,
         "yggdrasil_addr": None,
+        "device_fingerprint": device_fingerprint,
+        "alias_username": alias_username,
     }
     node_json_path.write_text(
         json.dumps(node_payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -130,14 +162,40 @@ def run_bootstrap(dry_run: bool = False) -> dict:
         json.dumps(node_payload, indent=2, ensure_ascii=False), encoding="utf-8"
     )
 
+    # SCHRITT 7b — Account-Claim schreiben (alias-Modus bis zur Netz-Registrierung)
+    # Wird von swarm_p2p._refresh_local_account_claim() gelesen.
+    # claim_mode=alias: Netz kennt diesen Username noch nicht → nur lokale Bindung.
+    # claim_mode=registered: nach erfolgreicher Netz-Registrierung (Rust-Shell oder Relay).
+    claim_path = base / "data" / "swarm" / "account_claim.json"
+    if not claim_path.exists():
+        claim_path.write_text(
+            json.dumps({
+                "schema": "aether.account_claim.v1",
+                "node_id": node_id,
+                "alias_username": alias_username,
+                "account_username": alias_username,
+                "device_fingerprint": device_fingerprint,
+                "claim_mode": "alias",
+                "relay_bridge_mode": True,
+                "ygg_addr": "",
+                "identity_lock": "",
+                "network_entry_id": "",
+                "native_ygg_bound": False,
+                "created_at": registered_at,
+            }, indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
     # SCHRITT 8 — trusted_publishers.json aktualisieren
     _update_trusted_publishers(base, node_id, registered_at)
 
     # SCHRITT 9 — Ausgabe
     print("[BOOTSTRAP] Neuer Node registriert.")
-    print(f"[BOOTSTRAP] node_id  : {node_id}")
-    print(f"[BOOTSTRAP] Rolle    : peer")
-    print(f"[BOOTSTRAP] Genesis  : {GENESIS_NODE_ID} (unveraendert, exklusiv)")
+    print(f"[BOOTSTRAP] node_id       : {node_id}")
+    print(f"[BOOTSTRAP] Alias         : {alias_username}")
+    print(f"[BOOTSTRAP] HW-Fingerprint: {device_fingerprint[:16]}…")
+    print(f"[BOOTSTRAP] Rolle         : peer")
+    print(f"[BOOTSTRAP] Genesis       : {GENESIS_NODE_ID} (unveraendert, exklusiv)")
 
     return {"node_id": node_id, "role": "peer", "created_at": registered_at}
 

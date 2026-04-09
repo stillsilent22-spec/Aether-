@@ -314,6 +314,94 @@ def _form_recommendation(invariants: Dict[str, Any]) -> str:
     return " | ".join(lines)
 
 
+# =========================================================================== #
+#  Genesis Prior: Fallback für neue / datenschwache Knoten                   #
+# =========================================================================== #
+
+def load_genesis_prior() -> Optional[Dict[str, Any]]:
+    """Lädt genesis_invariants.json (eingeimpft von swarm_p2p._seed_genesis_invariants).
+
+    Gibt None zurück wenn die Datei nicht existiert (Knoten noch nicht initialisiert)
+    oder wenn sie bereits eigene Messungen enthält (source='measured').
+
+    Verwendung: Als Prior-Kontext übergeben wenn compute_invariant_score()
+    zu wenig eigene Daten hat (z.B. change_sequence < 32 Einträge).
+    """
+    try:
+        genesis_path = Path(__file__).resolve().parent.parent / "data" / "interbus" / "genesis_invariants.json"
+        if not genesis_path.is_file():
+            return None
+        data = json.loads(genesis_path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            return None
+        # Nur zurückgeben wenn noch kein eigenes Messergebnis vorhanden
+        if data.get("source") == "measured":
+            return None
+        return data
+    except Exception:
+        return None
+
+
+def compute_invariant_score_with_prior(
+    change_sequence: List[int],
+    anchor_frequencies: Dict[str, int],
+    file_sizes: List[int],
+    tree_depths: Optional[List[int]] = None,
+    min_samples_for_own_measurement: int = 32,
+) -> Dict[str, Any]:
+    """Wie compute_invariant_score, aber mit automatischem Genesis-Prior als Fallback.
+
+    Wenn zu wenig eigene Daten vorhanden sind (change_sequence < min_samples),
+    wird der Genesis-Prior aus genesis_invariants.json als Ausgangswert genutzt
+    und die eigenen (spärlichen) Messungen werden darüber gemergt.
+
+    Schreibt das Ergebnis zurück in genesis_invariants.json mit source='measured'
+    sobald ausreichend eigene Daten vorliegen — damit der Prior-Fallback deaktiviert wird.
+    """
+    has_enough_data = len(change_sequence) >= min_samples_for_own_measurement
+
+    if has_enough_data:
+        result = compute_invariant_score(change_sequence, anchor_frequencies, file_sizes, tree_depths)
+        result["source"] = "measured"
+        # Eigene Messung zurückschreiben → Prior wird ab jetzt nicht mehr genutzt
+        try:
+            genesis_path = Path(__file__).resolve().parent.parent / "data" / "interbus" / "genesis_invariants.json"
+            genesis_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+        return result
+
+    # Zu wenig Daten: Genesis-Prior laden und mit eigenen Teilergebnissen mergen
+    prior = load_genesis_prior()
+    own = compute_invariant_score(change_sequence, anchor_frequencies, file_sizes, tree_depths)
+
+    if prior is None:
+        return own  # Kein Prior verfügbar — eigene (spärliche) Daten direkt zurückgeben
+
+    # Selektiv mergen: eigene Ergebnisse überschreiben den Prior nur wenn R² oder
+    # Conformance ausreichend hoch (> 0.5), sonst bleibt der Prior-Wert erhalten
+    merged = dict(prior)
+    merged["source"] = "prior_merged"
+    merged["own_sample_count"] = len(change_sequence)
+
+    if own["benford"].get("benford_conformance", 0) > 0.5:
+        merged["benford"] = own["benford"]
+    if own["zipf"].get("r_squared", 0) > 0.5:
+        merged["zipf"] = own["zipf"]
+    if own["mandelbrot"].get("r_squared", 0) > 0.5:
+        merged["mandelbrot"] = own["mandelbrot"]
+    if own["fourier"].get("detected", False):
+        merged["fourier"] = own["fourier"]
+
+    # Strength als gewichtetes Mittel: eigene Daten gehen mit 30% ein solange <32 Samples
+    own_weight = len(change_sequence) / min_samples_for_own_measurement  # 0.0 .. 1.0
+    merged["invariant_strength"] = round(
+        prior["invariant_strength"] * (1 - own_weight) + own["invariant_strength"] * own_weight, 4
+    )
+    merged["recommendation"] = own.get("recommendation") or prior.get("recommendation", "")
+    return merged
+
+
 if __name__ == "__main__":
     from modules.session_guard import require_session
     require_session()

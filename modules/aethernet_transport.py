@@ -17,9 +17,51 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 import hashlib as _hashlib
 
-from modules import swarm_sync
-from modules.frame_delta_engine import FrameDeltaCodec as _FrameDeltaCodec
-from modules.p2p_anchor_pool import P2PAnchorPool as _P2PAnchorPool
+# swarm_sync, FrameDeltaCodec, P2PAnchorPool werden lazy geladen:
+# - swarm_sync bringt subprocess/git-Machinery mit (nicht nötig auf relay-only Nodes)
+# - FrameDeltaCodec braucht nur Nodes die aktiv Frames kodieren
+# - P2PAnchorPool braucht nur Nodes die Quorum-TTD verwalten
+_swarm_sync = None  # lazy, geladen bei erstem push_pack/pull_packs
+_FrameDeltaCodec = None  # lazy
+_P2PAnchorPool = None  # lazy
+
+
+def _get_swarm_sync():
+    global _swarm_sync
+    if _swarm_sync is None:
+        from modules import swarm_sync as _ss
+        _swarm_sync = _ss
+    return _swarm_sync
+
+
+def _get_frame_delta_codec_class():
+    global _FrameDeltaCodec
+    if _FrameDeltaCodec is None:
+        from modules.frame_delta_engine import FrameDeltaCodec as _fdc
+        _FrameDeltaCodec = _fdc
+    return _FrameDeltaCodec
+
+
+def _get_p2p_anchor_pool_class():
+    global _P2PAnchorPool
+    if _P2PAnchorPool is None:
+        from modules.p2p_anchor_pool import P2PAnchorPool as _pap
+        _P2PAnchorPool = _pap
+    return _P2PAnchorPool
+
+_ROOT = Path(__file__).resolve().parents[1]
+_LOCAL_NODE_JSON = _ROOT / "data" / "swarm" / "node.json"
+
+
+def _read_local_node_role() -> str:
+    """Liest die Rolle des lokalen Knotens aus node.json (genesis/peer/operator)."""
+    try:
+        if _LOCAL_NODE_JSON.is_file():
+            payload = json.loads(_LOCAL_NODE_JSON.read_text(encoding="utf-8"))
+            return str(payload.get("role", "operator") or "operator").strip().lower()
+    except Exception:
+        pass
+    return "operator"
 
 
 class AethernetTransport:
@@ -66,10 +108,75 @@ class AethernetTransport:
         self.anchor_dir.mkdir(parents=True, exist_ok=True)
         self.nodes_dir.mkdir(parents=True, exist_ok=True)
         self._local_ip: str = self._detect_local_ip()
-        self._frame_codec = _FrameDeltaCodec()
-        self._anchor_pool = _P2PAnchorPool()
+        self._frame_codec = None   # lazy: geladen bei erstem encode_frame-Aufruf
+        self._anchor_pool = None   # lazy: geladen bei erstem TTD-Quorum-Aufruf
         self._ttd_records: dict = {}       # Quorum-Stand: pack_id → TTD-Record
         self._pending_anchors: dict = {}   # Warten auf Quorum: pack_id → AnchorPack
+        # AELab-Invarianten-Bahn: kein Quorum, kein Genesis-Gate
+        self._algo_dir = self.anchor_dir.parent / "algo_tokens"
+        self._algo_dir.mkdir(parents=True, exist_ok=True)
+        # Relay-Bridge-Inbox: Gossip von Internet-Peers ohne Yggdrasil.
+        # POST /gossip → Inbox; GET /gossip/latest → zurückgeben.
+        self._relay_gossip_inbox: List[Dict[str, Any]] = []
+        self._relay_gossip_lock = threading.Lock()
+        # Persistierter Relay-Pool und Peer-Cache (survive restarts)
+        self._relay_pool_path = self.nodes_dir.parent / "relay_pool.json"
+        self._peer_cache_path = self.nodes_dir.parent / "peer_cache.json"
+        self._relay_pool_lock = threading.Lock()
+        # Beim Startup: Records die bereits auto_push_ready=True haben sofort flushen.
+        self._flush_pending_auto_push()
+
+    def _flush_pending_auto_push(self) -> None:
+        """Schiebt beim Transport-Start alle gespeicherten Packs durch die er bereits
+        auto_push_ready sind — damit ein Neustart keine push-bereiten Packs blockiert.
+
+        Liest lokale .pack-Dateien, prüft ob das zugehörige TTD-Record auto_push_ready
+        trägt (via Pool-Rekonstruktion), und tut push_pack() wenn ja.
+        Nur performance_route + (genesis_trust ODER peer_quorum) wird geflusht.
+        Kein neues Quorum wird erzwungen — reines Drain already-decided records.
+        """
+        try:
+            pack_ids = self._read_local_pack_ids()
+        except Exception:
+            return
+        for pack_id in pack_ids:
+            try:
+                pack_path = self._anchor_path(pack_id)
+                if not pack_path.is_file():
+                    continue
+                import json as _j
+                pack = _j.loads(pack_path.read_text(encoding="utf-8"))
+                if not isinstance(pack, dict):
+                    continue
+                # Nur performance_route artefakte fliessen automatisch
+                artifact_class = str(pack.get("artifact_class", "") or "").strip()
+                if artifact_class and artifact_class != "performance_route":
+                    continue
+                # TTD-Record wiederherstellen wenn vorhanden
+                if pack_id in self._ttd_records:
+                    record = self._ttd_records[pack_id]
+                else:
+                    # Aus public_metrics im Pack einen Minimal-Record rekonstruieren
+                    if self._anchor_pool is None:
+                        self._anchor_pool = _get_p2p_anchor_pool_class()()
+                    record = self._anchor_pool.build_record({
+                        "ttd_hash": pack_id,
+                        "uploader_node_id": str(pack.get("node_id", self.node_id) or self.node_id),
+                        "uploader_role": str(pack.get("uploader_role", "operator") or "operator"),
+                        "public_metrics": dict(pack.get("public_metrics", {}) or {}),
+                        "artifact_class": "performance_route",
+                    })
+                    self._ttd_records[pack_id] = record
+                if bool(record.get("auto_push_ready", False)):
+                    trust_reason = str(record.get("auto_push_reason", record.get("trust_reason", "")) or "")
+                    result = self.push_pack(pack)
+                    print(
+                        f"[AETHERNET] Startup-Flush ({pack_id[:16]}…) "
+                        f"reason={trust_reason} → {result}"
+                    )
+            except Exception as err:
+                print(f"[AETHERNET] flush_pending_auto_push: {err}")
+                continue
 
     @staticmethod
     def _utc_now_iso() -> str:
@@ -290,14 +397,23 @@ class AethernetTransport:
                         stack.append(value)
         return True
 
-    def register_local_anchor(self, frame: bytes) -> str:
+    def register_local_anchor(self, frame: bytes, public_metrics: Optional[Dict[str, Any]] = None) -> str:
         """
         Frame lokal durch FrameDeltaCodec analysieren.
         Vault-Hit-Signaturen (DNA) werden als Pending-Anker registriert.
-        Kein Push — Anker wartet auf 3 unabhaengige Bestaetigungen (Quorum).
-        Vault-Misses bleiben lokal bis GP-Evolution einen Baum findet.
+
+        public_metrics: optionale Analyse-Kennzahlen (symmetry, residual,
+            delta_stability …) aus dem unmittelbar vorgelagerten Pipeline-Schritt.
+            Werden im Pending-Pack gespeichert und beim Submit an den Pool
+            weitergegeben, damit _apply_trust_state den Trust-Score berechnen kann.
+            Genesis-Nodes benoetigen trust_score >= 0.65 — auch ohne Quorum.
+
+        Kein Push — Anker wartet auf Quorum (normale Nodes) oder besteht den
+        Trust-Score-Check (Genesis-Node).
         Rohdaten verlassen das Geraet nie (FORBIDDEN_PACK_KEYS greift).
         """
+        if self._frame_codec is None:
+            self._frame_codec = _get_frame_delta_codec_class()()
         packets = self._frame_codec.encode_frame(frame)
         dna_sigs = [pkt["sig"] for pkt in packets if pkt.get("type") == "dna"]
         if not dna_sigs:
@@ -312,6 +428,7 @@ class AethernetTransport:
                 "anchors": dna_sigs,
                 "source": "frame_delta",
                 "node_id": self.node_id,
+                "public_metrics": dict(public_metrics or {}),
             }
             self._submit_anchor_to_pool(self._pending_anchors[pack_id], self.node_id)
         return "pending_quorum"
@@ -319,85 +436,56 @@ class AethernetTransport:
     def _submit_anchor_to_pool(self, pack: dict, peer_node_id: str) -> bool:
         """
         Bestaetigung eines Nodes fuer einen Anker einreichen.
-        Gibt True zurueck wenn Quorum erreicht (>= 3 unabhaengige Nodes).
-        Bei Quorum: push_pack() wird aufgerufen.
+
+        Fuer normale Nodes: True wenn Quorum (>= 3 unabhaengige Nodes) erreicht.
+        Fuer Genesis-Node: True wenn trust_score >= 0.65 (Quorum wird uebersprungen).
+        Der Trust-Score ist in BEIDEN Faellen eine unumgehbare Schranke.
+        Genesis ist der einzige privilegierte Node — kein 'admin' existiert.
         """
+        from modules.registry import is_genesis_node as _is_genesis_node
         ttd_hash = str(pack.get("pack_id", "")).strip()
         if not ttd_hash:
             return False
+        # Rolle des einreichenden Nodes kryptografisch pruefen.
+        # Nur "genesis" wenn node_id == registrierter Genesis-Node — sonst "operator".
+        uploader_is_genesis = _is_genesis_node(str(peer_node_id or ""))
+        uploader_role = "genesis" if uploader_is_genesis else "operator"
         payload = {
             "pseudonym": peer_node_id,
             "ttd_hash": ttd_hash,
-            "public_metrics": {},
+            "uploader_node_id": str(peer_node_id or ""),
+            "uploader_role": uploader_role,
+            "public_metrics": dict(pack.get("public_metrics", {}) or {}),
         }
         if ttd_hash in self._ttd_records:
+            if self._anchor_pool is None:
+                self._anchor_pool = _get_p2p_anchor_pool_class()()
             if self._anchor_pool.validator_present(self._ttd_records[ttd_hash], peer_node_id):
                 return bool(self._ttd_records[ttd_hash].get("quorum_met", False))
             self._ttd_records[ttd_hash] = self._anchor_pool.merge_record(
                 self._ttd_records[ttd_hash], payload
             )
         else:
+            if self._anchor_pool is None:
+                self._anchor_pool = _get_p2p_anchor_pool_class()()
             self._ttd_records[ttd_hash] = self._anchor_pool.build_record(payload)
-        quorum_met = bool(self._ttd_records[ttd_hash].get("quorum_met", False))
+        record = self._ttd_records[ttd_hash]
+        quorum_met = bool(record.get("quorum_met", False))
+        trust_reason = str(record.get("trust_reason", "") or "")
         if quorum_met and ttd_hash in self._pending_anchors:
             anchor_pack = self._pending_anchors.pop(ttd_hash)
             result = self.push_pack(anchor_pack)
-            print(f"[AETHERNET] Quorum ({ttd_hash[:16]}\u2026) \u2192 Push: {result}")
-        return quorum_met
-
-    def register_local_anchor(self, frame: bytes) -> str:
-        """
-        Frame lokal durch FrameDeltaCodec analysieren.
-        Vault-Hit-Signaturen (DNA) werden als Pending-Anker registriert.
-        Kein Push — Anker wartet auf 3 unabhaengige Bestaetigungen (Quorum).
-        Vault-Misses bleiben lokal bis GP-Evolution einen Baum findet.
-        Rohdaten verlassen das Geraet nie (FORBIDDEN_PACK_KEYS greift).
-        """
-        packets = self._frame_codec.encode_frame(frame)
-        dna_sigs = [pkt["sig"] for pkt in packets if pkt.get("type") == "dna"]
-        if not dna_sigs:
-            return "no_vault_hits"
-        pack_id = _hashlib.sha256(
-            "".join(sorted(dna_sigs)).encode()
-        ).hexdigest()[:32]
-        if pack_id not in self._pending_anchors:
-            self._pending_anchors[pack_id] = {
-                "schema": "aether.anchor.pack.v1",
-                "pack_id": pack_id,
-                "anchors": dna_sigs,
-                "source": "frame_delta",
-                "node_id": self.node_id,
-            }
-            self._submit_anchor_to_pool(self._pending_anchors[pack_id], self.node_id)
-        return "pending_quorum"
-
-    def _submit_anchor_to_pool(self, pack: dict, peer_node_id: str) -> bool:
-        """
-        Bestaetigung eines Nodes fuer einen Anker einreichen.
-        Gibt True zurueck wenn Quorum erreicht (>= 3 unabhaengige Nodes).
-        Bei Quorum: push_pack() wird aufgerufen.
-        """
-        ttd_hash = str(pack.get("pack_id", "")).strip()
-        if not ttd_hash:
-            return False
-        payload = {
-            "pseudonym": peer_node_id,
-            "ttd_hash": ttd_hash,
-            "public_metrics": {},
-        }
-        if ttd_hash in self._ttd_records:
-            if self._anchor_pool.validator_present(self._ttd_records[ttd_hash], peer_node_id):
-                return bool(self._ttd_records[ttd_hash].get("quorum_met", False))
-            self._ttd_records[ttd_hash] = self._anchor_pool.merge_record(
-                self._ttd_records[ttd_hash], payload
+            print(
+                f"[AETHERNET] Push ({ttd_hash[:16]}\u2026) "
+                f"reason={trust_reason} \u2192 {result}"
             )
-        else:
-            self._ttd_records[ttd_hash] = self._anchor_pool.build_record(payload)
-        quorum_met = bool(self._ttd_records[ttd_hash].get("quorum_met", False))
-        if quorum_met and ttd_hash in self._pending_anchors:
-            anchor_pack = self._pending_anchors.pop(ttd_hash)
-            result = self.push_pack(anchor_pack)
-            print(f"[AETHERNET] Quorum ({ttd_hash[:16]}\u2026) \u2192 Push: {result}")
+        elif uploader_is_genesis and not quorum_met:
+            # Genesis hat submittet aber Trust-Score-Gate hat nicht bestanden.
+            score = round(float(record.get("pipeline_trust_score", 0.0) or 0.0), 4)
+            print(
+                f"[AETHERNET] Genesis-Push geblockt ({ttd_hash[:16]}\u2026): "
+                f"trust_score={score} < 0.65 — Quorum-Bypass verweigert."
+            )
         return quorum_met
 
     def _store_pack(self, pack: Dict[str, Any]) -> bool:
@@ -426,6 +514,116 @@ class AethernetTransport:
             print(f"[AETHERNET] local pack listing failed: {err}")
             return []
 
+    # ------------------------------------------------------------------
+    # AELab-Invarianten-Bahn — peer-to-peer, kein Quorum, kein Genesis-Gate
+    # Einzige Bedingung: verify_algo_token() muss bestehen (Struktur-Integrität).
+    # delta_nodes, Rohdaten und Session-Keys verlassen das Gerät nie (seal_invariant)
+    # ------------------------------------------------------------------
+
+    def _algo_path(self, token_id: str) -> Path:
+        return self._algo_dir / f"{token_id}.algo"
+
+    def _read_local_algo_ids(self) -> List[str]:
+        try:
+            return sorted(p.stem for p in self._algo_dir.glob("*.algo"))
+        except Exception:
+            return []
+
+    def push_algo_token(self, aelab_result: Dict[str, Any], domain_hint: str = "generic") -> str:
+        """Baut einen AlgoToken aus einem AELab-Ergebnis und teilt ihn direkt mit allen
+        erreichbaren Peers — ohne Quorum, ohne Genesis-Gate.
+
+        Nur strukturell valide Tokens (verify_algo_token) werden gesendet.
+        Rohdaten, Deltas und Session-Keys sind im AlgoToken nicht enthalten.
+        """
+        from modules.algo_share import build_algo_token, verify_algo_token
+        token = build_algo_token(aelab_result, domain_hint=domain_hint)
+        if token is None:
+            return "not_ready"  # commit_allowed=False — Tree noch nicht gut genug
+        if not verify_algo_token(token):
+            return "invalid"
+        token_dict = token.to_dict()
+        token_dict["schema"] = "aether.algo_token.v1"
+        token_dict["source_node_id"] = self.node_id
+        # Lokal speichern
+        try:
+            self._algo_path(token.token_id).write_text(
+                json.dumps(token_dict, ensure_ascii=True, sort_keys=True, indent=2),
+                encoding="utf-8",
+            )
+        except Exception as err:
+            print(f"[AETHERNET] algo_token store failed: {err}")
+        # An alle LAN-Peers senden
+        signed = self._sign_payload(token_dict)
+        sent = 0
+        for base_url in self.discover_lan_nodes():
+            try:
+                req = urllib.request.Request(
+                    urllib.parse.urljoin(base_url.rstrip("/") + "/", "algo"),
+                    data=json.dumps(signed, ensure_ascii=True, sort_keys=True).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    if 200 <= int(resp.status) < 300:
+                        sent += 1
+            except Exception:
+                continue
+        result = f"lan:{sent}" if sent else "local_only"
+        print(f"[AETHERNET] AlgoToken ({token.token_id[:16]}…) domain={domain_hint} → {result}")
+        return result
+
+    def pull_algo_tokens(self) -> List[Dict[str, Any]]:
+        """Holt AlgoTokens von allen erreichbaren LAN-Peers.
+        Kein Quorum nötig — empfangene Tokens werden nur nach verify_algo_token geprüft.
+        """
+        from modules.algo_share import AlgoToken, verify_algo_token
+        seen: set = set()
+        pulled: List[Dict[str, Any]] = []
+        for base_url in self.discover_lan_nodes():
+            try:
+                with urllib.request.urlopen(
+                    urllib.parse.urljoin(base_url.rstrip("/") + "/", "algos"),
+                    timeout=2.0,
+                ) as resp:
+                    listing = json.loads(resp.read().decode("utf-8"))
+                for token_id in list(listing.get("token_ids", [])):
+                    if str(token_id) in seen:
+                        continue
+                    try:
+                        with urllib.request.urlopen(
+                            urllib.parse.urljoin(base_url.rstrip("/") + "/", f"algo/{token_id}"),
+                            timeout=2.0,
+                        ) as tr:
+                            td = json.loads(tr.read().decode("utf-8"))
+                        if str(td.get("schema", "")) != "aether.algo_token.v1":
+                            continue
+                        # Struktur-Integrität prüfen
+                        token = AlgoToken(
+                            token_id=str(td.get("token_id", "")),
+                            tree_signature=str(td.get("tree_signature", "")),
+                            invariant_profile=list(td.get("invariant_profile", [])),
+                            fitness_score=float(td.get("fitness_score", 0.0)),
+                            domain_hint=str(td.get("domain_hint", "generic")),
+                            cascade_version=str(td.get("cascade_version", "")),
+                            node_count=int(td.get("node_count", 0)),
+                            depth=int(td.get("depth", 0)),
+                        )
+                        if not verify_algo_token(token):
+                            continue
+                        seen.add(token.token_id)
+                        # Lokal cachen
+                        self._algo_path(token.token_id).write_text(
+                            json.dumps(td, ensure_ascii=True, sort_keys=True, indent=2),
+                            encoding="utf-8",
+                        )
+                        pulled.append(td)
+                    except Exception:
+                        continue
+            except Exception:
+                continue
+        return pulled
+
     def push_pack(self, pack: Dict[str, Any]) -> str:
         """Versucht einen Anchor-Push zuerst ueber LAN und faellt danach auf Git zurueck."""
         try:
@@ -447,7 +645,7 @@ class AethernetTransport:
                             return "lan"
                 except Exception as e:
                     continue
-            if swarm_sync.push_anchor_pack(pack):
+            if _get_swarm_sync().push_anchor_pack(pack):
                 print("[AETHERNET] push via Git fallback")
                 return "git"
             return "failed"
@@ -485,15 +683,9 @@ class AethernetTransport:
                 except Exception as e:
                     continue
 
-            git_new_ids = swarm_sync.pull_anchors()
+            git_new_ids = _get_swarm_sync().pull_anchors()
             for pack_id in git_new_ids:
-                if str(pif ok:
-                            peer_id = str(payload.get("_sig_node_id", "unknown"))
-                            transport._submit_anchor_to_pool(
-                                {"pack_id": str(payload.get("pack_id", ""))},
-                                peer_id,
-                            )
-                        ack_id) in seen_pack_ids:
+                if str(pack_id) in seen_pack_ids:
                     continue
                 path = self._anchor_path(str(pack_id))
                 if path.exists():
@@ -584,6 +776,77 @@ class AethernetTransport:
                             self._send_json(500, {"ok": False})
                         return
 
+                    if self.path == "/gossip":
+                        # Relay-Bridge: Legacy-/kein-Yggdrasil-Nodes senden Gossip.
+                        # Keine Signaturpflicht — Legacy-Nodes haben ggf. noch keinen
+                        # vollständigen Key-Stack. Schema-Check als Mindestfilter.
+                        schema = str(payload.get("schema", "") or "")
+                        if schema == "aether.swarm.p2p.gossip.v1":
+                            with transport._relay_gossip_lock:
+                                transport._relay_gossip_inbox.append(payload)
+                                if len(transport._relay_gossip_inbox) > 200:
+                                    transport._relay_gossip_inbox = transport._relay_gossip_inbox[-200:]
+                            # Lerne neue Relay-URLs aus dem Gossip-Paket
+                            for rurl in list(payload.get("known_relay_urls") or []):
+                                transport._learn_relay_url(str(rurl))
+                            self._send_json(200, {"ok": True})
+                        else:
+                            self._send_json(400, {"ok": False, "error": "invalid_gossip_schema"})
+                        return
+
+                    if self.path == "/register":
+                        # Legacy-Node meldet seine LAN-URL → Relay kennt ihn,
+                        # und teilt seine bekannten Relays mit (bidirektionales Lernen).
+                        transport._store_peer_from_beacon(payload)
+                        for rurl in list(payload.get("known_relay_urls") or []):
+                            transport._learn_relay_url(str(rurl))
+                        # Antwort enthält unsere bekannten Relays → Peer lernt sie
+                        known = transport._get_relay_pool()
+                        self._send_json(200, {"ok": True, "known_relay_urls": known})
+                        return
+
+                    if self.path == "/relay-pool":
+                        # Ein anderer Knoten meldet eine oder mehrere Relay-URLs.
+                        for rurl in list(payload.get("relay_urls") or []):
+                            transport._learn_relay_url(str(rurl))
+                        self._send_json(200, {"ok": True,
+                                              "known_relay_urls": transport._get_relay_pool()})
+                        return
+
+                    if self.path == "/algo":
+                        # AELab-Invarianten-Bahn: kein Quorum, kein Genesis-Gate
+                        # Nur verify_algo_token() als Strukturprüfung
+                        if not transport._verify_signed_payload(payload):
+                            self._send_json(401, {"ok": False, "error": "invalid_signature"})
+                            return
+                        try:
+                            from modules.algo_share import AlgoToken, verify_algo_token
+                            schema = str(payload.get("schema", ""))
+                            if schema != "aether.algo_token.v1":
+                                self._send_json(400, {"ok": False, "error": "wrong_schema"})
+                                return
+                            token = AlgoToken(
+                                token_id=str(payload.get("token_id", "")),
+                                tree_signature=str(payload.get("tree_signature", "")),
+                                invariant_profile=list(payload.get("invariant_profile", [])),
+                                fitness_score=float(payload.get("fitness_score", 0.0)),
+                                domain_hint=str(payload.get("domain_hint", "generic")),
+                                cascade_version=str(payload.get("cascade_version", "")),
+                                node_count=int(payload.get("node_count", 0)),
+                                depth=int(payload.get("depth", 0)),
+                            )
+                            if not verify_algo_token(token):
+                                self._send_json(422, {"ok": False, "error": "token_invalid"})
+                                return
+                            transport._algo_path(token.token_id).write_text(
+                                json.dumps(payload, ensure_ascii=True, sort_keys=True, indent=2),
+                                encoding="utf-8",
+                            )
+                            self._send_json(200, {"ok": True, "token_id": token.token_id})
+                        except Exception as e:
+                            self._send_json(500, {"ok": False})
+                        return
+
                     self._send_json(404, {"ok": False})
 
                 def do_GET(self) -> None:  # noqa: N802
@@ -592,6 +855,20 @@ class AethernetTransport:
                         return
                     if self.path == "/anchors":
                         self._send_json(200, {"pack_ids": transport._read_local_pack_ids()})
+                        return
+                    if self.path == "/algos":
+                        self._send_json(200, {"token_ids": transport._read_local_algo_ids()})
+                        return
+                    if self.path.startswith("/algo/"):
+                        token_id = self.path.split("/algo/", 1)[1].strip()
+                        tp = transport._algo_path(token_id)
+                        if tp.exists():
+                            try:
+                                self._send_json(200, json.loads(tp.read_text(encoding="utf-8")))
+                                return
+                            except Exception:
+                                pass
+                        self._send_json(404, {"ok": False})
                         return
                     if self.path.startswith("/anchor/"):
                         pack_id = self.path.split("/anchor/", 1)[1].strip()
@@ -611,12 +888,24 @@ class AethernetTransport:
                         peers: List[Dict[str, Any]] = []
                         for node_path in transport.nodes_dir.glob("*.json"):
                             try:
-                                payload = json.loads(node_path.read_text(encoding="utf-8"))
-                                if isinstance(payload, dict):
-                                    peers.append(payload)
-                            except Exception as e:
+                                p = json.loads(node_path.read_text(encoding="utf-8"))
+                                if isinstance(p, dict):
+                                    peers.append(p)
+                            except Exception:
                                 continue
-                        self._send_json(200, {"peers": peers})
+                        self._send_json(200, {"peers": peers,
+                                              "relay_pool": transport._get_relay_pool()})
+                        return
+
+                    if self.path == "/relay-pool":
+                        self._send_json(200, {"relay_urls": transport._get_relay_pool()})
+                        return
+
+                    if self.path == "/gossip/latest":
+                        # Gibt letzte 50 Gossip-Pakete zurück (für Relay-Bridge-Clients).
+                        with transport._relay_gossip_lock:
+                            msgs = list(transport._relay_gossip_inbox[-50:])
+                        self._send_json(200, {"messages": msgs})
                         return
 
                     if self.path == "/consensus/candidates":
@@ -771,8 +1060,222 @@ class AethernetTransport:
         print(f"[AETHERNET] UDP discovery active (broadcast port {beacon_port})")
 
     # ------------------------------------------------------------------ #
+    #  Relay-Pool — verteiltes Relay-Verzeichnis                          #
+    # ------------------------------------------------------------------ #
+
+    def _get_relay_pool(self) -> List[str]:
+        """Gibt alle bekannten Relay-URLs aus dem persistierten Pool zurück."""
+        try:
+            if self._relay_pool_path.is_file():
+                data = json.loads(self._relay_pool_path.read_text(encoding="utf-8"))
+                return [str(u).strip() for u in data.get("urls", []) if str(u).strip()]
+        except Exception:
+            pass
+        return []
+
+    def _learn_relay_url(self, url: str) -> None:
+        """Fügt eine neue Relay-URL zum persistierten Pool hinzu (idempotent).
+
+        Wird aufgerufen wenn ein anderer Knoten seine Relay-URL im Gossip oder
+        beim /register mitteilt. Nodes lernen das Netz so von selbst.
+        """
+        url = url.strip()
+        if not url or not url.startswith(("http://", "https://")):
+            return
+        with self._relay_pool_lock:
+            pool = self._get_relay_pool()
+            if url in pool:
+                return
+            pool.append(url)
+            try:
+                self._relay_pool_path.parent.mkdir(parents=True, exist_ok=True)
+                self._relay_pool_path.write_text(
+                    json.dumps({"schema": "aether.relay_pool.v1", "urls": pool[:64]},
+                               ensure_ascii=True, indent=2),
+                    encoding="utf-8",
+                )
+            except Exception:
+                pass
+
+    def _save_peer_to_cache(self, peer: Dict[str, Any]) -> None:
+        """Schreibt einen bekannten Peer in den lokalen Peer-Cache.
+
+        Der Cache überleben Neustarts — beim nächsten Start sind sofort Peers bekannt,
+        ohne dass die Genesis-Node online sein muss.
+        """
+        node_id = str(peer.get("node_id", "")).strip()
+        if not node_id:
+            return
+        try:
+            cache: Dict[str, Any] = {}
+            if self._peer_cache_path.is_file():
+                cache = json.loads(self._peer_cache_path.read_text(encoding="utf-8"))
+            if not isinstance(cache, dict):
+                cache = {}
+            cache[node_id] = {
+                "node_id": node_id,
+                "lan_url": str(peer.get("lan_url", "") or ""),
+                "relay_url": str(peer.get("relay_url", "") or ""),
+                "alias_username": str(peer.get("alias_username", "") or ""),
+                "last_seen": self._utc_now_iso(),
+            }
+            # Maximal 512 Peers im Cache
+            if len(cache) > 512:
+                oldest = sorted(cache.items(), key=lambda x: x[1].get("last_seen", ""))[:len(cache) - 512]
+                for k, _ in oldest:
+                    del cache[k]
+            self._peer_cache_path.parent.mkdir(parents=True, exist_ok=True)
+            self._peer_cache_path.write_text(
+                json.dumps(cache, ensure_ascii=True, indent=2), encoding="utf-8"
+            )
+        except Exception:
+            pass
+
+    def _save_gossip_peer(self, info: Dict[str, Any]) -> None:
+        """Persistiert einen per Gossip oder Bootstrap bekannt gewordenen Peer in nodes_dir.
+
+        Kein Signatur-Check — Gossip-Pakete sind bereits durch device-lock/genesis-
+        Spoofing-Check in P2PLayer.receive_gossip() validiert. Peers aus bootstrap_from_relay
+        stammen von einem vertrauenswürdigen Relay, das wir selbst angesprochen haben.
+        KEIN Speichern von privaten Daten — nur node_id, yggdrasil_addr, peer_id.
+        """
+        node_id = str(info.get("node_id", "")).strip()
+        if not node_id or node_id == self.node_id:
+            return
+        try:
+            node_path = self.nodes_dir / f"{node_id}.json"
+            existing: Dict[str, Any] = {}
+            if node_path.exists():
+                try:
+                    existing = json.loads(node_path.read_text(encoding="utf-8"))
+                except Exception as e:
+                    logger.warning(f"[aethernet_transport] Stiller Fehler: {e}")
+            ygg = str(info.get("yggdrasil_addr", info.get("ygg_addr", "")) or "").strip()
+            update: Dict[str, Any] = {
+                "node_id": node_id,
+                "discovered_via": "gossip",
+                "last_seen_utc": self._utc_now_iso(),
+                "state": "active",
+                "consecutive_failures": 0,
+            }
+            if ygg:
+                update["yggdrasil_addr"] = ygg
+            peer_id = str(info.get("peer_id", "") or "").strip()
+            if peer_id:
+                update["peer_id"] = peer_id
+            lan_url = str(info.get("lan_url", "") or "").strip()
+            if lan_url:
+                update["lan_url"] = lan_url
+            relay = info.get("relay")
+            if relay is not None:
+                update["relay"] = bool(relay)
+            existing.update(update)
+            node_path.write_text(
+                json.dumps(existing, ensure_ascii=True, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        except Exception as err:
+            logger.warning(f"[aethernet_transport] _save_gossip_peer failed: {err}")
+
+    def bootstrap_from_relay(self, relay_url: str) -> int:
+        """Holt Peer-Liste + Relay-Pool von einem bekannten Relay-Knoten.
+
+        Wird beim Start aufgerufen — so lernt ein neuer Knoten sofort viele
+        andere Peers kennen, auch wenn er noch nie online war.
+        Gibt Anzahl neu gelernter Peers zurück.
+        """
+        if not relay_url:
+            return 0
+        learned = 0
+        try:
+            with urllib.request.urlopen(
+                relay_url.rstrip("/") + "/peers", timeout=10.0
+            ) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for peer in data.get("peers", []):
+                if isinstance(peer, dict):
+                    nid = str(peer.get("node_id", "")).strip()
+                    if nid and nid != self.node_id:
+                        self._save_peer_to_cache(peer)
+                        # Auch in nodes_dir/ schreiben — so findet discover_from_nodes_dir()
+                        # diesen Peer auch nach einem Neustart ohne Genesis-Kontakt.
+                        self._save_gossip_peer(peer)
+                        learned += 1
+            # Lerne auch den Relay-Pool des anderen Knotens
+            for rurl in data.get("relay_pool", []):
+                self._learn_relay_url(str(rurl))
+        except Exception:
+            pass
+        # Direkt auch /relay-pool abfragen
+        try:
+            with urllib.request.urlopen(
+                relay_url.rstrip("/") + "/relay-pool", timeout=5.0
+            ) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            for rurl in data.get("relay_urls", []):
+                self._learn_relay_url(str(rurl))
+        except Exception:
+            pass
+        return learned
+
+    # ------------------------------------------------------------------ #
     #  Internet Relay                                                      #
     # ------------------------------------------------------------------ #
+
+    def relay_gossip_push(self, relay_url: str, gossip_msg: Dict[str, Any]) -> bool:
+        """Sendet vollständiges Gossip-Paket an einen Relay-Knoten via HTTP.
+
+        Für Legacy-/kein-Yggdrasil-Nodes: Internet-HTTP-Kontakt zum Relay/Genesis.
+        Kein LAN, kein Yggdrasil nötig — reines TCP/HTTP, funktioniert ab Python 2.7+
+        (urllib-Fallback wird in legacy_bootstrap.py separat abgedeckt).
+        """
+        if not relay_url or not isinstance(gossip_msg, dict):
+            return False
+        try:
+            msg = dict(gossip_msg)
+            # Eigene Relay-Kenntnisse mitschicken → Peer lernt das Netz
+            known = self._get_relay_pool()
+            if relay_url not in known:
+                known.append(relay_url)
+            msg["known_relay_urls"] = known[:16]  # max 16, kein Flooding
+            req = urllib.request.Request(
+                relay_url.rstrip("/") + "/gossip",
+                data=json.dumps(msg, ensure_ascii=True).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=8.0) as resp:
+                return 200 <= int(resp.status) < 300
+        except Exception as err:
+            print(f"[AETHERNET] relay_gossip_push failed: {err}")
+            return False
+
+    def relay_gossip_pull(self, relay_url: str) -> List[Dict[str, Any]]:
+        """Holt Gossip-Pakete vom Relay-Knoten (GET /gossip/latest).
+
+        Legacy-/kein-Yggdrasil-Nodes empfangen so den Schwarmsstand ohne direkte
+        Peer-Verbindung. Gibt leere Liste bei Fehler zurück.
+        """
+        if not relay_url:
+            return []
+        try:
+            with urllib.request.urlopen(
+                relay_url.rstrip("/") + "/gossip/latest", timeout=8.0
+            ) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            msgs = [
+                m for m in list(data.get("messages", []))
+                if isinstance(m, dict)
+                and str(m.get("schema", "")) == "aether.swarm.p2p.gossip.v1"
+            ]
+            # Lerne Relay-URLs aus empfangenen Gossip-Paketen
+            for m in msgs:
+                for rurl in list(m.get("known_relay_urls") or []):
+                    self._learn_relay_url(str(rurl))
+            return msgs
+        except Exception as err:
+            print(f"[AETHERNET] relay_gossip_pull failed: {err}")
+            return []
 
     def relay_push(self, relay_url: str) -> bool:
         """POST self to a relay server so internet peers can discover us."""

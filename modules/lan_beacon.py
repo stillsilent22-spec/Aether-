@@ -11,11 +11,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 import hashlib
-from cryptography.hazmat.primitives.serialization import (
-    load_pem_public_key,
-    Encoding,
-    PublicFormat,
-)
+# cryptography wird erst bei Bedarf geladen (lazy) — kein Overhead auf Legacy-Nodes
+# die keine Signatur-Verifizierung brauchen (z.B. ultra-legacy relay-bridge Modus).
 
 LAN_MULTICAST_GROUP = "239.255.42.7"
 LAN_MULTICAST_PORT = 7742
@@ -68,10 +65,17 @@ def _verify_node_record(payload: dict[str, Any]) -> bool:
         node_id = str(payload.get("node_id", "") or "").strip()
         if not pem or not node_id:
             return False
+        from cryptography.hazmat.primitives.serialization import (
+            load_pem_public_key, Encoding, PublicFormat,
+        )
         pub = load_pem_public_key(pem.encode("utf-8"))
         raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
         expected_id = hashlib.sha256(raw).hexdigest()[:16]
         return expected_id == node_id
+    except ImportError:
+        # cryptography nicht installiert — Signaturprüfung überspringen (Legacy-Modus)
+        logger.debug("[lan_beacon] cryptography nicht verfügbar — Beacon-Signatur nicht geprüft")
+        return True
     except Exception as e:
         logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return False

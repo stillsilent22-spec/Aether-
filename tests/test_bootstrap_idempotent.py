@@ -39,7 +39,7 @@ def _prepare_temp_root(tmp_path: Path, monkeypatch) -> Path:
 def test_bootstrap_twice_same_node_id(tmp_path: Path, monkeypatch) -> None:
     """Zweimaliges bootstrap() mit gleichem Keypair -> gleiche node_id."""
     root = _prepare_temp_root(tmp_path, monkeypatch)
-    public_key_pem = _write_keypair(root / "keys")
+    public_key_pem = _write_keypair(root / "data" / "keys")
 
     node_dir = root / "data" / "swarm" / "nodes"
     node_dir.mkdir(parents=True, exist_ok=True)
@@ -67,7 +67,7 @@ def test_bootstrap_twice_same_node_id(tmp_path: Path, monkeypatch) -> None:
 def test_bootstrap_preserves_genesis_role(tmp_path: Path, monkeypatch) -> None:
     """Bootstrap ueberschreibt role=genesis nicht."""
     root = _prepare_temp_root(tmp_path, monkeypatch)
-    public_key_pem = _write_keypair(root / "keys")
+    public_key_pem = _write_keypair(root / "data" / "keys")
     node_path = root / "data" / "swarm" / "node.json"
     node_path.parent.mkdir(parents=True, exist_ok=True)
     node_path.write_text(

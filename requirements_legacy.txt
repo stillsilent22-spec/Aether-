@@ -1,0 +1,7 @@
+# ── Aether Legacy Requirements ─────────────────────────────────────────────
+# Stdlib-first headless path for weak/old PCs.
+# Mandatory third-party packages are intentionally avoided.
+# If pip/package builds fail, daemon_headless.py still runs without them.
+
+# Optional metrics helper for cleaner CPU/RAM reporting.
+psutil>=5.8,<7

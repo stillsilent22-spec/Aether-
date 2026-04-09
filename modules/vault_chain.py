@@ -24,7 +24,7 @@ from .p2p_anchor_pool import (
     public_ttd_validator_present,
     summarize_public_ttd_anchor_records,
 )
-from .registry import GENESIS_HASH, compute_chain_block_hash, legacy_chain_block_hash_candidates
+from .registry import GENESIS_HASH, GENESIS_NODE_ID, compute_chain_block_hash, legacy_chain_block_hash_candidates
 from .security_engine import (
     pseudonymous_network_identity,
     public_ttd_quorum_policy,
@@ -599,11 +599,19 @@ class AetherAugmentor:
         *,
         fingerprint: AetherFingerprint | None = None,
         scope: str = "metrics_only",
+        artifact_class: str = "performance_route",
+        source_scope: str = "derived_public_metrics",
+        privacy_class: str = "public_metric_only",
     ) -> dict[str, Any]:
         """Erzeugt ein metrics-only Bundle fuer stabile TTD-Anker ohne Rohdaten oder Deltas."""
         policy = public_ttd_share_policy(scope)
         if not bool(policy.get("share_public_anchor", False)):
             return {}
+        if str(privacy_class or "public_metric_only").strip().lower() != "public_metric_only":
+            return {
+                "valid": False,
+                "reason": "privacy_class_not_public_metric_only",
+            }
         quorum_policy = public_ttd_quorum_policy(self.session_context)
         compact = _compact_self_reflection_payload(dict(reflection_payload or {}), include_internal=False)
         candidates = [dict(item) for item in list(compact.get("ttd_candidates", []) or []) if isinstance(item, dict)]
@@ -650,7 +658,14 @@ class AetherAugmentor:
             "uploader_role": str(quorum_policy.get("uploader_role", "operator")),
             "quorum_threshold": int(quorum_policy.get("quorum_threshold", 3) or 3),
             "auto_trusted": bool(quorum_policy.get("auto_trusted", False)),
+            "uploader_node_id": GENESIS_NODE_ID if bool(quorum_policy.get("auto_trusted", False)) else "",
             "transport_hint": "ipfs_libp2p_bundle",
+            "artifact_class": str(artifact_class or "performance_route"),
+            "share_channel": "auto_push" if str(artifact_class or "performance_route").strip().lower() == "performance_route" else "consent_required",
+            "source_scope": str(source_scope or "derived_public_metrics"),
+            "privacy_class": "public_metric_only",
+            "user_confirmation_required": bool(str(artifact_class or "performance_route").strip().lower() != "performance_route"),
+            "genesis_override_allowed": True,
             "raw_data_included": False,
             "deltas_included": False,
             "internal_only": False,
@@ -717,6 +732,7 @@ class AetherAugmentor:
                 "latest_path": str(latest_path),
                 "public_anchor_count": int(current_summary.get("trusted_anchor_count", 0) or 0),
                 "candidate_anchor_count": int(current_summary.get("candidate_anchor_count", 0) or 0),
+                "auto_push_ready_count": int(current_summary.get("auto_push_ready_count", 0) or 0),
                 "record": existing_record,
             }
         history_path.write_text(json.dumps(envelope, ensure_ascii=True, indent=2), encoding="utf-8")
@@ -737,7 +753,8 @@ class AetherAugmentor:
             "public_anchor_count": int(latest_wrapper.get("trusted_anchor_count", 0) or 0),
             "candidate_anchor_count": int(latest_wrapper.get("candidate_anchor_count", 0) or 0),
             "quorum_validated_count": int(latest_wrapper.get("quorum_validated_count", 0) or 0),
-            "admin_trusted_count": int(latest_wrapper.get("admin_trusted_count", 0) or 0),
+            "genesis_trusted_count": int(latest_wrapper.get("genesis_trusted_count", 0) or 0),
+            "auto_push_ready_count": int(latest_wrapper.get("auto_push_ready_count", 0) or 0),
             "ttd_hash": str(payload.get("ttd_hash", "") or ""),
             "record": updated_record,
         }
@@ -787,6 +804,8 @@ class AetherAugmentor:
                 "trusted_anchor_count": 0,
                 "candidate_anchor_count": 0,
                 "anchor_records": [],
+                "auto_push_ready_count": 0,
+                "consent_required_count": 0,
             }
         try:
             payload = json.loads(latest_path.read_text(encoding="utf-8"))
@@ -798,6 +817,8 @@ class AetherAugmentor:
                 "trusted_anchor_count": 0,
                 "candidate_anchor_count": 0,
                 "anchor_records": [],
+                "auto_push_ready_count": 0,
+                "consent_required_count": 0,
             }
         if str(payload.get("schema", "") or "") == "aether.public_ttd_anchor.pool.v2":
             return {
@@ -810,7 +831,9 @@ class AetherAugmentor:
                 "candidate_anchors": [dict(item) for item in list(payload.get("candidate_anchors", []) or []) if isinstance(item, dict)],
                 "candidate_anchor_count": int(payload.get("candidate_anchor_count", 0) or 0),
                 "quorum_validated_count": int(payload.get("quorum_validated_count", 0) or 0),
-                "admin_trusted_count": int(payload.get("admin_trusted_count", 0) or 0),
+                "genesis_trusted_count": int(payload.get("genesis_trusted_count", 0) or 0),
+                "auto_push_ready_count": int(payload.get("auto_push_ready_count", 0) or 0),
+                "consent_required_count": int(payload.get("consent_required_count", 0) or 0),
             }
         legacy_anchors = [dict(item) for item in list(payload.get("public_anchors", []) or []) if isinstance(item, dict)]
         legacy_records = []
@@ -822,12 +845,12 @@ class AetherAugmentor:
                             "ttd_hash": str(item.get("ttd_hash", item.get("hash", "")) or ""),
                             "source_label": str(item.get("source_label", "") or ""),
                             "public_metrics": dict(item.get("public_metrics", {}) or {}),
-                            "uploader_role": str(item.get("uploader_role", "admin") or "admin"),
+                            "uploader_role": str(item.get("uploader_role", "genesis") or "genesis"),
                             "pseudonym": str(item.get("pseudonym", "LEGACY") or "LEGACY"),
                         }
                     ),
                     "timestamp": str(payload.get("updated_at", "") or datetime.now(timezone.utc).isoformat()),
-                    "uploader_role": str(item.get("uploader_role", "admin") or "admin"),
+                    "uploader_role": str(item.get("uploader_role", "genesis") or "genesis"),
                     "pseudonym": str(item.get("pseudonym", "LEGACY") or "LEGACY"),
                     "ttd_hash": str(item.get("ttd_hash", item.get("hash", "")) or ""),
                     "source_label": str(item.get("source_label", "") or ""),

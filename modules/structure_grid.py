@@ -72,3 +72,50 @@ class StructureGrid:
     def clear(self) -> None:
         """Leert das Gitter."""
         self._points.clear()
+
+    def set_point(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        t: float = 0.0,
+        delta: float = 0.0,
+        freq: float = 0.0,
+        amp: float = 0.0,
+        *,
+        interference: float = 0.0,
+        label: str = "",
+        anchor_hash: str = "",
+        entropy: float = 0.0,
+        trust_score: float = 0.0,
+    ) -> None:
+        """Kompatibilitäts-API: erstellt einen StructurePoint und ruft add() auf."""
+        point = StructurePoint(
+            x=float(x),
+            y=float(y),
+            z=float(z),
+            label=label or f"p{len(self._points)}",
+            anchor_hash=anchor_hash,
+            entropy=entropy if entropy > 0.0 else float(z) * 8.0,
+            trust_score=trust_score if trust_score > 0.0 else float(amp),
+        )
+        self.add(point)
+
+    def build_heatmap_grid(self, size: int = 16):
+        """Erstellt ein 2D-Dichte-Grid als Liste von Listen (size x size)."""
+        n = max(4, int(size))
+        grid = [[0.0] * n for _ in range(n)]
+        for p in self._points:
+            col = min(n - 1, int(p.x * n))
+            row = min(n - 1, int(p.y * n))
+            grid[row][col] += 1.0
+        # Normalisieren auf [0, 1]
+        max_val = max((cell for row in grid for cell in row), default=1.0) or 1.0
+        return [[cell / max_val for cell in row] for row in grid]
+
+    def render_points(self, limit: int = 256) -> List[List[float]]:
+        """Gibt Punkte als Liste von [x, y, z, entropy, trust_score] zurück."""
+        result = []
+        for p in list(self._points)[-limit:]:
+            result.append([p.x, p.y, p.z, p.entropy, p.trust_score])
+        return result

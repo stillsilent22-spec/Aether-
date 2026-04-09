@@ -12,7 +12,7 @@ er muss zusaetzlich von is_genesis_node() bestaetigt werden.
 from datetime import datetime, timezone
 from typing import Any
 
-from modules.registry import is_genesis_node as _is_genesis_node
+from modules.registry import is_genesis_node as _is_genesis_node, TRUSTED_ANCHOR_UPLOAD_MIN_SCORE as _GENESIS_PUSH_MIN_SCORE
 
 
 PUBLIC_TTD_POOL_SCHEMA = "aether.public_ttd_anchor.pool.v2"
@@ -20,22 +20,44 @@ PUBLIC_TTD_QUORUM_DEFAULT = 3
 
 
 def normalize_public_role(role: str | None) -> str:
-    """Normalisiert Rollen fuer den oeffentlichen TTD-Pool."""
+    """Normalisiert Rollen fuer den oeffentlichen TTD-Pool.
+
+    Genesis ist der einzige privilegierte Node — 'admin' existiert nicht.
+    Altes 'admin' aus Legacy-Daten wird auf 'genesis' normalisiert.
+    """
     normalized = str(role or "operator").strip().lower()
-    return "admin" if normalized == "admin" else "operator"
+    return "genesis" if normalized in ("genesis", "admin") else "operator"
+
+
+def normalize_public_artifact_class(artifact_class: str | None) -> str:
+    """Erlaubt nur explizit modellierte oeffentliche Artefaktklassen."""
+    normalized = str(artifact_class or "performance_route").strip().lower()
+    if normalized in {"performance_route", "collaborative_discovery", "public_field_observation"}:
+        return normalized
+    return "performance_route"
+
+
+def share_channel_for_artifact(artifact_class: str | None) -> str:
+    """Leitet die Weitergabe-Semantik aus der Artefaktklasse ab."""
+    normalized = normalize_public_artifact_class(artifact_class)
+    if normalized == "performance_route":
+        return "auto_push"
+    if normalized == "public_field_observation":
+        return "passive_observation"
+    return "consent_required"
 
 
 def quorum_threshold_for_role(role: str | None, node_id: str | None = None) -> int:
     """Liefert die Quorum-Schwelle pro Rolle.
 
-    Admin/Genesis-Schwelle (1) wird NUR gewaehrt wenn:
-    1. role == 'admin' ODER role == 'genesis'
+    Genesis-Schwelle (1) wird NUR gewaehrt wenn:
+    1. role == 'genesis' (Legacy 'admin' wird normalisiert)
     2. node_id mit dem kryptografisch registrierten Genesis-Node uebereinstimmt.
 
     Jede andere Kombination ergibt PUBLIC_TTD_QUORUM_DEFAULT (3).
-    Das verhindert, dass ein beliebiger Node sich als Admin ausgibt.
+    Das verhindert, dass ein beliebiger Node sich als Genesis ausgibt.
     """
-    if normalize_public_role(role) == "admin" and _is_genesis_node(str(node_id or "")):
+    if normalize_public_role(role) == "genesis" and _is_genesis_node(str(node_id or "")):
         return 1
     return PUBLIC_TTD_QUORUM_DEFAULT
 
@@ -83,10 +105,14 @@ def _average_metrics(
 def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     validation_count = int(record.get("validation_count", 0) or 0)
     uploader_role = normalize_public_role(record.get("uploader_role", "operator"))
-    # Admin auto-trust only if this is the verified genesis node
-    uploader_node_id = str(record.get("uploader_pseudonym", "") or "").strip()
-    admin_trusted = (
-        uploader_role == "admin"
+    artifact_class = normalize_public_artifact_class(record.get("artifact_class", "performance_route"))
+    share_channel = str(record.get("share_channel", share_channel_for_artifact(artifact_class)) or share_channel_for_artifact(artifact_class))
+    # Admin auto-trust only if this is the verified genesis node.
+    # uploader_node_id must be the real node_id — NOT a session-pseudonym hash.
+    uploader_node_id = str(record.get("uploader_node_id", "") or "").strip()
+    # Genesis ist der einzige privilegierte Node — kein 'admin' existiert.
+    genesis_trusted = (
+        uploader_role == "genesis"
         and _is_genesis_node(uploader_node_id)
     )
     effective_threshold = quorum_threshold_for_role(
@@ -94,9 +120,26 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     )
     threshold = int(record.get("quorum_threshold", effective_threshold) or effective_threshold)
     threshold = min(threshold, effective_threshold)  # never lower than what role allows
-    quorum_met = bool(admin_trusted or validation_count >= effective_threshold)
-    if admin_trusted:
+    # Trustscore from pipeline metrics — mandatory gate even for genesis.
+    # Derived from values already present in public_metrics (no pipeline modification).
+    _pm = dict(record.get("public_metrics", {}) or {})
+    pipeline_trust_score = round(
+        float(_pm.get("delta_stability", 0.0) or 0.0) * 0.4
+        + float(_pm.get("symmetry", 0.0) or 0.0) * 0.35
+        + max(0.0, 1.0 - float(_pm.get("residual", 1.0) or 1.0)) * 0.25,
+        4,
+    )
+    trust_score_met = pipeline_trust_score >= _GENESIS_PUSH_MIN_SCORE
+    # Genesis: quorum is bypassed — trustscore is the mandatory gate.
+    # Peers: quorum required (unchanged). Trustscore does not gate peers.
+    quorum_met = bool(
+        (genesis_trusted and trust_score_met)
+        or (not genesis_trusted and validation_count >= effective_threshold)
+    )
+    if genesis_trusted and trust_score_met:
         trust_reason = "genesis_auto_trust"
+    elif genesis_trusted:
+        trust_reason = "genesis_score_pending"
     elif quorum_met:
         trust_reason = "peer_quorum_met"
     else:
@@ -105,10 +148,26 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     updated["uploader_role"] = uploader_role
     updated["quorum_threshold"] = effective_threshold
     updated["validation_count"] = int(validation_count)
-    updated["admin_trusted"] = bool(admin_trusted)
+    updated["genesis_trusted"] = bool(genesis_trusted)
     updated["quorum_met"] = bool(quorum_met)
+    updated["pipeline_trust_score"] = pipeline_trust_score
     updated["trust_state"] = "trusted" if quorum_met else "candidate"
     updated["trust_reason"] = str(trust_reason)
+    updated["artifact_class"] = artifact_class
+    updated["share_channel"] = share_channel
+    updated["source_scope"] = str(record.get("source_scope", "derived_public_metrics") or "derived_public_metrics")
+    updated["privacy_class"] = str(record.get("privacy_class", "public_metric_only") or "public_metric_only")
+    updated["user_confirmation_required"] = bool(share_channel == "consent_required")
+    # Genesis: auto_push gated by trustscore (quorum bypassed).
+    # Peers: auto_push gated by quorum (unchanged).
+    genesis_push_ready = bool(genesis_trusted and artifact_class == "performance_route" and trust_score_met)
+    peer_push_ready = bool(not genesis_trusted and artifact_class == "performance_route" and quorum_met)
+    updated["auto_push_ready"] = bool(genesis_push_ready or peer_push_ready)
+    updated["auto_push_reason"] = (
+        "genesis_override" if genesis_push_ready
+        else "peer_quorum" if peer_push_ready
+        else "not_ready"
+    )
     if quorum_met and not str(updated.get("trusted_at", "") or "").strip():
         updated["trusted_at"] = _utc_now()
     return updated
@@ -119,6 +178,7 @@ def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_include
     item = dict(payload or {})
     pseudonym = str(item.get("pseudonym", "") or "").strip()
     uploader_role = normalize_public_role(item.get("uploader_role", "operator"))
+    artifact_class = normalize_public_artifact_class(item.get("artifact_class", "performance_route"))
     validators = [pseudonym] if pseudonym else []
     record = {
         "schema": "aether.public_ttd_anchor.record.v1",
@@ -127,6 +187,7 @@ def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_include
         "first_seen_at": str(item.get("timestamp", "") or _utc_now()),
         "last_seen_at": str(item.get("timestamp", "") or _utc_now()),
         "uploader_pseudonym": pseudonym,
+        "uploader_node_id": str(item.get("uploader_node_id", "") or "").strip(),
         "uploader_role": uploader_role,
         "validation_pseudonyms": validators,
         "validation_count": int(len(validators)),
@@ -137,6 +198,10 @@ def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_include
         "deltas_included": False,
         "internal_only": False,
         "transport_hint": str(item.get("transport_hint", "ipfs_libp2p_bundle") or "ipfs_libp2p_bundle"),
+        "artifact_class": artifact_class,
+        "share_channel": str(item.get("share_channel", share_channel_for_artifact(artifact_class)) or share_channel_for_artifact(artifact_class)),
+        "source_scope": str(item.get("source_scope", "derived_public_metrics") or "derived_public_metrics"),
+        "privacy_class": str(item.get("privacy_class", "public_metric_only") or "public_metric_only"),
     }
     return _apply_trust_state(record)
 
@@ -173,6 +238,10 @@ def merge_public_ttd_anchor_record(
         item.get("public_metrics", {}),
         left_weight=max(1, previous_count),
     )
+    merged["artifact_class"] = normalize_public_artifact_class(item.get("artifact_class", existing.get("artifact_class", "performance_route")))
+    merged["share_channel"] = str(item.get("share_channel", existing.get("share_channel", share_channel_for_artifact(merged.get("artifact_class", "performance_route")))) or existing.get("share_channel", share_channel_for_artifact(merged.get("artifact_class", "performance_route"))))
+    merged["source_scope"] = str(item.get("source_scope", existing.get("source_scope", "derived_public_metrics")) or existing.get("source_scope", "derived_public_metrics"))
+    merged["privacy_class"] = str(item.get("privacy_class", existing.get("privacy_class", "public_metric_only")) or existing.get("privacy_class", "public_metric_only"))
     return _apply_trust_state(merged)
 
 
@@ -191,6 +260,12 @@ def public_ttd_anchor_view(record: dict[str, Any]) -> dict[str, Any]:
         "trust_reason": str(item.get("trust_reason", "") or ""),
         "uploader_role": normalize_public_role(item.get("uploader_role", "operator")),
         "pseudonym": str(item.get("uploader_pseudonym", "") or ""),
+        "artifact_class": normalize_public_artifact_class(item.get("artifact_class", "performance_route")),
+        "share_channel": str(item.get("share_channel", share_channel_for_artifact(item.get("artifact_class", "performance_route"))) or share_channel_for_artifact(item.get("artifact_class", "performance_route"))),
+        "source_scope": str(item.get("source_scope", "derived_public_metrics") or "derived_public_metrics"),
+        "privacy_class": str(item.get("privacy_class", "public_metric_only") or "public_metric_only"),
+        "user_confirmation_required": bool(item.get("user_confirmation_required", False)),
+        "auto_push_ready": bool(item.get("auto_push_ready", False)),
         "raw_data_included": False,
         "deltas_included": False,
         "internal_only": False,
@@ -205,7 +280,9 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
     trusted_views = [public_ttd_anchor_view(record) for record in trusted_records]
     candidate_views = [public_ttd_anchor_view(record) for record in candidate_records]
     quorum_validated_count = sum(1 for record in trusted_records if str(record.get("trust_reason", "") or "") == "peer_quorum_met")
-    admin_trusted_count = sum(1 for record in trusted_records if bool(record.get("admin_trusted", False)))
+    genesis_trusted_count = sum(1 for record in trusted_records if bool(record.get("genesis_trusted", False)))
+    auto_push_ready_count = sum(1 for record in trusted_records if bool(record.get("auto_push_ready", False)))
+    consent_required_count = sum(1 for record in normalized_records if bool(record.get("user_confirmation_required", False)))
     return {
         "schema": PUBLIC_TTD_POOL_SCHEMA,
         "updated_at": _utc_now(),
@@ -216,7 +293,9 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
         "candidate_anchors": candidate_views,
         "candidate_anchor_count": int(len(candidate_views)),
         "quorum_validated_count": int(quorum_validated_count),
-        "admin_trusted_count": int(admin_trusted_count),
+        "genesis_trusted_count": int(genesis_trusted_count),
+        "auto_push_ready_count": int(auto_push_ready_count),
+        "consent_required_count": int(consent_required_count),
     }
 
 

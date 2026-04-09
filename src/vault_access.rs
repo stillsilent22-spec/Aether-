@@ -455,9 +455,7 @@ impl VaultAccessLayer {
     }
 
     pub fn enqueue_github_push_sync(&self, commit: &AnchorCommitResult) -> Result<(), PushError> {
-        let queue_dir = PathBuf::from("data")
-            .join("rust_shell")
-            .join("public_push_queue");
+        let queue_dir = crate::data_path("rust_shell/public_push_queue");
         fs::create_dir_all(&queue_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let raw = serde_json::to_string_pretty(&commit.record)
             .map_err(|err| PushError::Serialization(err.to_string()))?;
@@ -662,9 +660,7 @@ impl GitHubPushPipeline {
     }
 
     async fn update_index(&self, record: &PublicAnchorRecord) -> Result<(), PushError> {
-        let index_dir = PathBuf::from("data")
-            .join("rust_shell")
-            .join("github_preview");
+        let index_dir = crate::data_path("rust_shell/github_preview");
         fs::create_dir_all(&index_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let index_path = index_dir.join("index.json");
         let mut index: Vec<BTreeMap<String, String>> = if index_path.exists() {
@@ -687,9 +683,7 @@ impl GitHubPushPipeline {
     }
 
     async fn update_manifest(&self, record: &PublicAnchorRecord) -> Result<(), PushError> {
-        let manifest_dir = PathBuf::from("data")
-            .join("rust_shell")
-            .join("github_preview");
+        let manifest_dir = crate::data_path("rust_shell/github_preview");
         fs::create_dir_all(&manifest_dir).map_err(|err| PushError::Io(err.to_string()))?;
         let manifest_path = manifest_dir.join("vault_manifest.json");
         let mut distribution: BTreeMap<String, usize> = BTreeMap::new();
@@ -918,15 +912,11 @@ fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
 }
 
 fn workflow_anchor_state_path() -> PathBuf {
-    PathBuf::from("data")
-        .join("rust_shell")
-        .join("workflow_anchors.json")
+    crate::data_path("rust_shell/workflow_anchors.json")
 }
 
 fn raw_texture_cache_state_path() -> PathBuf {
-    PathBuf::from("data")
-        .join("rust_shell")
-        .join("raw_texture_cache.json")
+    crate::data_path("rust_shell/raw_texture_cache.json")
 }
 
 fn load_workflow_anchor_state() -> Result<WorkflowAnchorState, String> {

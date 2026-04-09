@@ -271,10 +271,7 @@ impl AepPack {
 
 impl PackRegistry {
     pub fn load_default() -> Result<Self, PackError> {
-        let local_cache = PathBuf::from("data")
-            .join("rust_shell")
-            .join("packs")
-            .join("pack_registry.json");
+        let local_cache = crate::data_path("rust_shell/packs/pack_registry.json");
         if !local_cache.exists() {
             let mut registry = Self {
                 index_url: "github-releases://stillsilent22-spec/Aether-/anchor-packs".to_owned(),
@@ -369,10 +366,7 @@ impl PackRegistry {
 
 impl PackManager {
     pub fn new(vault: Arc<VaultAccessLayer>, registry: Arc<RwLock<PackRegistry>>) -> Self {
-        let install_state_path = PathBuf::from("data")
-            .join("rust_shell")
-            .join("packs")
-            .join("installed_packs.json");
+        let install_state_path = crate::data_path("rust_shell/packs/installed_packs.json");
         let installed_packs = if install_state_path.exists() {
             fs::read_to_string(&install_state_path)
                 .ok()
@@ -546,7 +540,11 @@ impl PackManager {
     }
 
     fn load_pack(&self, entry: &PackRegistryEntry) -> Result<AepPack, PackError> {
-        let path = PathBuf::from(&entry.download_url);
+        let path = if entry.download_url.starts_with("http://") || entry.download_url.starts_with("https://") {
+            std::path::PathBuf::new() // not used for HTTP
+        } else {
+            crate::app_root().join(&entry.download_url)
+        };
         if path.exists() {
             return AepPack::read_from_path(&path, &self.engine);
         }
@@ -659,9 +657,7 @@ impl AutoPackGenerator {
     pub fn new(vault: Arc<VaultAccessLayer>) -> Self {
         Self {
             vault,
-            output_dir: PathBuf::from("data")
-                .join("rust_shell")
-                .join("generated_packs"),
+            output_dir: crate::data_path("rust_shell/generated_packs"),
             engine: EnginePipeline::new(),
         }
     }

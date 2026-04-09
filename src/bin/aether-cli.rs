@@ -1,6 +1,6 @@
-use aether_rust_shell::aef::{EnginePipeline, VaultStore};
-use aether_rust_shell::bus_ipc;
-use aether_rust_shell::vault_access::{sync_public_vault, PublicAnchorRecord, VaultAccessLayer};
+use aether::aef::{EnginePipeline, VaultStore};
+use aether::bus_ipc;
+use aether::vault_access::{sync_public_vault, PublicAnchorRecord, VaultAccessLayer};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -129,7 +129,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn verify_anchor(
     path: &Path,
     access_layer: &VaultAccessLayer,
-) -> Result<aether_rust_shell::vault_access::VerificationResult, Box<dyn std::error::Error>> {
+) -> Result<aether::vault_access::VerificationResult, Box<dyn std::error::Error>> {
     let record: PublicAnchorRecord = serde_json::from_str(&fs::read_to_string(path)?)?;
     Ok(access_layer.verify_anchor_record(&record)?)
 }

@@ -73,9 +73,11 @@ Forschungsrichtung: Strukturell Emergente Metadynamische Semantik (SEMS) — pro
 | 3 | Process: Windows Prozessdynamik + ReconstructionEngine + Attractor-Tracking | ✓ Fertig |
 | 4 | Render: ETW/DXGI Pixel-Koordination pro Prozess + UI + Runtime | ✓ Fertig |
 | 5 | Optimize: Vereinzelung, Ausdünnung, Empfehlung + Effizienzmonitor | ✓ Fertig |
-| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs, P2P-Transport | In Arbeit |
+| 6 | Aethernet: dezentrale Knoten, verteilte Anchor Packs, P2P-Transport, emergentes Tier-System | In Arbeit |
 | 7 | Cross-Domain Atlas: SEMS-Forschungswerkzeuge, domänenübergreifende Signaturvergleiche | Geplant |
 | 8 | Governance & Community: Anchor-Verifizierungsnetz, Publisher-Vertrauen | Vision |
+| 9 | LoRa Transport: Sub-1-GHz-Mesh, strukturelle Signaturen offline-first | Vision |
+| 10 | Platform Expansion: native Linux .deb/.AppImage, macOS .dmg, iOS, Mobile-App | Vision |
 
 ---
 
@@ -125,13 +127,29 @@ Forschungsrichtung: Strukturell Emergente Metadynamische Semantik (SEMS) — pro
 
 **Ziel:** Dezentraler Schwarm aus lokalen Aether-Instanzen die Strukturwissen teilen ohne Rohdaten zu übertragen.
 
-Aktueller Stand:
+### Implementiert ✓
+
 - GitHub als temporärer Anchor-Transport (öffentliche `.dna`-Dateien)
 - Lokale P2P-Pool-Infrastruktur (`modules/p2p_anchor_pool.py`)
 - Public-TTD-Transport (`modules/public_ttd_transport.py`)
 - Consent-Schicht: `Nein / Nur anonym / Mit Signatur` vor jeder Freigabe
+- **Emergentes Tier-System** (NetworkTier 0–4): Hardware-abgeleitete P2P-Freischaltung
+  - `derive_network_tier()` liest RAM, Kerne und Betriebssystem-Version
+  - OsPlatform-Erkennung: Win9x → WinModern, LinuxLegacy, LinuxModern, RaspberryPi
+  - Tier-Mapping: LocalOnly (0) → LanBeacon (1) → LanP2P (2) → YggdrasilP2P (3) → FullDht (4)
+- **StealthBeacon**: Geräte die noch nicht für Gossip qualifiziert sind werden passiv sichtbar
+- **Tier-Watchdog** (One-Shot-Pattern): prüft alle 90 s ob Tier-Upgrade möglich ist (max 10 Versuche)
+- **Genesis-Node-Key** (`data/keys/genesis_node.key`): Ed25519/HKDF-abgeleiteter Identitätsanker
+  - Feste IPv6-Adresse `200:ca77:8d5c:10b2:e3c0:d06c:6af4:dd5e` eingebaut
+  - Spoofing-Schutz: `GENESIS_NODE_YGG_ADDR` wird beim Start verifiziert
+- **Genesis-Invarianten** (`data/interbus/genesis_invariants.json`): Benford 0.85 / Zipf α 1.07 / Mandelbrot β 1.40 / Fourier 24.0
+  - Werden neuen Knoten als Prior eingeimpft
+  - Automatische Überschreibung nach ≥ 32 eigenen Messungen
+- Yggdrasil v0.5.8 automatisch verwaltet bei Tier ≥ 3; auf Schwachgeräten übersprungen ohne Fehler
+- DHT (Tier 4): Kademlia-ähnliches Peer-Lookup für vollvernetzte Knoten
 
-Nächste Schritte:
+### Nächste Schritte
+
 - IPFS/libp2p Integration für transportagnostische Anker-Verteilung
 - Knoten-Verifizierung ohne zentrale Instanz
 - Dreifach-unabhängige Validierung für globale Anker
@@ -147,6 +165,50 @@ Geplante Inhalte:
 - SEMS-Forschungsinterface für externe Wissenschaftler
 - Öffentliche Anchor-Bibliothek: kuratiertes Strukturwissen
 - API-frei: keine zentralisierte Cloud, kein SaaS
+
+## Phase 9 — LoRa Transport (Vision, 2027)
+
+**Ziel:** Strukturelle Signaturen auch ohne Internet-Infrastruktur übertragen — offline-first bis in die letzte Meile.
+
+Kernidee:
+- LoRa (Sub-1-GHz, 250–5500 bps) als Transportkanal für komprimierte Anchor-Packs
+- Strukturelle Signaturen sind klein genug für LoRa: ein 64-Byte-Anker ≈ 1 LoRa-Paket
+- Mesh-fähig: Knoten reichen Ankerpakete weiter (Store-and-Forward)
+- Offline-Szenarien: kein WLAN, kein Yggdrasil nötig — nur Funk
+
+Geplante Inhalte:
+- LoRa-Modul als Tier 5 im NetworkTier-System
+- Hardware-Targets: Raspberry Pi + LoRaWAN-HAT, ESP32-S3 + SX1276
+- Paketformat: Anchor-Pack + Signatur + Hop-Count, max 255 Byte
+- Automatische Datenrate-Anpassung (SF7–SF12) je nach Reichweite
+- Keine personenbezogenen Daten im Funk — nur Strukturhashes
+
+---
+
+## Phase 10 — Platform Expansion (Vision, 2027)
+
+**Ziel:** Aether auf allen relevanten Plattformen nativ lauffähig — ohne Python-Interpreter-Voraussetzung.
+
+| Plattform | Format | Status |
+|-----------|--------|--------|
+| Windows | `.exe` via PyInstaller (bestehend) | ✓ Fertig |
+| Android | natives APK (Kotlin, API 21+) | ✓ Fertig |
+| Linux | `.deb` + `.AppImage` (Rust-Shell + Python-Bundle) | Geplant |
+| macOS | `.dmg` (Universal Binary, x86-64 + ARM64) | Geplant |
+| iOS | Swift-App (Viewer + Local-Analyse, kein Vault-Write) | Vision |
+| Mobile (generisch) | PWA-Wrapper als Fallback für iOS/Android ohne Store | Vision |
+
+Linux-Priorität:
+- `daemon_headless.py` läuft bereits auf beliebigem Python 3.6+ ohne native Deps
+- Rust-Shell-Binary als `.AppImage` — self-contained, kein sudo required
+- `.deb`-Paket für Debian/Ubuntu mit systemd-Unit für Headless-Betrieb
+
+macOS-Priorität:
+- Universal Binary (Rosetta-kompatibel + ARM native für M-Chips)
+- `.dmg` mit Sign & Notarize für Gatekeeper-Kompatibilität
+- Keine Abhängigkeit von Homebrew — Bundle vollständig
+
+---
 
 ## Phase 8 — Governance & Community (Vision, 2027)
 

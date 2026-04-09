@@ -12,7 +12,6 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 
-const TRANSPORT_DIR: &str = "data/interbus";
 const EVENT_LOG_FILE: &str = "event_stream.jsonl";
 const PUBLISH_LOG_FILE: &str = "publish_requests.jsonl";
 
@@ -281,7 +280,7 @@ fn parse_event(event_type: &str, payload: Value) -> Result<BusEvent, String> {
 }
 
 fn transport_dir() -> PathBuf {
-    PathBuf::from(TRANSPORT_DIR)
+    crate::app_root().join("data").join("interbus")
 }
 
 fn event_log_path() -> PathBuf {

@@ -1,11 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
-const SETTINGS_PATH: &str = "data/settings.json";
-const STATUS_PATH: &str = "data/interbus/hybrid_status.json";
+fn settings_path() -> std::path::PathBuf { crate::data_path("settings.json") }
+fn status_path() -> std::path::PathBuf { crate::data_path("interbus/hybrid_status.json") }
 const BRIDGE_SCRIPT_PATH: &str = "modules/hybrid_bridge.py";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,6 +64,12 @@ pub struct HybridStatus {
     pub swarm_summary: String,
     pub last_error: String,
     pub last_tick: String,
+    /// Yggdrasil-Overlay laeuft (true wenn Prozess aktiv)
+    #[serde(default)]
+    pub yggdrasil_running: bool,
+    /// Eigene Yggdrasil IPv6-Adresse (200::/7), leer wenn nicht aktiv
+    #[serde(default)]
+    pub yggdrasil_addr: String,
 }
 
 pub struct PythonBridgeManager {
@@ -104,17 +109,17 @@ impl PythonBridgeManager {
             settings.python_path.trim()
         };
 
-        let script = Path::new(BRIDGE_SCRIPT_PATH);
+        let script = crate::app_root().join(BRIDGE_SCRIPT_PATH);
         if !script.is_file() {
             return Err(format!("Bridge-Skript fehlt: {}", script.display()));
         }
 
         let mut cmd = Command::new(python);
-        cmd.arg(BRIDGE_SCRIPT_PATH)
+        cmd.arg(&script)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .current_dir(PathBuf::from("."));
+            .current_dir(crate::app_root());
 
         let child = cmd
             .spawn()
@@ -140,7 +145,7 @@ impl PythonBridgeManager {
 
 pub fn load_hybrid_settings() -> HybridSettings {
     let default = HybridSettings::default();
-    let raw = match fs::read_to_string(SETTINGS_PATH) {
+    let raw = match fs::read_to_string(settings_path()) {
         Ok(v) => v,
         Err(_) => return default,
     };
@@ -199,7 +204,7 @@ pub fn load_hybrid_settings() -> HybridSettings {
 }
 
 pub fn write_hybrid_settings(settings: &HybridSettings) -> Result<(), String> {
-    let mut root = match fs::read_to_string(SETTINGS_PATH) {
+    let mut root = match fs::read_to_string(settings_path()) {
         Ok(raw) => serde_json::from_str::<Value>(&raw).unwrap_or_else(|_| Value::Object(Map::new())),
         Err(_) => Value::Object(Map::new()),
     };
@@ -225,14 +230,15 @@ pub fn write_hybrid_settings(settings: &HybridSettings) -> Result<(), String> {
         obj.insert("hybrid".to_owned(), hybrid_value);
     }
 
-    let data_dir = Path::new(SETTINGS_PATH)
+    let settings_file = settings_path();
+    let data_dir = settings_file
         .parent()
         .ok_or_else(|| "Settings-Pfad ist ungueltig".to_owned())?;
     fs::create_dir_all(data_dir).map_err(|err| format!("Settings-Verzeichnis fehlt: {err}"))?;
 
     let content = serde_json::to_string_pretty(&root)
         .map_err(|err| format!("Settings konnten nicht serialisiert werden: {err}"))?;
-    fs::write(SETTINGS_PATH, content).map_err(|err| format!("Settings konnten nicht geschrieben werden: {err}"))
+    fs::write(&settings_file, content).map_err(|err| format!("Settings konnten nicht geschrieben werden: {err}"))
 }
 
 pub fn set_symbiont_enabled(enabled: bool) -> Result<(), String> {
@@ -249,6 +255,6 @@ pub fn set_symbiont_endpoint(host: String, port: u16) -> Result<(), String> {
 }
 
 pub fn read_hybrid_status() -> Option<HybridStatus> {
-    let raw = fs::read_to_string(STATUS_PATH).ok()?;
+    let raw = fs::read_to_string(status_path()).ok()?;
     serde_json::from_str::<HybridStatus>(&raw).ok()
 }

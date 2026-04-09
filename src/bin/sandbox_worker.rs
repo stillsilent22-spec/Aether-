@@ -1,4 +1,4 @@
-use aether_rust_shell::observation::{ClassifyResponse, QuarantineCategory};
+use aether::observation::{ClassifyResponse, QuarantineCategory};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -31,10 +31,7 @@ struct WorkerStatus {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let db_path = PathBuf::from("data")
-        .join("rust_shell")
-        .join("quarantine")
-        .join("quarantine.db");
+    let db_path = aether::data_path("rust_shell/quarantine/quarantine.db");
     let command = parse_command(&args)?;
     apply_sandbox_restrictions();
     let store = QuarantineVaultStore::open(&db_path)?;

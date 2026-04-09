@@ -142,7 +142,7 @@ impl QuarantineIpcClient {
 
 impl Default for QuarantineIpcClient {
     fn default() -> Self {
-        Self::with_root(PathBuf::from("data").join("rust_shell").join("quarantine"))
+        Self::with_root(crate::data_path("rust_shell/quarantine"))
     }
 }
 
