@@ -9,6 +9,7 @@ import io
 import json
 import math
 import mimetypes
+import os
 import re
 import sqlite3
 import struct
@@ -277,6 +278,108 @@ _STRUCTURAL_CONSTANTS: dict[str, float] = {
     "log2":   math.log(2.0),     # 0.69314...
     "ln10":   math.log(10.0),    # 2.30258...
 }
+
+# ---------------------------------------------------------------------------
+# Temporal-Metadata-Consent Helper
+# ---------------------------------------------------------------------------
+_SETTINGS_PATH = Path("data/settings.json")
+
+
+def has_temporal_metadata_consent() -> bool:
+    """Liest das Einverständnis-Flag aus data/settings.json.
+    Standard ist False (Opt-In).  Kein Fehler wenn Datei fehlt.
+    """
+    try:
+        raw = _SETTINGS_PATH.read_text(encoding="utf-8")
+        return bool(json.loads(raw).get("temporal_metadata_consent", False))
+    except Exception:
+        return False
+
+
+def extract_source_date(file_path: Path) -> float | None:
+    """Liest das Entstehungsdatum einer Datei aus Metadaten.
+
+    Wertet aus:
+    - Dateisystem-Erstellungsdatum wenn eindeutig verfuegbar
+    - EXIF DateTimeOriginal / DateTime für JPEG/TIFF (erste 64 KB, kein Bild-Decode)
+    - ID3 TDRC für MP3 (erste 10 Bytes des ersten ID3-Frames)
+    - DICOM-Tag 0008,0020 StudyDate
+
+    Gibt Unix-Timestamp (float) zurück oder None.
+    Liest NIEMALS Dateiinhalt jenseits der benötigten Header-Bytes.
+    Darf NUR aufgerufen werden wenn has_temporal_metadata_consent() True ist.
+    Das Ergebnis geht AUSSCHLIESSLICH in den Zeitgraph-Tab —
+    NIEMALS in AetherFingerprint, Gossip oder Anker.
+    """
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return None
+
+    def _filesystem_creation_timestamp() -> float | None:
+        birth = getattr(stat, "st_birthtime", None)
+        if isinstance(birth, (int, float)) and birth > 0:
+            return float(birth)
+
+        if os.name == "nt":
+            ctime = getattr(stat, "st_ctime", None)
+            if isinstance(ctime, (int, float)) and ctime > 0:
+                return float(ctime)
+
+        return None
+
+    suffix = file_path.suffix.lower()
+
+    # EXIF: JPEG / TIFF — erste 64 KB reichen für IFD0
+    if suffix in {".jpg", ".jpeg", ".tiff", ".tif"}:
+        try:
+            header = file_path.read_bytes()[:65536]
+            # Suche nach ASCII-Datum "YYYY:MM:DD HH:MM:SS" in Header-Bytes
+            import re as _re
+            match = _re.search(rb"(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})", header)
+            if match:
+                from datetime import datetime as _dt, timezone as _tz
+                y, mo, d, h, mi, s = (int(g) for g in match.groups())
+                if 1970 <= y <= 2100:
+                    dt = _dt(y, mo, d, h, mi, s, tzinfo=_tz.utc)
+                    return dt.timestamp()
+        except Exception:
+            pass
+
+    # ID3: MP3 — TDRC-Frame
+    if suffix in {".mp3"}:
+        try:
+            header = file_path.read_bytes()[:4096]
+            # ID3v2: suche TDRC oder TYER nach "ID3"
+            import re as _re
+            m = _re.search(rb"(?:TDRC|TYER)[\x00-\xff]{6}(\d{4})", header)
+            if m:
+                year = int(m.group(1))
+                if 1970 <= year <= 2100:
+                    from datetime import datetime as _dt, timezone as _tz
+                    return _dt(year, 1, 1, tzinfo=_tz.utc).timestamp()
+        except Exception:
+            pass
+
+    # DICOM: StudyDate tag 0x0008,0x0020 = "YYYYMMDD"
+    if suffix in {".dcm", ""}:
+        try:
+            header = file_path.read_bytes()[:8192]
+            import re as _re
+            # DICOM StudyDate: group tag 0008 element 0020 little-endian
+            m = _re.search(rb"\x08\x00\x20\x00..\x00\x00(\d{8})", header)
+            if m:
+                ds = m.group(1).decode("ascii")
+                y, mo, d = int(ds[:4]), int(ds[4:6]), int(ds[6:8])
+                if 1970 <= y <= 2100:
+                    from datetime import datetime as _dt, timezone as _tz
+                    return _dt(y, mo, d, tzinfo=_tz.utc).timestamp()
+        except Exception:
+            pass
+
+    # Fallback nur wenn ein echtes Erstellungsdatum vorliegt.
+    # Upload-/Kopierzeiten via mtime wuerden die Zeitgraphen verfaelschen.
+    return _filesystem_creation_timestamp()
 
 
 def _nearest_structural_constant(value: float) -> tuple[str, float, float]:

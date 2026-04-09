@@ -209,6 +209,3 @@ pub fn code_suspicion_score(code: &str) -> f64 {
     clamp01(0.45 * entropy + 0.35 * eval_density + 0.20 * hex_ratio)
 }
 
-// Suppress dead-code warning for the helper (used transitively)
-#[allow(dead_code)]
-fn _use_shannon() { let _ = shannon_entropy_tokens(&[]); }

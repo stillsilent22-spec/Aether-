@@ -1,4 +1,4 @@
-﻿use iced::event;
+use iced::event;
 use iced::window;
 use std::collections::BTreeMap;
 use crate::state::RegisterEntry;
@@ -25,11 +25,9 @@ use crate::state::{StateStore, ChatMessage, PrivateThread, GroupRoom};
 use crate::security::{SecurityMonitor, SecuritySnapshot, SecurityAuditEvent};
 use crate::key_vault::DataKey;
 use crate::swarm_bootstrap::{SwarmStartupStatus, probe_swarm_startup};
-use crate::browser_embed::{EmbeddedBrowser, BrowserHostRect};
-use crate::browser::{BrowserProbePolicy, BrowserProbeResult, BrowserSearchContext, BrowserInspector};
 use crate::launcher_dashboard::{LauncherState, LauncherMode, ServiceStatus, BuildTaskResult};
 use crate::py_bridge::{PythonBridgeManager, load_hybrid_settings, read_hybrid_status};
-use crate::aef::{AefDecodeResult, AefDecoder, VaultStore};
+use crate::aef::{AefDecodeResult, AefDecoder, AefEncoder, EnginePipeline, VaultStore};
 use crate::hardware;
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use base64::Engine;
@@ -41,7 +39,7 @@ use std::fs;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Tab {
     Home, Control, Symbiont, SwarmOps, Privacy, Chat,
-    Browser, YouTube, Data, Anchors, Logs, Settings,
+    Data, Anchors, Logs, Settings,
     ADE, FlowSphere, StructureMap, Gaming, Media, Research, Rekonstruktion, Launcher, Imprint,
 }
 
@@ -54,13 +52,11 @@ impl Tab {
             Tab::SwarmOps => "Swarm Ops",
             Tab::Privacy => "Privacy",
             Tab::Chat => "Chat",
-            Tab::Browser => "Browser",
-            Tab::YouTube => "YouTube",
             Tab::Data => "Data",
             Tab::Anchors => "Anchors",
             Tab::Logs => "Logs",
             Tab::Settings => "Settings",
-            Tab::ADE => "ADE",
+            Tab::ADE => "Delta-Analyse",
             Tab::FlowSphere => "FlowSphere",
             Tab::StructureMap => "Delta Convergence",
             Tab::Gaming => "Gaming",
@@ -105,6 +101,121 @@ const OVERLAY_WINDOW_HEIGHT: f32 = 72.0;
 
 /// Helper to allow c(NAME) for color constants (for compatibility with codebase usage)
 fn c(color: Color) -> Color { color }
+
+// ---------------------------------------------------------------------------
+// FlowSphere – Sub-Tab und History-Eintrag
+// ---------------------------------------------------------------------------
+/// Drei Zeitebenen der Musteranalyse in FlowSphere.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FlowSphereSubTab {
+    #[default]
+    Session,  // Lokal – aktuelle Sitzung
+    History,  // Lokal – laengerer Zeitraum (persistiert)
+    Global,   // Global – Swarm-Knoten-Vergleich
+}
+
+/// Ein gespeicherter Analyseeintrag fuer die FlowSphere-History.
+/// Enthaelt alle 12 Mustererkennungsmetriken normiert auf [0,1].
+/// Reihenfolge: Shannon | PermEnt | KatzFD | Zipf | Benford | Fourier |
+///              Noether | H-Lambda | Symmetrie | SCE | DeltaKonv | Bayes
+#[derive(Debug, Clone)]
+pub struct FlowSphereEntry {
+    pub timestamp_secs: u64,      // Unix-Sekunden der Analyse selbst
+    pub source_timestamp_secs: Option<u64>, // Aus Datei-Metadaten extrahiertes Quelldatum
+    pub manual_timestamp_secs: Option<u64>, // Vom Nutzer gesetztes Bezugsdatum fuer Visualisierungen
+    pub source_label: String,     // Dateiname / Signalbezeichner
+    pub domain_hint: String,      // z.B. "Blutbild", "Klimadaten", "DNA", ""
+    pub broadcast_hint: String,   // Optionales Nutzerlabel nur fuer Broadcast-Abwaegungen
+    pub source_hash: String,      // SHA/Pipeline-Hash zur Deduplizierung
+    pub metrics: [f32; 12],       // Normierte Metrik-Werte [0,1]
+    pub anomaly_flags: Vec<String>,
+}
+
+impl FlowSphereEntry {
+    /// Baut einen Eintrag aus einem CapsuleViewState + CascadeMetrics.
+    fn from_capsule(
+        capsule: &CapsuleViewState,
+        cascade: Option<&CascadeMetrics>,
+        stability: f32,
+    ) -> Self {
+        let entropy        = (capsule.entropy / 8.0).clamp(0.0, 1.0);
+        let perm_entropy   = capsule.perm_entropy.clamp(0.0, 1.0);
+        let katz_fd        = (capsule.katz_dimension / 2.0).clamp(0.0, 1.0);
+        let zipf           = (capsule.zipf_alpha / 3.0).clamp(0.0, 1.0);
+        let benford        = capsule.benford_score.clamp(0.0, 1.0);
+        let fourier_raw    = cascade.map(|c| c.fourier_period as f32)
+                               .unwrap_or(capsule.periodicity);
+        let fourier        = (fourier_raw.ln_1p() / 3.912).clamp(0.0, 1.0);
+        let noether        = capsule.noether_consistency.clamp(0.0, 1.0);
+        let h_lambda       = capsule.h_lambda.clamp(0.0, 1.0);
+        let symmetry       = capsule.symmetry.clamp(0.0, 1.0);
+        let sce            = capsule.sce_score.clamp(0.0, 1.0);
+        let delta_conv     = (1.0 - capsule.delta_ratio).clamp(0.0, 1.0);
+        let bayes          = capsule.bayes_confidence.clamp(0.0, 1.0);
+        let _ = stability; // reserviert fuer zukuenftige Gewichtung
+
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        Self {
+            timestamp_secs: now,
+            source_timestamp_secs: None,
+            manual_timestamp_secs: None,
+            source_label: capsule.source_label.clone(),
+            domain_hint: capsule.domain_hint.clone(),
+            broadcast_hint: String::new(),
+            source_hash: capsule.source_hash.clone(),
+            metrics: [
+                entropy, perm_entropy, katz_fd, zipf, benford, fourier,
+                noether, h_lambda, symmetry, sce, delta_conv, bayes,
+            ],
+            anomaly_flags: capsule.anomaly_flags.clone(),
+        }
+    }
+
+    /// Wählt den Zeitwert für Graphen und History-Ansichten.
+    /// Nutzerlabels bleiben davon strikt getrennt.
+    fn visual_timestamp_secs(&self, temporal_metadata_consent: bool) -> u64 {
+        if temporal_metadata_consent {
+            self.source_timestamp_secs
+                .or(self.manual_timestamp_secs)
+                .unwrap_or(self.timestamp_secs)
+        } else {
+            self.manual_timestamp_secs.unwrap_or(self.timestamp_secs)
+        }
+    }
+
+    fn visual_timestamp_origin(&self, temporal_metadata_consent: bool) -> &'static str {
+        if temporal_metadata_consent && self.source_timestamp_secs.is_some() {
+            "meta"
+        } else if self.manual_timestamp_secs.is_some() {
+            "manual"
+        } else {
+            "analysis"
+        }
+    }
+
+    /// Kosinus-Aehnlichkeit zwischen diesem Eintrag und einem Metrik-Vektor [0,1].
+    fn cosine_similarity(&self, other_metrics: &[f32; 12]) -> f32 {
+        let dot: f32   = self.metrics.iter().zip(other_metrics.iter()).map(|(a,b)| a*b).sum();
+        let mag_a: f32 = self.metrics.iter().map(|v| v*v).sum::<f32>().sqrt();
+        let mag_b: f32 = other_metrics.iter().map(|v| v*v).sum::<f32>().sqrt();
+        if mag_a < 1e-6 || mag_b < 1e-6 { 0.0 } else { (dot / (mag_a * mag_b)).clamp(0.0, 1.0) }
+    }
+
+    /// Gibt Achsen-Indizes zurueck wo dieser Eintrag und der verglichene Metrik-Vektor
+    /// sich stark widersprechen (einer >0.65, der andere <0.35 auf derselben Achse).
+    fn contradiction_axes(&self, other_metrics: &[f32; 12]) -> Vec<usize> {
+        self.metrics.iter().zip(other_metrics.iter()).enumerate()
+            .filter_map(|(i, (a, b))| {
+                if (*a > 0.65 && *b < 0.35) || (*a < 0.35 && *b > 0.65) { Some(i) } else { None }
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct CascadeMetrics {
     pub entropy: f64,
@@ -143,6 +254,11 @@ struct CapsuleViewState {
     trigger: String,
     domain_hint: String,
     source_hash: String,
+    source_scope: String,
+    privacy_class: String,
+    artifact_class: String,
+    segment_count: u32,
+    segment_manifest_hash: String,
     size_bytes: u64,
     entropy: f32,
     h_lambda: f32,
@@ -159,6 +275,11 @@ struct CapsuleViewState {
     delta_ratio: f32,
     changed_bytes: u64,
     anomaly_flags: Vec<String>,
+    // ── Vier theoretische Limits — observational only, nie in Pipeline ──
+    /// Kolmogorov-Proxy (zlib-Komprimierbarkeit), 0–1 (höher = strukturierter)
+    kolmogorov_k: f32,
+    /// MDL-Modellabdeckung: Anteil der Bytes die durch Anker erklärt werden (L(Modell)/L(Signal))
+    anchor_coverage_ratio: f32,
 }
 
 impl CapsuleViewState {
@@ -183,6 +304,11 @@ impl CapsuleViewState {
                 .unwrap_or_else(|| capsule_meta.get("domain_hint").and_then(|value| value.as_str()).unwrap_or_default())
                 .to_owned(),
             source_hash: envelope.get("source_hash").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
+            source_scope: envelope.get("source_scope").and_then(|value| value.as_str()).unwrap_or("explicit_local_signal").to_owned(),
+            privacy_class: envelope.get("privacy_class").and_then(|value| value.as_str()).unwrap_or("explicit_user_signal").to_owned(),
+            artifact_class: envelope.get("artifact_class").and_then(|value| value.as_str()).unwrap_or("private_signal").to_owned(),
+            segment_count: envelope.get("segment_count").and_then(|value| value.as_u64()).unwrap_or(1) as u32,
+            segment_manifest_hash: envelope.get("segment_manifest_hash").and_then(|value| value.as_str()).unwrap_or_default().to_owned(),
             size_bytes: envelope.get("size_bytes").and_then(|value| value.as_u64()).unwrap_or_default(),
             entropy: value_as_f32(metrics.get("entropy")),
             h_lambda: value_as_f32(metrics.get("h_lambda")),
@@ -212,6 +338,15 @@ impl CapsuleViewState {
                 .and_then(|value| value.as_array())
                 .map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_owned)).collect())
                 .unwrap_or_default(),
+            // Kolmogorov-Proxy: aus sce_signature (bereits berechnet, kein neuer Pass)
+            kolmogorov_k: metrics
+                .get("sce_signature")
+                .and_then(|s| s.get("kolmogorov_k"))
+                .and_then(|v| v.as_f64())
+                .map(|v| v as f32)
+                .unwrap_or(0.0),
+            // MDL-Abdeckung: anchor_coverage_ratio direkt aus metrics
+            anchor_coverage_ratio: value_as_f32(metrics.get("anchor_coverage_ratio")),
         }
     }
 }
@@ -401,12 +536,17 @@ struct AnchorClusterView {
     item_count: usize,
     total_bytes: u64,
     sample_note: String,
+    /// Unix-Sekunden der frühesten Beobachtung in der FlowSphere-History
+    first_seen: Option<u64>,
+    /// Unix-Sekunden der jüngsten Beobachtung in der FlowSphere-History
+    last_seen: Option<u64>,
+    /// Wie oft Einträge dieser Gruppe in der Session-History aufgetaucht sind
+    observation_count: usize,
 }
 
 #[derive(Debug, Clone)]
 struct AnalysisSnapshot {
     file_name: String,
-    #[allow(dead_code)]
     original_size: u64,
     compression_gain_percent: f32,
     anchor_summary: String,
@@ -441,6 +581,10 @@ struct FileAnalysisResult {
     compression_state: Option<CompressionViewState>,
     reconstruction_state: Option<ReconstructionAuditViewState>,
     structure_map_nodes: Vec<Vec<f32>>,
+    /// Entstehungsdatum aus Datei-Metadaten (Unix-Sekunden) — nur für Zeitgraph-Tab.
+    /// None wenn temporal_metadata_consent=false oder kein Datum gefunden.
+    /// NIEMALS in Fingerprint, Gossip oder Anker verwenden.
+    source_date_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +604,20 @@ pub enum AppMode { Overlay, Full }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ChatContext { Private, Group, SwarmRequest }
+
+/// Eingehende Broadcast-Anfrage: ein Node hat strukturelle Ankermuster-Überschneidungen
+/// gefunden und bittet um Kontakt. Kein Inhalt wird übertragen.
+#[derive(Debug, Clone)]
+struct ChatBroadcastRequest {
+    /// Kurzkennung des anfragenden Nodes (kein Klarname, kein Inhalt)
+    node_id: String,
+    /// Strukturelles Signal das die Anfrage ausgelöst hat (z.B. "noether_break@domain:biology")
+    pattern_hint: String,
+    /// Domänen-Tag der Überschneidung
+    domain_tag: String,
+    /// Zeitstempel der Anfrage
+    epoch_week: String,
+}
 
 /// A pending swarm domain-overlap contact request from a remote node.
 #[derive(Debug, Clone)]
@@ -482,6 +640,21 @@ pub enum UiLanguage { German, English }
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RuntimeProfile { Auto, Balanced, LowPower, Legacy }
 
+#[derive(Debug, Clone, Copy)]
+struct ShellPreferences {
+    runtime_profile: RuntimeProfile,
+    persistent_mode: bool,
+    ui_language: UiLanguage,
+}
+
+/// Eine erkannte Telemetrie-Verbindung eines lokalen Prozesses.
+#[derive(Debug, Clone)]
+struct TelemetryAlert {
+    timestamp: String,
+    remote:    String,
+    process:   String,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
     LoginUsernameChanged(String),
@@ -499,24 +672,44 @@ enum Message {
     PrivatePartnerSelected(String),
     PrivateMessageChanged(String),
     PrivateMessageSend,
+    /// Nutzer tippt den Usernamen für eine direkte Einladung (Privat-Chat)
+    ChatInviteUsernameChanged(String),
+    /// Einladung per Username absenden
+    ChatInviteSend,
+    ChatBlockSelectedUser,
+    ChatUnblockSelectedUser,
+    GroupRoomSelected(String),
+    ChatGroupNameChanged(String),
+    ChatGroupCreate,
+    GroupMemberUsernameChanged(String),
+    GroupAddMember,
+    GroupRemoveMember(String),
+    GroupLeaveSelected,
     GroupMessageChanged(String),
     GroupMessageSend,
-    BrowserAddressChanged(String),
-    BrowserSearchQueryChanged(String),
-    BrowserLoadPressed,
-    BrowserInspectPressed,
-    BrowserSearchPressed,
-    BrowserInspectCompleted(BrowserProbeResult),
-    BrowserSearchCompleted(BrowserSearchContext),
-    YouTubeAddressChanged(String),
-    YouTubeLoadPressed,
-    YouTubeKiAnalysisPressed,
+    /// Broadcast-Anfrage: Nachricht für automatisierte Ankermuster-Anfrage
+    ChatBroadcastDraftChanged(String),
+    /// Broadcast abschicken (wird als offene Anfrage im Swarm-Anfragen-Tab sichtbar)
+    ChatBroadcastSend,
+    /// Eingehende Broadcast-Anfrage annehmen
+    ChatBroadcastAccept(String),
+    /// Eingehende Broadcast-Anfrage ablehnen
+    ChatBroadcastDecline(String),
     FileHovered(PathBuf),
     FileHoverCleared,
     ShowTooltip(String),
     FileDropped(PathBuf),
+    /// Nutzer tippt im Drop-Annotation-Feld
+    DropAnnotationChanged(String),
+    /// Nutzer tippt ein visuelles Quelldatum / Bezugsdatum fuer die Zeitachsen ein
+    DropSourceDateChanged(String),
+    /// Nutzer bestätigt: Analyse starten mit der eingegebenen Beschriftung
+    DropAnnotationConfirmed,
+    /// Nutzer bricht Drop-Annotation ab
+    DropAnnotationCancelled,
     FileAnalysisCompleted(Result<FileAnalysisResult, String>),
     LiveRenderAnalysisCompleted(Result<LiveRenderAnalysisResult, String>),
+    AutoAefEncodeCompleted(Result<String, String>),
     ReconstructPressed(u64),
     ReconstructionCompleted(Result<(String, AefDecodeResult), String>),
     ExportPressed(u64),
@@ -535,22 +728,21 @@ enum Message {
     FlowSphereBroadcastConsentToggled,
     FlowSphereBroadcastSuggest,
     FlowSphereBroadcastApprove,
+    FlowSphereBroadcastDispatch,
     FlowSphereBroadcastReject,
     FlowSphereExplain(String),
     FlowSphereNodeClicked(usize),
     FlowSphereExportPressed,
+    FlowSphereSubTabSelected(FlowSphereSubTab),
+    FlowSphereCompareSelected(usize),
     OpenFullTab(Tab),
     ToggleMode,
     LiveRenderToggle,
-    SymbiontInputChanged(String),
-    SymbiontProfilePressed,
-    SymbiontRazorPressed,
-    SymbiontSnapshotPressed,
-    SymbiontStatusPressed,
-    SymbiontDecodeDnaPressed,
-    SymbiontRpcCompleted(Result<String, String>),
     SymbiontEventsReceived(Result<(Vec<String>, u64), String>),
     SymbiontEventsClearPressed,
+    SymbiontInputChanged(String),
+    SymbiontRunPressed,
+    SymbiontResultReceived(Result<String, String>),
     HybridBridgeStartPressed,
     HybridBridgeStopPressed,
     HybridBridgeRestartPressed,
@@ -571,6 +763,18 @@ enum Message {
     SwarmOverlapAccepted(String),
     /// User declined a swarm domain-overlap contact request (payload = anchor_hash_a).
     SwarmOverlapDeclined(String),
+    /// Nutzer schaltet den Telemetrie-Firewall-Block ein oder aus.
+    TelemetryShieldToggle(bool),
+    /// Nutzer aktiviert / deaktiviert Entstehungsdatum-Lesen (nur Zeitgraph-Tab).
+    TemporalMetadataConsentToggle(bool),
+    /// Hintergrund-Scan hat Telemetrie-Verbindungen zurückgemeldet (oder leere Liste).
+    TelemetryScanResult(Vec<TelemetryAlert>),
+    /// Fenster-Schliessen-Anfrage (X-Button) abgefangen — kein Auto-Beenden.
+    CloseWindowRequested(window::Id),
+    /// Erzwungenes Beenden aus den Einstellungen heraus.
+    ForceQuit,
+    /// Permanent-Modus (Fenster bleibt offen statt zu schliessen) ein/aus.
+    PersistentModeToggle(bool),
 }
 
 pub struct AetherIcedShell {
@@ -594,14 +798,16 @@ pub struct AetherIcedShell {
     chat_user_search: String,
     selected_private_partner: Option<String>,
     private_message_draft: String,
+    /// Eingabefeld: Username für direkte Einladung im Privat-Chat
+    chat_invite_username: String,
+    selected_group_room_id: Option<String>,
+    chat_group_name: String,
+    group_member_username: String,
+    /// Eingabefeld: Broadcast-Anfrage (Gruppen-Tab)
+    chat_broadcast_draft: String,
+    /// Eingehende Broadcast-Anfragen (strukturell initiiert)
+    chat_broadcast_requests: Vec<ChatBroadcastRequest>,
     group_message_draft: String,
-    browser_address: String,
-    browser_search_query: String,
-    browser_note: String,
-    browser_probe: Option<BrowserProbeResult>,
-    browser_search_context: Option<BrowserSearchContext>,
-    browser_probe_policy: BrowserProbePolicy,
-    browser_embed: EmbeddedBrowser,
     analysis_running: bool,
     analysis_progress: f32,
     analysis_status: String,
@@ -615,7 +821,6 @@ pub struct AetherIcedShell {
     window_width: f32,
     window_height: f32,
     tick_counter: u64,
-    browser_sync_stride: u64,
     runtime_profile: RuntimeProfile,
     ui_language: UiLanguage,
     dashboard_search: String,
@@ -643,8 +848,13 @@ pub struct AetherIcedShell {
     flow_sphere_broadcast_opt_in: bool,    // Broadcast nur nach ausdruecklicher Zustimmung
     flow_sphere_broadcast_proposal: Option<String>,
     flow_sphere_broadcast_visible: Option<String>,
-    // --- YouTube ---
-    youtube_address: String,
+    flow_sphere_broadcast_outbound: Option<String>,
+    flow_sphere_broadcast_last_sent_at: Option<String>,
+    // FlowSphere – History und Sub-Tab
+    flow_sphere_subtab: FlowSphereSubTab,
+    flow_sphere_history: Vec<FlowSphereEntry>,  // persistierte Analyseeintraege (aller Sitzungen)
+    flow_sphere_session_entries: Vec<FlowSphereEntry>, // nur diese Sitzung
+    flow_sphere_compare_idx: Option<usize>,     // Index in history fuer direkten Vergleich
     // --- Rekonstruktion ---
     rekonstruktion_selected: Option<u64>,
     rekonstruktion_running: bool,
@@ -673,6 +883,8 @@ pub struct AetherIcedShell {
     hybrid_symbiont_running: bool,
     hybrid_aethernet_running: bool,
     hybrid_aethernet_receiver_port: u16,
+    hybrid_yggdrasil_running: bool,
+    hybrid_yggdrasil_addr: String,
     symbiont_host: String,
     symbiont_port: u16,
     symbiont_input: String,
@@ -714,16 +926,27 @@ pub struct AetherIcedShell {
     /// bits_saved_this_tick / joules_consumed_this_tick
     /// (bits_saved = (1-delta_ratio)*frame_bytes*8, joules = cpu_pct/100*15W*1/fps)
     live_render_bits_per_joule: f32,
+    /// Rolling history of bits-per-joule (last 60 values = ~2 min at default tick).
+    live_render_bpj_history: Vec<f32>,
     /// True when the user explicitly toggled Live-Render via the button (survives tab switches).
     /// False (default): context-driven — active automatically only on Gaming / Media tabs.
     live_render_explicit: bool,
     pending_analysis_world: Option<Tab>,
     pending_analysis_path: Option<PathBuf>,
+    pending_chat_partner: Option<String>,
+    pending_chat_group_room_id: Option<String>,
+    /// Drop-Annotation-Modal: Datei wartet auf Nutzer-Beschriftung
+    drop_pending_path: Option<PathBuf>,
+    drop_pending_world: Option<Tab>,
+    drop_annotation_input: String,
+    drop_source_date_input: String,
+    pending_broadcast_hint: Option<String>,
+    pending_visual_source_date_secs: Option<u64>,
+    /// Schnell-Entropie aus den ersten 4KB der Datei (0.0–8.0 bits/byte)
+    drop_quick_entropy: f32,
     active_gaming_game_id: Option<String>,
     gaming_progress_rows: Vec<GamingProgressRow>,
     gaming_progress_last_live_update_tick: u64,
-    #[allow(dead_code)]
-    backup_enabled: bool, // Wird über die GUI gesetzt (Checkbox)
     swarm_consented: bool, // Swarm-Teilnahme: opt-in/out über UI steuerbar
     /// Pending swarm domain-overlap contact requests, polled from data/interbus/.
     swarm_overlap_requests: Vec<SwarmOverlapRequest>,
@@ -735,6 +958,21 @@ pub struct AetherIcedShell {
     backend_capability_score: f32,
     /// Human-readable stage label for the capability score.
     backend_capability_stage: String,
+    /// Ob der Telemetrie-Firewall-Block aktiv ist.
+    telemetry_shield_enabled: bool,
+    /// Zustimmung: Entstehungsdatum aus Datei-Metadaten lesen (nur für Zeitgraph-Tab).
+    /// Kein Inhalt wird gelesen — nur mtime / Header-Timestamp-Bytes.
+    temporal_metadata_consent: bool,
+    /// Erkannte Telemetrie-Verbindungen (max. 30, neueste zuerst).
+    telemetry_alerts: Vec<TelemetryAlert>,
+    /// Programm läuft dauerhaft: X-Button minimiert zur Leiste statt zu beenden.
+    persistent_mode: bool,
+    /// Netzwerk-Tier aus hw_capability.json (geschrieben beim Start via hardware::detect).
+    hw_network_tier: String,
+    /// OS-Platform-Label aus hw_capability.json.
+    hw_os_platform: String,
+    /// Welche P2P-Features freigeschaltet (lan_beacon, lan_p2p, yggdrasil, dht).
+    hw_p2p_unlocked: [bool; 4],
 }
 
 impl AetherIcedShell {
@@ -749,7 +987,36 @@ impl AetherIcedShell {
         };
         let auth_store = AuthStore::load_default();
         let known_user_count = auth_store.user_count();
+        let known_username = auth_store.sole_username();
         let state_store = StateStore::load_default();
+        let detected_hardware_profile = {
+            let hw = hardware::detect();
+            hardware::write_capability_json(&hw);
+            hw
+        };
+        let detected_runtime_profile = {
+            use crate::hardware::RecommendedProfile;
+            match detected_hardware_profile.recommended_profile() {
+                RecommendedProfile::Legacy => RuntimeProfile::Legacy,
+                RecommendedProfile::LowPower => RuntimeProfile::LowPower,
+                RecommendedProfile::Auto => RuntimeProfile::Auto,
+            }
+        };
+        let (_, detected_lb, detected_lp, detected_ygg, detected_dht) =
+            detected_hardware_profile.network_tier.features();
+        let detected_os_platform = match &detected_hardware_profile.os_platform {
+            hardware::OsPlatform::Win9x => "Win9x",
+            hardware::OsPlatform::Win2000 => "Win2000",
+            hardware::OsPlatform::WinXP => "WinXP",
+            hardware::OsPlatform::WinVista7 => "WinVista7",
+            hardware::OsPlatform::WinModern => "WinModern",
+            hardware::OsPlatform::LinuxLegacy => "LinuxLegacy",
+            hardware::OsPlatform::LinuxModern => "LinuxModern",
+            hardware::OsPlatform::RaspberryPi => "RaspberryPi",
+            hardware::OsPlatform::Unknown => "Unknown",
+        }
+        .to_owned();
+        let shell_preferences = read_shell_preferences(detected_runtime_profile);
         let mut shell = Self {
             auth_store,
             state_store,
@@ -760,9 +1027,14 @@ impl AetherIcedShell {
             security_snapshot: SecuritySnapshot::default(),
             security_audit_events: Vec::new(),
             swarm_startup: swarm_startup.clone(),
-            login_username: String::new(),
+            login_username: known_username.clone().unwrap_or_default(),
             login_password: String::new(),
-            status_line: if known_user_count > 0 {
+            status_line: if let Some(username) = known_username {
+                format!(
+                    "Lokales Konto '{}' erkannt. Anmeldung weiterhin erforderlich.",
+                    username
+                )
+            } else if known_user_count > 0 {
                 format!(
                     "{} lokaler Nutzer erkannt. Anmeldung weiterhin erforderlich.",
                     known_user_count
@@ -780,16 +1052,13 @@ impl AetherIcedShell {
             chat_user_search: String::new(),
             selected_private_partner: None,
             private_message_draft: String::new(),
+            chat_invite_username: String::new(),
+            selected_group_room_id: None,
+            chat_group_name: String::new(),
+            group_member_username: String::new(),
+            chat_broadcast_draft: String::new(),
+            chat_broadcast_requests: Vec::new(),
             group_message_draft: String::new(),
-            browser_address: "https://duckduckgo.com/".to_owned(),
-            browser_search_query: String::new(),
-            browser_note:
-                "DuckDuckGo wird lokal eingebettet. Strukturprobe und Webflaeche laufen getrennt."
-                    .to_owned(),
-            browser_probe: None,
-            browser_search_context: None,
-            browser_probe_policy: BrowserProbePolicy::default(),
-            browser_embed: EmbeddedBrowser::new(),
             analysis_running: false,
             analysis_progress: 0.0,
             analysis_status: "Bereit fuer lokale Artefakte.".to_owned(),
@@ -806,16 +1075,8 @@ impl AetherIcedShell {
             window_width: FULL_WINDOW_WIDTH,
             window_height: FULL_WINDOW_HEIGHT,
             tick_counter: 0,
-            browser_sync_stride: 3,
-            runtime_profile: {
-                use crate::hardware::RecommendedProfile;
-                match hardware::detect().recommended_profile() {
-                    RecommendedProfile::Legacy   => RuntimeProfile::Legacy,
-                    RecommendedProfile::LowPower => RuntimeProfile::LowPower,
-                    RecommendedProfile::Auto     => RuntimeProfile::Auto,
-                }
-            },
-            ui_language: UiLanguage::German,
+            runtime_profile: shell_preferences.runtime_profile,
+            ui_language: shell_preferences.ui_language,
             dashboard_search: String::new(),
             dashboard_nav: "Overview".to_owned(),
             dashboard_info_key: None,
@@ -839,7 +1100,12 @@ impl AetherIcedShell {
             flow_sphere_broadcast_opt_in: false,
             flow_sphere_broadcast_proposal: None,
             flow_sphere_broadcast_visible: None,
-            youtube_address: "https://www.youtube.com/".to_owned(),
+            flow_sphere_broadcast_outbound: None,
+            flow_sphere_broadcast_last_sent_at: None,
+            flow_sphere_subtab: FlowSphereSubTab::Session,
+            flow_sphere_history: Vec::new(),
+            flow_sphere_session_entries: Vec::new(),
+            flow_sphere_compare_idx: None,
             rekonstruktion_selected: None,
             rekonstruktion_running: false,
             rekonstruktion_result: None,
@@ -866,6 +1132,8 @@ impl AetherIcedShell {
             hybrid_symbiont_running: false,
             hybrid_aethernet_running: false,
             hybrid_aethernet_receiver_port: 7385,
+            hybrid_yggdrasil_running: false,
+            hybrid_yggdrasil_addr: String::new(),
             symbiont_host: hybrid_settings.symbiont.host.clone(),
             symbiont_port: hybrid_settings.symbiont.port,
             symbiont_input: String::new(),
@@ -897,9 +1165,19 @@ impl AetherIcedShell {
             live_render_noether_prev_spectral: [0.0f32; 5],
             live_render_noether_prev_entropy: 0.0,
             live_render_bits_per_joule: 0.0,
+            live_render_bpj_history: Vec::new(),
             live_render_explicit: false,
             pending_analysis_world: None,
             pending_analysis_path: None,
+            pending_chat_partner: None,
+            pending_chat_group_room_id: None,
+            drop_pending_path: None,
+            drop_pending_world: None,
+            drop_annotation_input: String::new(),
+            drop_source_date_input: String::new(),
+            pending_broadcast_hint: None,
+            pending_visual_source_date_secs: None,
+            drop_quick_entropy: 0.0,
             active_gaming_game_id: None,
             gaming_progress_rows: load_gaming_progress_rows(),
             gaming_progress_last_live_update_tick: 0,
@@ -907,11 +1185,23 @@ impl AetherIcedShell {
             cascade_metrics: None,
             backend_capability_score: 0.0,
             backend_capability_stage: String::new(),
-            backup_enabled: true, // Standardmäßig aktiviert
             swarm_consented: read_swarm_consent(),
             swarm_overlap_requests: Vec::new(),
+            telemetry_shield_enabled: false,
+            telemetry_alerts: Vec::new(),
+            temporal_metadata_consent: {
+                let p = std::path::Path::new("data/settings.json");
+                std::fs::read_to_string(p)
+                    .ok()
+                    .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                    .and_then(|v| v.get("temporal_metadata_consent").and_then(|b| b.as_bool()))
+                    .unwrap_or(false)
+            },
+            persistent_mode: shell_preferences.persistent_mode,
+            hw_network_tier: detected_hardware_profile.network_tier.label().to_owned(),
+            hw_os_platform: detected_os_platform,
+            hw_p2p_unlocked: [detected_lb, detected_lp, detected_ygg, detected_dht],
         };
-        shell.browser_sync_stride = shell.profile_browser_sync_stride();
         if shell.swarm_startup.node_initialized {
             shell.analysis_status = shell.swarm_startup.summary.clone();
         }
@@ -925,7 +1215,7 @@ impl AetherIcedShell {
 // --- Moved methods into impl block ---
 
 fn read_swarm_consent() -> bool {
-    let path = std::path::Path::new("data").join("swarm_consent.json");
+    let path = crate::data_path("swarm_consent.json");
     if let Ok(raw) = fs::read_to_string(&path) {
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
             if let Some(v) = val.get("consented").and_then(|v| v.as_bool()) {
@@ -944,7 +1234,7 @@ fn read_swarm_consent() -> bool {
 }
 
 fn write_swarm_consent(enabled: bool) -> Result<(), String> {
-    let path = std::path::Path::new("data").join("swarm_consent.json");
+    let path = crate::data_path("swarm_consent.json");
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -969,6 +1259,110 @@ fn write_swarm_consent(enabled: bool) -> Result<(), String> {
     state["actor"] = serde_json::Value::String("iced_shell".to_owned());
     fs::write(&path, serde_json::to_string_pretty(&state).map_err(|e| e.to_string())?)
         .map_err(|e| e.to_string())
+}
+
+fn read_shell_preferences(detected_runtime_profile: RuntimeProfile) -> ShellPreferences {
+    let path = crate::data_path("settings.json");
+    let mut prefs = ShellPreferences {
+        runtime_profile: detected_runtime_profile,
+        persistent_mode: true,
+        ui_language: UiLanguage::German,
+    };
+
+    let Ok(raw) = fs::read_to_string(&path) else {
+        return prefs;
+    };
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return prefs;
+    };
+
+    if let Some(profile_raw) = value
+        .get("runtime_profile_override")
+        .and_then(|entry| entry.as_str())
+    {
+        if let Some(profile) = parse_runtime_profile(profile_raw) {
+            prefs.runtime_profile = profile;
+        }
+    }
+    if let Some(persistent_mode) = value
+        .get("close_only_via_settings")
+        .and_then(|entry| entry.as_bool())
+    {
+        prefs.persistent_mode = persistent_mode;
+    }
+    if let Some(language_raw) = value.get("shell_ui_language").and_then(|entry| entry.as_str()) {
+        if let Some(language) = parse_ui_language(language_raw) {
+            prefs.ui_language = language;
+        }
+    }
+
+    prefs
+}
+
+fn write_shell_preferences(
+    runtime_profile: RuntimeProfile,
+    persistent_mode: bool,
+    ui_language: UiLanguage,
+) -> Result<(), String> {
+    let path = crate::data_path("settings.json");
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+
+    let mut value = if path.exists() {
+        fs::read_to_string(&path)
+            .ok()
+            .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()))
+    } else {
+        serde_json::Value::Object(serde_json::Map::new())
+    };
+    if !value.is_object() {
+        value = serde_json::Value::Object(serde_json::Map::new());
+    }
+
+    value["runtime_profile_override"] =
+        serde_json::Value::String(runtime_profile_setting_label(runtime_profile).to_owned());
+    value["close_only_via_settings"] = serde_json::Value::Bool(persistent_mode);
+    value["shell_ui_language"] =
+        serde_json::Value::String(ui_language_setting_label(ui_language).to_owned());
+
+    let serialized = serde_json::to_string_pretty(&value).map_err(|err| err.to_string())?;
+    fs::write(&path, serialized).map_err(|err| err.to_string())
+}
+
+fn parse_runtime_profile(value: &str) -> Option<RuntimeProfile> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "auto" => Some(RuntimeProfile::Auto),
+        "balanced" => Some(RuntimeProfile::Balanced),
+        "low-power" | "low_power" | "lowpower" => Some(RuntimeProfile::LowPower),
+        "legacy" => Some(RuntimeProfile::Legacy),
+        _ => None,
+    }
+}
+
+fn runtime_profile_setting_label(profile: RuntimeProfile) -> &'static str {
+    match profile {
+        RuntimeProfile::Auto => "auto",
+        RuntimeProfile::Balanced => "balanced",
+        RuntimeProfile::LowPower => "low-power",
+        RuntimeProfile::Legacy => "legacy",
+    }
+}
+
+fn parse_ui_language(value: &str) -> Option<UiLanguage> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "de" | "german" | "deutsch" => Some(UiLanguage::German),
+        "en" | "english" => Some(UiLanguage::English),
+        _ => None,
+    }
+}
+
+fn ui_language_setting_label(language: UiLanguage) -> &'static str {
+    match language {
+        UiLanguage::German => "de",
+        UiLanguage::English => "en",
+    }
 }
 
 fn load_gaming_progress_rows() -> Vec<GamingProgressRow> {
@@ -1074,21 +1468,19 @@ impl AetherIcedShell {
                 Tab::SwarmOps     => "Schwarm: Knoten starten, verbinden und koordinieren. Zeigt wer aktiv ist und welche Invarianten geteilt werden.",
                 Tab::Privacy      => "Datenschutz: festlegen wer welche Daten sieht, wie lange sie gespeichert bleiben und was geschw\u{e4}rzt wird.",
                 Tab::Chat         => "Chat: Fragen stellen, Abl\u{e4}ufe steuern und Nachrichten mit anderen lokalen Nutzern austauschen.",
-                Tab::Browser      => "Browser: eingebetteter Web-Browser f\u{fc}r sichere Recherche direkt in Aether \u{2014} ohne externen Browser.",
-                Tab::YouTube      => "YouTube: Videos laden und gleichzeitig strukturell analysieren. KI-Mustererkennung l\u{e4}uft im Hintergrund.",
                 Tab::Data         => "Daten: Dateien ablegen, analysieren und als Artefakte sichern \u{2014} hier landen alle Analyse-Ergebnisse.",
                 Tab::Settings     => "Einstellungen: Laufzeit-Profil w\u{e4}hlen (Legacy f\u{fc}r \u{e4}ltere Hardware), Takt und Bridge-Verbindungen konfigurieren.",
                 Tab::Logs         => "Protokoll: alle Ereignisse, Fehler und Sicherheitsmeldungen chronologisch \u{2014} der Blick hinter die Kulissen.",
                 Tab::Anchors      => "Anker: unver\u{e4}nderliche Strukturpunkte anzeigen, die beweisen dass Daten nicht manipuliert wurden.",
+                Tab::ADE          => "Bedrohungsanalyse: Dateien auf Malware, Obfuskation und Anomalien pr\u{fc}fen \u{2014} mit erkl\u{e4}rbaren Ergebnissen.",
                 Tab::FlowSphere   => "FlowSphere: 3D-Musterbild \u{2014} zeigt Zusammenh\u{e4}nge, Ausrei\u{df}er und Stabilit\u{e4}t des Gesamtbilds.",
                 Tab::StructureMap => "Strukturkarte: Delta-Konvergenz und Kompressionspfad \u{2014} wie stark haben sich Daten ver\u{e4}ndert, wie gut lassen sie sich rekonstruieren.",
                 Tab::Gaming       => "Gaming-Welt: misst wie viel Aether \u{fc}ber interaktive Muster gelernt hat und wann ein stabiler Rollout sinnvoll ist.",
                 Tab::Media        => "Medien-Welt: Sequenzen, Videos und Audio werden offline verdichtet \u{2014} je mehr Material, desto besser die Modelle.",
                 Tab::Research     => "Forschungs-Welt: Messdaten und Archive r\u{fc}ckwirkend verkn\u{fc}pfen und reproduzierbar machen.",
-                Tab::ADE          => "Bedrohungsanalyse: Dateien auf Malware, Obfuskation und Anomalien pr\u{fc}fen \u{2014} mit erkl\u{e4}rbaren Ergebnissen.",
-                Tab::Imprint      => "Impressum: Version, Datenschutzprinzipien und rechtliche Hinweise zu Aether.",
                 Tab::Rekonstruktion => "Rekonstruktion: Artefakte aus dem Vault wiederherstellen und den Rekonstruktionspfad nachvollziehen.",
                 Tab::Launcher     => "Launcher: Dienste starten und stoppen, Build-Aufgaben ausf\u{fc}hren und Live-Logs beobachten.",
+                Tab::Imprint      => "Impressum: Version, Datenschutzprinzipien und rechtliche Hinweise zu Aether.",
             },
             UiLanguage::English => match self.active_tab {
                 Tab::Home         => "Dashboard: current system state, alerts, readiness score and quick access.",
@@ -1097,21 +1489,19 @@ impl AetherIcedShell {
                 Tab::SwarmOps     => "Swarm: start, connect and coordinate nodes. Shows who is active and which invariants are shared.",
                 Tab::Privacy      => "Privacy: define who sees what data, how long it is retained, and what gets redacted.",
                 Tab::Chat         => "Chat: ask questions, control workflows, and exchange messages with other local users.",
-                Tab::Browser      => "Browser: embedded web browser for secure research directly inside Aether.",
-                Tab::YouTube      => "YouTube: load and structurally analyze videos simultaneously. AI pattern recognition runs in the background.",
                 Tab::Data         => "Data: store files, run analysis, and save results as artifacts.",
                 Tab::Settings     => "Settings: choose runtime profile, configure tick cadence and bridge connections.",
                 Tab::Logs         => "Logs: all events, errors and security messages in chronological order.",
                 Tab::Anchors      => "Anchors: view immutable structural checkpoints that prove data has not been tampered with.",
+                Tab::ADE          => "Threat Analysis: scan files for malware, obfuscation and anomalies \u{2014} with explainable results.",
                 Tab::FlowSphere   => "FlowSphere: 3D pattern view \u{2014} shows relationships, outliers and overall stability.",
                 Tab::StructureMap => "Structure Map: delta convergence and compression path \u{2014} how much data changed and how well it can be reconstructed.",
                 Tab::Gaming       => "Gaming World: measures how much Aether learned from interactive patterns and when a stable rollout makes sense.",
                 Tab::Media        => "Media World: sequences, videos and audio are compressed offline \u{2014} more material means better models.",
                 Tab::Research     => "Research World: link measurement series and archives retroactively and make them reproducible.",
-                Tab::ADE          => "Threat Analysis: scan files for malware, obfuscation and anomalies \u{2014} with explainable results.",
-                Tab::Imprint      => "About: version, privacy principles and legal information about Aether.",
                 Tab::Rekonstruktion => "Reconstruction: restore artifacts from the vault and trace the reconstruction path.",
                 Tab::Launcher     => "Launcher: start and stop services, run build tasks, and monitor live logs.",
+                Tab::Imprint      => "About: version, privacy principles and legal information about Aether.",
             },
         }
     }
@@ -1127,7 +1517,13 @@ impl AetherIcedShell {
             .cascade_metrics
             .as_ref()
             .map(|metrics| metrics.perm_entropy as f32)
-            .unwrap_or_else(|| if self.structure_map_locked { 1.0 } else { self.structure_map_compression / 100.0 });
+            .unwrap_or_else(|| {
+                if self.structure_map_locked {
+                    1.0
+                } else {
+                    self.structure_map_compression / 100.0
+                }
+            });
         let noether = self
             .cascade_metrics
             .as_ref()
@@ -1159,8 +1555,12 @@ impl AetherIcedShell {
         let external_link_strength = if self.backend_swarm_node_count == 0 {
             0.0
         } else {
-            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
-                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32)
+                * 0.7
+                + (self.backend_swarm_candidate_count as f32
+                    / self.backend_swarm_node_count.max(1) as f32)
+                    .min(1.0)
+                    * 0.3)
                 .clamp(0.0, 1.0)
         };
 
@@ -1177,7 +1577,14 @@ impl AetherIcedShell {
             ),
             "overlay" => (
                 "Ueberlagerungen".to_owned(),
-                format!("Delta-Pulse zeigen Versatz und Takt bei {:.0}% Delta", self.cascade_metrics.as_ref().map(|metrics| metrics.delta_convergence as f32).unwrap_or(0.0) * 100.0),
+                format!(
+                    "Delta-Pulse zeigen Versatz und Takt bei {:.0}% Delta",
+                    self.cascade_metrics
+                        .as_ref()
+                        .map(|metrics| metrics.delta_convergence as f32)
+                        .unwrap_or(0.0)
+                        * 100.0
+                ),
                 "Die goldenen Pulse markieren Stellen, an denen mehrere Bewegungen gleichzeitig sichtbar werden. Wenn Linien, Wellen und Pulse dicht zusammenlaufen, ueberlagern sich verschiedene Muster oder Veraenderungsphasen. Dort lohnt sich ein zweiter Blick auf Ursache, Reihenfolge und Drift.".to_owned(),
                 Color::from_rgb8(0xFF, 0xC8, 0x3A),
             ),
@@ -1196,22 +1603,32 @@ impl AetherIcedShell {
                 if self.backend_swarm_node_count == 0 {
                     "Noch keine externen Knoten sichtbar".to_owned()
                 } else {
-                    format!("{} Knoten, {:.0}% Kopplung nach aussen", self.backend_swarm_node_count, external_link_strength * 100.0)
+                    format!(
+                        "{} Knoten, {:.0}% Kopplung nach aussen",
+                        self.backend_swarm_node_count,
+                        external_link_strength * 100.0
+                    )
                 },
                 "Die cyanfarbenen Knoten und Leitungen zeigen, wie stark der aktuelle Bereich nach aussen verbunden ist. Dichte, ruhige Linien sprechen fuer gemeinsame Bewegung ueber Domaenengrenzen hinweg. Lockere oder rot kipppende Verbindungen deuten eher auf Drift, geringe Uebereinstimmung oder instabile Kopplung hin.".to_owned(),
                 Color::from_rgb8(0x59, 0xD5, 0xE9),
             ),
             _ if key.starts_with("attractor_") => {
-                let idx = key.trim_start_matches("attractor_").parse::<usize>().unwrap_or(0);
+                let idx = key
+                    .trim_start_matches("attractor_")
+                    .parse::<usize>()
+                    .unwrap_or(0);
                 (
                     format!("Attraktor {}", idx + 1),
                     format!("Musterkern {} von {}", idx + 1, self.structure_map_anchor_count.max(1)),
-                    format!("Dieser gruene Knoten ist ein stabiler Sammelpunkt im Innenbild. Er steht fuer einen wiederkehrenden Zustand oder eine Form, zu der der Verlauf immer wieder zurueckfindet. Je ruhiger die Umgebung und je hoeher Noether/Bayes stehen, desto belastbarer ist dieser Knoten als Erklaerungskern."),
+                    "Dieser gruene Knoten ist ein stabiler Sammelpunkt im Innenbild. Er steht fuer einen wiederkehrenden Zustand oder eine Form, zu der der Verlauf immer wieder zurueckfindet. Je ruhiger die Umgebung und je hoeher Noether/Bayes stehen, desto belastbarer ist dieser Knoten als Erklaerungskern.".to_owned(),
                     Color::from_rgb8(0x4C, 0xD9, 0x6E),
                 )
             }
             _ if key.starts_with("swarm_") => {
-                let idx = key.trim_start_matches("swarm_").parse::<usize>().unwrap_or(0);
+                let idx = key
+                    .trim_start_matches("swarm_")
+                    .parse::<usize>()
+                    .unwrap_or(0);
                 let label = self
                     .backend_swarm_summary
                     .split_whitespace()
@@ -1220,7 +1637,10 @@ impl AetherIcedShell {
                 (
                     format!("Swarm-Knoten {}", idx + 1),
                     format!("Externer Bezug im Netzkontext {}", label),
-                    format!("Dieser Knoten repraesentiert einen externen Vergleichspunkt. Die Linie dorthin zeigt, ob die lokale Bewegung auch ausserhalb des aktuellen Bereichs wieder auftaucht. Hohe Kopplung und ein ruhiger Bayes-Wert sprechen eher fuer geteilte Struktur als fuer Zufall oder isolierte Spitzen. Bayes aktuell {:.0}%.", bayes * 100.0),
+                    format!(
+                        "Dieser Knoten repraesentiert einen externen Vergleichspunkt. Die Linie dorthin zeigt, ob die lokale Bewegung auch ausserhalb des aktuellen Bereichs wieder auftaucht. Hohe Kopplung und ein ruhiger Bayes-Wert sprechen eher fuer geteilte Struktur als fuer Zufall oder isolierte Spitzen. Bayes aktuell {:.0}%.",
+                        bayes * 100.0
+                    ),
                     Color::from_rgb8(0x7F, 0xD9, 0xFF),
                 )
             }
@@ -1237,8 +1657,12 @@ impl AetherIcedShell {
         let external_link_strength = if self.backend_swarm_node_count == 0 {
             0.0
         } else {
-            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
-                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32)
+                * 0.7
+                + (self.backend_swarm_candidate_count as f32
+                    / self.backend_swarm_node_count.max(1) as f32)
+                    .min(1.0)
+                    * 0.3)
                 .clamp(0.0, 1.0)
         };
         let noether = self
@@ -1270,12 +1694,29 @@ impl AetherIcedShell {
             return None;
         }
 
+        let recent_broadcast_hint = self
+            .flow_sphere_session_entries
+            .iter()
+            .rev()
+            .chain(self.flow_sphere_history.iter().rev())
+            .find_map(|entry| {
+                let trimmed = entry.broadcast_hint.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                }
+            });
         let domain_hint = self
             .flow_sphere_domain_names
             .iter()
             .find_map(|value| {
                 let trimmed = value.trim();
-                if trimmed.is_empty() { None } else { Some(trimmed.to_owned()) }
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_owned())
+                }
             })
             .unwrap_or_else(|| "unbenannte Struktur".to_owned());
         let user_hint = self.flow_sphere_broadcast_name.trim();
@@ -1287,14 +1728,16 @@ impl AetherIcedShell {
             "lose aber wiederkehrende Kopplung"
         };
 
-        let prefix = if user_hint.is_empty() {
-            domain_hint
+        let prefix = if !user_hint.is_empty() {
+            user_hint.to_owned()
+        } else if let Some(hint) = recent_broadcast_hint {
+            hint
         } else {
-            format!("{} / {}", user_hint, domain_hint)
+            domain_hint
         };
 
         Some(format!(
-            "{} · {} · {:.0}% Kopplung · {} erreichbare Peers",
+            "{} | {} | {:.0}% Kopplung | {} erreichbare Peers",
             prefix,
             relation,
             external_link_strength * 100.0,
@@ -1306,8 +1749,12 @@ impl AetherIcedShell {
         let external_link_strength = if self.backend_swarm_node_count == 0 {
             0.0
         } else {
-            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32) * 0.7
-                + (self.backend_swarm_candidate_count as f32 / self.backend_swarm_node_count.max(1) as f32).min(1.0) * 0.3)
+            ((self.backend_swarm_reachable_node_count as f32 / self.backend_swarm_node_count as f32)
+                * 0.7
+                + (self.backend_swarm_candidate_count as f32
+                    / self.backend_swarm_node_count.max(1) as f32)
+                    .min(1.0)
+                    * 0.3)
                 .clamp(0.0, 1.0)
         };
         let noether = self
@@ -1362,11 +1809,11 @@ impl AetherIcedShell {
     }
 
     fn poll_backend_state(&mut self) {
-        let path = std::path::Path::new("data/interbus/backend_state.json");
+        let path = crate::data_path("interbus/backend_state.json");
         if !path.exists() {
             return;
         }
-        let Ok(raw) = std::fs::read_to_string(path) else {
+        let Ok(raw) = std::fs::read_to_string(&path) else {
             return;
         };
         let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -1409,8 +1856,8 @@ impl AetherIcedShell {
             .unwrap_or(&self.backend_swarm_summary.clone())
             .to_owned();
         self.backend_state_loaded = true;
-        // Read emergent OS capability score (written by capability_score.py)
-        let cap_path = std::path::Path::new("data").join("interbus").join("capability_score.json");
+
+        let cap_path = crate::data_path("interbus/capability_score.json");
         if let Ok(raw) = std::fs::read_to_string(&cap_path) {
             if let Ok(cval) = serde_json::from_str::<serde_json::Value>(&raw) {
                 self.backend_capability_score = cval["percent"]
@@ -1422,14 +1869,30 @@ impl AetherIcedShell {
                     .to_owned();
             }
         }
+
+        let hw_path = crate::data_path("interbus/hw_capability.json");
+        if let Ok(raw) = std::fs::read_to_string(&hw_path) {
+            if let Ok(hval) = serde_json::from_str::<serde_json::Value>(&raw) {
+                if let Some(s) = hval["network_tier"].as_str() {
+                    self.hw_network_tier = s.to_owned();
+                }
+                if let Some(s) = hval["os_platform"].as_str() {
+                    self.hw_os_platform = s.to_owned();
+                }
+                self.hw_p2p_unlocked = [
+                    hval["lan_beacon"].as_bool().unwrap_or(false),
+                    hval["lan_p2p"].as_bool().unwrap_or(false),
+                    hval["yggdrasil"].as_bool().unwrap_or(false),
+                    hval["dht"].as_bool().unwrap_or(false),
+                ];
+            }
+        }
     }
 
     /// Reads `data/interbus/swarm_overlap_events.json` and appends new entries to
     /// `self.swarm_overlap_requests`. Duplicate entries (same `anchor_hash_a`) are skipped.
     fn poll_swarm_overlap_events(&mut self) {
-        let path = std::path::Path::new("data")
-            .join("interbus")
-            .join("swarm_overlap_events.json");
+        let path = crate::data_path("interbus/swarm_overlap_events.json");
         let Ok(raw) = std::fs::read_to_string(&path) else {
             return;
         };
@@ -1502,6 +1965,10 @@ impl AetherIcedShell {
             }
             if !status.last_error.trim().is_empty() {
                 self.hybrid_bridge_error = status.last_error;
+            }
+            self.hybrid_yggdrasil_running = status.yggdrasil_running;
+            if !status.yggdrasil_addr.trim().is_empty() {
+                self.hybrid_yggdrasil_addr = status.yggdrasil_addr;
             }
         }
         let vscode_path = std::path::Path::new("data/interbus/vscode_symbiont_status.json");
@@ -1726,6 +2193,12 @@ impl AetherIcedShell {
             .unwrap_or_default()
     }
 
+    fn blocked_usernames(&self) -> Vec<String> {
+        self.current_username()
+            .map(|username| self.state_store.blocked_users_for(&username))
+            .unwrap_or_default()
+    }
+
     fn other_usernames(&self) -> Vec<String> {
         let current = self.current_username();
         let query = self.chat_user_search.trim().to_ascii_lowercase();
@@ -1733,6 +2206,15 @@ impl AetherIcedShell {
             .usernames()
             .into_iter()
             .filter(|username| Some(username.clone()) != current)
+            .filter(|username| {
+                if let Some(current_username) = current.as_ref() {
+                    !self
+                        .state_store
+                        .is_blocked_between(current_username, username)
+                } else {
+                    true
+                }
+            })
             .filter(|username| {
                 query.is_empty() || username.to_ascii_lowercase().contains(query.as_str())
             })
@@ -1760,65 +2242,121 @@ impl AetherIcedShell {
             .unwrap_or_default()
     }
 
-    fn browser_embed_rect(&self) -> BrowserHostRect {
-        if self.active_tab == Tab::Home
-            && (self.dashboard_nav == "Browser" || self.dashboard_nav == "YouTube")
-        {
-            let x = (self.window_width * 0.42)
-                .clamp(260.0, (self.window_width - 360.0).max(260.0));
-            let width = (self.window_width - x - 20.0).max(320.0);
-            return BrowserHostRect {
-                x: x as i32,
-                y: 178,
-                width: width as i32,
-                height: (self.window_height - 210.0).max(220.0) as i32,
-            }
-            .normalized();
-        }
-
-        // Responsive Navigator width: 140px—200px depending on window size
-        let nav_width = ((self.window_width * 0.15).clamp(140.0, 200.0)).floor();
-        let left_margin = 18.0;
-        let nav_gap = 12.0;
-        let right_column_x = left_margin + nav_width + nav_gap;
-        let main_width = (self.window_width - right_column_x - 18.0).max(360.0);
-        let top_tabs_height = 58.0;
-        let status_height = 30.0;
-        let content_top = 18.0 + top_tabs_height + status_height + 12.0;
-        let browser_inner_padding = 10.0;
-        let control_column_width = (main_width * 0.36).clamp(280.0, 420.0);
-        let split_gap = 12.0;
-        BrowserHostRect {
-            x: (right_column_x + browser_inner_padding + control_column_width + split_gap) as i32,
-            y: (content_top + browser_inner_padding) as i32,
-            width: (main_width - control_column_width - split_gap - browser_inner_padding * 2.0)
-                .max(320.0) as i32,
-            height: (self.window_height - content_top - 24.0).max(220.0) as i32,
-        }
-        .normalized()
+    fn active_private_blocked(&self) -> bool {
+        let Some(username) = self.current_username() else {
+            return false;
+        };
+        let Some(partner) = self.active_private_partner() else {
+            return false;
+        };
+        self.state_store.is_blocked_between(&username, &partner)
     }
 
-    fn sync_browser_embed(&mut self) {
-        if self.browser_surface_mode().is_none() {
-            self.browser_embed.hide();
-            return;
-        }
-        if !self.browser_embed.available() {
-            self.browser_note =
-                "Eingebetteter Browser ist lokal noch nicht verfuegbar. DuckDuckGo bleibt als Ziel gesetzt."
-                    .to_owned();
-            return;
-        }
-        let rect = self.browser_embed_rect();
-        match self.browser_embed.show_docked("Aether", rect) {
-            Ok(()) => {
-                let _ = self.browser_embed.sync_bounds(rect);
-                self.browser_embed.show();
-            }
-            Err(err) => {
-                self.browser_note = format!("Browser-Einbettung noch nicht bereit: {err}");
+    fn active_group_room(&self) -> Option<GroupRoom> {
+        let rooms = self.group_rooms();
+        if let Some(selected_id) = &self.selected_group_room_id {
+            if let Some(room) = rooms.iter().find(|room| room.id == *selected_id) {
+                return Some(room.clone());
             }
         }
+        rooms.into_iter().next()
+    }
+
+    fn active_group_messages(&self) -> Vec<ChatMessage> {
+        self.active_group_room()
+            .map(|room| room.messages)
+            .unwrap_or_default()
+    }
+
+    fn active_group_is_owner(&self) -> bool {
+        let Some(username) = self.current_username() else {
+            return false;
+        };
+        self.active_group_room()
+            .map(|room| room.owner_username == username)
+            .unwrap_or(false)
+    }
+
+    fn select_group_room(&mut self, room_id: String) {
+        self.selected_group_room_id = Some(room_id.clone());
+        self.chat_context = ChatContext::Group;
+        if let Some(room) = self.state_store.group_room_by_id(&room_id) {
+            self.status_line = format!("Gruppe '{}' geoeffnet.", room.name);
+        }
+    }
+
+    fn queue_pending_chat_share(&mut self) {
+        self.pending_chat_partner = None;
+        self.pending_chat_group_room_id = None;
+        if self.active_tab != Tab::Chat {
+            return;
+        }
+        match self.chat_context {
+            ChatContext::Private => {
+                self.pending_chat_partner = self.active_private_partner();
+            }
+            ChatContext::Group => {
+                self.pending_chat_group_room_id = self.active_group_room().map(|room| room.id);
+            }
+            ChatContext::SwarmRequest => {}
+        }
+    }
+
+    fn structure_share_message(&self, result: &FileAnalysisResult) -> String {
+        format!(
+            "Strukturabgleich · {} | Anchors {} | Trust {:.1}% | Gewinn {:.1}% | {}",
+            result.snapshot.file_name,
+            result.structure_map_state.anchor_count,
+            result.capsule_state.trust_score * 100.0,
+            result.snapshot.compression_gain_percent,
+            result.snapshot.preview_note,
+        )
+    }
+
+    fn publish_pending_chat_share(&mut self, result: &FileAnalysisResult) -> Result<Option<String>, String> {
+        let Some(author) = self.current_username() else {
+            self.pending_chat_partner = None;
+            self.pending_chat_group_room_id = None;
+            return Ok(None);
+        };
+        let body = self.structure_share_message(result);
+        if let Some(partner) = self.pending_chat_partner.take() {
+            if self.state_store.is_blocked_between(&author, &partner) {
+                return Ok(Some(format!(
+                    "Strukturvergleich mit {} wurde durch eine Blockliste gestoppt.",
+                    partner
+                )));
+            }
+            self.state_store
+                .add_private_message(&author, &partner, &author, &body)?;
+            if self
+                .auth_store
+                .usernames()
+                .into_iter()
+                .any(|username| username == partner)
+            {
+                let _ = self
+                    .state_store
+                    .add_private_message(&partner, &author, &author, &body);
+            }
+            self.selected_private_partner = Some(partner.clone());
+            return Ok(Some(format!(
+                "Strukturvergleich im privaten Thread mit {} abgelegt.",
+                partner
+            )));
+        }
+        if let Some(room_id) = self.pending_chat_group_room_id.take() {
+            let Some(room) = self.state_store.group_room_by_id(&room_id) else {
+                return Ok(Some("Ausgewaehlte Gruppe war nicht mehr verfuegbar.".to_owned()));
+            };
+            self.state_store.add_group_message(&room_id, &author, &body)?;
+            self.selected_group_room_id = Some(room_id);
+            return Ok(Some(format!(
+                "Strukturvergleich in Gruppe '{}' abgelegt.",
+                room.name
+            )));
+        }
+        Ok(None)
     }
 
     fn anchor_clusters(&self) -> Vec<AnchorClusterView> {
@@ -1850,6 +2388,9 @@ impl AetherIcedShell {
                     sample_note:
                         "Aether erzeugt Cluster datengetrieben aus lokalen Strukturmerkmalen."
                             .to_owned(),
+                    first_seen: None,
+                    last_seen: None,
+                    observation_count: 0,
                 },
                 AnchorClusterView {
                     title: "Analyse-Gruppe A".to_owned(),
@@ -1859,6 +2400,9 @@ impl AetherIcedShell {
                     sample_note:
                         "Keine Ausfuehrung. Nur isolierte Verarbeitung und Anchor-Signale."
                             .to_owned(),
+                    first_seen: None,
+                    last_seen: None,
+                    observation_count: 0,
                 },
             ];
         }
@@ -1874,54 +2418,31 @@ impl AetherIcedShell {
                     .first()
                     .map(|entry| entry.preview_note.clone())
                     .unwrap_or_else(|| "Noch kein Detail.".to_owned());
+                // Zeitdimension: FlowSphere-History nach passenden Dateinamen durchsuchen.
+                // Kein Einfluss auf Metriken — nur Anzeige.
+                let file_names: std::collections::HashSet<&str> =
+                    items.iter().map(|e| e.file_name.as_str()).collect();
+                let matching_ts: Vec<u64> = self
+                    .flow_sphere_history
+                    .iter()
+                    .filter(|e| file_names.contains(e.source_label.as_str()))
+                    .map(|e| e.visual_timestamp_secs(self.temporal_metadata_consent))
+                    .collect();
+                let first_seen = matching_ts.iter().copied().min();
+                let last_seen  = matching_ts.iter().copied().max();
+                let observation_count = matching_ts.len();
                 AnchorClusterView {
                     title: format!("Cluster {:02}", index + 1),
                     descriptor: format!("{} / .{}", source, extension),
                     item_count: items.len(),
                     total_bytes,
                     sample_note,
+                    first_seen,
+                    last_seen,
+                    observation_count,
                 }
             })
             .collect()
-    }
-
-    #[allow(dead_code)]
-    fn tab_button(&self, tab: Tab, icon: &'static str, label: &'static str) -> Element<'_, Message> {
-        let is_active = self.active_tab == tab;
-        let accent = c(ACCENT());
-        let text_active = c(TEXT_H());
-        let text_idle = c(TEXT_D());
-
-        container(
-            button(
-                Column::new()
-                    .push(text(icon).size(16).color(if is_active { accent } else { text_idle }))
-                    .push(text(label).size(11).color(if is_active { text_active } else { text_idle }))
-                    .spacing(2)
-                    .align_x(Alignment::Center),
-            )
-            .padding([8, 16])
-            .on_press(Message::TabSelected(tab))
-            .style(move |_: &Theme, _| button::Style {
-                background: None,
-                text_color: if is_active { text_active } else { text_idle },
-                ..Default::default()
-            }),
-        )
-        .style(move |_: &Theme| container::Style {
-            background: if is_active {
-                Some(Background::Color(Color::from_rgba(0.502, 0.31, 0.98, 0.08)))
-            } else {
-                None
-            },
-            border: Border {
-                color: if is_active { c(BORDER_ACT()) } else { Color::TRANSPARENT },
-                width: if is_active { 2.0 } else { 0.0 },
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .into()
     }
 
     fn context_button(&self, context: ChatContext, label: &'static str) -> Element<'_, Message> {
@@ -2125,134 +2646,6 @@ impl AetherIcedShell {
 // Replaces the old 10-ring StructureMap as the modern structural visualizer.
 // All animation parameters are derived from tick + entropy, no random values.
 // ---------------------------------------------------------------------------
-
-
-// struct FlowSphereScene wurde auf Modulebene verschoben (siehe oben)
-#[allow(dead_code)]
-fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Message>) -> Element<'a, Message> {
-        let all_ok = self.security_snapshot.trust_state.to_uppercase().contains("HIGH")
-            || self.security_snapshot.trust_state.to_uppercase().contains("OK");
-
-        let status_border = if all_ok {
-            c(ACCENT())
-        } else {
-            c(DANGER())
-        };
-
-        let status_content: Element<'_, Message> = Row::new()
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .push(canvas::Canvas::new(DotScene { color: if all_ok { c(ACCENT()) } else { c(DANGER()) }})
-                .width(Length::Fixed(8.0)).height(Length::Fixed(8.0)))
-            .push(
-                text(
-                    if all_ok { "Operational" } else { "Degraded" }
-                )
-                .size(11)
-                .color(c(TEXT_M()))
-            )
-            .into();
-
-        let nodes_content: Element<'_, Message> = Row::new()
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .push(text("\u{2b21}").size(11).color(c(ACCENT2())))
-            .push(
-                text(
-                    format!("{} Nodes", self.anchor_clusters().len())
-                )
-                .size(11)
-                .color(c(TEXT_M()))
-            )
-            .into();
-
-        let time_content: Element<'_, Message> = Row::new()
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .push(text("\u{25d4}").size(11).color(c(TEXT_D())))
-            .push(
-                text(
-                    format!(
-                        "{:02}:{:02} Live",
-                        (self.tick_counter / 60) % 24,
-                        self.tick_counter % 60
-                    )
-                )
-                .size(11)
-                .color(c(TEXT_D()))
-            )
-            .into();
-
-        let key_content: Element<'_, Message> = Row::new()
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .push(text("\u{1f511}").size(11).color(c(ACCENT())))
-            .push(
-                text(
-                    if self.data_key_fingerprint.is_empty() {
-                        "KEY --".to_owned()
-                    } else {
-                        format!("KEY {}", self.data_key_fingerprint)
-                    }
-                )
-                .size(11)
-                .color(c(TEXT_M()))
-            )
-            .into();
-
-        let badge_style_ok = move |_: &Theme| container::Style {
-            background: None,
-            border: Border { color: status_border, width: 1.0, radius: 20.0.into() },
-            ..Default::default()
-        };
-        let badge_style_cyan = |_: &Theme| container::Style {
-            background: None,
-            border: Border { color: c(ACCENT2()), width: 1.0, radius: 20.0.into() },
-            ..Default::default()
-        };
-        let badge_style_dim = |_: &Theme| container::Style {
-            background: None,
-            border: Border { color: c(BORDER()), width: 1.0, radius: 20.0.into() },
-            ..Default::default()
-        };
-
-        container(
-            Row::new()
-                .spacing(16)
-                .align_y(Alignment::Center)
-                .push(logo)
-                .push(container(iced::widget::Space::new(1.0, 32.0))
-                    .style(|_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgb8(0x20, 0x1E, 0x30))),
-                        ..Default::default()
-                    })
-                    .width(Length::Fixed(1.0)))
-                .push(tabs)
-                .push(iced::widget::Space::new(Length::Fill, Length::Shrink))
-                .push(
-                    Row::new()
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .push(container(status_content).style(badge_style_ok).padding([4, 14]))
-                        .push(container(nodes_content).style(badge_style_cyan).padding([4, 14]))
-                        .push(container(time_content).style(badge_style_dim).padding([4, 14]))
-                        .push(container(key_content).style(badge_style_dim).padding([4, 14]))
-                )
-            )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(c(BG_BASE()))),
-            border: Border {
-                color: c(BORDER()),
-                width: 1.0,
-                radius: 0.0.into(),
-            },
-            ..Default::default()
-        })
-        .padding([0, 16])
-        .height(Length::Fixed(52.0))
-        .into()
-    }
-
     fn view_home(&self) -> Element<'_, Message> {
         self.view_home_aether_cyber()
     }
@@ -2472,7 +2865,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                             .style(primary_button_style),
                     )
                     .push(
-                        button(text("Threat Analysis").size(13))
+                        button(text("Delta-Analyse").size(13))
                             .on_press(Message::TabSelected(Tab::ADE))
                             .padding([10, 14])
                             .style(secondary_button_style),
@@ -2590,13 +2983,11 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 "Files" => self.view_data(),
                 "Chat" => self.view_chat(),
                 "Logs" => self.view_logs(),
-                "Threat Analysis" => self.view_ade(),
+                "Delta-Analyse" => self.view_ade(),
                 "FlowSphere" => self.view_flow_sphere(),
                 "Threat Graph" => self.view_flow_sphere(),
                 "Delta Convergence" => self.view_delta_convergence(),
                 "Anchors" => self.view_anchors(),
-                "Browser" => self.view_browser(),
-                "YouTube" => self.view_youtube(),
                 "Reconstruction" => self.view_rekonstruktion(),
                 "Info" => self.view_imprint(),
                 "Runtime" => self.view_dashboard_performance(),
@@ -2613,7 +3004,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         let mid_layer = container(
             {
                 let mut col = Column::new().spacing(10);
-                // col = col.push(topbar); // TODO: topbar nicht definiert
                 col = col.push(container(text(self.dashboard_search_help()).size(11).color(c(TEXT_D()))).padding([0, 4]));
                 col = col.push(dashboard_body);
                 col = col.push(info_overlay);
@@ -2644,11 +3034,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 row = row.push(text(format!("Risk {}", risk_score)).size(11).color(c(WARN())));
                 row = row.push(text(format!("Aether Event Model | Nav: {}", self.dashboard_nav)).size(11).color(c(TEXT_D())));
                 row = row.push(text(format!(
-                    "Runtime {} | Tick {}ms | Sync {} | Poll {}",
+                    "Runtime {} | Tick {}ms",
                     self.runtime_profile_label(),
                     self.tick_interval_ms(),
-                    self.browser_sync_stride,
-                    self.profile_browser_poll_batch()
                 )).size(11).color(c(TEXT_M())));
                 row
             }
@@ -2668,11 +3056,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
     }
     fn view_dashboard_performance(&self) -> Element<'_, Message> {
         let profile = self.runtime_profile;
-        let browser_mode = match self.browser_surface_mode() {
-            Some(Tab::Browser) => "NETWORK",
-            Some(Tab::YouTube) => "COMPUTE",
-            _ => "OFF",
-        };
         let profile_button = |label: &'static str, p: RuntimeProfile, active: bool| {
             button(text(if active { format!("{} [active]", label) } else { label.to_owned() }).size(13))
                 .on_press(Message::RuntimeProfileSelected(p))
@@ -2709,9 +3092,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             col = col.push(row2);
             let mut row3 = Row::new().spacing(10);
             row3 = row3.push(info_card("Tick-Intervall", &format!("{} ms", self.tick_interval_ms())));
-            row3 = row3.push(info_card("Browser-Sync", &format!("jede {} Ticks", self.browser_sync_stride)));
-            row3 = row3.push(info_card("Poll-Batch", &format!("{} Events", self.profile_browser_poll_batch())));
-            row3 = row3.push(info_card("Browser-Modus", browser_mode));
+
             col = col.push(row3);
             let mut row4 = Row::new().spacing(10);
             row4 = row4.push(info_card("Analyse-Status", &self.analysis_status));
@@ -2818,161 +3199,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 )
                 .push(panel)
                 .spacing(16),
-        )
-        .padding(12)
-        .into()
-    }
-
-    fn view_browser(&self) -> Element<'_, Message> {
-        let browser_status = if self.browser_embed.is_running() {
-            container(text("● Browser-Bridge aktiv").size(11).color(Color::from_rgb8(0x5A, 0xAE, 0x84)))
-                .padding([4, 8])
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x0A, 0x1A, 0x0F))),
-                    border: Border { color: Color::from_rgb8(0x5A, 0xAE, 0x84), width: 1.0, ..Default::default() },
-                    ..Default::default()
-                })
-        } else {
-            container(text("⚠ Browser-Bridge nicht aktiv — starte Aether vollständig oder prüfe Python-Pfad in Einstellungen.").size(11).color(Color::from_rgb8(0xD4, 0x6A, 0x6A)))
-                .padding([6, 10])
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x1A, 0x0A, 0x0A))),
-                    border: Border { color: Color::from_rgb8(0xD4, 0x6A, 0x6A), width: 1.0, ..Default::default() },
-                    ..Default::default()
-                })
-        };
-
-        let url_bar = container(
-            Row::new()
-                .push(container(
-                    text("\u{1f50d}").size(14).color(Color::from_rgb8(0x4E, 0x4A, 0x76))
-                ).padding([0, 8]))
-                .push(text_input("https://duckduckgo.com", &self.browser_address)
-                    .on_input(Message::BrowserAddressChanged)
-                    .on_submit(Message::BrowserLoadPressed)
-                    .size(13)
-                    .padding([8, 12])
-                    .width(Length::Fill))
-                .push(button(
-                    text("\u{2192}").size(14).color(Color::from_rgb8(0xF6, 0xED, 0xFF))
-                )
-                .padding([8, 14])
-                .on_press(Message::BrowserLoadPressed)
-                .style(|_: &Theme, _| button::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x96, 0x57, 0xF7))),
-                    text_color: Color::from_rgb8(0xF6, 0xED, 0xFF),
-                    border: Border { radius: 6.0.into(), ..Default::default() },
-                    ..Default::default()
-                }))
-                .spacing(4)
-                .align_y(Alignment::Center),
-        )
-        .style(|_: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgb8(0x17, 0x16, 0x24))),
-            border: Border { color: Color::from_rgb8(0x36, 0x34, 0x56), width: 1.1, radius: 8.0.into() },
-            ..Default::default()
-        })
-        .padding([4, 4]);
-
-        container(
-            Row::new()
-                .push(
-                    container(scrollable(
-                        {
-                            let mut col = Column::new().spacing(14);
-                            col = col.push(text("Browser").size(20).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)));
-                            col = col.push(browser_status);
-                            col = col.push(url_bar);
-                            col = col.push(
-                                Row::new()
-                                    .push(
-                                        button(text("Seite pruefen").size(13))
-                                            .padding([8, 14])
-                                            .on_press(Message::BrowserInspectPressed)
-                                            .style(secondary_button_style)
-                                    )
-                                    .spacing(10)
-                            );
-                            col = col.push(text("Eingabehilfe: URL-Feld fuer direkte Seiten, Suchfeld fuer Begriffe/Fragen (DuckDuckGo).")
-                                .size(11)
-                                .color(c(TEXT_D())));
-                            col = col.push(text_input("z.B. malware hash lookup, suspicious script pattern, channel name", &self.browser_search_query)
-                                .on_input(Message::BrowserSearchQueryChanged)
-                                .padding(10)
-                                .size(14));
-                            col = col.push(button(text("DuckDuckGo suchen"))
-                                .padding([10, 16])
-                                .on_press(Message::BrowserSearchPressed)
-                                .style(primary_button_style));
-                            col = col.push(info_card("Browser-Status", &self.browser_note));
-                            col = col.push(
-                                if let Some(probe) = &self.browser_probe {
-                                    info_card(
-                                        "Seitenanalyse",
-                                        &format!(
-                                            "URL: {}\nStatus: {} | Risiko: {} ({:.0}%)\nTyp: {}\n{}\n{}",
-                                            probe.final_url,
-                                            probe.status_code,
-                                            probe.risk_label,
-                                            probe.risk_score * 100.0,
-                                            probe.content_type,
-                                            probe.frontend_summary,
-                                            probe.summary
-                                        ),
-                                    )
-                                } else {
-                                    info_card(
-                                        "Seitenanalyse",
-                                        "Noch keine Seitenanalyse vorhanden. Aether prueft nur strukturell und fuehrt nichts aus.",
-                                    )
-                                }
-                            );
-                            col = col.push(
-                                if let Some(context) = &self.browser_search_context {
-                                    info_card(
-                                        "Suchkontext",
-                                        &format!(
-                                            "Provider: {}\nQuelle: {}\n{}",
-                                            context.provider,
-                                            context.search_url,
-                                            context.summary
-                                        ),
-                                    )
-                                } else {
-                                    info_card(
-                                        "Suchkontext",
-                                        "Noch kein Suchkontext geladen. DuckDuckGo bleibt explizit und fail-closed.",
-                                    )
-                                }
-                            );
-                            col
-                        }
-                    )
-                    .width(Length::Fixed(420.0))
-                )
-                .style(panel_frame_style)
-                .padding(14)
-            )
-                .push(
-                    container(
-                        {
-                            let mut col = Column::new().spacing(10);
-                            col = col.push(text("Eingebettete Browserflaeche").size(18).color(Color::from_rgb8(0xEE, 0xEA, 0xFF)));
-                            col = col.push(text("DuckDuckGo und geladene Seiten erscheinen hier direkt im Hauptprogramm.")
-                                .size(13).color(Color::from_rgb8(0x90, 0x88, 0xBC)));
-                            col = col.push(container(text(" "))
-                                .height(Length::Fill)
-                                .width(Length::Fill));
-                            col
-                        }
-                    )
-                    .padding(16)
-                    .style(panel_frame_style)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                )
-                .spacing(18)
-                .height(Length::Fill)
         )
         .padding(12)
         .into()
@@ -3271,7 +3497,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 "Mit jeder neuen Medienanalyse sollte der Bestand sofort auf repackbare Sequenzen, Frames und Segmentfamilien geprueft werden. Ziel ist wachsender Exact-Coverage-Anteil bei schrumpfendem Residual.",
                 "Mehrwert jetzt: weitere Sequenzen, Wiederholungen, Audio-/Videoausschnitte und Drop-Analysen vergroessern die repackbare Flaeche und verbessern die globale Medienbibliothek.",
                 vec![
-                    ("YouTube", Tab::YouTube),
                     ("Files", Tab::Data),
                     ("FlowSphere", Tab::FlowSphere),
                     ("Delta Conv", Tab::StructureMap),
@@ -3286,7 +3511,7 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 vec![
                     ("Files", Tab::Data),
                     ("Anchors", Tab::Anchors),
-                    ("Threat", Tab::ADE),
+                    ("Delta", Tab::ADE),
                     ("Delta Conv", Tab::StructureMap),
                 ],
                 Color::from_rgb8(0x4C, 0xD9, 0x6E),
@@ -3401,8 +3626,9 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
             content = content.push(info_card(
                 "Latest Local Artifact",
                 &format!(
-                    "{}\nPreview: {}\nAnchors: {}\nProcess: {}",
+                    "{}\nSize: {} B\nPreview: {}\nAnchors: {}\nProcess: {}",
                     last.file_name,
+                    last.original_size,
                     last.preview_note,
                     last.anchor_summary,
                     last.process_summary,
@@ -3431,7 +3657,92 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
     }
 
     fn view_private_chat(&self) -> Element<'_, Message> {
+        let accent  = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let teal    = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let mid     = Color::from_rgb8(0xA8, 0xC4, 0xD8);
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+
         let selected_partner = self.active_private_partner();
+        let blocked_users = self.blocked_usernames();
+        let is_blocked = self.active_private_blocked();
+
+        // ── Erklärungsbereich: Was ist strukturelle Analyse im Chat? ─────────
+        let info_panel: Element<'_, Message> = container(
+            column![
+                text("\u{25c6} PRIVATER ANALYSE-CHAT").size(15).color(accent),
+                text("Normale Kommunikation: Ende-zu-Ende verschl\u{fc}sselt. Kein Inhalt wird gelesen, gespeichert oder ausgewertet \u{2014} auch nicht lokal.").size(12).color(mid),
+                text("\u{25aa} \u{c4}rztliches Geheimnis bleibt gewahrt: Es werden keine Patientendaten, Diagnosen, Befunde oder Namen \u{fc}bertragen \u{2014} nur strukturelle Fingerabdr\u{fc}cke die lokal aus den Rohdaten berechnet werden. Kein R\u{fc}ckschluss auf Individuen m\u{f6}glich.").size(12).color(mid),
+                text("Strukturelle Analyse (optional, lokal): Datei in den Thread ziehen \u{2192} Muster entstehen. Diese Muster \u{2014} keine Inhalte \u{2014} k\u{f6}nnen mit dem Chatpartner verglichen werden um Zusammenh\u{e4}nge zu erkunden die kein einzelnes Institut allein sehen w\u{fc}rde.").size(12).color(mid),
+                text("Was bestimmte Metriken in der Praxis bedeuten k\u{f6}nnten:").size(12).color(teal),
+                row![
+                    column![
+                        text("\u{25aa} Noether-Break").size(11).color(teal),
+                        text("Symmetriebruch in Zeitreihen. In Blutwertreihen: pl\u{f6}tzliche Asymmetrie k\u{f6}nnte auf biologischen Kaskadenstart hindeuten der im Einzellabor im Rauschen untergeht. Gleichzeitig \u{fc}ber mehrere Kliniken: m\u{f6}glicherweise gemeinsamer Ausl\u{f6}ser oder neuer Erreger.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                    column![
+                        text("\u{25aa} Benford-Drift").size(11).color(teal),
+                        text("Ziffernverteilung weicht ab. In Blutbilddaten: bekannter Fr\u{fc}hindikator f\u{fc}r biologische stochastische Ver\u{e4}nderungen. In Genomvarianten-Z\u{e4}hlungen: m\u{f6}gliche Selektionsdrucksignatur. In Wasserproben-Messreihen: strukturelle Anomalie.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                    column![
+                        text("\u{25aa} Entropy-Spike").size(11).color(teal),
+                        text("Lokaler Entropiesprung. In EEG-Daten: Strukturst\u{f6}rung in normalerweise periodischen Signalen. In Genomsequenzen: lokale H\u{e4}ufung ungew\u{f6}hnlicher Varianten in einer Region. In chemischen Messreihen: Anomalie des Signals.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                ].spacing(10),
+                row![
+                    column![
+                        text("\u{25aa} Noether-K (Zeitkoh\u{e4}renz)").size(11).color(teal),
+                        text("Strukturelle Stabilit\u{e4}t \u{fc}ber Zeit. F\u{e4}llt in Blutwertreihen ab \u{2192} etwas hat sich in der zugrundeliegenden Biologie ver\u{e4}ndert. Gleichzeitiger Abfall \u{fc}ber mehrere Standorte: geteilter externer Faktor denkbar.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                    column![
+                        text("\u{25aa} Delta-Konvergenz").size(11).color(teal),
+                        text("Genomsequenzen verschiedener Patienten oder Quellen: wenn Delta-Muster zeitlich konvergieren \u{2192} k\u{f6}nnte auf gemeinsamen evolutionären Druck oder gemeinsamen Ursprung hinweisen. Dom\u{e4}nen\u{fc}bergreifend mit Bodenproben oder Lebensmitteldaten kombinierbar.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                    column![
+                        text("\u{25aa} Fourier-Periodiziät").size(11).color(teal),
+                        text("Unerwartete periodische Strukturen in EEG: Intensit\u{e4}tsverlust in normalerweise regelm\u{e4}\u{df}igen Mustern. In Blutwerten: rhythmische St\u{f6}rung die vorher nicht da war. Signaltr\u{e4}ger\u{fc}bergreifend interessant wenn mehrere Quellen gleichzeitig betroffen.").size(10).color(dim),
+                    ].spacing(2).width(Length::FillPortion(1)),
+                ].spacing(10),
+                text("Signaltr\u{e4}ger die verglichen werden k\u{f6}nnen (metrikbasiert, ohne Inhalt): Blutbild \u{b7} EEG \u{b7} Genomsequenzen \u{b7} Wasserproben \u{b7} Bodenproben \u{b7} Lebensmittel- / D\u{fc}ngemittelproben \u{b7} wirtschaftliche Zeitreihen \u{b7} Sensordaten \u{2014} die Liste ist theoretisch unbegrenzt.").size(11).color(dim),
+                text("Was diese Muster bedeuten liegt beim Nutzer mit dem Dom\u{e4}nenwissen. Aether zeigt nur ob strukturelle Aufälligkeiten vorhanden sind und ob sie evtl. interessant sein k\u{f6}nnten.").size(11).color(dim),
+                text("Verschl\u{fc}sselung: dieselbe wie im Rest des Systems. Kein zentraler Server. Peer-to-Peer.").size(11).color(dim),
+            ].spacing(8),
+        )
+        .padding([12, 14])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(panel_s)),
+            border: Border { color: Color::from_rgb8(0x9A, 0x67, 0xFF), width: 1.0, radius: 8.0.into() },
+            ..Default::default()
+        })
+        .into();
+
+        // ── Einladung per Username ────────────────────────────────────────────
+        let invite_panel: Element<'_, Message> = container(
+            column![
+                text("Nutzer direkt einladen").size(13).color(green),
+                text("Gib den Usernamen deines Gegen\u{fc}bers ein, um einen privaten Thread zu \u{f6}ffnen. Kein Inhalt flie\u{df}t ohne deine Aktion.").size(11).color(dim),
+                row![
+                    text_input("Username eingeben\u{2026}", &self.chat_invite_username)
+                        .on_input(Message::ChatInviteUsernameChanged)
+                        .padding(9)
+                        .size(14),
+                    button(text("Einladen").size(13))
+                        .padding([9, 14])
+                        .on_press(Message::ChatInviteSend)
+                        .style(primary_button_style),
+                ].spacing(8).align_y(Alignment::Center),
+            ].spacing(8),
+        )
+        .padding([10, 12])
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(panel_s)),
+            border: Border { color: Color::from_rgb8(0x3F, 0xBA, 0xC2), width: 1.0, radius: 6.0.into() },
+            ..Default::default()
+        })
+        .into();
+
+        // ── Partner-Liste ─────────────────────────────────────────────────────
         let mut partners = Column::new();
         partners = partners.push(
             text_input("Nutzer suchen", &self.chat_user_search)
@@ -3440,7 +3751,6 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .size(16)
         );
         partners = partners.spacing(10);
-
         for username in self.other_usernames().into_iter().take(12) {
             let active = selected_partner.as_deref() == Some(username.as_str());
             partners = partners.push(
@@ -3454,52 +3764,85 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                 .style(if active { primary_button_style } else { secondary_button_style }),
             );
         }
+        if !blocked_users.is_empty() {
+            partners = partners.push(text("Blockiert").size(12).color(dim));
+            for username in blocked_users.into_iter().take(8) {
+                partners = partners.push(info_card("Blockiert", &username));
+            }
+        }
 
+        // ── Konversation ──────────────────────────────────────────────────────
         let messages = self.active_private_messages();
-        let conversation = if let Some(partner) = &selected_partner {
+        let conversation: Element<'_, Message> = if let Some(partner) = &selected_partner {
             let mut content = Column::new();
-            content = content.push(text(format!("Privater Kanal | {partner}")).size(20));
-            content = content.push(text("Suche nach Nutzernamen oeffnet lokale Threads. Inhalte bleiben im privaten Bereich.").size(15));
+            content = content.push(text(format!("Privater Kanal \u{b7} {partner}")).size(18));
+            content = content.push(text("Inhalt bleibt privat und verschl\u{fc}sselt. Strukturmuster k\u{f6}nnen optional separat geteilt werden.").size(12).color(dim));
+            content = content.push(
+                row![
+                    button(text(if is_blocked { "Entblocken" } else { "Blockieren" }))
+                        .padding([8, 14])
+                        .on_press(if is_blocked {
+                            Message::ChatUnblockSelectedUser
+                        } else {
+                            Message::ChatBlockSelectedUser
+                        })
+                        .style(if is_blocked { secondary_button_style } else { primary_button_style }),
+                ]
+                .spacing(8),
+            );
             content = content.spacing(10);
             if messages.is_empty() {
                 content = content.push(info_card(
                     "Leerer Thread",
-                    "Noch keine lokalen Nachrichten. Du kannst den Thread sofort beginnen.",
+                    "Noch keine lokalen Nachrichten. Schreibe direkt oder ziehe eine Datei in das Fenster um strukturelle Muster zu erzeugen.",
                 ));
             } else {
                 for message in messages.iter().take(32) {
                     content = content.push(info_card(&message.author, &message.body));
                 }
             }
-            content = content.push(
-                text_input("Nachricht verfassen", &self.private_message_draft)
-                    .on_input(Message::PrivateMessageChanged)
-                    .padding(10)
-                    .size(16),
-            );
-            content = content.push(
-                button(text("Nachricht lokal speichern"))
-                    .padding([10, 16])
-                    .on_press(Message::PrivateMessageSend)
-                    .style(primary_button_style),
-            );
+            if is_blocked {
+                content = content.push(info_card(
+                    "Kontakt blockiert",
+                    "Direkte Nachrichten und Strukturvergleiche sind blockiert, bis der Kontakt wieder entblockt wird.",
+                ));
+            } else {
+                content = content.push(
+                    text_input("Nachricht verfassen", &self.private_message_draft)
+                        .on_input(Message::PrivateMessageChanged)
+                        .padding(10)
+                        .size(16),
+                );
+                content = content.push(
+                    button(text("Senden"))
+                        .padding([10, 16])
+                        .on_press(Message::PrivateMessageSend)
+                        .style(primary_button_style),
+                );
+            }
             container(scrollable(content).height(Length::Fill))
                 .padding(16)
                 .style(panel_frame_style)
                 .into()
         } else {
-            info_card(
-                "Kein Nutzer gewaehlt",
-                "Suche links nach einem vorhandenen Nutzernamen, um einen privaten Thread zu oeffnen.",
-            )
+            container(
+                column![
+                    info_panel,
+                    invite_panel,
+                ].spacing(10),
+            ).into()
         };
 
         let mut row = Row::new();
         row = row.push(
-            container(scrollable(partners).height(Length::Fill))
-                .padding(16)
-                .style(panel_frame_style)
-                .width(Length::FillPortion(1)),
+            container(
+                column![
+                    scrollable(partners).height(Length::Fill),
+                ].spacing(8),
+            )
+            .padding(16)
+            .style(panel_frame_style)
+            .width(Length::FillPortion(1)),
         );
         row = row.push(
             container(conversation).style(panel_frame_style).width(Length::FillPortion(2)),
@@ -3508,49 +3851,272 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
         container(row)
             .height(Length::Fill)
             .into()
+
     }
 
     fn view_group_chat(&self) -> Element<'_, Message> {
-        let rooms = self.group_rooms();
-        let mut content = Column::new()
-            .push(text("Gruppen").size(20))
-            .push(text("Gruppen bleiben lokal organisiert. Der Standardraum dient als gemeinsamer lokaler Arbeitskontext.").size(15))
-            .spacing(12);
+        let accent  = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let teal    = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let warn    = Color::from_rgb8(0xD4, 0xA0, 0x42);
+        let mid     = Color::from_rgb8(0xA8, 0xC4, 0xD8);
+        let dim     = Color::from_rgb8(0x70, 0x90, 0xA8);
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
 
-        if rooms.is_empty() {
-            content = content.push(info_card(
-                "Keine Gruppenraeume",
-                "Sobald du eine lokale Gruppennachricht speicherst, erscheint hier der Raum Allgemein.",
-            ));
-        } else {
-            for room in rooms.iter().take(8) {
-                let body = if room.messages.is_empty() {
-                    "Noch keine lokalen Nachrichten.".to_owned()
-                } else {
-                    room.messages
-                        .iter()
-                        .rev()
-                        .take(3)
-                        .map(|message| format!("{}: {}", message.author, message.body))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                };
-                content = content.push(info_card(&room.name, &body));
+        let rooms = self.group_rooms();
+        let selected_room = self.active_group_room();
+        let active_messages = self.active_group_messages();
+        let is_owner = self.active_group_is_owner();
+        let mut content = Column::new().spacing(12);
+
+        // ── Erklärungspanel: Strukturelle Kollaboration ──────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("\u{25c6} GRUPPEN \u{b7} STRUKTURELLES ANALYSE-NETZWERK").size(15).color(accent),
+                    text("Gruppen-Chats sind Ende-zu-Ende verschl\u{fc}sselt. Kein Inhalt wird zentral gespeichert. \u{c4}rztliches Geheimnis und Datenschutz bleiben gewahrt: ausgetauscht werden ausschlie\u{df}lich strukturelle Fingerabdr\u{fc}cke ohne jeden Inhalt oder Personenbezug.").size(12).color(mid),
+                    text("Bez\u{fc}glich Ärztesgeheimnis: strukturelle Muster sind keine Diagnosen. Es werden keine Patientendaten, Befunde oder Identit\u{e4}ten \u{fc}bertragen — nur ob bestimmte Strukturmerkmale in der Datenbasis vorhanden sind. Vergleichbar damit, ob zwei R\u{f6}ntgenbilder gleich viele Knochen zeigen, ohne dass man wei\u{df} wem sie geh\u{f6}ren.").size(12).color(mid),
+                    text("Strukturelle Kollaboration \u{2014} was heute sonst nicht m\u{f6}glich w\u{e4}re:").size(12).color(teal),
+                    text("\u{25aa} Mehrere unabh\u{e4}ngige Gruppen analysieren Datens\u{e4}tze in ihrer Dom\u{e4}ne. Wenn strukturell \u{e4}hnliche Muster auftauchen gibt Aether ein Signal ohne den Inhalt zu kennen.").size(11).color(dim),
+                    text("\u{25aa} Besonders wo der Zeitfaktor erst den Zusammenhang sichtbar macht: Ein Muster das einzeln harmlos wirkt wird erst durch seinen zeitlichen Kontext relevant \u{2014} wenn es an mehreren Stellen gleichzeitig oder kurz nacheinander auftritt.").size(11).color(dim),
+                    text("Beispiele f\u{fc}r strukturelle Signale im Gruppen-Kontext:").size(12).color(teal),
+                    row![
+                        column![
+                            text("Pandemie-Fr\u{fc}herkennung").size(11).color(green),
+                            text("Noether-Breaks in Aufnahme-Zeitreihen mehrerer Kliniken zur gleichen Zeit \u{2014} kein Befund, kein Name, nur ob Strukturmuster von der Baseline abweichen. Einzeln rauscht es durch, zusammen wird es sichtbar.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Wasser + Patienten + Genomdaten").size(11).color(green),
+                            text("Benford-Drift in kommunalen Wasserproben + zeitlich korrelierter Entropie-Spike in Blutwerten aus derselben Region + ungewöhnliche Delta-Konvergenz in Genomsequenzen \u{2014} diese Kombination ist ohne Datenaustausch pr\u{fc}fbar.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Wirtschaft + Gesundheitsdaten").size(11).color(green),
+                            text("Noether-K-Abfall in wirtschaftlichen Transaktionszeitreihen + gleichzeitiger Noether-Break in Klinikaufnahmedaten \u{2014} strukturelle Korrelation die auf Stresskaske vor offiziell erkanntem Ausbruch hindeuten k\u{f6}nnte.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                    ].spacing(10),
+                    row![
+                        column![
+                            text("Boden / Lebensmittel / D\u{fc}nger").size(11).color(green),
+                            text("Delta-Konvergenz \u{fc}ber Boden-, Lebensmittel- und D\u{fc}ngemittelproben + Genomsequenz-Drift in lokaler Pflanzenpopulation \u{2014} struktureller Zusammenhang erkennbar ohne die Proben selbst zu teilen.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("EEG + Blutbild + Umweltdaten").size(11).color(green),
+                            text("Fourier-Periodizit\u{e4}tsverlust in EEG-Messreihen mehrerer Patienten + Benford-Drift in ihren Laborwerten zur gleichen Zeit + Entropy-Spike in regionalen Umweltmessungen: Signaltr\u{e4}ger\u{fc}bergreifendes Muster.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Wissenschaftl. Reproduzierbarkeit").size(11).color(green),
+                            text("Mehrere Labore vergleichen ob ihre Replikate strukturell \u{e4}quivalent sind \u{2014} Delta-Vergleich ohne Datenaustausch. Gleichzeitiger Noether-Break in allen Replikaten zeigt: die Messbedingung hat sich ver\u{e4}ndert.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                    ].spacing(10),
+                    text("Signaltr\u{e4}ger die strukturell verglichen werden k\u{f6}nnen: Blutbild \u{b7} EEG \u{b7} Genomsequenzen \u{b7} Wasserproben \u{b7} Bodenproben \u{b7} Lebensmittel-/D\u{fc}ngemittelanalysen \u{b7} wirtschaftliche Zeitreihen \u{b7} Sensordaten \u{b7} Klimamessreihen \u{2014} die Liste ist theoretisch unbegrenzt.").size(11).color(dim),
+                    text("Diese Muster und Zusammenh\u{e4}nge k\u{f6}nnten interessant sein \u{2014} besonders wenn \u{e4}hnliche Strukturen zur gleichen Zeit oder in kurzer Folge an verschiedenen Stellen auftreten. Was sie bedeuten liegt beim Nutzer mit dem Dom\u{e4}nenwissen.").size(11).color(dim),
+                ].spacing(7),
+            )
+            .padding([12, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: accent, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Broadcast-Anfrage ────────────────────────────────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("Broadcast-Anfrage \u{b7} strukturelle Suche").size(13).color(teal),
+                    text("Schicke eine anonymisierte Broadcast-Anfrage an Swarm-Teilnehmer mit \u{e4}hnlichen Anker-Dom\u{e4}nen. Kein Inhalt wird \u{fc}bertragen \u{2014} nur das Signal ob strukturelle \u{dc}berschneidungen vorliegen.").size(11).color(dim),
+                    text("Die Anfrage erscheint bei anderen als best\u{e4}tigungspflichtige Einladung. Erst nach gegenseitiger Zustimmung wird ein Kanal ge\u{f6}ffnet.").size(11).color(dim),
+                    row![
+                        text_input("Dom\u{e4}nen-Hinweis f\u{fc}r Broadcast (z.B. \u{201e}Zeitreihe/Klimatik\u{201c})\u{2026}", &self.chat_broadcast_draft)
+                            .on_input(Message::ChatBroadcastDraftChanged)
+                            .padding(9)
+                            .size(13),
+                        button(text("Broadcast senden").size(12))
+                            .padding([9, 14])
+                            .on_press(Message::ChatBroadcastSend)
+                            .style(primary_button_style),
+                    ].spacing(8).align_y(Alignment::Center),
+                ].spacing(8),
+            )
+            .padding([10, 12])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: teal, width: 1.0, radius: 6.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Eingehende Broadcast-Anfragen ────────────────────────────────────
+        if !self.chat_broadcast_requests.is_empty() {
+            content = content.push(text("Eingehende Broadcast-Anfragen").size(13).color(warn));
+            for req in &self.chat_broadcast_requests {
+                let node = req.node_id.clone();
+                let node2 = req.node_id.clone();
+                content = content.push(
+                    container(
+                        column![
+                            text(format!("Node: {} \u{b7} Dom\u{e4}ne: {} \u{b7} {}", &req.node_id.chars().take(12).collect::<String>(), req.domain_tag, req.epoch_week)).size(12).color(mid),
+                            text(format!("Signal: {}", req.pattern_hint)).size(11).color(dim),
+                            row![
+                                button(text("Annehmen \u{2192} Privaten Thread").size(12))
+                                    .padding([7,12])
+                                    .on_press(Message::ChatBroadcastAccept(node))
+                                    .style(primary_button_style),
+                                button(text("Ablehnen").size(12))
+                                    .padding([7,12])
+                                    .on_press(Message::ChatBroadcastDecline(node2))
+                                    .style(secondary_button_style),
+                            ].spacing(8),
+                        ].spacing(6),
+                    )
+                    .padding([8, 10])
+                    .style(move |_: &Theme| container::Style {
+                        background: Some(Background::Color(panel_s)),
+                        border: Border { color: warn, width: 1.0, radius: 5.0.into() },
+                        ..Default::default()
+                    })
+                );
             }
         }
 
+        // ── Gruppen-Räume ────────────────────────────────────────────────────
+        content = content.push(text("Gruppengespräche").size(16).color(mid));
         content = content.push(
-            text_input("Nachricht an Allgemein", &self.group_message_draft)
+            container(
+                column![
+                    text("Neue Gruppe anlegen").size(13).color(green),
+                    row![
+                        text_input("Gruppenname", &self.chat_group_name)
+                            .on_input(Message::ChatGroupNameChanged)
+                            .padding(9)
+                            .size(14),
+                        button(text("Anlegen").size(13))
+                            .padding([9, 14])
+                            .on_press(Message::ChatGroupCreate)
+                            .style(primary_button_style),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(8),
+            )
+            .padding([10, 12])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: green, width: 1.0, radius: 6.0.into() },
+                ..Default::default()
+            })
+        );
+        if rooms.is_empty() {
+            content = content.push(info_card(
+                "Keine Gruppenräume",
+                "Lege eine Gruppe an, damit Mitglieder aufgenommen werden und strukturierte Vergleiche im Gruppenkontext landen können.",
+            ));
+        } else {
+            let mut room_picker = Column::new().spacing(8);
+            for room in rooms.iter().take(12) {
+                let active = selected_room
+                    .as_ref()
+                    .map(|selected| selected.id == room.id)
+                    .unwrap_or(false);
+                let label = format!(
+                    "{} · {} Mitglieder · {} Nachrichten",
+                    room.name,
+                    room.members.len(),
+                    room.messages.len()
+                );
+                room_picker = room_picker.push(
+                    button(text(label))
+                        .padding([8, 12])
+                        .on_press(Message::GroupRoomSelected(room.id.clone()))
+                        .style(if active { primary_button_style } else { secondary_button_style }),
+                );
+            }
+            content = content.push(room_picker);
+        }
+
+        if let Some(room) = selected_room {
+            let owner_label = format!("Ersteller: {}", room.owner_username);
+            let member_list = room.members.join(", ");
+            let mut room_panel = Column::new()
+                .spacing(10)
+                .push(text(format!("Aktive Gruppe · {}", room.name)).size(18))
+                .push(text(owner_label).size(12).color(dim))
+                .push(text(format!("Mitglieder: {}", member_list)).size(12).color(mid));
+
+            if is_owner {
+                room_panel = room_panel.push(
+                    row![
+                        text_input("Mitglied per Username hinzufuegen", &self.group_member_username)
+                            .on_input(Message::GroupMemberUsernameChanged)
+                            .padding(9)
+                            .size(14),
+                        button(text("Hinzufuegen").size(12))
+                            .padding([8, 12])
+                            .on_press(Message::GroupAddMember)
+                            .style(primary_button_style),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                );
+            }
+
+            if active_messages.is_empty() {
+                room_panel = room_panel.push(info_card(
+                    "Noch kein Gruppenverlauf",
+                    "Schreibe direkt in den Raum oder ziehe eine Datei im Chatfenster ab, um einen strukturellen Vergleich in diese Gruppe zu legen.",
+                ));
+            } else {
+                for message in active_messages.iter().take(40) {
+                    room_panel = room_panel.push(info_card(&message.author, &message.body));
+                }
+            }
+
+            if is_owner {
+                for member in room.members.iter().filter(|member| member.as_str() != room.owner_username) {
+                    room_panel = room_panel.push(
+                        row![
+                            text(format!("Mitglied: {}", member)).size(12).color(mid),
+                            button(text("Entfernen").size(11))
+                                .padding([6, 10])
+                                .on_press(Message::GroupRemoveMember(member.clone()))
+                                .style(secondary_button_style),
+                        ]
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                    );
+                }
+            }
+
+            room_panel = room_panel.push(
+                text_input(
+                    &format!("Nachricht an {}", room.name),
+                    &self.group_message_draft,
+                )
                 .on_input(Message::GroupMessageChanged)
                 .padding(10)
                 .size(16),
-        );
-        content = content.push(
-            button(text("Gruppennachricht lokal speichern"))
-                .padding([10, 16])
-                .on_press(Message::GroupMessageSend)
-                .style(primary_button_style),
-        );
+            );
+            room_panel = room_panel.push(
+                row![
+                    button(text("Senden"))
+                        .padding([10, 16])
+                        .on_press(Message::GroupMessageSend)
+                        .style(primary_button_style),
+                    button(text("Gruppe verlassen"))
+                        .padding([10, 16])
+                        .on_press(Message::GroupLeaveSelected)
+                        .style(secondary_button_style),
+                ]
+                .spacing(10),
+            );
+            content = content.push(
+                container(room_panel)
+                    .padding(12)
+                    .style(panel_frame_style),
+            );
+        }
 
         container(scrollable(content).height(Length::Fill))
             .padding(12)
@@ -3652,27 +4218,97 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                             row.spacing(8)
                         }
                     );
+                    // ── Telemetrie-Shield ─────────────────────────────────────────────
+                    col = col.push(text(self.ui_text("Telemetrie-Shield", "Telemetry Shield")).size(20));
+                    col = col.push(text(self.ui_text(
+                        "Erkennt Windows-Telemetrieprozesse mit aktiven Verbindungen und blockiert diese per Firewall-Regel (Adminrechte erforderlich).",
+                        "Detects Windows telemetry processes with active connections and blocks them via firewall rule (admin rights required).",
+                    )).size(13).color(c(TEXT_M())));
                     col = col.push(
                         {
                             let mut row = Row::new();
+                            row = row.push(
+                                button(text(if self.telemetry_shield_enabled {
+                                    self.ui_text("\u{25a0} SHIELD AKTIV", "\u{25a0} SHIELD ACTIVE")
+                                } else {
+                                    self.ui_text("\u{25a1} SHIELD AKTIVIEREN", "\u{25a1} ACTIVATE SHIELD")
+                                }))
+                                .padding([10, 18])
+                                .on_press(Message::TelemetryShieldToggle(!self.telemetry_shield_enabled))
+                                .style(if self.telemetry_shield_enabled { primary_button_style } else { secondary_button_style })
+                            );
                             row = row.push(info_card("OS-Layer",
-                                self.ui_text(
-                                    "Sandbox: strikt\nPrivacy-Boundary: hard block\nIntegrationsgrad: lokal",
-                                    "Sandbox: strict\nPrivacy boundary: hard block\nIntegration level: local",
-                                )));
-                            row = row.push(info_card(self.ui_text("Telemetrie", "Telemetry"),
-                                self.ui_text(
-                                    "Standard: nur lokal\nOptionen: aus, gedrosselt, sicherheitsrelevant",
-                                    "Default: local only\nOptions: off, throttled, security-relevant",
-                                )));
-                            row = row.push(info_card(self.ui_text("Agenten", "Agents"),
-                                self.ui_text(
-                                    "Lokale Agenten k\u{f6}nnen aktiviert, begrenzt und mit Sicherheitsprofilen versehen werden.",
-                                    "Local agents can be activated, restricted and assigned security profiles.",
-                                )));
+                                if self.telemetry_shield_enabled {
+                                    self.ui_text("Firewall: aktiv \u{b7} Sandbox: lokal", "Firewall: active \u{b7} Sandbox: local")
+                                } else {
+                                    self.ui_text("Firewall: aus \u{b7} Sandbox: lokal", "Firewall: off \u{b7} Sandbox: local")
+                                }));
                             row.spacing(14)
                         }
                     );
+                    if self.telemetry_alerts.is_empty() {
+                        col = col.push(
+                            text(self.ui_text(
+                                "Keine aktive Telemetrie erkannt.",
+                                "No active telemetry detected.",
+                            )).size(12).color(c(TEXT_D()))
+                        );
+                    } else {
+                        col = col.push(
+                            text(format!(
+                                "{} {}",
+                                self.ui_text("\u{26a0} Telemetrie erkannt:", "\u{26a0} Telemetry detected:"),
+                                self.telemetry_alerts.len(),
+                            )).size(13).color(c(WARN()))
+                        );
+                        let alerts_col: Element<'_, Message> = {
+                            let mut ac = Column::new().spacing(2);
+                            for alert in self.telemetry_alerts.iter().rev().take(8) {
+                                ac = ac.push(
+                                    text(format!("{} \u{2502} {} \u{2192} {}",
+                                        alert.timestamp, alert.process, alert.remote))
+                                        .size(11)
+                                        .color(c(DANGER()))
+                                );
+                            }
+                            ac.into()
+                        };
+                        col = col.push(alerts_col);
+                    }
+                    // ── Zeitgraph-Metadaten-Zustimmung ─────────────────────────────────
+                    col = col.push(text("").size(6));
+                    col = col.push(text(self.ui_text(
+                        "Entstehungsdatum aus Datei-Metadaten",
+                        "File origin date from metadata",
+                    )).size(20));
+                    col = col.push(text(self.ui_text(
+                        "Liest beim Analysieren das Entstehungsdatum aus Datei-Metadaten (Dateiinfo + Header-Bytes). Kein Inhalt wird gelesen. Das Ergebnis erscheint nur im Zeitgraph-Tab \u{2014} nie in der Analyse selbst oder im Swarm.",
+                        "Reads the file origin date from metadata (file info + header bytes) during analysis. No content is read. The result appears only in the timeline graph tab \u{2014} never in the analysis itself or in the swarm.",
+                    )).size(13).color(c(TEXT_M())));
+                    col = col.push({
+                        let mut row = Row::new();
+                        row = row.push(
+                            button(text(if self.temporal_metadata_consent {
+                                self.ui_text("\u{25a0} AKTIV", "\u{25a0} ACTIVE")
+                            } else {
+                                self.ui_text("\u{25a1} AKTIVIEREN", "\u{25a1} ACTIVATE")
+                            }))
+                            .padding([10, 18])
+                            .on_press(Message::TemporalMetadataConsentToggle(!self.temporal_metadata_consent))
+                            .style(if self.temporal_metadata_consent { primary_button_style } else { secondary_button_style })
+                        );
+                        row = row.push(info_card(
+                            self.ui_text("Zeitgraph", "Timeline"),
+                            if self.temporal_metadata_consent {
+                                self.ui_text("Metadaten-Datum: aktiv \u{b7} nur Zeitgraph", "Metadata date: active \u{b7} timeline only")
+                            } else {
+                                self.ui_text("Metadaten-Datum: aus \u{b7} Analysezeitpunkt", "Metadata date: off \u{b7} analysis timestamp")
+                            },
+                        ));
+                        row.spacing(14)
+                    });
+                    col = col.push(text("").size(4));
+                    // ── Security-Modus ──────────────────────────────────────────────────
                     col = col.push(text(self.ui_text("Security-Modus", "Security mode")).size(20));
                     col = col.push(
                         {
@@ -3698,10 +4334,10 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                             row.spacing(10)
                         }
                     );
-                    col = col.push(text(self.ui_text("Runtime-Profil (Hardware-Inklusion)", "Runtime profile (hardware tier)")).size(20));
+                    col = col.push(text(self.ui_text("Runtime-Profil (lokaler Takt)", "Runtime profile (local cadence)")).size(20));
                     col = col.push(text(self.ui_text(
-                        "AUTO passt dynamisch an. LEGACY priorisiert niedrige Dauerlast f\u{fc}r \u{e4}ltere Systeme.",
-                        "AUTO adapts dynamically. LEGACY prioritises low sustained load for older hardware.",
+                        "AUTO, BALANCED, LOW-POWER und LEGACY steuern nur lokalen Takt, Polling und Watchdogs. Das Netzwerk-Tier bleibt separat hardwaregebunden: Vault-first-Geraete profitieren lokal, normale PCs behalten freie Profilwahl.",
+                        "AUTO, BALANCED, LOW-POWER and LEGACY only control local cadence, polling and watchdog pressure. The network tier stays separately hardware-bound: vault-first devices still benefit locally, while normal PCs keep full profile choice.",
                     )).size(14));
                     col = col.push(
                         {
@@ -3736,17 +4372,24 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                     col = col.push(info_card(
                         self.ui_text("Aktive Runtime-Parameter", "Active runtime parameters"),
                         &format!(
-                            "{} {}\n{} {} ms\n{} {} {}",
+                            "{} {}\n{} {} ms\n{} {}",
                             self.ui_text("Profil:", "Profile:"),
                             self.runtime_profile_label(),
                             self.ui_text("Tick-Intervall:", "Tick interval:"),
                             self.tick_interval_ms(),
-                            self.ui_text("Browser-Sync: alle", "Browser sync: every"),
-                            self.browser_sync_stride,
-                            self.ui_text("Ticks", "ticks"),
+                            self.ui_text("Netzwerk-Tier:", "Network tier:"),
+                            if self.hw_network_tier.is_empty() { "ermittelt..." } else { &self.hw_network_tier },
                         ),
                     ));
                     col = col.push(text(self.ui_text("Hybrid Runtime (Rust + Python + Symbiont)", "Hybrid runtime (Rust + Python + Symbiont)")).size(20));
+                    col = col.push(text(self.ui_text(
+                        "Hybrid Runtime bedeutet: Die Rust-Shell (diese App) läuft immer. Python-Module laufen optional im Hintergrund und kommunizieren über den Symbiont-Link. Das Python-Backend übernimmt rechenintensive Analyse-Schritte und gibt die Ergebnisse per IPC an die Shell zurück.",
+                        "Hybrid Runtime: The Rust shell (this app) always runs. Python modules run optionally in the background and communicate via the Symbiont link. The Python backend handles compute-intensive analysis steps and passes results back to the shell via IPC.",
+                    )).size(13).color(Color::from_rgb8(0x70, 0x90, 0xA8)));
+                    col = col.push(text(self.ui_text(
+                        "Symbiont Link AUS = nur lokale Rust-Analyse (schnell, eingeschränkt). Symbiont Link AN = volle AELab- und Pipeline-Tiefe.",
+                        "Symbiont Link OFF = local Rust analysis only (fast, limited). Symbiont Link ON = full AELab and pipeline depth.",
+                    )).size(12).color(Color::from_rgb8(0x50, 0x6A, 0x7A)));
                     col = col.push(
                         {
                             let mut row = Row::new();
@@ -3765,6 +4408,14 @@ fn view_header<'a>(&'a self, logo: Element<'a, Message>, tabs: Element<'a, Messa
                             row.spacing(8)
                         }
                     );
+                    col = col.push(text(self.ui_text(
+                        "Symbiont-Verbindungsport (Socket)",
+                        "Symbiont connection port (socket)",
+                    )).size(16));
+                    col = col.push(text(self.ui_text(
+                        "Ein Socket ist eine lokale Netzwerkadresse (127.0.0.1 = dieses Ger\u{e4}t), \u{fc}ber die Rust-Shell und Python-Backend miteinander sprechen. Der Port ist die Nummer des Kan\u{e4}ls \u{2014} beide Seiten m\u{fc}ssen denselben Port verwenden. Ports unter 1024 ben\u{f6}tigen Adminrechte.",
+                        "A socket is a local network address (127.0.0.1 = this device) used for communication between the Rust shell and Python backend. The port is the channel number \u{2014} both sides must use the same port. Ports below 1024 require admin rights.",
+                    )).size(12).color(Color::from_rgb8(0x50, 0x6A, 0x7A)));
                     col = col.push(
                         {
                             let mut row = Row::new();
@@ -3880,6 +4531,46 @@ On warning: always check Logs and ADE for details.",
 5) Use strip mode (top bar) for quick access without switching tabs.",
                         )
                     ));
+                    // ── Dauerbetrieb / Persistent mode ────────────────────────────────
+                    col = col.push(text(self.ui_text("Dauerbetrieb & Leistenmodus", "Persistent mode & overlay bar")).size(20));
+                    col = col.push(text(self.ui_text(
+                        "Im Dauerbetrieb wird das Fenster beim Klick auf X nicht beendet, sondern zur immer-sichtbaren Leiste (Always-on-Top) minimiert. Escape oder Klick auf die Leiste öffnet die Vollansicht wieder.",
+                        "In persistent mode, clicking X does not quit — the window collapses to an always-on-top overlay bar. Pressing Escape or clicking the bar restores the full view.",
+                    )).size(13).color(c(TEXT_M())));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            row = row.push(
+                                button(text(if self.persistent_mode {
+                                    self.ui_text("\u{25a0} DAUERBETRIEB AKTIV", "\u{25a0} PERSISTENT ON")
+                                } else {
+                                    self.ui_text("\u{25a1} DAUERBETRIEB EIN", "\u{25a1} ENABLE PERSISTENT")
+                                }))
+                                .padding([10, 18])
+                                .on_press(Message::PersistentModeToggle(true))
+                                .style(if self.persistent_mode { primary_button_style } else { secondary_button_style })
+                            );
+                            row = row.push(
+                                button(text(if !self.persistent_mode {
+                                    self.ui_text("\u{25a0} NORMALMODUS AKTIV", "\u{25a0} NORMAL MODE ON")
+                                } else {
+                                    self.ui_text("\u{25a1} NORMALMODUS", "\u{25a1} NORMAL MODE")
+                                }))
+                                .padding([10, 18])
+                                .on_press(Message::PersistentModeToggle(false))
+                                .style(if !self.persistent_mode { primary_button_style } else { secondary_button_style })
+                            );
+                            row.spacing(8)
+                        }
+                    );
+                    col = col.push(
+                        button(text(self.ui_text("\u{26a0} Programm jetzt beenden", "\u{26a0} Quit program now"))
+                            .size(13)
+                            .color(c(DANGER())))
+                            .padding([8, 16])
+                            .on_press(Message::ForceQuit)
+                            .style(secondary_button_style)
+                    );
                     col.spacing(16)
                 }
             )
@@ -3975,8 +4666,10 @@ On warning: always check Logs and ADE for details.",
             return container(
                 column![
                     text("◆ ANCHOR VAULT").size(22),
-                    text("Noch keine Anchor-Cluster vorhanden.").size(14),
-                    text("Analysiere eine Datei um erste Strukturanker zu erzeugen.").size(13),
+                    text("Was sind Anker?").size(16).color(Color::from_rgb8(0x9A, 0x67, 0xFF)),
+                    text("Anker (Anchors) sind unveränderliche Strukturabdrücke einer Datei — ähnlich einem kryptografischen Fingerabdruck, aber rein aus mathematischen Strukturmerkmalen abgeleitet, nicht aus dem Inhalt selbst.").size(13),
+                    text("Artefakte sind analysierte Dateien, gespeichert mit ihrem Anker im Vault. Je mehr Artefakte bekannt sind, desto schneller und genauer werden neue Analysen — weil bekannte Muster nicht erneut berechnet werden.").size(13),
+                    text("Analysiere eine Datei um erste Strukturanker zu erzeugen.").size(13).color(Color::from_rgb8(0x50, 0x6A, 0x7A)),
                 ]
                 .spacing(10),
             )
@@ -3989,8 +4682,9 @@ On warning: always check Logs and ADE for details.",
             .cloned()
             .unwrap_or_else(|| clusters[0].clone());
         let mut list = Column::new()
-            .push(text("\u{25c6} CLUSTER \u{2014} Anchor-Gruppen").size(22))
-            .push(text("Kategorien entstehen datengetrieben aus Strukturmerkmalen.").size(13))
+            .push(text("\u{25c6} ANCHOR VAULT — Strukturanker und Artefakte").size(22))
+            .push(text("Anker sind strukturelle Fingerabdrücke von Dateien. Artefakte sind analysierte Dateien im Vault. Je mehr vorhanden, desto effizienter werden neue Analysen.").size(12).color(Color::from_rgb8(0x50, 0x6A, 0x7A)))
+            .push(text("Cluster entstehen automatisch datengetrieben aus Strukturmerkmalen — nicht aus Dateinamen oder Typen.").size(12).color(Color::from_rgb8(0x50, 0x6A, 0x7A)))
             .spacing(10);
         for (index, cluster) in clusters.iter().enumerate() {
             let is_sel = index == self.selected_anchor_group;
@@ -4042,6 +4736,22 @@ On warning: always check Logs and ADE for details.",
         } else {
             (selected.total_bytes.min(10_000_000) as f32) / 10_000_000.0
         };
+        let observation_summary = if selected.observation_count == 0 {
+            "FlowSphere-History: noch keine Zeitbeobachtungen fuer dieses Cluster.".to_owned()
+        } else {
+            format!(
+                "FlowSphere-History: {} Beobachtungen | Erste Sicht {} | Letzte Sicht {}",
+                selected.observation_count,
+                selected
+                    .first_seen
+                    .map(format_unix_date)
+                    .unwrap_or_else(|| "unbekannt".to_owned()),
+                selected
+                    .last_seen
+                    .map(format_unix_date)
+                    .unwrap_or_else(|| "unbekannt".to_owned())
+            )
+        };
         container(
             Row::new()
                 .push(
@@ -4058,7 +4768,8 @@ On warning: always check Logs and ADE for details.",
                             .push(text(format!("Artefakte: {}", selected.item_count)).size(14))
                             .push(progress_bar(0.0..=1.0, detail_fill))
                             .push(text(make_sparkline(detail_fill)).size(13))
-                            .push(text(format!("Groesse: {} B", selected.total_bytes)).size(14))
+                            .push(text(format!("Gr\u{f6}\u{df}e: {} B", selected.total_bytes)).size(14))
+                            .push(text(observation_summary).size(13))
                             .push(text(selected.sample_note.clone()).size(13))
                             .push(button(text("Download anfragen")).padding([10, 18]).style(secondary_button_style))
                             .spacing(10)
@@ -4076,20 +4787,69 @@ On warning: always check Logs and ADE for details.",
 
     fn view_imprint(&self) -> Element<'_, Message> {
         let symbiont_count = self.auth_store.user_count();
+        let accent  = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let teal    = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+        let mid     = Color::from_rgb8(0xA8, 0xC4, 0xD8);
+        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+
+        let section = |title: &'static str, body: &'static str| -> Element<'_, Message> {
+            container(
+                Column::new()
+                    .push(text(title).size(15).color(accent))
+                    .push(text(body).size(13).color(mid))
+                    .spacing(6),
+            )
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: dim, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+            .padding(16)
+            .width(Length::Fill)
+            .into()
+        };
+
         container(
             scrollable(
                 Column::new()
-                    .push(text("Impressum").size(24))
-                    .push(info_card(
-                        "Status",
-                        "Kurz: Die Logik ist schon richtig gebaut. Die volle selbstverstaerkende Skalierung ist vorbereitet, aber noch nicht komplett end-to-end operationalisiert.",
+                    .push(text("Aether \u{2014} Was ist das?").size(26).color(c(TEXT_H())))
+                    .push(text(format!("Version: lokal  \u{b7}  Registrierte Nutzer: {symbiont_count}")).size(12).color(teal))
+                    .push(section(
+                        "Ziel und Kernidee",
+                        "Aether ist ein signalagnostisches Beobachter- und Verdichtungssystem. Es lernt strukturelle Muster aus beliebigen Datenquellen \u{2014} Dateien, Sensoren, Klimamessreihen, Audiodaten, Spielsequenzen \u{2014} ohne eine zentrale Infrastruktur zu ben\u{f6}tigen. Jedes Ger\u{e4}t ist ein vollst\u{e4}ndiger Knoten.",
                     ))
-                    .push(info_card("Symbionten", &format!("Aktuell registrierte Symbionten: {symbiont_count}")))
-                    .push(info_card("Zweck", "Aether macht lokale Analyse, Technik und Wissen ohne Cloud-Zwang verstaendlich und nutzbar."))
-                    .push(info_card("Datenschutz", "Account, Deltas und Restanteile bleiben auf dem Geraet. Keine zentrale Wiederherstellung."))
-                    .push(info_card("Formeln", "P(n) = base + (1-base) * ln(1+n) / ln(1+Nmax)\nC(t) = vault_hits / total_chunks"))
-                    .push(info_card("Systembild", "Aether arbeitet eher wie eine Leitstelle als wie ein Agent: lokale Signale werden geordnet, priorisiert und in stabile Entscheidungen ueberfuehrt."))
-                    .spacing(16),
+                    .push(section(
+                        "Dezentralit\u{e4}t und Datenschutz",
+                        "Kein Konto bei einem Drittanbieter. Kein Cloud-Upload. Alle Daten, Analysen, Anker und Schl\u{fc}ssel bleiben auf dem Ger\u{e4}t. Rekonstruktion und Zugang sind an den lokalen Vault gebunden. Es gibt keine zentrale Wiederherstellung \u{2014} das ist kein Fehler, sondern das Grundprinzip.",
+                    ))
+                    .push(section(
+                        "Demokratisierung von Wissen und Technik",
+                        "Leistungsf\u{e4}hige Analyse und Mustererkennung sind keine Privilegien von Rechenzentren. Aether verhilft auch alter Hardware zu aussagekr\u{e4}ftigen Ergebnissen, weil die Effizienz mit jedem gespeicherten Muster w\u{e4}chst \u{2014} es wird nicht mehr Strom ben\u{f6}tigt, sondern weniger. Veraltete Ger\u{e4}te werden durch neues Wissen wertvoller.",
+                    ))
+                    .push(section(
+                        "Kampf gegen Obsoleszenz durch Struktur",
+                        "Das System behandelt jede weitere Analyse nicht als neue Last, sondern als zus\u{e4}tzliches Wissen das zuk\u{fc}nftige Analysen beschleunigt. Bekannte Muster werden nicht erneut berechnet, sondern aus dem Vault abgeglichen. Je gr\u{f6}\u{df}er der Vault, desto geringer der Rechenaufwand pro neuer Datei.",
+                    ))
+                    .push(section(
+                        "Signalagnostik \u{2014} eine Meta-Schicht \u{fc}ber jedem OS und jeder Hardware",
+                        "Aether unterscheidet nicht zwischen Dateitypen, Protokollen oder Systemarchitekturen. Es sucht nach mathematischen Invarianten \u{2014} Strukturen, die sich unver\u{e4}ndert verhalten unabh\u{e4}ngig davon ob das Signal ein Genome-Datensatz, ein JPEG, eine Audiodatei oder ein Netzwerkpaket ist. Das macht es zu einer Metalayer die \u{fc}ber jedem OS und jeder Hardware funktioniert.",
+                    ))
+                    .push(section(
+                        "Shannon-Erweiterung durch Beobachternetzwerke",
+                        "Klassische Informationstheorie (Shannon) berechnet Entropie f\u{fc}r bekannte Alphabete. Aether erweitert diesen Ansatz: ein verteiltes Netzwerk von Beobachtern sucht signalartübergreifende Invarianten, kommuniziert sie, verbessert sie und l\u{e4}sst lossless Kompression emergieren \u{2014} nicht durch Regelwerke, sondern durch Strukturkonvergenz. Muster entstehen, nach denen niemand explizit gesucht hat.",
+                    ))
+                    .push(section(
+                        "Symbiotische Metalayer OS",
+                        "Aether greift nicht in das laufende Betriebssystem ein. Es legt sich als Beobachtungsschicht dar\u{fc}ber: liest Signale, analysiert, verdichtet, ankert und gibt strukturierte R\u{fc}ckmeldungen. Die Hardware-Ressourcen die es nutzt, nutzt es effizienter als zuvor \u{2014} weil jede verarbeitete Datei das gesamte System ein kleines Bisschen schneller macht.",
+                    ))
+                    .push(section(
+                        "Technische Grundformeln",
+                        "P(n) = base + (1-base) \u{d7} ln(1+n) / ln(1+N\u{2098}\u{2090}\u{2093})\n\u{2192} Wahrscheinlichkeit eines Vault-Treffers nach n gespeicherten Mustern. Skaliert logarithmisch.\n\nC(t) = vault_hits / total_chunks\n\u{2192} Kompressions-Effizienz zu Zeitpunkt t. Steigt monoton mit Vault-Gr\u{f6}\u{df}e.\n\nH\u{03bb} = H(X) \u{2212} I(X;vault)\n\u{2192} Restunsicherheit nach Abzug des strukturellen Vorwissens.",
+                    ))
+                    .push(info_card("Status", "Die Kernlogik ist vollst\u{e4}ndig implementiert. Die signalagnostische Skalierung ist vorbereitet. Der verteilte Netzwerkbetrieb (Swarm) ist aktiv. Vollst\u{e4}ndig end-to-end operationalisiert wird das System mit wachsendem Vault automatisch leistungsf\u{e4}higer."))
+                    .push(info_card("Datenschutz", "Account, Schl\u{fc}ssel, Deltas und Vault-Inhalte verbleiben auf diesem Ger\u{e4}t. Es gibt keine Telemetrieverbindung, keine Cloud-Synchronisation und keinen zentralen Server."))
+                    .spacing(12),
             )
             .height(Length::Fill),
         )
@@ -4264,9 +5024,18 @@ On warning: always check Logs and ADE for details.",
                     if is_aef_err {
                         col = col.push(
                             container(
-                                text("\u{26a0} Diese Datei wurde noch nicht als AEF analysiert. Ziehe sie erneut in das Fenster.")
-                                    .size(13)
-                                    .color(Color::from_rgb8(0xFF, 0xCC, 0x44)),
+                                column![
+                                    text("\u{26a0} Diese Datei ist noch kein AEF-Artefakt.")
+                                        .size(13)
+                                        .color(Color::from_rgb8(0xFF, 0xCC, 0x44)),
+                                    text("AEF (Aether Encoded Format) ist das interne Artefakt-Format, das bei einer ersten Analyse erzeugt wird. Es enth\u{e4}lt strukturelle Anker, Delta-Werte und Metadaten f\u{fc}r die sp\u{e4}tere Rekonstruktion.")
+                                        .size(12)
+                                        .color(Color::from_rgb8(0xCC, 0xAA, 0x44)),
+                                    text("L\u{f6}sung: Ziehe die Originaldatei zun\u{e4}chst in den Analyse-Tab um sie zu erfassen. Danach ist sie im Vault und kann hier rekonstruiert werden.")
+                                        .size(12)
+                                        .color(Color::from_rgb8(0xAA, 0x88, 0x44)),
+                                ]
+                                .spacing(6),
                             )
                             .padding([8, 12])
                             .style(|_: &Theme| container::Style {
@@ -4328,52 +5097,6 @@ On warning: always check Logs and ADE for details.",
         .width(Length::Fill)
         .height(Length::Fill)
         .style(panel_frame_style)
-        .into()
-    }
-
-    // -----------------------------------------------------------------------
-    // Aether.YouTube – Eingebetteter Video-Browser
-    // -----------------------------------------------------------------------
-
-    fn view_youtube(&self) -> Element<'_, Message> {
-        let nav_bar = row![
-            text_input("YouTube-URL ...", &self.youtube_address)
-                .on_input(Message::YouTubeAddressChanged)
-                .padding(10)
-                .size(16)
-                .width(Length::Fill),
-            button(text("\u{25b6} Laden").size(15))
-                .padding([10, 16])
-                .on_press(Message::YouTubeLoadPressed),
-        ]
-        .spacing(8);
-
-        column![
-            row![
-                text("\u{25b6} YouTube").size(22),
-                text("\u{2014} URL anpassen und Laden dr\u{fc}cken").size(14),
-            ]
-            .spacing(12),
-            nav_bar,
-            text(&self.browser_note).size(13),
-            text("YouTube-Tab: URL direkt eingeben (youtube.com/watch?v=...) oder Suchbegriff fuer DuckDuckGo-Suche im Browser-Tab. KI-Slop-Erkennung wird aktiviert sobald Bridge laeuft.").size(11).color(c(TEXT_D())),
-            container(
-                column![
-                    text("Eingebetteter Browser aktiv.").size(16),
-                    text("Das Video-Fenster erscheint als natives Overlay.").size(14),
-                    text("Tipp: youtube.com/watch?v=... direkt eintippen.").size(13),
-                ]
-                .spacing(10)
-                .padding(30)
-            )
-            .width(Length::Fill)
-            .height(Length::Fill),
-            button(text("🔍 KI-Analyse starten").size(12).color(c(TEXT_H())))
-                .on_press(Message::YouTubeKiAnalysisPressed)
-                .padding([8, 12])
-                .style(secondary_button_style),
-        ]
-        .spacing(10)
         .into()
     }
 
@@ -4587,6 +5310,27 @@ On warning: always check Logs and ADE for details.",
             .as_ref()
             .map(|capsule| capsule.bayes_confidence)
             .unwrap_or(0.0);
+        // Weitere Mustererkennungsmetriken direkt aus capsule_state (unveraenderte Pipeline-Rohwerte)
+        let perm_entropy = self
+            .capsule_state
+            .as_ref()
+            .map(|c| c.perm_entropy.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let symmetry = self
+            .capsule_state
+            .as_ref()
+            .map(|c| c.symmetry.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let h_lambda = self
+            .capsule_state
+            .as_ref()
+            .map(|c| c.h_lambda.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let sce_score = self
+            .capsule_state
+            .as_ref()
+            .map(|c| c.sce_score.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
         let anomaly_flags = self
             .capsule_state
             .as_ref()
@@ -4747,10 +5491,181 @@ On warning: always check Logs and ADE for details.",
                 else if v >= 4 { '\u{2592}' } else { '\u{2591}' }
             }).collect();
 
+            // Pre-compute history element before column! macro to satisfy iced type inference
+            let history_el: Element<'_, Message> = {
+                let entries: &Vec<FlowSphereEntry> = match self.flow_sphere_subtab {
+                    FlowSphereSubTab::Session => &self.flow_sphere_session_entries,
+                    FlowSphereSubTab::History | FlowSphereSubTab::Global => &self.flow_sphere_history,
+                };
+                let entry_rows: Vec<Element<'_, Message>> = if entries.is_empty() {
+                    let empty_msg: &'static str = match self.flow_sphere_subtab {
+                        FlowSphereSubTab::Session => "Noch keine Analysen in dieser Sitzung.",
+                        FlowSphereSubTab::History => "Noch keine gespeicherten Analysen.",
+                        FlowSphereSubTab::Global => "Keine Swarm-Vergleichsdaten.",
+                    };
+                    vec![text(empty_msg).size(10).color(dim).into()]
+                } else {
+                    entries.iter().enumerate()
+                        .rev()
+                        .take(30)
+                        .map(|(idx, entry)| {
+                            let is_selected = self.flow_sphere_compare_idx == Some(idx);
+                            let ts = format_unix_date(
+                                entry.visual_timestamp_secs(self.temporal_metadata_consent),
+                            );
+                            let ts_origin = entry.visual_timestamp_origin(self.temporal_metadata_consent);
+                            let domain = if entry.domain_hint.is_empty() {
+                                String::new()
+                            } else {
+                                format!(" [{}]", entry.domain_hint)
+                            };
+                            let has_anomaly = !entry.anomaly_flags.is_empty();
+                            let origin_color = match ts_origin {
+                                "meta" => Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                                "manual" => Color::from_rgb8(0xFF, 0xC8, 0x6B),
+                                _ => dim,
+                            };
+                            button(
+                                column![
+                                    text(format!("{}{}", entry.source_label.chars().take(22).collect::<String>(), domain))
+                                        .size(10).color(if is_selected { Color::WHITE } else { Color::from_rgb8(0xC0, 0xD6, 0xE8) }),
+                                    row![
+                                        text(format!("{} {}", ts, if has_anomaly { "\u{26a0}" } else { "" }))
+                                            .size(9)
+                                            .color(if has_anomaly { Color::from_rgb8(0xFF, 0xD7, 0x00) } else { dim }),
+                                        text(format!("· {}", ts_origin))
+                                            .size(9)
+                                            .color(origin_color),
+                                    ]
+                                    .spacing(4),
+                                ]
+                                .spacing(1)
+                            )
+                            .on_press(Message::FlowSphereCompareSelected(idx))
+                            .padding([5, 8])
+                            .width(Length::Fill)
+                            .style(move |_: &Theme, _| button::Style {
+                                background: Some(Background::Color(if is_selected {
+                                    Color::from_rgba(0.38, 0.22, 0.72, 0.45)
+                                } else {
+                                    Color::from_rgba(0.06, 0.10, 0.16, 0.90)
+                                })),
+                                border: Border {
+                                    color: if is_selected { Color::from_rgb8(0x9A, 0x67, 0xFF) } else { Color::from_rgba(0.20, 0.28, 0.38, 0.60) },
+                                    width: if is_selected { 1.2 } else { 0.6 },
+                                    radius: 6.0.into(),
+                                },
+                                text_color: Color::WHITE,
+                                ..Default::default()
+                            })
+                            .into()
+                        })
+                        .collect()
+                };
+                column(entry_rows).spacing(3).into()
+            };
+
             container(
                 scrollable(
                     column![
                         text("FLOWSPHERE LESEHILFE").size(11).color(cyan),
+                        // --- Sub-Tab-Bar: Sitzung | History | Global ---
+                        {
+                            let mk_tab = |label: &'static str, tab: FlowSphereSubTab| {
+                                let active = self.flow_sphere_subtab == tab;
+                                button(text(label).size(11))
+                                    .on_press(Message::FlowSphereSubTabSelected(tab))
+                                    .padding([5, 10])
+                                    .style(move |_: &Theme, _| button::Style {
+                                        background: Some(Background::Color(if active {
+                                            Color::from_rgba(0.38, 0.22, 0.72, 0.55)
+                                        } else {
+                                            Color::from_rgba(0.08, 0.11, 0.18, 0.90)
+                                        })),
+                                        border: Border {
+                                            color: if active { Color::from_rgb8(0x9A, 0x67, 0xFF) }
+                                                   else { Color::from_rgba(0.35, 0.45, 0.55, 0.40) },
+                                            width: if active { 1.4 } else { 0.8 },
+                                            radius: 7.0.into(),
+                                        },
+                                        text_color: if active { Color::WHITE } else { Color::from_rgb8(0x8F, 0xA7, 0xBA) },
+                                        ..Default::default()
+                                    })
+                            };
+                            Row::new()
+                                .push(mk_tab("Sitzung", FlowSphereSubTab::Session))
+                                .push(mk_tab("History", FlowSphereSubTab::History))
+                                .push(mk_tab("Global", FlowSphereSubTab::Global))
+                                .spacing(4)
+                        },
+                        // --- Radar-Grafik: alle 12 Pipeline-Metriken, unveraendert ---
+                        // Normierungsregeln (auditierbar, invertierbar):
+                        //   Shannon: Rohwert/8.0  | KatzFD: /2.0  | Zipf: /3.0
+                        //   Fourier: ln(1+x)/3.912 | alle anderen: direkt [0,1]
+                        {
+                            // Vergleichs-Entry aus History (falls ausgewaehlt)
+                            let compare_entry = match self.flow_sphere_subtab {
+                                FlowSphereSubTab::Session => self.flow_sphere_compare_idx
+                                    .and_then(|i| self.flow_sphere_session_entries.get(i)),
+                                FlowSphereSubTab::History | FlowSphereSubTab::Global => self.flow_sphere_compare_idx
+                                    .and_then(|i| self.flow_sphere_history.get(i)),
+                            };
+                            let values_a: [f32; 12] = [
+                                entropy,
+                                perm_entropy,
+                                (katz_dimension / 2.0).clamp(0.0, 1.0),
+                                (zipf_alpha / 3.0).clamp(0.0, 1.0),
+                                benford_score,
+                                (fourier_period.ln_1p() / 3.912).clamp(0.0, 1.0),
+                                noether_consistency,
+                                h_lambda,
+                                symmetry,
+                                sce_score,
+                                delta_convergence,
+                                bayes_confidence,
+                            ];
+                            let values_b = compare_entry.map(|e| e.metrics);
+                            let contradiction_axes: Vec<usize> = compare_entry
+                                .map(|e| e.contradiction_axes(&values_a))
+                                .unwrap_or_default();
+                            let cosine_sim: f32 = compare_entry
+                                .map(|e| e.cosine_similarity(&values_a))
+                                .unwrap_or(0.0);
+                            let has_compare = compare_entry.is_some();
+                            let label_a = self.capsule_state.as_ref()
+                                .map(|c| c.source_label.clone())
+                                .unwrap_or_else(|| "Aktuell".to_owned());
+                            let label_b = compare_entry
+                                .map(|e| e.source_label.clone())
+                                .unwrap_or_default();
+                            let canvas_elem = canvas::Canvas::new(MetricRadarScene {
+                                values_a,
+                                values_b,
+                                contradiction_axes,
+                                tick: self.tick_counter,
+                                label_a,
+                                label_b,
+                            })
+                            .width(Length::Fill)
+                            .height(Length::Fixed(220.0));
+                            let sim_elem: Element<'_, Message> = if has_compare {
+                                let sim_pct = cosine_sim * 100.0;
+                                let sim_color = if sim_pct >= 85.0 {
+                                    Color::from_rgb8(0x4C, 0xD9, 0x6E)
+                                } else if sim_pct >= 60.0 {
+                                    Color::from_rgb8(0xD4, 0xA0, 0x42)
+                                } else {
+                                    Color::from_rgb8(0xD9, 0x50, 0x50)
+                                };
+                                text(format!("\u{2248} Kosinus-\u{00c4}hnlichkeit: {:.1}%", sim_pct))
+                                    .size(11)
+                                    .color(sim_color)
+                                    .into()
+                            } else {
+                                text("").size(1).into()
+                            };
+                            column![canvas_elem, sim_elem].spacing(4)
+                        },
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         summary_card(
                             "IM INNEREN",
@@ -4860,6 +5775,9 @@ On warning: always check Logs and ADE for details.",
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         text("VERLAUF").size(10).color(dim),
                         text(mut_spark).size(10).color(Color::from_rgb8(0xFF, 0xA5, 0x00)),
+                        text("\u{2500}".repeat(22)).size(8).color(dim),
+                        // --- History-Eintraege je nach Sub-Tab (pre-computed above) ---
+                        history_el,
                         text("\u{2500}".repeat(22)).size(8).color(dim),
                         button(text("EXPORT JSON").size(11))
                             .on_press(Message::FlowSphereExportPressed)
@@ -4996,15 +5914,42 @@ On warning: always check Logs and ADE for details.",
                 .align_y(Alignment::Center)
                 .into()
         } else if let Some(visible) = &self.flow_sphere_broadcast_visible {
-            container(text(format!("Sichtbar: {}", visible)).size(10).color(c(TEXT_H())))
-                .padding([8, 10])
-                .width(Length::Fill)
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.92))),
-                    border: Border { color: Color::from_rgba(0.30, 0.85, 0.45, 0.60), width: 1.0, radius: 8.0.into() },
-                    ..Default::default()
-                })
-                .into()
+            {
+                let already_outbound = self.flow_sphere_broadcast_outbound.as_deref() == Some(visible.as_str());
+                let last_sent = self.flow_sphere_broadcast_last_sent_at.clone().unwrap_or_default();
+                let outbound_note = if already_outbound && !last_sent.is_empty() {
+                    format!("Outbound markiert: {}", last_sent)
+                } else {
+                    "Noch nicht outbound versendet.".to_owned()
+                };
+                let dispatch_button = if already_outbound {
+                    button(text("Bereits outbound markiert").size(11))
+                        .padding([6, 10])
+                        .style(secondary_button_style)
+                } else {
+                    button(text("Swarm-Anfrage senden").size(11))
+                        .on_press(Message::FlowSphereBroadcastDispatch)
+                        .padding([6, 10])
+                        .style(primary_button_style)
+                };
+                Row::new()
+                    .push(container(column![
+                            text(format!("Lokal freigegeben: {}", visible)).size(10).color(c(TEXT_H())),
+                            text(outbound_note).size(10).color(soft),
+                        ]
+                        .spacing(4))
+                        .padding([8, 10])
+                        .width(Length::Fill)
+                        .style(|_: &Theme| container::Style {
+                            background: Some(Background::Color(Color::from_rgba(0.08, 0.18, 0.14, 0.92))),
+                            border: Border { color: Color::from_rgba(0.30, 0.85, 0.45, 0.60), width: 1.0, radius: 8.0.into() },
+                            ..Default::default()
+                        }))
+                    .push(dispatch_button)
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+            }
         } else {
             text("Noch kein Broadcast sichtbar. Erst Vorschlag aus Analyse finden, dann Zustimmung geben.")
                 .size(10)
@@ -5213,8 +6158,10 @@ On warning: always check Logs and ADE for details.",
 
         let broadcast_gate_preview = if self.flow_sphere_broadcast_proposal.is_some() {
             "Vorschau: Die Analyse hat einen Broadcast-Vorschlag gefunden, wartet aber noch auf deine Zustimmung.".to_owned()
+        } else if self.flow_sphere_broadcast_outbound.is_some() {
+            "Vorschau: Eine explizit freigegebene Broadcast-Anfrage wurde als outbound markiert; Kontakt bleibt trotzdem ein separater Zustimmungspfad.".to_owned()
         } else if self.flow_sphere_broadcast_visible.is_some() {
-            "Vorschau: Ein freigegebener Broadcast ist sichtbar und bleibt an die aktuelle Strukturentscheidung gebunden.".to_owned()
+            "Vorschau: Ein Broadcast ist lokal freigegeben, aber noch nicht als outbound Anfrage versendet.".to_owned()
         } else {
             broadcast_gate_detail.clone()
         };
@@ -5329,6 +6276,7 @@ On warning: always check Logs and ADE for details.",
             let mut rows = column![
                 text(format!("source: {}", capsule.source_label)).size(14).color(cyan),
                 text(format!("trigger: {} | type: {} | domain: {}", capsule.trigger, capsule.source_type, capsule.domain_hint)).size(13).color(dim),
+                text(format!("scope: {} | privacy: {} | artifact: {} | segments: {}", capsule.source_scope, capsule.privacy_class, capsule.artifact_class, capsule.segment_count)).size(13).color(dim),
                 text(format!("Trust Score: {:.3}", capsule.trust_score)).size(16).color(if capsule.trust_score > 0.65 { green } else { red }),
                 text(format!("Entropy: {:.4}", capsule.entropy)).size(14).color(dim),
                 text(format!("H_lambda: {:.4}", capsule.h_lambda)).size(14).color(dim),
@@ -5342,6 +6290,10 @@ On warning: always check Logs and ADE for details.",
                 text(format!("Noether Consistency: {:.4}", capsule.noether_consistency)).size(14).color(dim),
                 text(format!("Delta Ratio: {:.4} | Changed Bytes: {}", capsule.delta_ratio, capsule.changed_bytes)).size(14).color(dim),
             ];
+            if !capsule.segment_manifest_hash.is_empty() {
+                let short_manifest: String = capsule.segment_manifest_hash.chars().take(16).collect();
+                rows = rows.push(text(format!("segment manifest: {}", short_manifest)).size(13).color(dim));
+            }
             if !capsule.anomaly_flags.is_empty() {
                 let flags = capsule.anomaly_flags.join(", ");
                 rows = rows.push(text(format!("Anomalies: {}", flags)).size(14).color(red));
@@ -5380,7 +6332,8 @@ On warning: always check Logs and ADE for details.",
             .join(" | ");
             let rows = column![
                 text(format!("fitness: {:.4} | lossless: {:.1}%", aelab.fitness, aelab.lossless * 100.0)).size(14).color(cyan),
-                text(format!("nodes: {} | depth: {} | anchor: {} | evolved: {}", aelab.nodes, aelab.depth, aelab.has_anchor, aelab.evolved)).size(14).color(dim),
+                // "operators / depth" = AE-Baum-Schritte — KEINE Netz-Nodes (Nodes = User im System)
+                text(format!("operators: {} | depth: {} | anchor: {} | evolved: {}", aelab.nodes, aelab.depth, aelab.has_anchor, aelab.evolved)).size(14).color(dim),
                 text(format!("seed: {}", seed_preview)).size(13).color(dim),
                 text(format!("coupling: {:.3} | coherence: {:.3} | utility: {:.3}", aelab.seed_coupling, aelab.seed_coherence, aelab.seed_utility)).size(13).color(dim),
                 text(format!("ops: {}", operator_flags)).size(13).color(dim),
@@ -5457,6 +6410,164 @@ On warning: always check Logs and ADE for details.",
             ade_subpanel("AUDIT CHAIN · DETERMINISTIC LINEAGE", rows.into(), panel_s)
         };
 
+        // ── VIER THEORETISCHE LIMITS · Shannon / Kolmogorov / MDL / TDL ──────
+        // Rein observational — kein Einfluss auf Analyse-Pipeline, Trust-Score oder
+        // delta_ratio. Alles wird aus bereits berechneten Werten abgelesen.
+        let ipe_panel = {
+            let bpj = self.live_render_bits_per_joule;
+            let bpj_history = &self.live_render_bpj_history;
+
+            // ── Shannon-Limit-Annäherung aus Capsule ────────────────────────
+            let (h_lambda, shannon_limit, shannon_gap_pct) = if let Some(cap) = &self.capsule_state {
+                let gap = if cap.entropy > 0.0 {
+                    ((cap.h_lambda - cap.entropy * 0.15) / cap.entropy * 100.0).max(0.0)
+                } else { 0.0 };
+                (cap.h_lambda, cap.entropy * 0.15, gap)
+            } else {
+                (0.0_f32, 0.0_f32, 100.0_f32)
+            };
+
+            // ── Kolmogorov-Proxy aus sce_signature ─────────────────────────
+            let kolmogorov_k = self.capsule_state.as_ref().map(|c| c.kolmogorov_k).unwrap_or(0.0);
+
+            // ── MDL: Modellabdeckung (AnchorPack/DeltaPack) ─────────────────
+            // MDL-Kosten = L(Modell) + L(Rest) = anchor_coverage_ratio + delta_ratio
+            // Minimum wenn anchor_coverage_ratio → 1 und delta_ratio → 0
+            let mdl_model_cov = self.capsule_state.as_ref().map(|c| c.anchor_coverage_ratio).unwrap_or(0.0);
+            let mdl_residual = self.capsule_state.as_ref().map(|c| c.delta_ratio).unwrap_or(1.0);
+            let mdl_total = (mdl_model_cov + mdl_residual).min(2.0); // normaliert auf [0,2]
+
+            // ── TDL: Thermodynamische Tiefe (Bits/Joule → Landauer-Grenze) ─
+            // Landauer-Limit bei 300K: ~2.9 × 10^-21 J/bit → ~3.4 × 10^20 bit/J
+            // Wir zeigen relativen Abstand (wir sind noch weit entfernt, aber der Trend zählt)
+            let bpj_str = if bpj >= 1_000_000.0 {
+                format!("{:.2} Mb/J", bpj / 1_000_000.0)
+            } else if bpj >= 1_000.0 {
+                format!("{:.1} kb/J", bpj / 1_000.0)
+            } else if bpj > 0.0 {
+                format!("{:.0} b/J", bpj)
+            } else {
+                "\u{2014} b/J".to_owned()
+            };
+
+            // IPE-Trend aus Rolling-History
+            let (ipe_slope, ipe_trend) = if bpj_history.len() >= 4 {
+                let n = bpj_history.len();
+                let x_mean = (n as f32 - 1.0) / 2.0;
+                let y_mean: f32 = bpj_history.iter().sum::<f32>() / n as f32;
+                let num: f32 = bpj_history.iter().enumerate()
+                    .map(|(i, v)| (i as f32 - x_mean) * (v - y_mean)).sum();
+                let den: f32 = bpj_history.iter().enumerate()
+                    .map(|(i, _)| (i as f32 - x_mean).powi(2)).sum();
+                let slope = if den > 0.0 { num / den } else { 0.0 };
+                let label = if slope > 1000.0 { "IMPROVING \u{2191}\u{2191}" }
+                    else if slope > 100.0 { "IMPROVING \u{2191}" }
+                    else if slope < -1000.0 { "DEGRADING \u{2193}" }
+                    else { "STABLE \u{2192}" };
+                (slope, label)
+            } else {
+                (0.0_f32, "collecting\u{2026}")
+            };
+
+            let _delta_ratio_now = self.live_render_last_delta_ratio;
+
+            let rows = column![
+                // Kopfzeile
+                text("Das System n\u{00e4}hert sich gleichzeitig vier theoretischen Grenzen.")
+                    .size(12).color(dim),
+
+                // Trennlinie: Shannon
+                text("\u{25b6}  SHANNON-LIMIT  \u{2014}  H_\u{03bb}(X, M_t) \u{2192} H_min(X)")
+                    .size(13).color(cyan),
+                row![
+                    text("H\u{03bb} (Restunsicherheit):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.4} bit/byte", h_lambda)).size(13).color(amber),
+                    text(format!("  Limit: {:.4}", shannon_limit)).size(12).color(dim),
+                ].spacing(8),
+                row![
+                    text("Abstand zum Shannon-Limit:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.2}%", shannon_gap_pct)).size(13)
+                        .color(if shannon_gap_pct < 10.0 { green } else if shannon_gap_pct < 40.0 { amber } else { red }),
+                    text("  (0% = Shannon-Limit erreicht)").size(11).color(dim),
+                ].spacing(8),
+
+                // Trennlinie: Kolmogorov
+                text("\u{25b6}  KOLMOGOROV-KOMPLEXITÄT  \u{2014}  K(X) via zlib-Proxy")
+                    .size(13).color(cyan),
+                row![
+                    text("Komprimierbarkeit K:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.4}", kolmogorov_k)).size(13)
+                        .color(if kolmogorov_k > 0.7 { green } else if kolmogorov_k > 0.4 { amber } else { dim }),
+                    text("  (1.0 = maximal strukturiert / minimale Beschreibung)").size(11).color(dim),
+                ].spacing(8),
+                row![
+                    // "Operatoren" = AE-Baum-Knoten (Algorithmus-Schritte), NICHT User-Nodes
+                    text("AE-Programm (Operatoren):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(if let Some(ae) = &self.aelab_state {
+                        format!("{} Ops, Tiefe {} | fitness {:.4} | lossless {:.1}%",
+                            ae.nodes, ae.depth, ae.fitness, ae.lossless * 100.0)
+                    } else {
+                        "\u{2014}".to_owned()
+                    }).size(13).color(amber),
+                ].spacing(8),
+                row![
+                    text("").width(Length::Fixed(240.0)),
+                    text(if let Some(ae) = &self.aelab_state {
+                        format!("evolved: {} | anchor: {} | ops: {}{}{}{}",
+                            ae.evolved, ae.has_anchor,
+                            if ae.has_sequence { "seq " } else { "" },
+                            if ae.has_bridge { "bridge " } else { "" },
+                            if ae.has_xor { "xor " } else { "" },
+                            if ae.has_interfere { "interfere" } else { "" })
+                    } else { "\u{2014}".to_owned() }).size(11).color(dim),
+                ].spacing(8),
+                row![
+                    text("").width(Length::Fixed(240.0)),
+                    text("(weniger Ops + gleiche Fitness = n\u{00e4}her an K-Minimum)").size(11).color(dim),
+                ].spacing(8),
+
+                // Trennlinie: MDL
+                text("\u{25b6}  MDL  \u{2014}  L(Modell) + L(Daten|Modell) \u{2192} Minimum")
+                    .size(13).color(cyan),
+                row![
+                    text("Modell-Abdeckung (AnchorPack):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.2}%", mdl_model_cov * 100.0)).size(13)
+                        .color(if mdl_model_cov > 0.85 { green } else if mdl_model_cov > 0.5 { amber } else { dim }),
+                ].spacing(8),
+                row![
+                    text("Residual (DeltaPack / delta_ratio):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.4}", mdl_residual)).size(13)
+                        .color(if mdl_residual < 0.2 { green } else if mdl_residual < 0.6 { amber } else { red }),
+                    text("  (MDL-Minimum: Modell erkl\u{00e4}rt alles, Residual = 0)").size(11).color(dim),
+                ].spacing(8),
+                row![
+                    text("MDL-Gesamtkosten:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(format!("{:.4} / 2.0", mdl_total)).size(13)
+                        .color(if mdl_total < 1.2 { green } else if mdl_total < 1.6 { amber } else { red }),
+                    text("  (L(Modell) + L(Rest) \u{2192} 0 ideal)").size(11).color(dim),
+                ].spacing(8),
+
+                // Trennlinie: TDL (Thermodynamic Depth)
+                text("\u{25b6}  TDL \u{2014} THERMODYNAMISCHE TIEFE  \u{2014}  Bits / Joule \u{2192} Landauer-Grenze")
+                    .size(13).color(cyan),
+                row![
+                    text("Bits / Joule (live):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(bpj_str).size(14).color(if bpj > 10_000.0 { green } else if bpj > 1_000.0 { amber } else { dim }),
+                ].spacing(8),
+                row![
+                    text("IPE-Trend:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(ipe_trend).size(13)
+                        .color(if ipe_slope > 100.0 { green } else if ipe_slope < -100.0 { red } else { amber }),
+                    text(format!("  (slope {:.0} b/J per tick)", ipe_slope)).size(11).color(dim),
+                ].spacing(8),
+
+                // Footer
+                text("Alle Werte werden aus bereits berechneten Metriken abgelesen. Pipeline und Trust-Score sind davon v\u{00f6}llig unabh\u{00e4}ngig.")
+                    .size(11).color(dim),
+            ].spacing(6);
+            ade_subpanel("VIER LIMITS \u{b7} SHANNON / KOLMOGOROV / MDL / TDL \u{2014} OBSERVATIONAL", rows.into(), panel_s)
+        };
+
         let main_content = scrollable(
             column![
                 metric_help_panel,
@@ -5466,6 +6577,7 @@ On warning: always check Logs and ADE for details.",
                 compression_panel,
                 reconstruction_panel,
                 lineage_panel,
+                ipe_panel,
             ]
             .spacing(12)
             .padding([0.0f32, 8.0]),
@@ -5475,94 +6587,437 @@ On warning: always check Logs and ADE for details.",
     }
 
     fn view_ade(&self) -> Element<'_, Message> {
-        let panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
-        let cyan    = Color::from_rgb8(0x9A, 0x67, 0xFF);
-        let red     = Color::from_rgb8(0xD9, 0x50, 0x50);
-        let green   = Color::from_rgb8(0x4C, 0xD9, 0x6E);
-        let dim     = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let panel_s  = Color::from_rgb8(0x05, 0x10, 0x1C);
+        let accent   = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let green    = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+        let warn     = Color::from_rgb8(0xD4, 0xA0, 0x42);
+        let dim      = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let mid      = Color::from_rgb8(0xA8, 0xC4, 0xD8);
 
-        let capsule_panel = if let Some(capsule) = &self.capsule_state {
-            let mut rows = column![
-                text(format!("source: {}", capsule.source_label)).size(14).color(cyan),
-                text(format!("trigger: {} | type: {} | domain: {}", capsule.trigger, capsule.source_type, capsule.domain_hint)).size(13).color(dim),
-                text(format!("Trust Score: {:.3}", capsule.trust_score)).size(16).color(if capsule.trust_score > 0.65 { green } else { red }),
-                text(format!("Entropy: {:.4}", capsule.entropy)).size(14).color(dim),
-                text(format!("H_lambda: {:.4}", capsule.h_lambda)).size(14).color(dim),
-                text(format!("Symmetry: {:.4}", capsule.symmetry)).size(14).color(dim),
-                text(format!("Periodicity: {:.4}", capsule.periodicity)).size(14).color(dim),
-                text(format!("Zipf Alpha: {:.4}", capsule.zipf_alpha)).size(14).color(dim),
-                text(format!("Benford Score: {:.4}", capsule.benford_score)).size(14).color(dim),
-                text(format!("Katz Dimension: {:.4}", capsule.katz_dimension)).size(14).color(dim),
-                text(format!("SCE Score: {:.4}", capsule.sce_score)).size(14).color(dim),
-                text(format!("Bayes Confidence: {:.4}", capsule.bayes_confidence)).size(14).color(dim),
-                text(format!("Noether Consistency: {:.4}", capsule.noether_consistency)).size(14).color(dim),
-                text(format!("Delta Ratio: {:.4} | Changed Bytes: {}", capsule.delta_ratio, capsule.changed_bytes)).size(14).color(dim),
-            ];
-            if !capsule.anomaly_flags.is_empty() {
-                let flags = capsule.anomaly_flags.join(", ");
-                rows = rows.push(text(format!("Anomalies: {}", flags)).size(14).color(red));
+        // ── helper: renders a single use-case card ───────────────────────────
+        // layout: coloured heading, scenario line, then labelled metric rows
+        let scenario_card = |
+            heading: &'static str,
+            heading_color: Color,
+            scenario: &'static str,
+            rows: Vec<(&'static str, &'static str, Color)>,
+            note: &'static str,
+        | -> Element<'_, Message> {
+            let mut col = Column::new()
+                .push(text(heading).size(14).color(heading_color))
+                .push(text(scenario).size(12).color(mid))
+                .spacing(6);
+            for (label, value, color) in rows {
+                col = col.push(
+                    row![
+                        text(label).size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(value).size(12).color(color),
+                    ]
+                    .spacing(8),
+                );
             }
-            ade_subpanel("CAPSULE · THREAT SIGNALS", rows.into(), panel_s)
-        } else {
-            ade_subpanel("CAPSULE · THREAT SIGNALS", text("No capsule result available").size(13).color(dim).into(), panel_s)
+            if !note.is_empty() {
+                col = col.push(text(note).size(11).color(dim));
+            }
+            container(col.spacing(4))
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(panel_s)),
+                    border: Border { color: c(BORDER()), width: 1.0, radius: 8.0.into() },
+                    ..Default::default()
+                })
+                .padding(14)
+                .width(Length::Fill)
+                .into()
         };
 
-        let structure_panel = if let Some(state) = &self.structure_map_state {
-            let rows = column![
-                text(format!("region: {}", state.region_label)).size(14).color(cyan),
-                text(format!("coherence: {:.4} | trust: {:.4}", state.coherence_score, state.trust_score)).size(14).color(dim),
-                text(format!("anchors: {} | anomalies: {}", state.anchor_count, state.anomaly_count)).size(14).color(dim),
-                text(format!("locked: {}", if state.locked { "yes" } else { "no" })).size(14).color(if state.locked { green } else { dim }),
-            ];
-            ade_subpanel("STRUCTURE SNAPSHOT · THREAT CONTEXT", rows.into(), panel_s)
-        } else {
-            ade_subpanel("STRUCTURE SNAPSHOT · THREAT CONTEXT", text("No structure snapshot available").size(13).color(dim).into(), panel_s)
-        };
+        // ── intro header ─────────────────────────────────────────────────────
+        let intro = ade_subpanel(
+            "DELTA-ANALYSE \u{b7} STRUKTURELLE METRIKEN \u{2014} THEORIE UND ANWENDUNG",
+            column![
+                text("Jede Datei erzeugt eine Kapsel mit strukturellen Messwerten. Diese Metriken sind signalagnostisch \u{2014} sie sagen nichts \u{fc}ber den Inhalt, aber sehr viel \u{fc}ber die Struktur. Das er\u{f6}ffnet ein breites Anwendungsspektrum.").size(13).color(mid),
+                text("Alle Beispiele sind synthetisch \u{2014} keine echten Personendaten.").size(11).color(dim),
+            ].spacing(6).into(),
+            panel_s,
+        );
 
-        let aelab_panel = if let Some(aelab) = &self.aelab_state {
-            let rows = column![
-                text(format!("fitness: {:.4} | lossless: {:.1}%", aelab.fitness, aelab.lossless * 100.0)).size(14).color(cyan),
-                text(format!("coupling: {:.3} | coherence: {:.3}", aelab.seed_coupling, aelab.seed_coherence)).size(13).color(dim),
-                text(format!("vault total: {} | integrity: {}", aelab.vault_total_entries, if aelab.vault_integrity_ok { "ok" } else { "check" })).size(13).color(if aelab.vault_integrity_ok { green } else { red }),
-                text(format!("vault root: {}", aelab.vault_root)).size(12).color(dim),
-            ];
-            ade_subpanel("AELAB · THREAT CORRELATION", rows.into(), panel_s)
-        } else {
-            ade_subpanel("AELAB · THREAT CORRELATION", text("No AELab correlation available yet").size(13).color(dim).into(), panel_s)
-        };
+        // ── capabilities overview ─────────────────────────────────────────────
+        let uc_overview = ade_subpanel(
+            "THEORETISCHES ANWENDUNGSSPEKTRUM DER METRIKEN",
+            column![
+                text("Diese Metriken k\u{f6}nnen \u{2014} einzeln oder kombiniert \u{2014} folgende Klassen von Ph\u{e4}nomenen sichtbar machen:").size(13).color(mid),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Manipulation & F\u{e4}lschung \u{2014} absichtliche Ver\u{e4}nderung von Dateiinhalten, auch wenn Dateigr\u{f6}\u{df}e identisch bleibt").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Ausrei\u{df}er-Erkennung \u{2014} einzelne Dateien/Datens\u{e4}tze die strukturell aus einer Menge herausfallen (defekte Sensoren, Glitches, Batch-Fehler)").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Strukturelle Anomalien \u{2014} Diskontinuit\u{e4}ten, Symmetriebrueche, Entropiespr\u{fc}nge die auf Format-Fehler, Korruption oder unerwartete \u{c4}nderungen hinweisen").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Software-Regression \u{2014} unbeabsichtigte \u{c4}nderungen in Build-Artefakten (Debug-Symbole, Supply-Chain, Abh\u{e4}ngigkeits-Drift)").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Log-Gesundheit & Schleifen \u{2014} Feedback-Loops, Stuck-Processes, Injection in Log-Streams erkennbar ohne eine Zeile zu lesen").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Informationsverlust \u{2014} ob eine Konvertierung (OCR, Transkodierung, Kompression) strukturell verlustfrei war oder Signifikanz vernichtet hat").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Synthetische & KI-generierte Inhalte \u{2014} LLM-Text, synthetische Datens\u{e4}tze und maschinell generierte Bin\u{e4}rdaten hinterlassen strukturelle Signaturen").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Wissenschaftliche Reproduzierbarkeit \u{2014} ob zwei Versionen eines Datensatzes wirklich identisch sind oder ob zwischen Archiven Drift entstanden ist").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Kryptographische Anomalien \u{2014} ob ein Dateiabschnitt echte Verschl\u{fc}sselung, schwache Verschl\u{fc}sselung oder Steganographie aufweist (Entropie-Profil per Segment)").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                row![
+                    text("\u{25aa}").size(12).color(accent).width(Length::Fixed(14.0)),
+                    text("Firmware & Embedded-Integrit\u{e4}t \u{2014} IoT-Firmware gegen signierte Baseline; Sektionsprofil (Bootloader vs. Payload) strukturell messbar").size(12).color(mid),
+                ].spacing(4).align_y(Alignment::Start),
+                text("Entscheidend ist immer die Kombination: keine einzelne Metrik ist ein Beweis. Ihre Signaturmuster zusammen erzeugen das Signal.").size(12).color(dim),
+            ].spacing(7).into(),
+            panel_s,
+        );
 
-        let compression_panel_ade = if let Some(compression) = &self.compression_state {
-            let rows = column![
-                text(format!("format: {}", compression.format)).size(14).color(cyan),
-                text(format!("original: {} B  |  compressed: {} B", compression.original_bytes, compression.compressed_bytes)).size(14).color(dim),
-                text(format!("ratio: {:.4}  |  gain: {:.2}%", compression.ratio, compression.gain_percent)).size(16).color(if compression.gain_percent > 0.0 { green } else { dim }),
-                text(format!("changed bytes: {}", self.capsule_state.as_ref().map_or(0, |c| c.changed_bytes))).size(13).color(dim),
-            ];
-            ade_subpanel("COMPRESSION · RATIO", rows.into(), panel_s)
-        } else {
-            ade_subpanel("COMPRESSION · RATIO", text("Datei analysieren um Kompressionswerte zu sehen.").size(13).color(dim).into(), panel_s)
-        };
+        // ── use case 1: ausreißer in sensor-/zeitreihendaten ─────────────────
+        let uc_outlier = ade_subpanel(
+            "FALLBEISPIEL 1 \u{b7} AUSREI\u{df}ER IN ZEITREIHENDATEN (SENSOR-BATCH)",
+            column![
+                text("Szenario: 30 CSV-Dateien einer Fertigungsanlage, jede enth\u{e4}lt Temperatur- und Druckmesswerte eines Tages. 29 Dateien sind unauf\u{e4}llig \u{2014} zwei zeigen Sensor-Fehlerbilder. Kein Betrug, keine Manipulation \u{2014} einfache Hardware-Ausrei\u{df}er, erkennbar in Sekunden \u{fc}ber Metriken ohne jeden Messwert manuell zu pr\u{fc}fen.").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Normale Messtage (Referenz-Profil)",
+                green,
+                "sensor_tag_001.csv bis sensor_tag_012.csv \u{b7} je ~180 kB",
+                vec![
+                    ("Entropie",             "3.4\u{2013}3.7 bit/byte \u{b7} typisch f\u{fc}r Dezimalzahlen in CSV", mid),
+                    ("Noether Consistency",  "0.91\u{2013}0.96 \u{b7} saisonale und maschinenzyklische Symmetrie erhalten", green),
+                    ("Periodizit\u{e4}t",    "0.30\u{2013}0.45 \u{b7} moderate Periode durch Maschinenzyklen", mid),
+                    ("Benford Score",        "0.88\u{2013}0.95 \u{b7} Messwerte folgen nat\u{fc}rlicher Ziffernverteilung", green),
+                    ("Anomaly Flags",        "(keine)", dim),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "Ausrei\u{df}er: Stuck-at-Fault (Sensor liefert Konstantwert)",
+                warn,
+                "sensor_tag_014.csv \u{b7} 42 kB",
+                vec![
+                    ("Entropie",             "0.31 bit/byte \u{b7} extrem niedrig \u{2014} Sensor liefert dieselbe Zahl in jeder Zeile", warn),
+                    ("Noether Consistency",  "0.04 \u{b7} Symmetrie komplett aufgel\u{f6}st \u{2014} keine Variation mehr", warn),
+                    ("Periodizit\u{e4}t",    "0.99 \u{b7} maximale Wiederholung \u{2014} identische Zeilen", warn),
+                    ("Benford Score",        "0.12 \u{b7} eine Ziffer dominiert alles", warn),
+                    ("Anomaly Flags",        "stuck_signal, zero_variance, benford_deviation", warn),
+                ],
+                "Kein Angriff \u{2014} einfach ein defekter Sensor. Dieser Dateityp f\u{e4}llt im Batch sofort durch extrem niedrige Entropie + maximale Periodizit\u{e4}t heraus.",
+            ))
+            .push(scenario_card(
+                "Ausrei\u{df}er: Impuls-Glitch (Spike-Fault)",
+                accent,
+                "sensor_tag_022.csv \u{b7} 181 kB",
+                vec![
+                    ("Entropie",             "4.12 bit/byte \u{b7} h\u{f6}her als Referenz \u{2014} Spikes erh\u{f6}hen Zuf\u{e4}lligkeit lokal", accent),
+                    ("Noether Consistency",  "0.54 \u{b7} teil-gebrochen \u{2014} lokale Diskontinuit\u{e4}t in einzelnen Bl\u{f6}cken", accent),
+                    ("Periodizit\u{e4}t",    "0.38 \u{b7} normal \u{2014} kein globales Muster gest\u{f6}rt", mid),
+                    ("Delta Ratio",          "0.03 \u{b7} zum Vortags-Log \u{2014} kleine Byte-Menge, aber strukturell abweichend", accent),
+                    ("Anomaly Flags",        "entropy_spike, noether_local_break", accent),
+                ],
+                "Impuls-Glitches sind schwerer erkennbar als Stuck-Faults. Der Noether-Abfall in Kombination mit gestiegener Entropie zeigt, dass einzelne Bl\u{f6}cke aus dem Rahmen fallen. Delta-Vergleich zum Referenztag isoliert die betroffenen Segmente.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
 
-        let reconstruct_link: Element<'_, Message> = if self.capsule_state.is_some() {
-            button(text("→ Rekonstruktion pruefen").size(12).color(Color::from_rgb8(0xD0, 0xE8, 0xF8)))
+        // ── use case 2: manipulation / datenverfälschung ──────────────────────
+        let uc_tamper = ade_subpanel(
+            "FALLBEISPIEL 2 \u{b7} MANIPULATION UND DATEI-VERF\u{c4}LSCHUNG",
+            column![
+                text("Szenario: Die offizielle ausf\u{fc}hrbare Datei eines bekannten Tools und eine Kopie aus einer Drittquelle. Der Strukturvergleich zeigt Abweichungen \u{2014} ohne den Quellcode zu kennen, ohne die Datei auszuf\u{fc}hren.").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Original (Referenz)",
+                green,
+                "setup.exe \u{b7} 3,2 MB \u{b7} Hersteller-Download",
+                vec![
+                    ("Entropie",             "6.12 bit/byte \u{b7} normal f\u{fc}r komprimierte Bin\u{e4}rdatei", mid),
+                    ("Delta Ratio",          "0.000 \u{b7} kein bekannter Ver\u{e4}nderungspfad", dim),
+                    ("Trust Score",          "0.82 \u{b7} hohe Strukturkonsistenz", green),
+                    ("Noether Consistency",  "0.978 \u{b7} Blockstruktur symmetrisch stabil", green),
+                    ("Katz Dimension",       "1.52 \u{b7} stabile fraktale Komplexit\u{e4}t", green),
+                    ("Anomaly Flags",        "(keine)", dim),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "Verd\u{e4}chtige Kopie",
+                warn,
+                "setup.exe \u{b7} 3,4 MB \u{b7} Drittquelle",
+                vec![
+                    ("Entropie",             "7.91 bit/byte \u{b7} n\u{e4}hert sich Maximum \u{2014} m\u{f6}gliche Verschleierung", warn),
+                    ("Delta Ratio",          "0.34 \u{b7} 34% der Bytes weichen vom Original ab", warn),
+                    ("Trust Score",          "0.29 \u{b7} niedrige Konsistenz", warn),
+                    ("Noether Consistency",  "0.41 \u{b7} Blockstruktur stark gebrochen", warn),
+                    ("Katz Dimension",       "1.78 \u{b7} Komplexit\u{e4}tsklasse angestiegen", warn),
+                    ("Anomaly Flags",        "high_entropy_segment, structural_break, katz_shift", warn),
+                ],
+                "Hohe Entropie allein ist kein Beweis \u{2014} komprimierte legitime Dateien erreichen \u{e4}hnliche Werte. Entscheidend ist die Kombination: hohe Entropie + gro\u{df}e Delta-Abweichung + gebrochene Noether-Symmetrie + Katz-Klassen-Sprung. Jede einzelne Metrik ist ein Hinweis, zusammen erh\u{e4}rten sie ein Signal.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
+
+        // ── use case 3: software-regression / build-drift ────────────────────
+        let uc_regression = ade_subpanel(
+            "FALLBEISPIEL 3 \u{b7} SOFTWARE-REGRESSION UND BUILD-DRIFT",
+            column![
+                text("Szenario: Zwei aufeinanderfolgende Releases desselben Tools. Kein Angriff \u{2014} aber zwischen v2.1 und v2.2 wurden ungeplant Debug-Symbole eingelinkt. Ohne Quellcode-Zugriff durch reinen Strukturvergleich sichtbar.").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Release v2.1 (Baseline)",
+                green,
+                "tool_v2.1_release.bin \u{b7} 8,4 MB",
+                vec![
+                    ("Entropie",             "5.88 bit/byte \u{b7} typisch f\u{fc}r optimierten Release-Build", mid),
+                    ("Delta Ratio",          "0.000 \u{b7} Referenz", dim),
+                    ("Noether Consistency",  "0.961 \u{b7} stabile Sektionsstruktur", green),
+                    ("Katz Dimension",       "1.44 \u{b7} erwartete fraktale Komplexit\u{e4}t", green),
+                    ("Anomaly Flags",        "(keine)", dim),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "Release v2.2 (ungewollte Debug-Symbole)",
+                accent,
+                "tool_v2.2_release.bin \u{b7} 14,1 MB",
+                vec![
+                    ("Entropie",             "4.31 bit/byte \u{b7} deutlich gesunken \u{2014} Debug-Strings sind hochredundanter Klartext", accent),
+                    ("Delta Ratio",          "0.41 \u{b7} 41% des Dateiinhalts neu \u{2014} f\u{fc}r eine Minor-Version unplausibel", accent),
+                    ("Noether Consistency",  "0.73 \u{b7} neue Sektionen st\u{f6}ren Sektions-Symmetrie", accent),
+                    ("Katz Dimension",       "1.21 \u{b7} Komplexit\u{e4}tsklasse gesunken \u{2014} Datei strukturell einfacher geworden", accent),
+                    ("Changed Bytes",        "~5,7 MB zus\u{e4}tzlicher Inhalt hinzugekommen", accent),
+                    ("Anomaly Flags",        "entropy_drop, size_increase, delta_volume_high", accent),
+                ],
+                "Sinkende Entropie bei steigender Dateigr\u{f6}\u{df}e ist das klassische Signal f\u{fc}r hinzugef\u{fc}gte redundante Informationen (Debug-Symbole, Logs, Padding). Hohe Delta-Ratio f\u{fc}r eine Minor-Version: hier ist mehr ge\u{e4}ndert worden als erwartet war. Kein Security-Alarm, aber ein CI/CD-Qualit\u{e4}tssignal.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
+
+        // ── use case 4: log-anomalie / feedback-schleife ──────────────────────
+        let uc_log = ade_subpanel(
+            "FALLBEISPIEL 4 \u{b7} LOG-DATEI ANOMALIE UND FEEDBACK-SCHLEIFE",
+            column![
+                text("Szenario: T\u{e4}gliche Anwendungslogs eines Servers. An einem Tag l\u{e4}uft eine Endlosschleife und schreibt Millionen identischer Zeilen. Erkennbar ohne eine einzige Zeile lesen zu m\u{fc}ssen.").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Normaler Log-Tag (Referenz)",
+                green,
+                "app.log.2024-10-15 \u{b7} 82 MB",
+                vec![
+                    ("Entropie",        "4.82 bit/byte \u{b7} typische Sprachdichte mit Zeitstempeln und Werten", mid),
+                    ("Zipf Alpha",      "0.97 \u{b7} nat\u{fc}rliche Wortfrequenz \u{2014} Log-Tokens folgen Zipf", green),
+                    ("Periodizit\u{e4}t", "0.28 \u{b7} geringe Wiederholung \u{2014} nat\u{fc}rliche Variation", mid),
+                    ("Noether Score",   "0.89 \u{b7} Zeilenstruktur gleichm\u{e4}\u{df}ig verteilt", green),
+                    ("Anomaly Flags",   "(keine)", dim),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "Feedback-Schleife (Absturztag)",
+                warn,
+                "app.log.2024-11-03 \u{b7} 18,4 GB",
+                vec![
+                    ("Entropie",        "0.76 bit/byte \u{b7} minimale Informationsdichte \u{2014} tausende identische Zeilen", warn),
+                    ("Zipf Alpha",      "0.09 \u{b7} Zipf komplett gebrochen \u{2014} ein Token \u{fc}berw\u{e4}ltigt alle anderen", warn),
+                    ("Periodizit\u{e4}t", "0.99 \u{b7} maximale Periode \u{2014} dieselbe Zeile unaufh\u{f6}rlich", warn),
+                    ("Noether Score",   "0.03 \u{b7} Struktursymmetrie aufgel\u{f6}st", warn),
+                    ("Anomaly Flags",   "stuck_signal, zipf_collapse, periodicity_max", warn),
+                ],
+                "Feedback-Schleife erzeugt dieselbe Signatur wie ein Stuck-Sensor: extremer Entropieabfall, Zipf-Kollaps, maximale Periodizit\u{e4}t. Mit dem Delta-Vergleich zum Vortags-Log wird zus\u{e4}tzlich sichtbar ab welchem Byte die Schleife startete.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
+
+        // ── use case 5: ki-generierte vs. echte inhalte ───────────────────────
+        let uc_ai = ade_subpanel(
+            "FALLBEISPIEL 5 \u{b7} KI-GENERIERTE INHALTE VS. ECHTE DATEN",
+            column![
+                text("Szenario: Zwei Textdateien \u{2014} eine von einem Menschen, eine von einem Sprachmodell. Und ein synthetisch erzeugter ML-Trainingsdatensatz gegen\u{fc}ber echten Messwerten.").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Menschlicher Text (Referenz)",
+                green,
+                "abstract_human.txt \u{b7} 4,2 kB",
+                vec![
+                    ("Entropie",      "4.71 bit/byte \u{b7} mittlere Sprachdichte", mid),
+                    ("Zipf Alpha",    "1.03 \u{b7} nat\u{fc}rliches Wortfrequenzgesetz gut erf\u{fc}llt", green),
+                    ("Benford Score", "0.91 \u{b7} eingebettete Zahlen folgen nat\u{fc}rlicher Ziffernverteilung", green),
+                    ("Periodizit\u{e4}t", "0.22 \u{b7} geringe strukturelle Wiederholung", mid),
+                    ("SCE Score",     "0.67 \u{b7} normale Komplexit\u{e4}tsdichte", mid),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "LLM-generierter Text",
+                accent,
+                "abstract_llm.txt \u{b7} 4,5 kB",
+                vec![
+                    ("Entropie",      "4.68 bit/byte \u{b7} \u{e4}hnlich \u{2014} Entropie allein unterscheidet kaum", mid),
+                    ("Zipf Alpha",    "0.78 \u{b7} schw\u{e4}cher \u{2014} LLMs gl\u{e4}tten die Verteilung", accent),
+                    ("Benford Score", "0.71 \u{b7} leicht abweichend bei eingebetteten Zahlen", accent),
+                    ("Periodizit\u{e4}t", "0.61 \u{b7} markant h\u{f6}her \u{b7} strukturelle Satzwiederholungen", accent),
+                    ("SCE Score",     "0.88 \u{b7} hohe Fl\u{e4}che \u{b7} \u{e4}hnliche Satzkomplexe", accent),
+                    ("Anomaly Flags", "zipf_deviation, high_periodicity", accent),
+                ],
+                "LLM-Text tendiert zu h\u{f6}herer Periodizit\u{e4}t (Sampling aus Wahrscheinlichkeitsverteilungen \u{2192} Wiederholungsmuster) und gl\u{e4}tterer Zipf-Kurve. Als statistisches Indiz hilfreich, kein juristischer Beweis.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
+
+        // ── use case 6: wissenschaftliche reproduzierbarkeit / datensatz-drift ─
+        let uc_integrity = ade_subpanel(
+            "FALLBEISPIEL 6 \u{b7} WISSENSCHAFTLICHE REPRODUZIERBARKEIT UND DATENSATZ-DRIFT",
+            column![
+                text("Szenario: Zwei Versionen desselben Datensatzes aus zwei verschiedenen Archiven \u{2014} beide behaupten, der Original-Datensatz einer Publikation zu sein. Gleiche Dateigr\u{f6}\u{df}e \u{2014} sind sie strukturell identisch?").size(12).color(mid),
+            ].spacing(6)
+            .push(scenario_card(
+                "Version A (Original-Repository)",
+                green,
+                "experiment_data_v1.csv \u{b7} 22 MB",
+                vec![
+                    ("Entropie",             "3.91 bit/byte \u{b7} typisch f\u{fc}r physikalische Messwerte in CSV", mid),
+                    ("Benford Score",        "0.94 \u{b7} Messwerte folgen Benford-Gesetz \u{2014} nat\u{fc}rliche Daten", green),
+                    ("Noether Consistency",  "0.972 \u{b7} Messreihen-Symmetrie vollst\u{e4}ndig erhalten", green),
+                    ("Delta Ratio",          "0.000 \u{b7} Referenz", dim),
+                ],
+                "",
+            ))
+            .push(scenario_card(
+                "Version B (Zweitarchiv \u{2014} abweichend trotz gleicher Dateigr\u{f6}\u{df}e)",
+                warn,
+                "experiment_data_v1.csv \u{b7} 22 MB \u{b7} identische Dateigr\u{f6}\u{df}e",
+                vec![
+                    ("Entropie",             "3.89 bit/byte \u{b7} kaum erkennbar anders", mid),
+                    ("Benford Score",        "0.63 \u{b7} abweichend \u{2014} Ziffernf\u{fc}hrung wurde ver\u{e4}ndert", warn),
+                    ("Noether Consistency",  "0.71 \u{b7} Teilsymmetrie gebrochen \u{2014} nicht alle Messreihen konsistent", warn),
+                    ("Delta Ratio",          "0.07 \u{b7} 7% der Bytes unterscheiden sich trotz gleicher Dateigr\u{f6}\u{df}e", warn),
+                    ("Changed Bytes",        "~1,5 MB inhaltlich unterschiedlich", warn),
+                    ("Anomaly Flags",        "benford_deviation, noether_break, delta_mismatch", warn),
+                ],
+                "Gleiche Dateigr\u{f6}\u{df}e bedeutet nichts \u{2014} Inhalte k\u{f6}nnen ausgetauscht worden sein. Benford-Abweichung zeigt: Zahlen wurden bearbeitet (gerundet, skaliert). Noether-Break + 7% Delta-Ratio bei sonst identischem Erscheinungsbild ist ein starkes Signal f\u{fc}r Datensatz-Drift oder absichtliche Modifikation. Relevant f\u{fc}r wissenschaftliche Reproduzierbarkeit.",
+            ))
+            .spacing(8)
+            .into(),
+            panel_s,
+        );
+
+        // ── live capsule (if available) ───────────────────────────────────────
+        let live_panel: Element<'_, Message> = if let Some(capsule) = &self.capsule_state {
+            let red   = Color::from_rgb8(0xD9, 0x50, 0x50);
+            let mut rows = Column::new()
+                .push(text(format!("Quelle: {}  \u{b7}  Typ: {}  \u{b7}  Domain: {}",
+                    capsule.source_label, capsule.source_type, capsule.domain_hint))
+                    .size(13).color(mid))
+                .push(
+                    row![
+                        text("Trust Score").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.3}", capsule.trust_score)).size(13)
+                            .color(if capsule.trust_score > 0.65 { green } else { warn }),
+                    ]
+                )
+                .push(
+                    row![
+                        text("Entropie").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.4} bit/byte", capsule.entropy)).size(13).color(mid),
+                    ]
+                )
+                .push(
+                    row![
+                        text("Delta Ratio").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.4}", capsule.delta_ratio)).size(13).color(mid),
+                    ]
+                )
+                .push(
+                    row![
+                        text("Noether Consistency").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.4}", capsule.noether_consistency)).size(13).color(mid),
+                    ]
+                )
+                .push(
+                    row![
+                        text("Benford / Zipf / Katz").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.3}  /  {:.3}  /  {:.3}",
+                            capsule.benford_score, capsule.zipf_alpha, capsule.katz_dimension))
+                            .size(13).color(mid),
+                    ]
+                )
+                .push(
+                    row![
+                        text("Periodizit\u{e4}t / SCE").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(format!("{:.4}  /  {:.4}", capsule.periodicity, capsule.sce_score))
+                            .size(13).color(mid),
+                    ]
+                )
+                .spacing(5);
+            if !capsule.anomaly_flags.is_empty() {
+                rows = rows.push(
+                    row![
+                        text("Anomalie-Flags").size(12).color(dim).width(Length::Fixed(190.0)),
+                        text(capsule.anomaly_flags.join(", ")).size(12).color(red),
+                    ]
+                );
+            }
+            let recon: Element<'_, Message> = button(
+                    text("\u{2192} Rekonstruktion pr\u{fc}fen").size(12).color(Color::from_rgb8(0xD0, 0xE8, 0xF8))
+                )
                 .on_press(Message::TabSelected(Tab::Rekonstruktion))
                 .padding([6, 14])
                 .style(primary_button_style)
-                .into()
+                .into();
+            ade_subpanel(
+                "AKTUELLE KAPSEL \u{b7} ZULETZT ANALYSIERTE DATEI",
+                Column::new().push(rows).push(recon).spacing(10).into(),
+                panel_s,
+            )
         } else {
-            iced::widget::Space::new(Length::Shrink, Length::Shrink).into()
+            ade_subpanel(
+                "AKTUELLE KAPSEL \u{b7} ZULETZT ANALYSIERTE DATEI",
+                text("Noch keine Datei analysiert. Datei auf das Fenster ziehen um eine Kapsel zu erzeugen.").size(13).color(dim).into(),
+                panel_s,
+            )
         };
 
         scrollable(
-            column![
-                reconstruct_link,
-                capsule_panel,
-                structure_panel,
-                aelab_panel,
-                compression_panel_ade,
-            ]
-            .spacing(12)
-            .padding([0.0f32, 8.0]),
+            Column::new()
+                .push(intro)
+                .push(uc_overview)
+                .push(live_panel)
+                .push(uc_outlier)
+                .push(uc_tamper)
+                .push(uc_regression)
+                .push(uc_log)
+                .push(uc_ai)
+                .push(uc_integrity)
+                .spacing(12)
+                .padding([0.0f32, 8.0]),
         )
         .into()
     }
@@ -5575,8 +7030,6 @@ On warning: always check Logs and ADE for details.",
             Tab::SwarmOps => self.view_swarm_ops(),
             Tab::Privacy => self.view_privacy_ops(),
             Tab::Chat => self.view_chat(),
-            Tab::Browser => self.view_browser(),
-            Tab::YouTube => self.view_youtube(),
             Tab::Data => self.view_data(),
             Tab::Settings => self.view_settings(),
             Tab::Logs => self.view_logs(),
@@ -5641,7 +7094,7 @@ On warning: always check Logs and ADE for details.",
                 nav_item("6. Swarm Ops", Tab::SwarmOps, self.active_tab),
                 nav_item("7. Privacy", Tab::Privacy, self.active_tab),
                 text("Analysis").size(12).color(c(TEXT_D())),
-                nav_item("8. Threat Analysis", Tab::ADE, self.active_tab),
+                nav_item("8. Delta-Analyse", Tab::ADE, self.active_tab),
                 nav_item("9. FlowSphere", Tab::FlowSphere, self.active_tab),
                 nav_item("10. Delta Convergence", Tab::StructureMap, self.active_tab),
                 nav_item("11. Symbiont", Tab::Symbiont, self.active_tab),
@@ -5657,13 +7110,12 @@ On warning: always check Logs and ADE for details.",
                 text("Worlds").size(12).color(c(TEXT_D())),
                 nav_item("14. Gaming", Tab::Gaming, self.active_tab),
                 nav_item("15. Media", Tab::Media, self.active_tab),
-                nav_item("16. Research", Tab::Research, self.active_tab),
                 text("Workspace").size(12).color(c(TEXT_D())),
-                nav_item("17. Reconstruction", Tab::Rekonstruktion, self.active_tab),
-                nav_item("18. Info", Tab::Imprint, self.active_tab),
+                nav_item("16. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("17. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D())),
-                nav_item("19. Runtime", Tab::Settings, self.active_tab),
-                nav_item("20. Launcher", Tab::Launcher, self.active_tab),
+                nav_item("18. Runtime", Tab::Settings, self.active_tab),
+                nav_item("19. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -5692,8 +7144,6 @@ On warning: always check Logs and ADE for details.",
                         Tab::SwarmOps => "Swarm Ops",
                         Tab::Privacy => "Privacy",
                         Tab::Chat => "Chat",
-                        Tab::Browser => "Browser",
-                        Tab::YouTube => "YouTube",
                         Tab::Data => "Files",
                         Tab::Settings => "Runtime",
                         Tab::Logs => "Logs",
@@ -5703,7 +7153,7 @@ On warning: always check Logs and ADE for details.",
                         Tab::Gaming => "Gaming",
                         Tab::Media => "Media",
                         Tab::Research => "Research",
-                        Tab::ADE => "Threat Analysis",
+                        Tab::ADE => "Delta-Analyse",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
                         Tab::Launcher => "Launcher",
@@ -5962,7 +7412,7 @@ On warning: always check Logs and ADE for details.",
             quick_button("Privacy", Tab::Privacy),
             quick_button("FlowSphere", Tab::FlowSphere),
             quick_button("Delta Conv", Tab::StructureMap),
-            quick_button("ADE", Tab::ADE),
+            quick_button("Delta", Tab::ADE),
             quick_button("Anchors", Tab::Anchors),
             quick_button("Settings", Tab::Settings),
             quick_button("Logs", Tab::Logs),
@@ -6026,6 +7476,13 @@ On warning: always check Logs and ADE for details.",
             self.status_line = "Leere Nachrichten werden nicht gespeichert.".to_owned();
             return;
         }
+        if self.state_store.is_blocked_between(&author, &partner) {
+            self.status_line = format!(
+                "Privater Thread mit {} ist blockiert. Nachricht wurde nicht gespeichert.",
+                partner
+            );
+            return;
+        }
         if let Err(err) = self
             .state_store
             .add_private_message(&author, &partner, &author, &body)
@@ -6053,6 +7510,10 @@ On warning: always check Logs and ADE for details.",
             self.status_line = "Gruppennachrichten erfordern eine Anmeldung.".to_owned();
             return;
         };
+        let Some(room) = self.active_group_room() else {
+            self.status_line = "Bitte zuerst eine Gruppe auswaehlen oder anlegen.".to_owned();
+            return;
+        };
         let body = self.group_message_draft.trim().to_owned();
         if body.is_empty() {
             self.status_line = "Leere Gruppennachrichten werden nicht gespeichert.".to_owned();
@@ -6060,27 +7521,145 @@ On warning: always check Logs and ADE for details.",
         }
         match self
             .state_store
-            .add_group_message(&author, "Allgemein", &author, &body)
+            .add_group_message(&room.id, &author, &body)
         {
             Ok(()) => {
                 self.group_message_draft.clear();
-                self.status_line = "Gruppennachricht in Allgemein gespeichert.".to_owned();
+                self.status_line = format!("Gruppennachricht in '{}' gespeichert.", room.name);
             }
             Err(err) => self.status_line = err,
         }
     }
 
-    #[allow(dead_code)]
-    fn normalize_live_command(text: &str) -> String {
-        let mut normalized = text.trim().to_lowercase();
-        for dash in ['‑', '–', '—'] {
-            normalized = normalized.replace(dash, "-");
+    fn create_group_room(&mut self) {
+        let Some(owner) = self.current_username() else {
+            self.status_line = "Gruppen erfordern eine Anmeldung.".to_owned();
+            return;
+        };
+        let group_name = self.chat_group_name.trim().to_owned();
+        if group_name.is_empty() {
+            self.status_line = "Bitte zuerst einen Gruppennamen eingeben.".to_owned();
+            return;
         }
-        normalized
-            .replace('ä', "ae")
-            .replace('ö', "oe")
-            .replace('ü', "ue")
-            .replace('ß', "ss")
+        match self.state_store.create_group_room(&owner, &group_name) {
+            Ok(room_id) => {
+                self.chat_group_name.clear();
+                self.selected_group_room_id = Some(room_id);
+                self.chat_context = ChatContext::Group;
+                self.status_line = format!("Gruppe '{}' angelegt.", group_name);
+            }
+            Err(err) => self.status_line = err,
+        }
+    }
+
+    fn add_member_to_active_group(&mut self) {
+        let Some(owner) = self.current_username() else {
+            self.status_line = "Mitgliederverwaltung erfordert eine Anmeldung.".to_owned();
+            return;
+        };
+        let Some(room) = self.active_group_room() else {
+            self.status_line = "Bitte zuerst eine Gruppe auswaehlen.".to_owned();
+            return;
+        };
+        let member = self.group_member_username.trim().to_owned();
+        if member.is_empty() {
+            self.status_line = "Bitte zuerst einen Usernamen eingeben.".to_owned();
+            return;
+        }
+        if !self.auth_store.usernames().into_iter().any(|username| username == member) {
+            self.status_line = format!("Unbekannter Username: {}", member);
+            return;
+        }
+        if self.state_store.is_blocked_between(&owner, &member) {
+            self.status_line = format!(
+                "{} kann wegen einer Blockliste nicht in die Gruppe aufgenommen werden.",
+                member
+            );
+            return;
+        }
+        match self
+            .state_store
+            .add_group_member(&owner, &room.id, &member)
+        {
+            Ok(()) => {
+                self.group_member_username.clear();
+                self.status_line = format!("{} wurde zu '{}' hinzugefuegt.", member, room.name);
+            }
+            Err(err) => self.status_line = err,
+        }
+    }
+
+    fn remove_member_from_active_group(&mut self, member: String) {
+        let Some(owner) = self.current_username() else {
+            self.status_line = "Mitgliederverwaltung erfordert eine Anmeldung.".to_owned();
+            return;
+        };
+        let Some(room) = self.active_group_room() else {
+            self.status_line = "Bitte zuerst eine Gruppe auswaehlen.".to_owned();
+            return;
+        };
+        match self
+            .state_store
+            .remove_group_member(&owner, &room.id, &member)
+        {
+            Ok(()) => {
+                self.status_line = format!("{} wurde aus '{}' entfernt.", member, room.name);
+            }
+            Err(err) => self.status_line = err,
+        }
+    }
+
+    fn leave_active_group(&mut self) {
+        let Some(username) = self.current_username() else {
+            self.status_line = "Gruppen verlassen erfordert eine Anmeldung.".to_owned();
+            return;
+        };
+        let Some(room) = self.active_group_room() else {
+            self.status_line = "Bitte zuerst eine Gruppe auswaehlen.".to_owned();
+            return;
+        };
+        let room_name = room.name.clone();
+        match self.state_store.leave_group(&username, &room.id) {
+            Ok(()) => {
+                self.selected_group_room_id = self.group_rooms().into_iter().next().map(|next| next.id);
+                self.status_line = format!("Gruppe '{}' verlassen.", room_name);
+            }
+            Err(err) => self.status_line = err,
+        }
+    }
+
+    fn block_selected_partner(&mut self) {
+        let Some(username) = self.current_username() else {
+            self.status_line = "Blockieren erfordert eine Anmeldung.".to_owned();
+            return;
+        };
+        let Some(partner) = self.active_private_partner() else {
+            self.status_line = "Bitte zuerst einen privaten Kontakt waehlen.".to_owned();
+            return;
+        };
+        match self.state_store.block_user(&username, &partner) {
+            Ok(()) => {
+                self.status_line = format!("{} wurde blockiert.", partner);
+            }
+            Err(err) => self.status_line = err,
+        }
+    }
+
+    fn unblock_selected_partner(&mut self) {
+        let Some(username) = self.current_username() else {
+            self.status_line = "Entblocken erfordert eine Anmeldung.".to_owned();
+            return;
+        };
+        let Some(partner) = self.active_private_partner() else {
+            self.status_line = "Bitte zuerst einen privaten Kontakt waehlen.".to_owned();
+            return;
+        };
+        match self.state_store.unblock_user(&username, &partner) {
+            Ok(()) => {
+                self.status_line = format!("{} wurde entblockt.", partner);
+            }
+            Err(err) => self.status_line = err,
+        }
     }
 
     fn panic_payload_to_string(payload: &(dyn std::any::Any + Send)) -> String {
@@ -6091,63 +7670,6 @@ On warning: always check Logs and ADE for details.",
             return (*message).to_owned();
         }
         "unbekannter Panic-Payload".to_owned()
-    }
-
-    #[allow(dead_code)]
-    fn parse_live_render_mode_command(&self, prompt: &str) -> Option<bool> {
-        let normalized = Self::normalize_live_command(prompt);
-        let mentions_live = normalized.contains("live")
-            || normalized.contains("liverender")
-            || normalized.contains("liverenderer")
-            || normalized.contains("laufrenderer")
-            || normalized.contains("laufrenderer");
-        let mentions_render = normalized.contains("render")
-            || normalized.contains("renderer")
-            || normalized.contains("analyse")
-            || normalized.contains("frame");
-        let mentions_live_render = (mentions_live && mentions_render)
-            || normalized.contains("liverender")
-            || normalized.contains("liverenderer")
-            || normalized.contains("laufrenderer")
-            || normalized.contains("laufrenderer");
-        if !mentions_live_render {
-            return None;
-        }
-        let activation_markers = [
-            "aktiviere",
-            "aktivieren",
-            "einschalten",
-            "an",
-            "ein",
-            "live-analyse an",
-            "live analyse an",
-        ];
-        let deactivation_markers = [
-            "deaktiviere",
-            "deaktivieren",
-            "aus",
-            "live-analyse aus",
-            "live analyse aus",
-            "passiven normalmodus",
-            "passiv",
-            "stoppe alle frame-hooks",
-            "stoppe alle frame hooks",
-        ];
-        let last_activation = activation_markers
-            .iter()
-            .filter_map(|marker| normalized.rfind(marker))
-            .max();
-        let last_deactivation = deactivation_markers
-            .iter()
-            .filter_map(|marker| normalized.rfind(marker))
-            .max();
-
-        match (last_activation, last_deactivation) {
-            (Some(a), Some(d)) => Some(a > d),
-            (Some(_), None) => Some(true),
-            (None, Some(_)) => Some(false),
-            (None, None) => None,
-        }
     }
 
     fn apply_live_render_mode(&mut self, enabled: bool) {
@@ -6388,7 +7910,7 @@ On warning: always check Logs and ADE for details.",
 
     fn capture_live_render_frame(&mut self) {
         // Sampling every tick can block UI on Windows (`tasklist`), so we throttle it.
-        let os_sample_interval = 10u64;
+        let os_sample_interval = self.live_render_os_sample_interval_ticks();
         let should_sample_os = self.live_render_last_os_processes.is_empty()
             || self.tick_counter.saturating_sub(self.live_render_last_os_sample_tick) >= os_sample_interval;
         let os_processes = if should_sample_os {
@@ -6565,6 +8087,10 @@ On warning: always check Logs and ADE for details.",
             let cpu_fraction = (self.backend_cpu_pct / 100.0).clamp(0.005, 1.0);
             let joules_per_tick = cpu_fraction * 15.0_f32 * 0.033_f32;
             self.live_render_bits_per_joule = bits_saved / joules_per_tick;
+            self.live_render_bpj_history.push(self.live_render_bits_per_joule);
+            if self.live_render_bpj_history.len() > 60 {
+                self.live_render_bpj_history.remove(0);
+            }
         }
     }
 
@@ -6590,6 +8116,154 @@ On warning: always check Logs and ADE for details.",
         }
     }
 
+    fn is_vault_first_tier(&self) -> bool {
+        matches!(self.hw_network_tier.as_str(), "LocalOnly" | "LanBeacon")
+    }
+
+    fn launcher_poll_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 2,
+                RuntimeProfile::Balanced => 3,
+                RuntimeProfile::LowPower => 4,
+                RuntimeProfile::Legacy => 5,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 1,
+                RuntimeProfile::Balanced => 2,
+                RuntimeProfile::LowPower => 3,
+                RuntimeProfile::Legacy => 4,
+            }
+        }
+    }
+
+    fn hybrid_state_poll_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 75,
+                RuntimeProfile::Balanced => 90,
+                RuntimeProfile::LowPower => 120,
+                RuntimeProfile::Legacy => 150,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 45,
+                RuntimeProfile::Balanced => 60,
+                RuntimeProfile::LowPower => 90,
+                RuntimeProfile::Legacy => 120,
+            }
+        }
+    }
+
+    fn backend_state_poll_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 150,
+                RuntimeProfile::Balanced => 180,
+                RuntimeProfile::LowPower => 240,
+                RuntimeProfile::Legacy => 300,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 90,
+                RuntimeProfile::Balanced => 120,
+                RuntimeProfile::LowPower => 180,
+                RuntimeProfile::Legacy => 240,
+            }
+        }
+    }
+
+    fn swarm_overlap_poll_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 90,
+                RuntimeProfile::Balanced => 120,
+                RuntimeProfile::LowPower => 180,
+                RuntimeProfile::Legacy => 240,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 60,
+                RuntimeProfile::Balanced => 75,
+                RuntimeProfile::LowPower => 120,
+                RuntimeProfile::Legacy => 180,
+            }
+        }
+    }
+
+    fn telemetry_scan_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 450,
+                RuntimeProfile::Balanced => 600,
+                RuntimeProfile::LowPower => 900,
+                RuntimeProfile::Legacy => 1200,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 300,
+                RuntimeProfile::Balanced => 450,
+                RuntimeProfile::LowPower => 600,
+                RuntimeProfile::Legacy => 900,
+            }
+        }
+    }
+
+    fn symbiont_event_poll_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 10,
+                RuntimeProfile::Balanced => 12,
+                RuntimeProfile::LowPower => 18,
+                RuntimeProfile::Legacy => 24,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 8,
+                RuntimeProfile::Balanced => 10,
+                RuntimeProfile::LowPower => 14,
+                RuntimeProfile::Legacy => 18,
+            }
+        }
+    }
+
+    fn live_render_analysis_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 10,
+                RuntimeProfile::Balanced => 12,
+                RuntimeProfile::LowPower => 18,
+                RuntimeProfile::Legacy => 24,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 8,
+                RuntimeProfile::Balanced => 10,
+                RuntimeProfile::LowPower => 14,
+                RuntimeProfile::Legacy => 18,
+            }
+        }
+    }
+
+    fn live_render_os_sample_interval_ticks(&self) -> u64 {
+        if self.is_vault_first_tier() {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 14,
+                RuntimeProfile::Balanced => 18,
+                RuntimeProfile::LowPower => 28,
+                RuntimeProfile::Legacy => 36,
+            }
+        } else {
+            match self.runtime_profile {
+                RuntimeProfile::Auto => 10,
+                RuntimeProfile::Balanced => 14,
+                RuntimeProfile::LowPower => 20,
+                RuntimeProfile::Legacy => 28,
+            }
+        }
+    }
+
     fn dashboard_search_help(&self) -> &'static str {
         self.ui_text("Suche: Datei, Anchor, Bedrohung \u{2026}", "Search: file, anchor, threat \u{2026}")
     }
@@ -6598,21 +8272,8 @@ On warning: always check Logs and ADE for details.",
         self.ui_text("Suche \u{2026}", "Search \u{2026}")
     }
 
-    fn browser_surface_mode(&self) -> Option<Tab> {
-        if self.current_user.is_none() {
-            return None;
-        }
-
-        match self.active_tab {
-            Tab::Browser => Some(Tab::Browser),
-            Tab::YouTube => Some(Tab::YouTube),
-            Tab::Home => None,
-            _ => None,
-        }
-    }
-
     fn profile_tick_interval_ms(&self) -> u64 {
-        let browser_like = self.browser_surface_mode().is_some();
+        let browser_like = false;
         let analysis_visual = matches!(self.active_tab, Tab::FlowSphere | Tab::StructureMap | Tab::ADE);
         match self.runtime_profile {
             RuntimeProfile::Auto => {
@@ -6656,24 +8317,6 @@ On warning: always check Logs and ADE for details.",
         }
     }
 
-    fn profile_browser_sync_stride(&self) -> u64 {
-        match self.runtime_profile {
-            RuntimeProfile::Auto => 3,
-            RuntimeProfile::Balanced => 3,
-            RuntimeProfile::LowPower => 5,
-            RuntimeProfile::Legacy => 7,
-        }
-    }
-
-    fn profile_browser_poll_batch(&self) -> usize {
-        match self.runtime_profile {
-            RuntimeProfile::Auto => 4,
-            RuntimeProfile::Balanced => 4,
-            RuntimeProfile::LowPower => 3,
-            RuntimeProfile::Legacy => 2,
-        }
-    }
-
     fn tick_interval_ms(&self) -> u64 {
         self.profile_tick_interval_ms()
     }
@@ -6699,8 +8342,16 @@ On warning: always check Logs and ADE for details.",
                         self.chat_context = ChatContext::Private;
                         self.selected_private_partner = None;
                         self.refresh_security_snapshot(true, "login");
+                        // GENESIS NODE nur wenn genesis_node.key lokal vorhanden (backend prüft).
+                        // Nicht jeder Admin ist der Genesis-Node — nur der Ersteller.
+                        let role_label = if self.backend_swarm_genesis_key_ok {
+                            "GENESIS NODE"
+                        } else {
+                            "Node"
+                        };
                         self.status_line = format!(
-                            "Anmeldung erfolgreich als GENESIS NODE! Session-Key: {}",
+                            "Anmeldung erfolgreich als {}! Session-Key: {}",
+                            role_label,
                             self.data_key_fingerprint
                         );
                     }
@@ -6729,8 +8380,15 @@ On warning: always check Logs and ADE for details.",
                             self.chat_context = ChatContext::Private;
                             self.selected_private_partner = None;
                             self.refresh_security_snapshot(true, "register");
+                            // GENESIS NODE nur wenn genesis_node.key lokal vorhanden.
+                            let role_label = if self.backend_swarm_genesis_key_ok {
+                                "GENESIS NODE"
+                            } else {
+                                "Node"
+                            };
                             self.status_line = format!(
-                                "Registrierung abgeschlossen als GENESIS NODE! Session-Key: {}",
+                                "Registrierung abgeschlossen als {}! Session-Key: {}",
+                                role_label,
                                 self.data_key_fingerprint
                             );
                         }
@@ -6761,57 +8419,44 @@ On warning: always check Logs and ADE for details.",
                         "Live-Render pausiert — kein Gaming-/Media-Tab aktiv.".to_owned();
                 }
                 self.active_tab = tab;
-                if self.active_tab == Tab::Browser {
-                    self.browser_address = "https://duckduckgo.com/".to_owned();
-                    match self.browser_embed.navigate(&self.browser_address) {
-                        Ok(()) => {
-                            self.sync_browser_embed();
-                            self.browser_note = "DuckDuckGo wurde automatisch geladen.".to_owned();
-                            self.status_line = self.browser_note.clone();
-                        }
-                        Err(err) => {
-                            self.browser_note = format!(
-                                "DuckDuckGo konnte beim Tab-Wechsel nicht geladen werden: {err}"
-                            );
-                            self.status_line = self.browser_note.clone();
-                        }
-                    }
-                } else if self.active_tab == Tab::YouTube {
-                    self.youtube_address = "https://www.youtube.com/".to_owned();
-                    let url = self.youtube_address.clone();
-                    match self.browser_embed.navigate(&url) {
-                        Ok(()) => {
-                            self.sync_browser_embed();
-                            self.browser_note = "YouTube wurde automatisch geladen.".to_owned();
-                            self.status_line = self.browser_note.clone();
-                        }
-                        Err(err) => {
-                            self.browser_note =
-                                format!("YouTube konnte beim Tab-Wechsel nicht geladen werden: {err}");
-                            self.status_line = self.browser_note.clone();
-                        }
-                    }
-                } else {
-                    self.browser_embed.hide();
-                }
             }
             Message::ChatContextSelected(context) => self.chat_context = context,
             Message::SecurityModeSelected(mode) => self.set_security_mode(&mode),
             Message::RuntimeProfileSelected(profile) => {
                 self.runtime_profile = profile;
-                self.browser_sync_stride = self.profile_browser_sync_stride();
-                self.status_line = format!(
-                    "Runtime-Profil aktiv: {} | Tick {} ms | Browser-Sync jede {} Ticks",
-                    self.runtime_profile_label(),
-                    self.tick_interval_ms(),
-                    self.browser_sync_stride
-                );
+                match write_shell_preferences(
+                    self.runtime_profile,
+                    self.persistent_mode,
+                    self.ui_language,
+                ) {
+                    Ok(()) => {
+                        self.status_line = format!(
+                            "Runtime-Profil gespeichert: {} | Tick {} ms",
+                            self.runtime_profile_label(),
+                            self.tick_interval_ms(),
+                        );
+                    }
+                    Err(err) => {
+                        self.status_line = format!(
+                            "Runtime-Profil aktiv, aber nicht gespeichert: {}",
+                            err
+                        );
+                    }
+                }
             }
             Message::UiLanguageSelected(lang) => {
                 self.ui_language = lang;
-                self.status_line = match self.ui_language {
-                    UiLanguage::German => "Sprache auf Deutsch gesetzt.".to_owned(),
-                    UiLanguage::English => "Interface language switched to English.".to_owned(),
+                let message = match self.ui_language {
+                    UiLanguage::German => "Sprache auf Deutsch gesetzt.",
+                    UiLanguage::English => "Interface language switched to English.",
+                };
+                self.status_line = match write_shell_preferences(
+                    self.runtime_profile,
+                    self.persistent_mode,
+                    self.ui_language,
+                ) {
+                    Ok(()) => message.to_owned(),
+                    Err(err) => format!("{} Speicherung fehlgeschlagen: {}", message, err),
                 };
             }
             Message::DashboardSearchChanged(value) => self.dashboard_search = value,
@@ -6831,126 +8476,54 @@ On warning: always check Logs and ADE for details.",
             }
             Message::PrivateMessageChanged(value) => self.private_message_draft = value,
             Message::PrivateMessageSend => self.send_private_message(),
+            Message::ChatInviteUsernameChanged(value) => self.chat_invite_username = value,
+            Message::ChatInviteSend => {
+                let Some(current_username) = self.current_username() else {
+                    self.status_line = "Privater Chat erfordert eine Anmeldung.".to_owned();
+                    return Task::none();
+                };
+                let name = self.chat_invite_username.trim().to_owned();
+                if !name.is_empty() {
+                    if self.state_store.is_blocked_between(&current_username, &name) {
+                        self.status_line = format!(
+                            "Privater Thread mit {} ist blockiert.",
+                            name
+                        );
+                        return Task::none();
+                    }
+                    self.selected_private_partner = Some(name.clone());
+                    self.chat_invite_username.clear();
+                    self.status_line = format!("Privater Thread mit {} geöffnet.", name);
+                }
+            }
+            Message::ChatBlockSelectedUser => self.block_selected_partner(),
+            Message::ChatUnblockSelectedUser => self.unblock_selected_partner(),
+            Message::GroupRoomSelected(room_id) => self.select_group_room(room_id),
+            Message::ChatGroupNameChanged(value) => self.chat_group_name = value,
+            Message::ChatGroupCreate => self.create_group_room(),
+            Message::GroupMemberUsernameChanged(value) => self.group_member_username = value,
+            Message::GroupAddMember => self.add_member_to_active_group(),
+            Message::GroupRemoveMember(member) => self.remove_member_from_active_group(member),
+            Message::GroupLeaveSelected => self.leave_active_group(),
             Message::GroupMessageChanged(value) => self.group_message_draft = value,
             Message::GroupMessageSend => self.send_group_message(),
-            Message::BrowserAddressChanged(value) => self.browser_address = value,
-            Message::BrowserSearchQueryChanged(value) => self.browser_search_query = value,
-            Message::YouTubeAddressChanged(value) => {
-                self.youtube_address = value;
-            }
-            Message::YouTubeLoadPressed => {
-                let url = self.youtube_address.trim().to_owned();
-                if url.is_empty() {
-                    self.status_line = "Bitte eine YouTube-URL eingeben.".to_owned();
-                    return Task::none();
-                }
-                self.active_tab = Tab::YouTube;
-                match self.browser_embed.navigate(&url) {
-                    Ok(()) => {
-                        self.sync_browser_embed();
-                        self.browser_note = format!("YouTube laedt {url}");
-                        self.status_line = self.browser_note.clone();
-                    }
-                    Err(err) => {
-                        self.browser_note = format!("Video konnte nicht geladen werden: {err}");
-                        self.status_line = self.browser_note.clone();
-                    }
+            Message::ChatBroadcastDraftChanged(value) => self.chat_broadcast_draft = value,
+            Message::ChatBroadcastSend => {
+                let hint = self.chat_broadcast_draft.trim().to_owned();
+                if !hint.is_empty() {
+                    self.status_line = "Broadcast-Anfrage wird nur lokal vorgemerkt. Eine outbound Freigabe bleibt ein getrennter, expliziter Schritt.".to_owned();
+                    self.chat_broadcast_draft.clear();
                 }
             }
-            Message::YouTubeKiAnalysisPressed => {
-                if self.youtube_address.trim().is_empty() {
-                    self.status_line = "YouTube-URL oder Suchbegriff eingeben vor KI-Analyse.".to_owned();
-                    return Task::none();
-                }
-                if !self.hybrid_bridge_running {
-                    self.status_line = "KI-Analyse: Bridge-Verbindung wird benoetigt (Symbiont Control -> Bridge starten)".to_owned();
-                    return Task::none();
-                }
-                let analysis_addr = self.youtube_address.clone();
-                self.status_line = format!("KI-Analyse gestartet fuer {} - Ergebnis erscheint im Log.", analysis_addr);
+            Message::ChatBroadcastAccept(node_id) => {
+                self.chat_broadcast_requests.retain(|r| r.node_id != node_id);
+                self.selected_private_partner = Some(node_id.clone());
+                self.chat_context = ChatContext::Private;
+                self.status_line = format!("Broadcast-Kontakt {} als privaten Thread geöffnet.", node_id);
             }
-            Message::BrowserLoadPressed => {
-                let url = self.browser_address.trim().to_owned();
-                if url.is_empty() {
-                    self.status_line = "Bitte zuerst eine URL eingeben.".to_owned();
-                    return Task::none();
-                }
-                self.active_tab = Tab::Browser;
-                match self.browser_embed.navigate(&url) {
-                    Ok(()) => {
-                        self.sync_browser_embed();
-                        self.browser_note = format!("Browser laedt {url}");
-                        self.status_line = self.browser_note.clone();
-                    }
-                    Err(err) => {
-                        self.browser_note = format!("Browser konnte nicht geladen werden: {err}");
-                        self.status_line = self.browser_note.clone();
-                    }
-                }
-            }
-            Message::BrowserInspectPressed => {
-                let url = self.browser_address.trim().to_owned();
-                if url.is_empty() {
-                    self.status_line = "Bitte zuerst eine URL eingeben.".to_owned();
-                    return Task::none();
-                }
-                self.active_tab = Tab::Browser;
-                self.browser_note = format!("Strukturanalyse gestartet fuer {url}");
-                self.status_line = self.browser_note.clone();
-                let policy = self.browser_probe_policy.clone();
-                return Task::perform(
-                    async move { BrowserInspector::inspect_url(&url, &policy) },
-                    Message::BrowserInspectCompleted,
-                );
-            }
-            Message::BrowserSearchPressed => {
-                let query = self.browser_search_query.trim().to_owned();
-                if query.is_empty() {
-                    self.status_line = "Bitte zuerst einen Suchbegriff eingeben.".to_owned();
-                    return Task::none();
-                }
-                self.active_tab = Tab::Browser;
-                match self.browser_embed.search_duckduckgo(&query) {
-                    Ok(()) => {
-                        self.sync_browser_embed();
-                        self.browser_note = format!(
-                            "DuckDuckGo wird geladen und Suchkontext wird ermittelt: {query}"
-                        );
-                        self.status_line = self.browser_note.clone();
-                    }
-                    Err(err) => {
-                        self.browser_note =
-                            format!("DuckDuckGo konnte nicht geladen werden: {err}");
-                        self.status_line = self.browser_note.clone();
-                    }
-                }
-                return Task::perform(
-                    async move { BrowserInspector::fetch_search_context(&query, "duckduckgo", 6.0, "") },
-                    Message::BrowserSearchCompleted,
-                );
-            }
-            Message::BrowserInspectCompleted(result) => {
-                self.browser_note = if result.ok {
-                    format!(
-                        "Analyse abgeschlossen: {} | {} ({:.0}%)",
-                        result.final_url,
-                        result.risk_label,
-                        result.risk_score * 100.0
-                    )
-                } else {
-                    format!("Analyse fehlgeschlagen: {}", result.error)
-                };
-                self.status_line = self.browser_note.clone();
-                self.browser_probe = Some(result);
-            }
-            Message::BrowserSearchCompleted(context) => {
-                self.browser_note = if context.ok {
-                    format!("Suchkontext geladen von {}", context.provider)
-                } else {
-                    format!("Suchkontext fehlgeschlagen: {}", context.error)
-                };
-                self.status_line = self.browser_note.clone();
-                self.browser_search_context = Some(context);
+            Message::ChatBroadcastDecline(node_id) => {
+                self.chat_broadcast_requests.retain(|r| r.node_id != node_id);
+                self.status_line = "Broadcast-Anfrage abgelehnt.".to_owned();
             }
             Message::FileHovered(path) => {
                 self.hovered_file_label = format!("Bereit fuer Drop: {}", path.display());
@@ -6963,16 +8536,76 @@ On warning: always check Logs and ADE for details.",
                 self.status_line = tooltip_text;
             }
             Message::FileDropped(path) => {
-                let Some(username) = self.current_username() else {
+                if self.current_username().is_none() {
                     self.status_line =
                         "Bitte zuerst lokal anmelden, bevor du Artefakte analysierst.".to_owned();
                     return Task::none();
                 };
+                self.queue_pending_chat_share();
                 let drop_world = match self.active_tab {
                     Tab::Gaming => Some(Tab::Gaming),
                     Tab::Media => Some(Tab::Media),
                     Tab::Research => Some(Tab::Research),
                     _ => None,
+                };
+                // Schnell-Entropie aus den ersten 4KB (synchron, <1ms)
+                self.drop_quick_entropy = quick_file_entropy(&path);
+                // Annotation-Modal anzeigen statt sofort zu analysieren
+                self.drop_pending_path = Some(path);
+                self.drop_pending_world = drop_world;
+                self.drop_annotation_input = String::new();
+                self.drop_source_date_input = String::new();
+                self.pending_broadcast_hint = None;
+                self.pending_visual_source_date_secs = None;
+                self.status_line =
+                    "Artefakt erkannt \u{2014} Broadcast-Hinweis optional, Quelldatum optional nur fuer Zeitgrafiken. Analyse startet nach Bestaetigung."
+                    .to_owned();
+            }
+            // Nutzer tippt im Annotationsfeld
+            Message::DropAnnotationChanged(value) => {
+                self.drop_annotation_input = value;
+            }
+            Message::DropSourceDateChanged(value) => {
+                self.drop_source_date_input = value.chars().take(24).collect();
+            }
+            // Nutzer bricht Drop ab
+            Message::DropAnnotationCancelled => {
+                self.drop_pending_path = None;
+                self.drop_pending_world = None;
+                self.pending_chat_partner = None;
+                self.pending_chat_group_room_id = None;
+                self.drop_annotation_input = String::new();
+                self.drop_source_date_input = String::new();
+                self.pending_broadcast_hint = None;
+                self.pending_visual_source_date_secs = None;
+                self.drop_quick_entropy = 0.0;
+                self.status_line = "Drop abgebrochen.".to_owned();
+            }
+            // Nutzer bestaetigt: Analyse starten mit optional eingegebener Beschriftung
+            Message::DropAnnotationConfirmed => {
+                let manual_visual_source_date = match parse_visual_source_date_input(&self.drop_source_date_input) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        self.status_line = err;
+                        return Task::none();
+                    }
+                };
+                let Some(path) = self.drop_pending_path.take() else {
+                    return Task::none();
+                };
+                let drop_world = self.drop_pending_world.take();
+                let broadcast_hint = self.drop_annotation_input.trim().to_owned();
+                self.pending_broadcast_hint = if broadcast_hint.is_empty() {
+                    None
+                } else {
+                    Some(broadcast_hint)
+                };
+                self.pending_visual_source_date_secs = manual_visual_source_date;
+                self.drop_annotation_input.clear();
+                self.drop_source_date_input.clear();
+                self.drop_quick_entropy = 0.0;
+                let Some(username) = self.current_username() else {
+                    return Task::none();
                 };
                 let launch_note = if let Some(world) = drop_world {
                     if !self.live_render_mode {
@@ -7011,6 +8644,8 @@ On warning: always check Logs and ADE for details.",
                 self.analysis_running = false;
                 let pending_world = self.pending_analysis_world.take();
                 let pending_path = self.pending_analysis_path.take();
+                let pending_broadcast_hint = self.pending_broadcast_hint.take();
+                let pending_visual_source_date_secs = self.pending_visual_source_date_secs.take();
                 if pending_world != Some(Tab::Gaming) {
                     self.active_gaming_game_id = None;
                 }
@@ -7035,6 +8670,52 @@ On warning: always check Logs and ADE for details.",
                                 result.compression_state.clone(),
                                 result.reconstruction_state.clone(),
                             );
+                            // --- FlowSphere History-Eintrag festhalten (erster Fund = Timestamp) ---
+                            {
+                                let stability = result.structure_map_state.coherence_score.clamp(0.0, 1.0);
+                                let mut entry = FlowSphereEntry::from_capsule(
+                                    &result.capsule_state,
+                                    self.cascade_metrics.as_ref(),
+                                    stability,
+                                );
+                                if let Some(src_ts) = result.source_date_secs {
+                                    if src_ts > 0 {
+                                        entry.source_timestamp_secs = Some(src_ts);
+                                    }
+                                }
+                                if let Some(manual_ts) = pending_visual_source_date_secs {
+                                    if manual_ts > 0 {
+                                        entry.manual_timestamp_secs = Some(manual_ts);
+                                    }
+                                }
+                                if let Some(broadcast_hint) = pending_broadcast_hint.clone() {
+                                    if !broadcast_hint.is_empty() {
+                                        entry.broadcast_hint = broadcast_hint.clone();
+                                        if self.flow_sphere_broadcast_name.trim().is_empty() {
+                                            self.flow_sphere_broadcast_name = broadcast_hint;
+                                        }
+                                    }
+                                }
+                                let visual_ts = entry.visual_timestamp_secs(self.temporal_metadata_consent);
+                                // Deduplizieren: gleicher Hash + gleicher visueller Zeitbezug nur einmal
+                                let is_dup = self.flow_sphere_history.iter()
+                                    .any(|e| e.source_hash == entry.source_hash
+                                          && e.visual_timestamp_secs(self.temporal_metadata_consent) == visual_ts);
+                                if !is_dup {
+                                    self.flow_sphere_history.push(entry.clone());
+                                    self.flow_sphere_session_entries.push(entry);
+                                    // Maximal 200 Eintraege in History
+                                    if self.flow_sphere_history.len() > 200 {
+                                        self.flow_sphere_history.remove(0);
+                                    }
+                                }
+                            }
+                            let keep_chat_view = self.pending_chat_partner.is_some()
+                                || self.pending_chat_group_room_id.is_some();
+                            let chat_share_status = match self.publish_pending_chat_share(&result) {
+                                Ok(status) => status,
+                                Err(err) => Some(format!("Chat-Ablage fehlgeschlagen: {err}")),
+                            };
                             self.analysis_progress = 1.0;
                             let preview_upper = result.snapshot.preview_note.to_ascii_uppercase();
                             let malware_flag = preview_upper.contains("MALWARE")
@@ -7055,11 +8736,95 @@ On warning: always check Logs and ADE for details.",
                                 danger_hint,
                                 result.snapshot.preview_note
                             );
-                            self.status_line = self.analysis_status.clone();
-                            self.active_tab = Tab::Data;
+                            // Hinweis auf FlowSphere-Broadcast falls bereits History-Einträge vorhanden.
+                            // Kein Einfluss auf Metriken — nur Orientierung für den Nutzer.
+                            if self.flow_sphere_history.len() >= 2 {
+                                self.status_line = format!(
+                                    "{} \u{2014} FlowSphere: Muster in History vorhanden \u{b7} evtl. Zusammenh\u{e4}nge oder Broadcast-\u{dc}berschneidung pr\u{fc}fen.",
+                                    self.analysis_status
+                                );
+                            } else {
+                                self.status_line = self.analysis_status.clone();
+                            }
+                            if let Some(chat_note) = chat_share_status {
+                                self.status_line = format!("{} \u{2014} {}", self.status_line, chat_note);
+                            }
+                            self.active_tab = if keep_chat_view { Tab::Chat } else { Tab::Data };
+                            // Auto-AEF: Gate bestanden (lossless >= 0.95 + Anker) → direkt encodieren
+                            if let Some(aelab) = &result.aelab_state {
+                                if aelab.lossless >= 0.95 && aelab.has_anchor {
+                                    let src = PathBuf::from(&result.entry.full_path);
+                                    let data_key = self.data_key_fork();
+                                    self.status_line = format!(
+                                        "{} \u{2014} AEF-Encoding l\u{e4}uft \u{2026}",
+                                        self.analysis_status
+                                    );
+                                    return Task::perform(
+                                        async move {
+                                            let out_dir = crate::data_path("rust_shell/aef");
+                                            std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+                                            let stem = src
+                                                .file_stem()
+                                                .and_then(|s| s.to_str())
+                                                .unwrap_or("file");
+                                            let out_path = out_dir.join(format!("{stem}.aef"));
+                                            let vault = VaultStore::load_default().map_err(|e| e.to_string())?;
+                                            let vault = Arc::new(RwLock::new(vault));
+                                            let engine = Arc::new(EnginePipeline::new());
+                                            let encoder = if let Some(dk) = data_key {
+                                                AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine)).withdatakey(dk)
+                                            } else {
+                                                AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine))
+                                            };
+                                            encoder
+                                                .encode_sync(&src, &out_path)
+                                                .map(|_| out_path.to_string_lossy().to_string())
+                                                .map_err(|e| e.to_string())
+                                        },
+                                        Message::AutoAefEncodeCompleted,
+                                    );
+                                }
+                            }
                             self.refresh_security_snapshot(true, "file_loaded");
+                            // Auto-AEF: Gate bestanden (lossless >= 0.95 + Anker) → direkt encodieren
+                            if let Some(aelab) = &result.aelab_state {
+                                if aelab.lossless >= 0.95 && aelab.has_anchor {
+                                    let src = PathBuf::from(&result.entry.full_path);
+                                    let data_key = self.data_key_fork();
+                                    self.status_line = format!(
+                                        "{} \u{2014} AEF-Encoding l\u{e4}uft \u{2026}",
+                                        self.analysis_status
+                                    );
+                                    return Task::perform(
+                                        async move {
+                                            let out_dir = crate::data_path("rust_shell/aef");
+                                            std::fs::create_dir_all(&out_dir).map_err(|e| e.to_string())?;
+                                            let stem = src
+                                                .file_stem()
+                                                .and_then(|s| s.to_str())
+                                                .unwrap_or("file");
+                                            let out_path = out_dir.join(format!("{stem}.aef"));
+                                            let vault = VaultStore::load_default().map_err(|e| e.to_string())?;
+                                            let vault = Arc::new(RwLock::new(vault));
+                                            let engine = Arc::new(EnginePipeline::new());
+                                            let encoder = if let Some(dk) = data_key {
+                                                AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine)).withdatakey(dk)
+                                            } else {
+                                                AefEncoder::new(Arc::clone(&vault), Arc::clone(&engine))
+                                            };
+                                            encoder
+                                                .encode_sync(&src, &out_path)
+                                                .map(|_| out_path.to_string_lossy().to_string())
+                                                .map_err(|e| e.to_string())
+                                        },
+                                        Message::AutoAefEncodeCompleted,
+                                    );
+                                }
+                            }
                         }
                         Err(err) => {
+                            self.pending_chat_partner = None;
+                            self.pending_chat_group_room_id = None;
                             self.analysis_progress = 0.0;
                             self.analysis_status =
                                 format!("Analyse konnte nicht gespeichert werden: {err}");
@@ -7067,6 +8832,8 @@ On warning: always check Logs and ADE for details.",
                         }
                     },
                     Err(err) => {
+                        self.pending_chat_partner = None;
+                        self.pending_chat_group_room_id = None;
                         self.analysis_progress = 0.0;
                         self.analysis_status = format!("Analyse fehlgeschlagen: {err}");
                         self.status_line = self.analysis_status.clone();
@@ -7119,7 +8886,7 @@ On warning: always check Logs and ADE for details.",
                 self.rekonstruktion_result = None;
                 self.status_line = format!("Rekonstruktion gestartet: {}", entry.file_name);
                 let aef_path = PathBuf::from(&entry.full_path);
-                let out_dir = PathBuf::from("data").join("rust_shell").join("reconstructed");
+                let out_dir = crate::data_path("rust_shell/reconstructed");
                 let out_path = out_dir.join(&entry.file_name);
                 let file_name = entry.file_name.clone();
                 let data_key = self.data_key_fork();
@@ -7167,9 +8934,7 @@ On warning: always check Logs and ADE for details.",
                 };
                 if let Ok((file_name, r)) = result {
                     if r.reconstruction_complete {
-                        let src = PathBuf::from("data")
-                            .join("rust_shell")
-                            .join("reconstructed")
+                        let src = crate::data_path("rust_shell/reconstructed")
                             .join(file_name);
                         let dst = PathBuf::from(std::env::var("USERPROFILE").unwrap_or_default())
                             .join("Downloads")
@@ -7190,9 +8955,6 @@ On warning: always check Logs and ADE for details.",
             Message::WindowResized(width, height) => {
                 self.window_width = width;
                 self.window_height = height;
-                if self.active_tab == Tab::Browser {
-                    self.sync_browser_embed();
-                }
             }
             Message::FlowSphereSnapshotSelected(idx) => {
                 self.flow_sphere_snapshot_idx = idx;
@@ -7248,6 +9010,8 @@ On warning: always check Logs and ADE for details.",
                 if !self.flow_sphere_broadcast_opt_in {
                     self.flow_sphere_broadcast_proposal = None;
                     self.flow_sphere_broadcast_visible = None;
+                    self.flow_sphere_broadcast_outbound = None;
+                    self.flow_sphere_broadcast_last_sent_at = None;
                 }
                 self.status_line = if self.flow_sphere_broadcast_opt_in {
                     "FlowSphere: Broadcast-Pruefung aktiviert. Vorschlaege koennen jetzt angefragt werden.".to_owned()
@@ -7270,7 +9034,20 @@ On warning: always check Logs and ADE for details.",
             Message::FlowSphereBroadcastApprove => {
                 if let Some(proposal) = self.flow_sphere_broadcast_proposal.take() {
                     self.flow_sphere_broadcast_visible = Some(proposal);
-                    self.status_line = "FlowSphere: Broadcast-Vorschlag freigegeben und sichtbar geschaltet.".to_owned();
+                    self.flow_sphere_broadcast_outbound = None;
+                    self.flow_sphere_broadcast_last_sent_at = None;
+                    self.status_line = "FlowSphere: Broadcast-Vorschlag lokal freigegeben. Outbound-Senden bleibt ein separater Schritt.".to_owned();
+                }
+            }
+            Message::FlowSphereBroadcastDispatch => {
+                if let Some(visible) = self.flow_sphere_broadcast_visible.clone() {
+                    if self.flow_sphere_broadcast_outbound.as_deref() == Some(visible.as_str()) {
+                        self.status_line = "FlowSphere: Diese Broadcast-Anfrage ist bereits als outbound markiert.".to_owned();
+                    } else {
+                        self.flow_sphere_broadcast_outbound = Some(visible);
+                        self.flow_sphere_broadcast_last_sent_at = Some(current_epoch_label());
+                        self.status_line = "FlowSphere: Broadcast-Anfrage als outbound markiert. Kontakt bleibt weiterhin explizit bestaetigungspflichtig.".to_owned();
+                    }
                 }
             }
             Message::FlowSphereBroadcastReject => {
@@ -7295,11 +9072,21 @@ On warning: always check Logs and ADE for details.",
                     "anchor_count": self.structure_map_nodes.last().map_or(0, |v| v.len()),
                     "stability": if self.structure_map_locked { 1.0 } else { self.structure_map_compression / 100.0 },
                 });
-                let path = std::path::Path::new("data").join(format!("flow_sphere_snapshot_{}.json", self.tick_counter));
+                let path = crate::app_root().join(format!("data/flow_sphere_snapshot_{}.json", self.tick_counter));
                 if let Ok(json) = serde_json::to_string_pretty(&snapshot) {
-                    let _ = std::fs::create_dir_all("data");
+                    let _ = std::fs::create_dir_all(crate::app_root().join("data"));
                     let _ = std::fs::write(&path, json);
                     self.status_line = format!("FlowSphere-Snapshot exportiert: {}", path.display());
+                }
+            }
+            Message::FlowSphereSubTabSelected(subtab) => {
+                self.flow_sphere_subtab = subtab;
+            }
+            Message::FlowSphereCompareSelected(idx) => {
+                if self.flow_sphere_compare_idx == Some(idx) {
+                    self.flow_sphere_compare_idx = None; // Toggle: nochmal klicken = deselektieren
+                } else {
+                    self.flow_sphere_compare_idx = Some(idx);
                 }
             }
             Message::OpenFullTab(tab) => {
@@ -7307,136 +9094,14 @@ On warning: always check Logs and ADE for details.",
                 self.app_mode = AppMode::Full;
                 return window::get_latest().then(|id_opt| {
                     if let Some(id) = id_opt {
-                        window::resize(id, iced::Size::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT))
+                        Task::batch(vec![
+                            window::resize(id, iced::Size::new(FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT)),
+                            window::change_level(id, window::Level::Normal),
+                        ])
                     } else {
                         Task::none()
                     }
                 });
-            }
-            Message::SymbiontInputChanged(value) => {
-                self.symbiont_input = value;
-            }
-            Message::SymbiontProfilePressed => {
-                let host = self.symbiont_host.clone();
-                let port = self.symbiont_port;
-                let signal = self.symbiont_input.clone();
-                self.symbiont_busy = true;
-                self.symbiont_result = "Symbiont profile wird berechnet...".to_owned();
-                return Task::perform(
-                    async move {
-                        let result = symbiont_rpc::request_json(
-                            &host,
-                            port,
-                            "aether/profile",
-                            serde_json::json!({ "signal": signal }),
-                        )?;
-                        serde_json::to_string_pretty(&result)
-                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
-                    },
-                    Message::SymbiontRpcCompleted,
-                );
-            }
-            Message::SymbiontRazorPressed => {
-                let host = self.symbiont_host.clone();
-                let port = self.symbiont_port;
-                let signals: Vec<String> = self
-                    .symbiont_input
-                    .lines()
-                    .map(|line| line.trim().to_owned())
-                    .filter(|line| !line.is_empty())
-                    .collect();
-                self.symbiont_busy = true;
-                self.symbiont_result = "Symbiont razor wird berechnet...".to_owned();
-                return Task::perform(
-                    async move {
-                        let result = symbiont_rpc::request_json(
-                            &host,
-                            port,
-                            "aether/razor",
-                            serde_json::json!({ "signals": signals }),
-                        )?;
-                        serde_json::to_string_pretty(&result)
-                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
-                    },
-                    Message::SymbiontRpcCompleted,
-                );
-            }
-            Message::SymbiontSnapshotPressed => {
-                let host = self.symbiont_host.clone();
-                let port = self.symbiont_port;
-                let signal = self.symbiont_input.clone();
-                self.symbiont_busy = true;
-                self.symbiont_result = "Symbiont snapshot wird gespeichert...".to_owned();
-                return Task::perform(
-                    async move {
-                        let result = symbiont_rpc::request_json(
-                            &host,
-                            port,
-                            "aether/snapshot",
-                            serde_json::json!({ "signal": signal }),
-                        )?;
-                        serde_json::to_string_pretty(&result)
-                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
-                    },
-                    Message::SymbiontRpcCompleted,
-                );
-            }
-            Message::SymbiontStatusPressed => {
-                let host = self.symbiont_host.clone();
-                let port = self.symbiont_port;
-                self.symbiont_busy = true;
-                self.symbiont_result = "Symbiont status wird geladen...".to_owned();
-                return Task::perform(
-                    async move {
-                        let result = symbiont_rpc::request_json(
-                            &host,
-                            port,
-                            "aether/status",
-                            serde_json::json!({}),
-                        )?;
-                        serde_json::to_string_pretty(&result)
-                            .map_err(|err| format!("Symbiont Ergebnis-Formatfehler: {err}"))
-                    },
-                    Message::SymbiontRpcCompleted,
-                );
-            }
-            Message::SymbiontDecodeDnaPressed => {
-                let host  = self.symbiont_host.clone();
-                let port  = self.symbiont_port;
-                let input = self.symbiont_input.trim().to_owned();
-                self.symbiont_busy   = true;
-                self.symbiont_result = "DNA-Rekonstruktion laeuft...".to_owned();
-                return Task::perform(
-                    async move {
-                        // 64-stellige Hex-Signatur → sig-Lookup; sonst direkt als DNA
-                        let params = if input.len() == 64
-                            && input.chars().all(|c| c.is_ascii_hexdigit())
-                        {
-                            serde_json::json!({ "sig": input, "length": 256 })
-                        } else {
-                            serde_json::json!({ "dna": input, "length": 256 })
-                        };
-                        let result = symbiont_rpc::request_json(
-                            &host, port, "aether/decode_dna", params,
-                        )?;
-                        serde_json::to_string_pretty(&result)
-                            .map_err(|err| format!("Decode-DNA Formatfehler: {err}"))
-                    },
-                    Message::SymbiontRpcCompleted,
-                );
-            }
-            Message::SymbiontRpcCompleted(result) => {
-                self.symbiont_busy = false;
-                match result {
-                    Ok(pretty) => {
-                        self.symbiont_result = pretty;
-                        self.status_line = "Symbiont-RPC abgeschlossen.".to_owned();
-                    }
-                    Err(err) => {
-                        self.symbiont_result = format!("Fehler: {err}");
-                        self.status_line = format!("Symbiont-RPC fehlgeschlagen: {err}");
-                    }
-                }
             }
             Message::SymbiontEventsReceived(result) => {
                 self.symbiont_events_polling = false;
@@ -7455,6 +9120,39 @@ On warning: always check Logs and ADE for details.",
             Message::SymbiontEventsClearPressed => {
                 self.symbiont_events.clear();
                 self.symbiont_last_event_idx = 0;
+            }
+            Message::SymbiontInputChanged(s) => {
+                self.symbiont_input = s;
+            }
+            Message::SymbiontRunPressed => {
+                if self.symbiont_busy || self.symbiont_input.trim().is_empty() {
+                    return Task::none();
+                }
+                self.symbiont_busy = true;
+                self.symbiont_result = "Warte auf Antwort...".to_owned();
+                let host = self.symbiont_host.clone();
+                let port = self.symbiont_port;
+                let method = self.symbiont_input.trim().to_owned();
+                return Task::perform(
+                    async move {
+                        let result = symbiont_rpc::request_json(
+                            &host,
+                            port,
+                            &method,
+                            serde_json::json!({}),
+                        )?;
+                        Ok(serde_json::to_string_pretty(&result)
+                            .unwrap_or_else(|_| result.to_string()))
+                    },
+                    Message::SymbiontResultReceived,
+                );
+            }
+            Message::SymbiontResultReceived(result) => {
+                self.symbiont_busy = false;
+                self.symbiont_result = match result {
+                    Ok(s)  => s,
+                    Err(e) => format!("Fehler: {e}"),
+                };
             }
             Message::HybridBridgeStartPressed => {
                 match self.hybrid_bridge.start() {
@@ -7542,9 +9240,16 @@ On warning: always check Logs and ADE for details.",
                     AppMode::Full => (FULL_WINDOW_WIDTH, FULL_WINDOW_HEIGHT),
                     AppMode::Overlay => (OVERLAY_WINDOW_WIDTH, OVERLAY_WINDOW_HEIGHT),
                 };
+                let new_level = match self.app_mode {
+                    AppMode::Full => window::Level::Normal,
+                    AppMode::Overlay => window::Level::AlwaysOnTop,
+                };
                 return window::get_latest().then(move |id_opt| {
                     if let Some(id) = id_opt {
-                        window::resize(id, iced::Size::new(new_w, new_h))
+                        Task::batch(vec![
+                            window::resize(id, iced::Size::new(new_w, new_h)),
+                            window::change_level(id, new_level),
+                        ])
                     } else {
                         Task::none()
                     }
@@ -7565,7 +9270,9 @@ On warning: always check Logs and ADE for details.",
             Message::Tick => {
                 let mut queued_tasks: Vec<Task<Message>> = Vec::new();
                 self.tick_counter = self.tick_counter.wrapping_add(1);
-                self.launcher_state.poll_processes();
+                if self.tick_counter % self.launcher_poll_interval_ticks() == 0 {
+                    self.launcher_state.poll_processes();
+                }
                 if self.live_render_mode {
                     let previous_live_signal = self.live_render_last_frame.clone();
                     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -7594,7 +9301,7 @@ On warning: always check Logs and ADE for details.",
                         }
                     }
                     if !self.live_render_analysis_running
-                        && self.tick_counter % 8 == 0
+                        && self.tick_counter % self.live_render_analysis_interval_ticks() == 0
                         && !self.live_render_last_frame.is_empty()
                     {
                         self.live_render_analysis_running = true;
@@ -7608,18 +9315,28 @@ On warning: always check Logs and ADE for details.",
                         ));
                     }
                 }
-                if self.tick_counter % 60 == 0 {
+                if self.tick_counter % self.hybrid_state_poll_interval_ticks() == 0 {
                     self.poll_hybrid_state();
                 }
-                if self.tick_counter % 120 == 0 {
+                if self.tick_counter % self.backend_state_poll_interval_ticks() == 0 {
                     self.poll_backend_state();
                 }
-                // Poll swarm overlap contact requests every ~60 ticks (offset to avoid collision).
-                if self.tick_counter % 60 == 30 {
+                // Poll swarm overlap contact requests (offset by half-interval to spread load).
+                if self.tick_counter % self.swarm_overlap_poll_interval_ticks()
+                    == self.swarm_overlap_poll_interval_ticks() / 2
+                {
                     self.poll_swarm_overlap_events();
                 }
-                // Poll Symbiont live events every ~8 ticks while the server is running
-                if self.tick_counter % 8 == 3
+                // Scan telemetry processes (offset 17 to spread load).
+                if self.tick_counter % self.telemetry_scan_interval_ticks() == 17 {
+                    let shield = self.telemetry_shield_enabled;
+                    queued_tasks.push(Task::perform(
+                        scan_telemetry_activity(shield),
+                        Message::TelemetryScanResult,
+                    ));
+                }
+                // Poll Symbiont live events while the server is running
+                if self.tick_counter % self.symbiont_event_poll_interval_ticks() == 3
                     && self.hybrid_symbiont_running
                     && !self.symbiont_events_polling
                 {
@@ -7637,20 +9354,20 @@ On warning: always check Logs and ADE for details.",
                             )?;
                             let last_idx = result
                                 .get("last_idx")
-                                .and_then(|v| v.as_u64())
+                                .and_then(|v: &serde_json::Value| v.as_u64())
                                 .unwrap_or(since);
                             let entries: Vec<String> = result
                                 .get("events")
-                                .and_then(|v| v.as_array())
-                                .map(|arr| {
+                                .and_then(|v: &serde_json::Value| v.as_array())
+                                .map(|arr: &Vec<serde_json::Value>| {
                                     arr.iter()
-                                        .filter_map(|e| {
+                                        .filter_map(|e: &serde_json::Value| {
                                             let idx = e.get("idx")?.as_u64()?;
                                             let ts = e.get("ts")?.as_f64()?;
                                             let kind = e.get("kind")?.as_str()?;
                                             let detail = e
                                                 .get("detail")
-                                                .and_then(|v| v.as_str())
+                                                .and_then(|v: &serde_json::Value| v.as_str())
                                                 .unwrap_or("");
                                             Some(format!(
                                                 "[{idx}] {ts:.3}  {kind}  {detail}"
@@ -7680,55 +9397,6 @@ On warning: always check Logs and ADE for details.",
                         Task::batch(queued_tasks)
                     };
                 }
-                if self.browser_surface_mode().is_none() {
-                    self.browser_embed.hide();
-                    return if queued_tasks.is_empty() {
-                        Task::none()
-                    } else {
-                        Task::batch(queued_tasks)
-                    };
-                }
-                let effective_browser_stride = self.browser_sync_stride.max(1);
-                if self.tick_counter % effective_browser_stride == 0 {
-                    self.sync_browser_embed();
-                }
-                for event in self
-                    .browser_embed
-                    .poll_events(self.profile_browser_poll_batch())
-                {
-                    match event.kind.as_str() {
-                        "ready" | "bridge_ready" => {
-                            self.browser_note =
-                                "Eingebetteter Browser ist bereit. DuckDuckGo kann direkt geladen werden."
-                                    .to_owned();
-                            self.status_line = self.browser_note.clone();
-                        }
-                        "loaded" => {
-                            if !event.url.trim().is_empty() {
-                                self.browser_address = event.url.clone();
-                            }
-                            let title = if event.title.trim().is_empty() {
-                                "Seite geladen".to_owned()
-                            } else {
-                                event.title.clone()
-                            };
-                            self.browser_note = format!(
-                                "{} | {} | {}",
-                                title,
-                                self.browser_address,
-                                if event.secure { "HTTPS" } else { "ohne HTTPS" }
-                            );
-                            self.status_line = self.browser_note.clone();
-                        }
-                        "error" | "stderr" => {
-                            if !event.message.trim().is_empty() {
-                                self.browser_note = format!("Browserfehler: {}", event.message);
-                                self.status_line = self.browser_note.clone();
-                            }
-                        }
-                        _ => {}
-                    }
-                }
                 return if queued_tasks.is_empty() {
                     Task::none()
                 } else {
@@ -7738,6 +9406,108 @@ On warning: always check Logs and ADE for details.",
             Message::SecurityRecheck => {
                 self.refresh_security_snapshot(true, "manual_recheck");
                 self.status_line = "Security-Recheck abgeschlossen.".to_owned();
+            }
+            Message::TelemetryShieldToggle(enabled) => {
+                self.telemetry_shield_enabled = enabled;
+                apply_telemetry_firewall(enabled);
+                self.status_line = if enabled {
+                    self.ui_text(
+                        "Telemetrie-Firewall aktiviert. Erkennung l\u{e4}uft im Hintergrund.",
+                        "Telemetry firewall enabled. Detection running in background.",
+                    ).to_owned()
+                } else {
+                    self.ui_text(
+                        "Telemetrie-Shield deaktiviert.",
+                        "Telemetry shield disabled.",
+                    ).to_owned()
+                };
+                return Task::perform(
+                    scan_telemetry_activity(enabled),
+                    Message::TelemetryScanResult,
+                );
+            }
+            Message::TemporalMetadataConsentToggle(enabled) => {
+                self.temporal_metadata_consent = enabled;
+                // In settings.json persistieren
+                let p = std::path::Path::new("data/settings.json");
+                if let Ok(raw) = std::fs::read_to_string(p) {
+                    if let Ok(mut val) = serde_json::from_str::<serde_json::Value>(&raw) {
+                        val["temporal_metadata_consent"] = serde_json::Value::Bool(enabled);
+                        let _ = std::fs::write(p, serde_json::to_string_pretty(&val)
+                            .unwrap_or_default());
+                    }
+                }
+                self.status_line = if enabled {
+                    self.ui_text(
+                        "Metadaten-Datum aktiv: Header-/Erstellungsdaten treiben die Zeitachsen, manuelle Daten bleiben Fallback.",
+                        "Metadata dates active: header/creation dates drive timelines, manual dates remain fallback.",
+                    ).to_owned()
+                } else {
+                    self.ui_text(
+                        "Metadaten-Datum deaktiviert. Manuelle Quelldaten bleiben aktiv, sonst gilt der Analysezeitpunkt.",
+                        "Metadata dates disabled. Manual source dates stay active, otherwise analysis time is used.",
+                    ).to_owned()
+                };
+            }
+            Message::TelemetryScanResult(alerts) => {
+                if !alerts.is_empty() {
+                    let new_alerts: Vec<TelemetryAlert> = alerts
+                        .into_iter()
+                        .filter(|a| !self.telemetry_alerts.iter().any(|e| e.process == a.process && e.remote == a.remote))
+                        .collect();
+                    self.telemetry_alerts.extend(new_alerts);
+                    if self.telemetry_alerts.len() > 30 {
+                        self.telemetry_alerts.drain(0..self.telemetry_alerts.len() - 30);
+                    }
+                }
+            }
+            // ── Permanent-Modus / Overlay-Close-Guard ─────────────────────────────
+            Message::PersistentModeToggle(val) => {
+                self.persistent_mode = val;
+                let base_message = if val {
+                    self.ui_text(
+                        "Schliessen nur ueber Einstellungen aktiv: X minimiert zur Leiste.",
+                        "Close only via settings enabled: X collapses to bar.",
+                    )
+                } else {
+                    self.ui_text(
+                        "Schliessen nur ueber Einstellungen deaktiviert: X beendet das Programm.",
+                        "Close only via settings disabled: X closes the program.",
+                    )
+                };
+                self.status_line = match write_shell_preferences(
+                    self.runtime_profile,
+                    self.persistent_mode,
+                    self.ui_language,
+                ) {
+                    Ok(()) => base_message.to_owned(),
+                    Err(err) => format!("{} Speicherung fehlgeschlagen: {}", base_message, err),
+                };
+            }
+            Message::ForceQuit => {
+                return window::get_latest().then(|id_opt| {
+                    if let Some(id) = id_opt {
+                        window::close(id)
+                    } else {
+                        Task::none()
+                    }
+                });
+            }
+            Message::CloseWindowRequested(win_id) => {
+                if self.persistent_mode {
+                    // Collapse to always-on-top overlay bar instead of quitting.
+                    self.app_mode = AppMode::Overlay;
+                    self.status_line = self.ui_text(
+                        "Läuft im Hintergrund. Escape oder Klick → Vollansicht.",
+                        "Running in background. Escape or click → full view.",
+                    ).to_owned();
+                    return Task::batch(vec![
+                        window::resize(win_id, iced::Size::new(OVERLAY_WINDOW_WIDTH, OVERLAY_WINDOW_HEIGHT)),
+                        window::change_level(win_id, window::Level::AlwaysOnTop),
+                    ]);
+                } else {
+                    return window::close(win_id);
+                }
             }
             Message::TutorialDismissed => {
                 self.show_tutorial = false;
@@ -7852,6 +9622,16 @@ On warning: always check Logs and ADE for details.",
             }
             // ─────────────────────────────────────────────────────────────────────
             Message::AnchorGroupSelected(index) => self.selected_anchor_group = index,
+            Message::AutoAefEncodeCompleted(result) => match result {
+                Ok(path) => {
+                    self.status_line = format!(
+                        "AEF gespeichert: {path} \u{2014} Rekonstruktion jetzt verf\u{fc}gbar."
+                    );
+                }
+                Err(err) => {
+                    self.status_line = format!("AEF-Encoding fehlgeschlagen: {err}");
+                }
+            },
         }
         Task::none()
     }
@@ -7962,6 +9742,169 @@ On warning: always check Logs and ADE for details.",
             .into()
     }
 
+    /// Drop-Annotation-Modal: erscheint wenn eine Datei fallen gelassen wurde,
+    /// bevor die Analyse startet. Zeigt Strukturvorschau + optionales Freitext-Feld.
+    /// Semantik bleibt beim Nutzer — nur Struktur geht in die Berechnung.
+    fn view_drop_annotation(&self) -> Element<'_, Message> {
+        let path = match &self.drop_pending_path {
+            Some(p) => p,
+            None => return column![].into(),
+        };
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unbekannte Datei");
+        let file_size_label = std::fs::metadata(path)
+            .map(|m| {
+                let bytes = m.len();
+                if bytes < 1024 {
+                    format!("{} B", bytes)
+                } else if bytes < 1_048_576 {
+                    format!("{:.1} KB", bytes as f32 / 1024.0)
+                } else {
+                    format!("{:.1} MB", bytes as f32 / 1_048_576.0)
+                }
+            })
+            .unwrap_or_else(|_| "? B".to_owned());
+
+        let entropy = self.drop_quick_entropy;
+        let entropy_label = if entropy < 2.0 {
+            "sehr niedrig \u{2014} stark strukturiert"
+        } else if entropy < 4.0 {
+            "niedrig \u{2014} regelm\u{00e4}\u{00df}ig strukturiert"
+        } else if entropy < 6.0 {
+            "mittel \u{2014} gemischte Entropie"
+        } else if entropy < 7.2 {
+            "hoch \u{2014} dicht oder komprimiert"
+        } else {
+            "maximal \u{2014} zufllig oder verschl\u{00fc}sselt"
+        };
+        let entropy_fraction = (entropy / 8.0).clamp(0.0, 1.0);
+
+        let accent = Color::from_rgb8(0x74, 0x8B, 0xFF);
+        let dim = Color::from_rgba(0.55, 0.60, 0.75, 0.85);
+        let green = Color::from_rgb8(0x64, 0xFF, 0xB8);
+
+        let card = container(
+            column![
+                text("\u{25c6} Artefakt erkannt").size(14).color(accent),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(10.0)),
+                text(format!("  {}", file_name))
+                    .size(16)
+                    .color(Color::WHITE),
+                text(format!("  {}", file_size_label))
+                    .size(11)
+                    .color(dim),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(14.0)),
+                text("  Strukturvorschau (erste 4 KB):").size(11).color(dim),
+                progress_bar(0.0..=1.0, entropy_fraction)
+                    .height(8)
+                    .style(move |_: &Theme| progress_bar::Style {
+                        background: Background::Color(
+                            Color::from_rgba(0.12, 0.16, 0.28, 0.8),
+                        ),
+                        bar: Background::Color(green),
+                        border: Border::default(),
+                    }),
+                text(format!(
+                    "  {:.2} bit/byte \u{2014} {}",
+                    entropy, entropy_label
+                ))
+                .size(10)
+                .color(dim),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(14.0)),
+                text("  Was ist das f\u{00fc}r dich? (optional \u{2014} bleibt dein Wissen)")
+                    .size(11)
+                    .color(dim),
+                text_input(
+                    "Broadcast-Hinweis, keine Kategorie \u{2022} beeinflusst keine Cluster oder Dynamiken",
+                    &self.drop_annotation_input,
+                )
+                .on_input(Message::DropAnnotationChanged)
+                .on_submit(Message::DropAnnotationConfirmed)
+                .padding([8, 10])
+                .size(13),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(14.0)),
+                text("  Quelldatum oder Bezugsdatum (optional \u{2014} nur fuer Zeitachsen, nie fuer die Analyse)")
+                    .size(11)
+                    .color(dim),
+                text_input(
+                    "YYYY-MM-DD oder DD.MM.YYYY",
+                    &self.drop_source_date_input,
+                )
+                .on_input(Message::DropSourceDateChanged)
+                .on_submit(Message::DropAnnotationConfirmed)
+                .padding([8, 10])
+                .size(13),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(12.0)),
+                text("  Das Label dient nur der Broadcast-Abwaegung. Das Datum speist nur Grafik, Dynamiken und Overlaps.")
+                    .size(10)
+                    .color(dim),
+                iced::widget::Space::new(Length::Shrink, Length::Fixed(12.0)),
+                row![
+                    button(text("Analysieren").size(13))
+                        .on_press(Message::DropAnnotationConfirmed)
+                        .padding([10, 24])
+                        .style(move |_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgba(
+                                0.45, 0.27, 0.92, 0.85,
+                            ))),
+                            border: Border {
+                                color: accent,
+                                width: 1.2,
+                                radius: 6.0.into(),
+                            },
+                            text_color: Color::WHITE,
+                            ..Default::default()
+                        }),
+                    iced::widget::Space::new(Length::Fixed(12.0), Length::Shrink),
+                    button(text("Abbrechen").size(12).color(dim))
+                        .on_press(Message::DropAnnotationCancelled)
+                        .padding([10, 18])
+                        .style(move |_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgba(
+                                0.08, 0.12, 0.22, 0.85,
+                            ))),
+                            border: Border {
+                                color: Color::from_rgba(0.25, 0.28, 0.45, 0.6),
+                                width: 1.0,
+                                radius: 6.0.into(),
+                            },
+                            text_color: dim,
+                            ..Default::default()
+                        }),
+                ]
+                .align_y(Alignment::Center),
+            ]
+            .padding([24, 28])
+            .width(Length::Shrink),
+        )
+        .max_width(540)
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.06, 0.11, 0.22, 0.97))),
+            border: Border {
+                color: accent,
+                width: 1.2,
+                radius: 12.0.into(),
+            },
+            ..Default::default()
+        });
+
+        // Zentriert auf dunklem Hintergrund (ersetzt die normale Ansicht w\u{00e4}hrend des Popups)
+        container(card)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|_: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(
+                    0.01, 0.03, 0.10, 0.93,
+                ))),
+                ..Default::default()
+            })
+            .into()
+    }
+
     fn view_symbiont(&self) -> Element<'_, Message> {
         let bridge_state = if self.hybrid_bridge_running { "online" } else { "offline" };
         let sym_state = if self.hybrid_symbiont_running { "online" } else { "offline" };
@@ -8027,7 +9970,7 @@ On warning: always check Logs and ADE for details.",
                         text("WebSocket: Echtzeit-Kanal zwischen Symbiont-Backend und Rust-Shell. Aktiv wenn Hybrid Bridge online ist.").size(11).color(c(TEXT_D())),
                         text("SymbiontLink: Verbindungsstatus zum VS-Code-Plugin (aether-symbiont Extension). Zeigt ob IDE-Integration aktiv ist.").size(11).color(c(TEXT_D())),
                         text("Runtime Hybrid / Runtime Web: Betriebsmodi des Backends. Hybrid = Python+Rust gemischt, Web = Browser-Bridge aktiv.").size(11).color(c(TEXT_D())),
-                        text("Razor-Signale: Mehrzeilige Eingabe im Signalfeld. Jede Zeile wird als separates strukturelles Signal analysiert, nicht als Freitext.").size(11).color(c(TEXT_D())),
+                        text("Kybernetik II: Das System beobachtet sich selbst. Je mehr Muster im Vault, desto effizienter werden neue Analysen \u{2014} alte Hardware wird wertvoller.").size(11).color(c(TEXT_D())),
                     ]
                     .spacing(6)
                 )
@@ -8105,6 +10048,39 @@ On warning: always check Logs and ADE for details.",
                         .spacing(2)
                         .align_y(Alignment::Center),
                         row![
+                            text("Yggdrasil P2P:").size(12).color(c(TEXT_D())),
+                            {
+                                let ygg_state = if self.hybrid_yggdrasil_running { "online" } else { "offline" };
+                                let ygg_color = if self.hybrid_yggdrasil_running {
+                                    Color::from_rgb8(0x3A, 0xC2, 0x72)
+                                } else {
+                                    Color::from_rgb8(0xC2, 0x4A, 0x3A)
+                                };
+                                button(text(format!(" {} (?)", ygg_state)).size(12).color(ygg_color))
+                                    .on_press(Message::ShowTooltip(
+                                        "Yggdrasil: IPv6-Overlay-Mesh fuer P2P-Konnektivitaet zwischen Knoten. Adresse beginnt mit 200::/7.".to_owned()
+                                    ))
+                                    .style(secondary_button_style)
+                                    .padding([2, 6])
+                            },
+                            {
+                                let addr_display = if self.hybrid_yggdrasil_addr.is_empty() {
+                                    "keine Adresse".to_owned()
+                                } else {
+                                    format!("[{}]", &self.hybrid_yggdrasil_addr)
+                                };
+                                button(text(addr_display).size(11).color(c(TEXT_D())))
+                                    .on_press(Message::ShowTooltip(format!(
+                                        "Eigene Yggdrasil-Adresse: {}",
+                                        if self.hybrid_yggdrasil_addr.is_empty() { "noch nicht aktiv" } else { &self.hybrid_yggdrasil_addr }
+                                    )))
+                                    .style(secondary_button_style)
+                                    .padding([2, 6])
+                            },
+                        ]
+                        .spacing(4)
+                        .align_y(Alignment::Center),
+                        row![
                             button(text("Bridge Start").size(12).color(c(TEXT_H())))
                                 .on_press(Message::HybridBridgeStartPressed)
                                 .padding([8, 12])
@@ -8124,52 +10100,151 @@ On warning: always check Logs and ADE for details.",
                 )
                 .padding(10)
                 .style(panel_frame_style),
-                container(
-                    text("Tipp: Zuerst Bridge starten, dann Symbiont - warte auf Status 'online' bevor Signale eingegeben werden.").size(11).color(c(WARN()))
-                )
-                .padding(8)
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x1A, 0x14, 0x0A))),
-                    border: Border { color: Color::from_rgb8(0xD4, 0xA0, 0x42), width: 1.0, ..Default::default() },
-                    ..Default::default()
-                }),
+                // ─── Kybernetik II — Selbstoptimierung ───────────────────────────────
+                {
+                    let teal_co  = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+                    let green_ok = Color::from_rgb8(0x4C, 0xD9, 0x6E);
+                    let amber_co = Color::from_rgb8(0xD4, 0xA0, 0x42);
+                    let gain = self.last_analysis.as_ref()
+                        .map(|s| s.compression_gain_percent)
+                        .unwrap_or(0.0);
+                    let vault_conv = (self.backend_anchor_count as f32
+                        / (self.backend_anchor_count as f32 + 100.0)).clamp(0.0, 1.0);
+                    let delta_conv_pct = self.cascade_metrics.as_ref()
+                        .map(|m| m.delta_convergence as f32 * 100.0)
+                        .unwrap_or(0.0);
+                    let noether_pct = self.cascade_metrics.as_ref()
+                        .map(|m| m.noether_consistency as f32 * 100.0)
+                        .unwrap_or(0.0);
+                    let trust_pct = self.cascade_metrics.as_ref()
+                        .map(|m| m.trust_score as f32 * 100.0)
+                        .unwrap_or(0.0);
+                    let opt_rows: Vec<Element<'_, Message>> = vec![
+                        row![
+                            text("Vault-Konvergenz").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            progress_bar(0.0..=1.0, vault_conv).height(6).width(Length::Fixed(110.0)),
+                            text(format!("{} Anker \u{2014} weniger Compute je mehr Wissen",
+                                self.backend_anchor_count)).size(10).color(teal_co),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        row![
+                            text("Lossless \u{0394}").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            progress_bar(0.0..=100.0, gain).height(6).width(Length::Fixed(110.0)),
+                            text(format!("{:.1}% Verdichtung letzter Fund", gain)).size(10).color(
+                                if gain > 30.0 { green_ok } else if gain > 10.0 { amber_co } else { c(TEXT_M()) }
+                            ),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        row![
+                            text("Delta-Konvergenz").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            progress_bar(0.0..=100.0, delta_conv_pct).height(6).width(Length::Fixed(110.0)),
+                            text(format!("{:.1}% Redundanz-Abbau", delta_conv_pct)).size(10).color(c(TEXT_M())),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        row![
+                            text("Noether-Invarianz").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            progress_bar(0.0..=100.0, noether_pct).height(6).width(Length::Fixed(110.0)),
+                            text(format!("{:.1}% strukturelle Stabilitaet", noether_pct)).size(10).color(c(TEXT_M())),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        row![
+                            text("Algo-Trust").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            progress_bar(0.0..=100.0, trust_pct).height(6).width(Length::Fixed(110.0)),
+                            text(format!("{:.1}% Metrik-Koh\u{00e4}renz", trust_pct)).size(10).color(
+                                if trust_pct > 65.0 { green_ok }
+                                else if trust_pct > 40.0 { amber_co }
+                                else { c(WARN()) }
+                            ),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        row![
+                            text("Prozess-Overhead").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                            text(format!(
+                                "CPU {:.0}%  \u{00b7}  Tick {} ms  \u{00b7}  Muster kumuliert: {}",
+                                self.backend_cpu_pct,
+                                self.tick_interval_ms(),
+                                self.flow_sphere_history.len(),
+                            )).size(10).color(c(TEXT_M())),
+                        ].spacing(8).align_y(Alignment::Center).into(),
+                        {
+                            // Bits-per-Joule row with mini sparkline
+                            let bpj = self.live_render_bits_per_joule;
+                            let bpj_label = if bpj >= 1_000_000.0 {
+                                format!("{:.1} Mb/J", bpj / 1_000_000.0)
+                            } else if bpj >= 1_000.0 {
+                                format!("{:.0} kb/J", bpj / 1_000.0)
+                            } else if bpj > 0.0 {
+                                format!("{:.0} b/J", bpj)
+                            } else {
+                                "\u{2014} b/J".to_owned()
+                            };
+                            let bpj_color = if bpj >= 1_000_000.0 { green_ok }
+                                else if bpj >= 10_000.0 { teal_co }
+                                else if bpj > 0.0 { amber_co }
+                                else { c(TEXT_D()) };
+                            // sparkline: last 20 samples mapped to block chars
+                            let history = &self.live_render_bpj_history;
+                            let spark: String = if history.is_empty() {
+                                "\u{2581}\u{2581}\u{2581}\u{2581}\u{2581}\u{2581}\u{2581}\u{2581}".to_owned()
+                            } else {
+                                let max = history.iter().cloned().fold(0.0_f32, f32::max).max(1.0);
+                                let bars = ['\u{2581}','\u{2582}','\u{2583}','\u{2584}','\u{2585}','\u{2586}','\u{2587}','\u{2588}'];
+                                history.iter().rev().take(20).rev()
+                                    .map(|v| bars[((v / max) * 7.0).clamp(0.0, 7.0) as usize])
+                                    .collect()
+                            };
+                            row![
+                                text("Bits pro Joule").size(11).color(c(TEXT_D())).width(Length::Fixed(160.0)),
+                                text(spark).size(10).color(teal_co).width(Length::Fixed(110.0)),
+                                text(bpj_label).size(10).color(bpj_color),
+                            ].spacing(8).align_y(Alignment::Center).into()
+                        },
+                    ];
+                    container(
+                        column![
+                            text("\u{29bf} Kybernetik II \u{2014} Selbstoptimierung")
+                                .size(13).color(teal_co),
+                            text("Das System verdichtet Wissen passiv. Je mehr Muster bekannt, desto weniger Rechenaufwand f\u{00fc}r neue Analysen.")
+                                .size(11).color(c(TEXT_D())),
+                            column(opt_rows).spacing(6),
+                        ]
+                        .spacing(8)
+                    )
+                    .padding(12)
+                    .style(panel_frame_style)
+                },
+                // ─── Schnell-Abfrage ─────────────────────────────────────────────────
                 container(
                     column![
-                        text(format!("RPC Endpoint: {}:{}", self.symbiont_host, self.symbiont_port))
-                            .size(12)
-                            .color(c(TEXT_D())),
-                        text_input("Signal eingeben (mehrere Zeilen = Razor-Signale)", &self.symbiont_input)
-                            .on_input(Message::SymbiontInputChanged)
-                            .padding(8),
-                        text("Info: Profil = ein Gesamtsignal. Razor = mehrere Zeilen (jede Zeile ein separates Signal). Snapshot speichert den aktuellen Zustand.")
+                        text("\u{25ba} Schnell-Abfrage").size(13).color(c(TEXT_H())),
+                        text("Symbiont-Methode eingeben (z.B. aether/status) und Senden dr\u{00fc}cken.")
                             .size(11)
                             .color(c(TEXT_D())),
                         row![
-                            button(text(if self.symbiont_busy { "Profil ..." } else { "Profil" }).size(12).color(c(TEXT_H())))
-                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontProfilePressed))
-                                .padding([8, 12])
-                                .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Razor ..." } else { "Razor" }).size(12).color(c(TEXT_H())))
-                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontRazorPressed))
-                                .padding([8, 12])
-                                .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Snapshot ..." } else { "Snapshot" }).size(12).color(c(TEXT_H())))
-                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontSnapshotPressed))
-                                .padding([8, 12])
-                                .style(primary_button_style),
-                            button(text(if self.symbiont_busy { "Status ..." } else { "Status" }).size(12).color(c(TEXT_H())))
-                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontStatusPressed))
-                                .padding([8, 12])
-                                .style(secondary_button_style),
-                            button(text(if self.symbiont_busy { "Decode DNA ..." } else { "Decode DNA" }).size(12).color(c(TEXT_H())))
-                                .on_press_maybe((!self.symbiont_busy).then_some(Message::SymbiontDecodeDnaPressed))
-                                .padding([8, 12])
-                                .style(primary_button_style),
+                            iced::widget::text_input("aether/status", &self.symbiont_input)
+                                .on_input(Message::SymbiontInputChanged)
+                                .on_submit(Message::SymbiontRunPressed)
+                                .padding([6, 10])
+                                .size(12)
+                                .width(Length::Fill),
+                            button(
+                                text(if self.symbiont_busy { "\u{21bb}" } else { "Senden" })
+                                    .size(12)
+                                    .color(c(TEXT_H()))
+                            )
+                            .on_press(Message::SymbiontRunPressed)
+                            .padding([6, 12])
+                            .style(if self.symbiont_busy { secondary_button_style } else { primary_button_style }),
                         ]
-                        .spacing(10),
-                        container(scrollable(text(self.symbiont_result.clone()).size(11).color(c(TEXT_M()))).height(Length::Fixed(160.0)))
-                            .padding(8)
-                            .style(panel_frame_style),
+                        .spacing(8)
+                        .align_y(Alignment::Center),
+                        container(
+                            text(&self.symbiont_result)
+                                .size(11)
+                                .color(if self.symbiont_result.starts_with("Fehler") {
+                                    Color::from_rgb8(0xD9, 0x50, 0x50)
+                                } else {
+                                    c(TEXT_M())
+                                })
+                        )
+                        .padding([8, 10])
+                        .style(panel_frame_style)
+                        .width(Length::Fill),
                     ]
                     .spacing(8)
                 )
@@ -8202,7 +10277,7 @@ On warning: always check Logs and ADE for details.",
                 .style(panel_frame_style),
                 info_card(
                     "Hinweis",
-                    "aether-symbiont (VSCode) und symbiont_core.py sind separate Ebenen. Dieser Tab ist die zentrale Steuerflaeche im Hauptprogramm.",
+                    "aether-symbiont (VSCode) und symbiont_core.py sind separate Ebenen. Dieser Tab zeigt Bridge-Status, P2P-Verbindung und Selbstoptimierungs-Kennzahlen.",
                 ),
             ]
             .spacing(12)
@@ -8217,9 +10292,17 @@ On warning: always check Logs and ADE for details.",
     }
 
     fn view_swarm_ops(&self) -> Element<'_, Message> {
-        let swarm_state = if self.swarm_startup.node_initialized {
+        let accent   = Color::from_rgb8(0x3F, 0xBA, 0xC2);
+        let green    = Color::from_rgb8(0x5A, 0xAE, 0x84);
+        let gold     = Color::from_rgb8(0xC7, 0xA0, 0x4A);
+        let mid      = c(TEXT_M());
+        let dim      = c(TEXT_D());
+        let panel_s  = Color::from_rgba(0.08, 0.12, 0.16, 0.90);
+        let border_c = c(BORDER());
+
+        let node_status = if self.swarm_startup.node_initialized {
             format!(
-                "Node bereit | nodes={} | new_packs={}",
+                "Node bereit \u{b7} nodes={} \u{b7} packs={}",
                 self.swarm_startup.node_count,
                 self.swarm_startup.new_pack_count
             )
@@ -8227,85 +10310,259 @@ On warning: always check Logs and ADE for details.",
             "Node noch nicht initialisiert".to_owned()
         };
 
-        container(
+        let locally_analyzed = self.flow_sphere_history.len();
+        let overlap_pending  = self.swarm_overlap_requests.len();
+        let anchor_count     = self.backend_anchor_count;
+
+        let mut content = column![].spacing(14);
+
+        // ── Header ───────────────────────────────────────────────────────────
+        content = content.push(
             column![
-                text("Swarm Operations").size(28).color(c(TEXT_H())),
-                text("Alles rund um Anchors, P2P, Sync und Runtime-Status an einer Stelle.")
-                    .size(13)
-                    .color(c(TEXT_M())),
-                container(text(swarm_state).size(12).color(c(TEXT_D())))
-                    .padding(10)
-                    .style(panel_frame_style),
-                row![
-                    cyber_kpi_card(
-                        "Swarm Nodes",
-                        format!("{}", self.swarm_startup.node_count),
-                        "bootstrap",
-                        Color::from_rgb8(0x3F, 0xBA, 0xC2),
-                        "swarm_nodes"
-                    ),
-                    cyber_kpi_card(
-                        "New Packs",
-                        format!("{}", self.swarm_startup.new_pack_count),
-                        "transport",
-                        Color::from_rgb8(0x5A, 0xAE, 0x84),
-                        "swarm_packs"
-                    ),
-                    cyber_kpi_card(
-                        "Runtime",
-                        self.runtime_profile_label().to_owned(),
-                        "tick scheduler",
-                        Color::from_rgb8(0xC7, 0xA0, 0x4A),
-                        "swarm_runtime"
-                    ),
-                ]
-                .spacing(10),
-                row![
-                    button(text(if self.swarm_consented { "Swarm-Teilnahme [aktiv]" } else { "Swarm aktivieren" }).size(12).color(c(TEXT_H())))
-                        .on_press(Message::SwarmConsentToggled(true))
-                        .padding([8, 12])
-                        .style(if self.swarm_consented { primary_button_style } else { secondary_button_style }),
-                    button(text(if !self.swarm_consented { "Swarm-Teilnahme [aus]" } else { "Swarm deaktivieren" }).size(12).color(c(TEXT_H())))
-                        .on_press(Message::SwarmConsentToggled(false))
-                        .padding([8, 12])
-                        .style(if !self.swarm_consented { primary_button_style } else { secondary_button_style }),
-                ]
-                .spacing(10),
+                text("\u{25c6} SWARM OPS \u{b7} INVARIANTENBASIERTE KNOTENKOORDINATION").size(15).color(accent),
+                text(node_status).size(11).color(dim),
+            ].spacing(4)
+        );
+
+        // ── Was ist Swarm Ops? ───────────────────────────────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("Was ist Swarm Ops und wozu dient er?").size(13).color(accent),
+                    text("Swarm Ops ist die Schaltzentrale f\u{fc}r das Netz der Aether-Knoten. Hier siehst du welche Knoten aktiv sind und welche strukturellen Dom\u{e4}nen sie abdecken \u{2014} ohne dass Rohdaten jemals den Knoten verlassen.").size(12).color(mid),
+                    text("Priorit\u{e4}t \u{2014} lokal zuerst: Jeder Knoten erreicht mit der Zeit das Maximum das offline m\u{f6}glich ist. Der Vault w\u{e4}chst, der lernende Beobachter entfernt Overhead und Bloat, die Invarianten werden sch\u{e4}rfer. Jede neue Analyse macht den Knoten effizienter. Das passiert lokal, immer, auch komplett ohne Netz.").size(11).color(dim),
+                    text("Das absolute Maximum ist nur im Netz erreichbar: Offline ist die Obergrenze das was ein einzelner Knoten mit seinen eigenen Daten und seiner eigenen Hardware leisten kann. Mit dem Schwarm im R\u{fc}cken verschiebt sich diese Grenze nach oben \u{2014} weil strukturell komplement\u{e4}re Knotenprofile L\u{fc}cken schlie\u{df}en die ein einzelner Knoten nie f\u{fc}llen k\u{f6}nnte. Aber das ist ein Bonus, kein Fundament.").size(11).color(dim),
+                    text("Swarm ist optionaler R\u{fc}ckenwind: Wenn im Hintergrund strukturell passende Kapazit\u{e4}t verf\u{fc}gbar ist passiert etwas \u{2014} wenn nicht, l\u{e4}uft alles trotzdem auf dem lokalen Maximum weiter. Kein Unterschied, keine Abh\u{e4}ngigkeit.").size(11).color(dim),
+                ].spacing(6),
+            )
+            .padding([12, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: accent, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Emergente Netzwerk-Freischaltung ─────────────────────────────────
+        {
+            let tier_label = if self.hw_network_tier.is_empty() {
+                "ermittelt…".to_owned()
+            } else {
+                self.hw_network_tier.clone()
+            };
+            let os_label = if self.hw_os_platform.is_empty() {
+                "unbekannt".to_owned()
+            } else {
+                self.hw_os_platform.clone()
+            };
+            let [lb, lp, ygg, dht] = self.hw_p2p_unlocked;
+            let feat_color = |on: bool| if on { green } else { dim };
+            let feat_char = |on: bool| if on { "\u{2713}" } else { "\u{2014}" };
+            content = content.push(
                 container(
-                    text(if self.swarm_consented {
-                        "Aktiv — es werden ausschließlich SHA-256-Fingerabdrücke und aggregierte Strukturmetriken geteilt. Keine Rohdaten."
-                    } else {
-                        "Deaktiviert — dieser Knoten sendet keine Daten an den Swarm."
-                    }).size(11).color(c(TEXT_M()))
+                    column![
+                        text("Emergente Netzwerk-Freischaltung").size(13).color(gold),
+                        text(format!(
+                            "Plattform: {}  \u{b7}  Tier: {}",
+                            os_label, tier_label
+                        )).size(11).color(dim),
+                        text("Welche P2P-Features diese Hardware unterstützt (automatisch ermittelt):").size(11).color(mid),
+                        row![
+                            container(column![
+                                text(format!("{} LAN-Beacon", feat_char(lb))).size(12).color(feat_color(lb)),
+                                text("Passiver Knoten\nsichtbar im LAN").size(10).color(dim),
+                            ].spacing(2)).padding([6, 10]),
+                            container(column![
+                                text(format!("{} LAN-P2P", feat_char(lp))).size(12).color(feat_color(lp)),
+                                text("Gossip + Leader-\nElection lokal").size(10).color(dim),
+                            ].spacing(2)).padding([6, 10]),
+                            container(column![
+                                text(format!("{} Yggdrasil", feat_char(ygg))).size(12).color(feat_color(ygg)),
+                                text("IPv6-Overlay-Mesh\ninternetf\u{e4}hig").size(10).color(dim),
+                            ].spacing(2)).padding([6, 10]),
+                            container(column![
+                                text(format!("{} DHT", feat_char(dht))).size(12).color(feat_color(dht)),
+                                text("Kademlia-Relay\n+ Peer-Tabelle").size(10).color(dim),
+                            ].spacing(2)).padding([6, 10]),
+                        ].spacing(4),
+                        text(if !lb {
+                            "\u{26a0} LocalOnly: Dieses Ger\u{e4}t ist zu schwach f\u{fc}r Netzwerkbetrieb \u{2014} nur lokale Analyse."
+                        } else if !lp {
+                            "\u{25cf} LAN-Beacon: Ank\u{fc}ndigung im LAN aktiv. Voller Gossip erfordert mehr RAM/Kerne."
+                        } else if !ygg {
+                            "\u{25cf} LAN-P2P bereit. Yggdrasil erfordert moderneres OS oder mehr RAM."
+                        } else if !dht {
+                            "\u{25cf} Yggdrasil-P2P bereit. DHT-Relay erfordert \u{2265}4 GB RAM + 4 Kerne."
+                        } else {
+                            "\u{25c6} Voller DHT aktiv \u{2014} dieser Knoten kann als Relay teilnehmen."
+                        }).size(11).color(if !lb { c(WARN()) } else { accent }),
+                    ].spacing(6),
                 )
-                .padding(10)
-                .style(panel_frame_style),
-                row![
-                    button(text("Open Anchors").size(12).color(c(TEXT_H())))
-                        .on_press(Message::TabSelected(Tab::Anchors))
-                        .padding([8, 12])
-                        .style(primary_button_style),
-                    button(text("Open Runtime").size(12).color(c(TEXT_H())))
-                        .on_press(Message::TabSelected(Tab::Settings))
-                        .padding([8, 12])
-                        .style(primary_button_style),
-                    button(text("Open Logs").size(12).color(c(TEXT_H())))
-                        .on_press(Message::TabSelected(Tab::Logs))
-                        .padding([8, 12])
-                        .style(primary_button_style),
-                ]
-                .spacing(10),
-                info_card(
-                    "Hinweis",
-                    "P2P-Anchor-Pool, swarm_sync und public_ttd_transport laufen im Backend. Dieser Tab ist dein UI-Kontrollpunkt.",
+                .padding([12, 14])
+                .style(move |_: &Theme| container::Style {
+                    background: Some(Background::Color(panel_s)),
+                    border: Border { color: gold, width: 1.0, radius: 8.0.into() },
+                    ..Default::default()
+                })
+            );
+        }
+
+        // ── KPIs ─────────────────────────────────────────────────────────────
+        content = content.push(
+            row![
+                cyber_kpi_card(
+                    "Swarm Nodes",
+                    format!("{}", self.swarm_startup.node_count),
+                    "bootstrap",
+                    accent,
+                    "swarm_nodes"
                 ),
-            ]
-            .spacing(12),
-        )
-        .padding(12)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+                cyber_kpi_card(
+                    "Lokale Analysen",
+                    format!("{}", locally_analyzed),
+                    "observer-history",
+                    green,
+                    "swarm_local"
+                ),
+                cyber_kpi_card(
+                    "Offene Anfragen",
+                    format!("{}", overlap_pending),
+                    "overlap-requests",
+                    gold,
+                    "swarm_overlap"
+                ),
+                cyber_kpi_card(
+                    "Anchors gesamt",
+                    format!("{}", anchor_count),
+                    "invariant-store",
+                    accent,
+                    "swarm_anchors"
+                ),
+            ].spacing(10)
+        );
+
+        // ── Invariantenbasierte Aufgabenverteilung ───────────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("Swarm-Beteiligung \u{2014} emergent, optional, im Hintergrund").size(13).color(accent),
+                    text("Kein Knoten wird zum Worker ernannt. Wenn im Hintergrund strukturell kompatible Kapazit\u{e4}t verf\u{fc}gbar ist passiert etwas \u{2014} wenn nicht, passiert nichts. Kein Unterschied f\u{fc}r den eigenen Knoten. Rechenkapazit\u{e4}t, Latenz und Last entscheiden im Moment und das \u{e4}ndert sich st\u{e4}ndig.").size(11).color(dim),
+                    row![
+                        column![
+                            text("Emergent, nicht geplant").size(11).color(green),
+                            text("Rollen entstehen situativ aus dem aktuellen Zustand des Netzes \u{2014} nicht aus einer vordefinierten Hierarchie. Ein Knoten der gerade Kapazit\u{e4}t hat beteiligt sich, ein Knoten der ausgelastet ist h\u{e4}lt sich zur\u{fc}ck. Das ergibt sich von selbst.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Mehrere Knoten, gleiche Aufgabe").size(11).color(green),
+                            text("Die selbe Berechnung kann von mehreren Knoten gleichzeitig \u{fc}bernommen werden. Das ist kein Fehler sondern ein Feature: Redundanz verst\u{e4}rkt das Ergebnis, gleicht Ausf\u{e4}lle aus und macht das Netz robuster ohne dass jemand etwas konfigurieren muss.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Kein Datentransfer, nur Fingerabdr\u{fc}cke").size(11).color(green),
+                            text("Ausgetauscht werden ausschlie\u{df}lich mathematische Invarianten \u{2014} strukturelle Fingerabdr\u{fc}cke ohne Inhalt. Wer etwas beitragen kann signalisiert das \u{fc}ber den Anchor-Hash. Kein Vertrauen als Person n\u{f6}tig: die Struktur spricht f\u{fc}r sich.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                    ].spacing(10),
+                ].spacing(7),
+            )
+            .padding([12, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: green, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Lernender Beobachter als Koordinationsmotor ──────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("Lernender Beobachter \u{2014} der Knoten wird mit der Zeit besser").size(13).color(accent),
+                    text("Der Beobachter lernt still was dieser Knoten schon gut kann und wo noch Overhead steckt. Mit jeder Analyse werden Invarianten sch\u{e4}rfer, Bloat wird erkannt und entfernt, der Vault komprimiert sein Wissen. Der Knoten wird effizienter \u{2014} automatisch, im Hintergrund, ohne Konfiguration. Das ist die Kerngarantie unabh\u{e4}ngig davon ob Swarm-Verbindungen bestehen oder nicht.").size(11).color(dim),
+                    row![
+                        column![
+                            text("Stetig wachsende lokale Effizienz").size(11).color(gold),
+                            text("Noether-K, Delta-Konvergenz und Fourier-Periodizit\u{e4}t bauen intern ein immer sch\u{e4}rferes Bild auf. Je mehr der Knoten analysiert hat desto weniger Rechenaufwand braucht er f\u{fc}r bekannte Muster \u{2014} der Overhead sinkt mit der Zeit.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Vault entfernt Bloat automatisch").size(11).color(gold),
+                            text("Redundante Pfade, veraltete Invarianten und ineffiziente Repr\u{e4}sentationen werden durch den lernenden Beobachter laufend bereinigt. Der Vault wird nicht gro\u{df}er sondern sch\u{e4}rfer. Auch alte oder schwache Hardware profitiert davon direkt.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                        column![
+                            text("Swarm als optionaler Multiplikator").size(11).color(gold),
+                            text("Wenn im Hintergrund andere Knoten mit passenden Invarianten verf\u{fc}gbar sind k\u{f6}nnen sie erweiternd mitmachen \u{2014} redundant, ohne Koordination, ohne feste Rollen. Kein Knoten muss einem anderen vertrauen: die Struktur ist die Signatur.").size(10).color(dim),
+                        ].spacing(3).width(Length::FillPortion(1)),
+                    ].spacing(10),
+                    text("Vault-Individualit\u{e4}t \u{2014} nat\u{fc}rliche Komplementarit\u{e4}t:").size(12).color(gold),
+                    text("Jeder Vault ist einzigartig weil er aus unterschiedlichen Analysen gewachsen ist. Wenn Knoten zusammenwirken erg\u{e4}nzen sie sich von Natur aus \u{2014} ohne Rollenvergabe. Das ergibt sich aus dem was jeder gesehen hat.").size(10).color(dim),
+                    text("Globaler Vault (FlowSphere) \u{2014} kollektiver Bonus:").size(11).color(gold),
+                    text("Der globale Vault geh\u{f6}rt allen teilnehmenden Knoten gleichzeitig. Jeder tr\u{e4}gt sein Profil bei und profitiert vom aggregierten Bild \u{2014} ein Muster-Ged\u{e4}chtnis das kein einzelner Knoten je erreichen k\u{f6}nnte. Wenn es passiert ist es ein Gewinn. Wenn nicht l\u{e4}uft der eigene Knoten trotzdem auf Maximum.").size(10).color(dim),
+                    text("Kurzum: Jeder Nutzer hat mit der Zeit einen immer effizienteren Knoten \u{2014} egal ob allein oder im Netz. Der Schwarm ist nur das was obendrauf kommt.").size(11).color(mid),
+                ].spacing(7),
+            )
+            .padding([12, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: gold, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Consent + Status ─────────────────────────────────────────────────
+        content = content.push(
+            container(
+                column![
+                    text("Swarm-Teilnahme").size(12).color(accent),
+                    row![
+                        button(text(if self.swarm_consented { "Swarm-Teilnahme [aktiv]" } else { "Swarm aktivieren" }).size(12).color(c(TEXT_H())))
+                            .on_press(Message::SwarmConsentToggled(true))
+                            .padding([8, 12])
+                            .style(if self.swarm_consented { primary_button_style } else { secondary_button_style }),
+                        button(text(if !self.swarm_consented { "Swarm-Teilnahme [aus]" } else { "Swarm deaktivieren" }).size(12).color(c(TEXT_H())))
+                            .on_press(Message::SwarmConsentToggled(false))
+                            .padding([8, 12])
+                            .style(if !self.swarm_consented { primary_button_style } else { secondary_button_style }),
+                    ].spacing(10),
+                    text(if self.swarm_consented {
+                        "Aktiv \u{2014} ausschlie\u{df}lich SHA-256-Fingerabdr\u{fc}cke und aggregierte Strukturmetriken werden geteilt. Keine Rohdaten, keine Inhalte, keine Identit\u{e4}ten."
+                    } else {
+                        "Deaktiviert \u{2014} dieser Knoten sendet nichts an den Schwarm. Alle Analysen laufen rein lokal."
+                    }).size(11).color(dim),
+                ].spacing(8),
+            )
+            .padding([12, 14])
+            .style(move |_: &Theme| container::Style {
+                background: Some(Background::Color(panel_s)),
+                border: Border { color: border_c, width: 1.0, radius: 8.0.into() },
+                ..Default::default()
+            })
+        );
+
+        // ── Schnellzugriff ────────────────────────────────────────────────────
+        content = content.push(
+            row![
+                button(text("Anchors").size(12).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(Tab::Anchors))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text("FlowSphere").size(12).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(Tab::FlowSphere))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text("Chat").size(12).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(Tab::Chat))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+                button(text("Logs").size(12).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(Tab::Logs))
+                    .padding([8, 12])
+                    .style(primary_button_style),
+            ].spacing(10)
+        );
+
+        container(scrollable(content.padding([0, 4])))
+            .padding(12)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
     }
 
     fn view_privacy_ops(&self) -> Element<'_, Message> {
@@ -8354,10 +10611,6 @@ On warning: always check Logs and ADE for details.",
                         .style(primary_button_style),
                     button(text("Open Logs").size(12).color(c(TEXT_H())))
                         .on_press(Message::TabSelected(Tab::Logs))
-                        .padding([8, 12])
-                        .style(primary_button_style),
-                    button(text("Open Browser").size(12).color(c(TEXT_H())))
-                        .on_press(Message::TabSelected(Tab::Browser))
                         .padding([8, 12])
                         .style(primary_button_style),
                 ]
@@ -8977,6 +11230,11 @@ On warning: always check Logs and ADE for details.",
             return self.view_auth();
         }
 
+        // Drop-Annotation-Modal hat Priorität vor der normalen Ansicht
+        if self.drop_pending_path.is_some() {
+            return self.view_drop_annotation();
+        }
+
         match self.app_mode {
             AppMode::Overlay => self.view_overlay(),
             AppMode::Full => {
@@ -9038,6 +11296,9 @@ fn app_event(event: iced::Event, status: event::Status, _window: window::Id) -> 
             }
             None
         }
+        iced::Event::Window(window::Event::CloseRequested) => {
+            Some(Message::CloseWindowRequested(_window))
+        }
         iced::Event::Window(window::Event::Resized(size)) => {
             Some(Message::WindowResized(size.width, size.height))
         }
@@ -9055,7 +11316,54 @@ fn app_subscription(state: &AetherIcedShell) -> Subscription<Message> {
     ])
 }
 
+/// Führt `start.py` synchron aus wenn `data/keys/node_private.key` fehlt (Erststart).
+/// Blockiert bis start.py beendet ist — kein GUI-Start davor.
+fn run_bootstrap_if_needed() {
+    let root = crate::app_root();
+    let key_path = root.join("data").join("keys").join("node_private.key");
+    if key_path.exists() {
+        return;
+    }
+    let start_py = root.join("start.py");
+    if !start_py.exists() {
+        eprintln!("[aether] start.py nicht gefunden unter {}. Bootstrap uebersprungen.", start_py.display());
+        return;
+    }
+    // Python-Executable suchen: python → python3 → py (Windows Launcher)
+    let candidates = ["python", "python3", "py"];
+    let python_exe = candidates.iter().find(|&&candidate| {
+        std::process::Command::new(candidate)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }).copied();
+    let Some(python) = python_exe else {
+        eprintln!("[aether] Kein Python-Interpreter gefunden. Bootstrap manuell ausfuehren: python start.py");
+        return;
+    };
+    eprintln!("[aether] Erststart erkannt — fuehre start.py aus ({python})...");
+    match std::process::Command::new(python)
+        .arg(start_py.as_os_str())
+        .current_dir(&root)
+        .status()
+    {
+        Ok(status) if status.success() => {
+            eprintln!("[aether] Bootstrap abgeschlossen.");
+        }
+        Ok(status) => {
+            eprintln!("[aether] start.py beendet mit Status: {status}. Starte trotzdem weiter.");
+        }
+        Err(err) => {
+            eprintln!("[aether] start.py konnte nicht gestartet werden: {err}");
+        }
+    }
+}
+
 pub fn run() -> iced::Result {
+    run_bootstrap_if_needed();
     iced::application(app_title, app_update, app_view)
         .theme(app_theme)
         .subscription(app_subscription)
@@ -9095,7 +11403,6 @@ fn make_sparkline(fill: f32) -> String {
 // All animation parameters are derived from tick + entropy, no random values.
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 struct FlowSphereScene {
     tick: u64,
     entropy: f32,
@@ -9673,17 +11980,29 @@ impl canvas::Program<Message> for FlowSphereScene {
 }
 
 // ---------------------------------------------------------------------------
-// Aether.StructureMap – legacy Canvas-Renderer (fraktaler 3D-Suchbaum)
-// Kept for data generation; rendering now handled by FlowSphereScene.
+// Aether.MetricRadar – hexagonales Radar-Chart fuer FlowSphere-Seitenleiste
+// Zeigt 6 Kernmetriken (Trust, Stabilitaet, Noether, Delta, Benford, Bayes)
+// auf einem halbtransparenten 6-Achsen-Spinner mit Puls-Animation.
 // ---------------------------------------------------------------------------
-
-/// Trägt die vorberechneten Knoten-Positionen (Theta-Winkel pro Ring).
-#[allow(dead_code)]
-struct StructureMapScene {
-    nodes: Vec<Vec<f32>>,
+struct MetricRadarScene {
+    /// Signal A: normierte Rohwerte [0,1], 12 Achsen, feste deterministisch auditierbare Reihenfolge:
+    /// 0 Shannon | 1 PermEnt | 2 KatzFD | 3 Zipf | 4 Benford | 5 Fourier |
+    /// 6 Noether | 7 H-Lambda | 8 Symmetrie | 9 SCE | 10 DeltaKonv | 11 Bayes
+    /// Normierungsregeln (invertierbar): Shannon/8.0, KatzFD/2.0, Zipf/3.0, Fourier=ln1p(x)/3.912
+    /// Alle anderen Werte kommen direkt [0,1] aus der Pipeline.
+    values_a: [f32; 12],
+    /// Signal B (optionaler Vergleich) – exakt dieselbe Normierung
+    values_b: Option<[f32; 12]>,
+    /// Achsen-Indizes mit strukturellem Widerspruch (A>0.65 & B<0.35 oder umgekehrt)
+    contradiction_axes: Vec<usize>,
+    tick: u64,
+    /// Label fuer Signal A
+    label_a: String,
+    /// Label fuer Signal B
+    label_b: String,
 }
 
-impl canvas::Program<Message> for StructureMapScene {
+impl canvas::Program<Message> for MetricRadarScene {
     type State = ();
 
     fn draw(
@@ -9692,345 +12011,235 @@ impl canvas::Program<Message> for StructureMapScene {
         renderer: &iced::Renderer,
         _theme: &Theme,
         bounds: Rectangle,
-        _cursor: mouse::Cursor,
+        _cursor: iced::mouse::Cursor,
     ) -> Vec<canvas::Geometry<iced::Renderer>> {
-        use std::f32::consts::TAU;
+        use std::f32::consts::PI;
 
         let mut frame = canvas::Frame::new(renderer, bounds.size());
-
-        // Hintergrund – tiefschwarz
-        frame.fill_rectangle(
-            Point::new(0.0, 0.0),
-            bounds.size(),
-            Color::from_rgb8(0x02, 0x04, 0x08),
-        );
-
-        if self.nodes.is_empty() {
-            return vec![frame.into_geometry()];
-        }
-
         let cx = bounds.width * 0.5;
-        let cy = bounds.height * 0.5;
-        let max_r = cx.min(cy) * 0.90;
-        const N_RINGS: usize = 10;
+        let cy = bounds.height * 0.52;
+        let max_r = bounds.width.min(bounds.height) * 0.34;
+        let n = 12usize;
 
-        let ring_colors: [Color; N_RINGS] = [
-            Color::from_rgb8(0xFF, 0x44, 0x44), // 1  Rohdaten
-            Color::from_rgb8(0xAA, 0xFF, 0x00), // 2
-            Color::from_rgb8(0x7F, 0xFF, 0x00), // 3
-            Color::from_rgb8(0xFF, 0xD7, 0x00), // 4
-            Color::from_rgb8(0xFF, 0xA5, 0x00), // 5  Mutation
-            Color::from_rgb8(0xFF, 0xCC, 0x00), // 6
-            Color::from_rgb8(0xFF, 0xFF, 0xFF), // 7  Ockham-Cut
-            Color::from_rgb8(0x9B, 0xD4, 0xFF), // 8  Kompression
-            Color::from_rgb8(0xC0, 0xE8, 0xFF), // 9  Kompression
-            Color::from_rgb8(0xE0, 0xF7, 0xFF), // 10 Anker
+        // Achsen-Labels (fix, deterministisch) + individuelle Farben
+        let labels = [
+            "Shannon", "PermEnt", "KatzFD", "Zipf\u{03b1}",
+            "Benford", "Fourier", "Noether", "H-\u{03bb}",
+            "Symm", "SCE", "\u{0394}Konv", "Bayes",
         ];
+        let axis_colors = [
+            Color::from_rgb8(0xAF, 0x86, 0xFF), // Shannon
+            Color::from_rgb8(0x88, 0x60, 0xFF), // PermEnt
+            Color::from_rgb8(0xFF, 0xB0, 0x50), // KatzFD
+            Color::from_rgb8(0x7F, 0xD9, 0xFF), // Zipf
+            Color::from_rgb8(0xC0, 0x8D, 0xFF), // Benford
+            Color::from_rgb8(0xFF, 0xD7, 0x00), // Fourier
+            Color::from_rgb8(0x4C, 0xD9, 0x6E), // Noether
+            Color::from_rgb8(0xFF, 0x70, 0x50), // H-λ
+            Color::from_rgb8(0x50, 0xD0, 0xFF), // Symmetrie
+            Color::from_rgb8(0xD9, 0xA0, 0x50), // SCE
+            Color::from_rgb8(0x80, 0xFF, 0xB0), // ΔKonv
+            Color::from_rgb8(0xFF, 0x90, 0xC0), // Bayes
+        ];
+        let contradiction_color = Color::from_rgb8(0xFF, 0x30, 0x30);
 
-        let polar = |theta: f32, ring_idx: usize| -> Point {
-            let r = max_r * ((ring_idx + 1) as f32 / N_RINGS as f32);
-            Point::new(cx + r * theta.cos(), cy + r * theta.sin())
+        frame.fill_rectangle(Point::ORIGIN, bounds.size(), Color::from_rgb8(0x03, 0x09, 0x12));
+
+        let axis_pt = |i: usize, r: f32| -> Point {
+            let angle = -PI / 2.0 + i as f32 * 2.0 * PI / n as f32;
+            Point::new(cx + angle.cos() * r, cy + angle.sin() * r)
         };
 
-        for ring_idx in 0..N_RINGS {
-            let color = ring_colors[ring_idx];
-            let curr = match self.nodes.get(ring_idx) {
-                Some(v) => v.clone(),
-                None => continue,
-            };
-
-            // Ring-Führungskreis (schwach sichtbar)
-            {
-                let r = max_r * ((ring_idx + 1) as f32 / N_RINGS as f32);
-                let guide = canvas::Path::circle(Point::new(cx, cy), r);
-                let mut gc = color;
-                gc.a = 0.07;
-                frame.stroke(
-                    &guide,
-                    canvas::Stroke {
-                        style: canvas::Style::Solid(gc),
-                        width: 0.7,
-                        ..canvas::Stroke::default()
-                    },
-                );
-            }
-
-            // Verbindungslinien zum Elternring
-            if ring_idx > 0 {
-                let prev = match self.nodes.get(ring_idx - 1) {
-                    Some(v) => v.clone(),
-                    None => vec![],
-                };
-                let lw: f32 = if ring_idx == 6 { 2.0 } else if ring_idx >= 7 { 1.2 } else { 0.65 };
-                let alpha: f32 = if ring_idx >= 6 { 0.82 } else { 0.45 };
-                let mut lc = color;
-                lc.a = alpha;
-
-                for &theta in &curr {
-                    if let Some(&parent) = prev.iter().min_by(|&&a, &&b| {
-                        let da = (a - theta).abs().min(TAU - (a - theta).abs());
-                        let db = (b - theta).abs().min(TAU - (b - theta).abs());
-                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
-                    }) {
-                        let from = polar(parent, ring_idx - 1);
-                        let to   = polar(theta,  ring_idx);
-                        let p = canvas::Path::new(|b| {
-                            b.move_to(from);
-                            b.line_to(to);
-                        });
-                        frame.stroke(
-                            &p,
-                            canvas::Stroke {
-                                style: canvas::Style::Solid(lc),
-                                width: lw,
-                                ..canvas::Stroke::default()
-                            },
-                        );
-                    }
+        // Skalierungsringe 25/50/75/100%
+        for ring in 1..=4usize {
+            let r = max_r * ring as f32 / 4.0;
+            let ring_path = canvas::Path::new(|builder| {
+                for i in 0..n {
+                    let p = axis_pt(i, r);
+                    if i == 0 { builder.move_to(p); } else { builder.line_to(p); }
                 }
+                builder.close();
+            });
+            frame.stroke(&ring_path, canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.50, 0.65, 0.82,
+                    if ring == 4 { 0.28 } else { 0.10 })),
+                width: if ring == 4 { 1.1 } else { 0.6 },
+                ..canvas::Stroke::default()
+            });
+            // Prozentwert at 100%-Ring
+            if ring == 4 {
+                frame.fill_text(canvas::Text {
+                    content: "100".to_owned(),
+                    position: Point::new(cx + 3.0, cy - max_r - 2.0),
+                    color: Color::from_rgba(0.50, 0.65, 0.82, 0.45),
+                    size: iced::Pixels(7.5),
+                    horizontal_alignment: iced::alignment::Horizontal::Left,
+                    vertical_alignment: iced::alignment::Vertical::Bottom,
+                    ..canvas::Text::default()
+                });
             }
+        }
 
-            // Ockham-Schnittlinie (Ring 7)
-            if ring_idx == 6 {
-                let r = max_r * 7.0 / N_RINGS as f32;
-                let arc = canvas::Path::circle(Point::new(cx, cy), r);
-                let mut cut = Color::WHITE;
-                cut.a = 0.22;
-                frame.stroke(&arc, canvas::Stroke {
-                    style: canvas::Style::Solid(cut),
+        // Achslinien — Widerspruchs-Achsen rot markieren
+        for i in 0..n {
+            let tip = axis_pt(i, max_r);
+            let is_contradiction = self.contradiction_axes.contains(&i);
+            let axis_line = canvas::Path::new(|builder| {
+                builder.move_to(Point::new(cx, cy));
+                builder.line_to(tip);
+            });
+            frame.stroke(&axis_line, canvas::Stroke {
+                style: canvas::Style::Solid(if is_contradiction {
+                    Color::from_rgba(contradiction_color.r, contradiction_color.g, contradiction_color.b, 0.60)
+                } else {
+                    Color::from_rgba(0.40, 0.55, 0.70, 0.22)
+                }),
+                width: if is_contradiction { 1.6 } else { 0.7 },
+                ..canvas::Stroke::default()
+            });
+        }
+
+        // Signal B (Vergleich) – zuerst zeichnen damit A drueber liegt
+        if let Some(vals_b) = &self.values_b {
+            let path_b = canvas::Path::new(|builder| {
+                for i in 0..n {
+                    let p = axis_pt(i, max_r * vals_b[i].clamp(0.0, 1.0));
+                    if i == 0 { builder.move_to(p); } else { builder.line_to(p); }
+                }
+                builder.close();
+            });
+            frame.fill(&path_b, Color::from_rgba(1.0, 0.55, 0.20, 0.12));
+            frame.stroke(&path_b, canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(1.0, 0.65, 0.20, 0.70)),
+                width: 1.4,
+                line_dash: canvas::LineDash { segments: &[6.0, 4.0], offset: 0 },
+                ..canvas::Stroke::default()
+            });
+            // Punkte B
+            for i in 0..n {
+                let p = axis_pt(i, max_r * vals_b[i].clamp(0.0, 1.0));
+                frame.fill(&canvas::Path::circle(p, 2.8),
+                    Color::from_rgba(1.0, 0.65, 0.20, 0.85));
+            }
+        }
+
+        // Signal A (aktuell) – Haupt-Polygon
+        let path_a = canvas::Path::new(|builder| {
+            for i in 0..n {
+                let p = axis_pt(i, max_r * self.values_a[i].clamp(0.0, 1.0));
+                if i == 0 { builder.move_to(p); } else { builder.line_to(p); }
+            }
+            builder.close();
+        });
+        frame.fill(&path_a, Color::from_rgba(0.30, 0.65, 1.00, 0.16));
+        frame.stroke(&path_a, canvas::Stroke {
+            style: canvas::Style::Solid(Color::from_rgba(0.55, 0.82, 1.00, 0.80)),
+            width: 1.7,
+            ..canvas::Stroke::default()
+        });
+
+        // Punkte A (Achsenfarbe)
+        for i in 0..n {
+            let p = axis_pt(i, max_r * self.values_a[i].clamp(0.0, 1.0));
+            let is_contra = self.contradiction_axes.contains(&i);
+            let color = if is_contra { contradiction_color } else { axis_colors[i] };
+            frame.fill(&canvas::Path::circle(p, if is_contra { 5.0 } else { 3.5 }), color);
+            // Wert als Prozent direkt am Punkt (nur wenn Platz)
+            let pct = format!("{:.0}", self.values_a[i] * 100.0);
+            frame.fill_text(canvas::Text {
+                content: pct,
+                position: Point::new(p.x, p.y - 7.0),
+                color: Color::from_rgba(color.r, color.g, color.b, 0.75),
+                size: iced::Pixels(7.5),
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Bottom,
+                ..canvas::Text::default()
+            });
+        }
+
+        // Widerspruchs-Pfeile: Differenzlinie zwischen A und B an Widerspruchs-Achsen
+        if let Some(vals_b) = &self.values_b {
+            for &i in &self.contradiction_axes {
+                let pa = axis_pt(i, max_r * self.values_a[i].clamp(0.0, 1.0));
+                let pb = axis_pt(i, max_r * vals_b[i].clamp(0.0, 1.0));
+                let diff_line = canvas::Path::new(|builder| {
+                    builder.move_to(pa);
+                    builder.line_to(pb);
+                });
+                frame.stroke(&diff_line, canvas::Stroke {
+                    style: canvas::Style::Solid(Color::from_rgba(1.0, 0.20, 0.20, 0.80)),
                     width: 2.0,
                     ..canvas::Stroke::default()
                 });
-            } else if ring_idx >= 7 {
-                // frame.fill(&canvas::Path::circle(pt, 2.5), color); // TODO: pt nicht definiert
-            } else {
-                let _sz = (4.0 - ring_idx as f32 * 0.28).max(1.2);
-                // TODO: pt not defined — fill call below is incomplete
-                // frame.fill(&canvas::Path::circle(pt, _sz), nc); // TODO: pt nicht definiert
             }
         }
 
-        vec![frame.into_geometry()]
-    }
-}
-
-// ── AetherLogoScene ──────────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-struct AetherLogoScene;
-impl canvas::Program<Message> for AetherLogoScene {
-    type State = ();
-    fn draw(&self, _: &(), renderer: &iced::Renderer, _: &Theme, bounds: Rectangle, _: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let w = bounds.width;
-        let h = bounds.height;
-        let cx = w * 0.5;
-        let cy = h * 0.5;
-
-        let top = Point::new(cx, cy - h * 0.38);
-        let bl  = Point::new(cx - w * 0.38, cy + h * 0.35);
-        let br  = Point::new(cx + w * 0.38, cy + h * 0.35);
-        let ml  = Point::new(cx - w * 0.18, cy + h * 0.05);
-        let mr  = Point::new(cx + w * 0.18, cy + h * 0.05);
-
-        let a_path = canvas::Path::new(|b| {
-            b.move_to(bl); b.line_to(top); b.line_to(br);
-        });
-        frame.stroke(&a_path, canvas::Stroke {
-            style: canvas::Style::Solid(Color::from_rgb8(0xFF, 0xFF, 0xFF)),
-            width: 2.8,
-            ..canvas::Stroke::default()
-        });
-        let cross = canvas::Path::new(|b| { b.move_to(ml); b.line_to(mr); });
-        frame.stroke(&cross, canvas::Stroke {
-            style: canvas::Style::Solid(Color::from_rgb8(0xFF, 0xFF, 0xFF)),
-            width: 2.0,
-            ..canvas::Stroke::default()
-        });
-
-        let nodes = [top, bl, br, Point::new(cx, cy + h * 0.10)];
-        let net_color = Color::from_rgb8(0xA0, 0x70, 0xFF);
-        for &n in &nodes {
-            frame.fill(&canvas::Path::circle(n, 2.2), net_color);
-        }
-        for i in 0..nodes.len() {
-            for j in (i+1)..nodes.len() {
-                let mut lc = net_color; lc.a = 0.55;
-                let l = canvas::Path::new(|b| { b.move_to(nodes[i]); b.line_to(nodes[j]); });
-                frame.stroke(&l, canvas::Stroke { style: canvas::Style::Solid(lc), width: 0.8, ..canvas::Stroke::default() });
-            }
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-// ── Orchestration Canvas ────────────────────────────────────────────────────
-
-#[allow(dead_code)]
-struct OrchestrationScene {
-    tick: u64,
-    cluster_count: usize,
-    analysis_running: bool,
-    trust_ok: bool,
-}
-
-impl canvas::Program<Message> for OrchestrationScene {
-    type State = ();
-    fn draw(
-        &self,
-        _state: &(),
-        renderer: &iced::Renderer,
-        _theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(
-            Point::new(0.0, 0.0), bounds.size(),
-            Color::from_rgb8(0x04, 0x0C, 0x18),
+        // Puls-Ring (deterministischer Tick, kein Zufall)
+        let pulse_phase = (self.tick as f32 * 0.04).sin() * 0.5 + 0.5;
+        frame.stroke(
+            &canvas::Path::circle(Point::new(cx, cy), max_r * (0.92 + pulse_phase * 0.08)),
+            canvas::Stroke {
+                style: canvas::Style::Solid(Color::from_rgba(0.35, 0.65, 1.0, 0.04 + pulse_phase * 0.04)),
+                width: 0.7,
+                ..canvas::Stroke::default()
+            },
         );
 
-        let w = bounds.width;
-        let h = bounds.height;
-        let t = self.tick as f32;
-        let analysis_alpha = if self.analysis_running { 0.95 } else { 0.55 };
-
-        // Node definitions: (label, cx_frac, cy_frac, color)
-        let nodes: &[(&str, f32, f32, Color)] = &[
-            ("API Gateway",     0.14, 0.42, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
-            ("Compute Node A",  0.50, 0.18, Color::from_rgb8(0x3A, 0xC0, 0x8A)),
-            ("Event Router",    0.50, 0.50, Color::from_rgb8(0x1E, 0x90, 0xFF)),
-            ("Task Queue",      0.74, 0.42, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
-            ("Alert Handler",   0.90, 0.42, Color::from_rgb8(0xD0, 0x60, 0x60)),
-            ("Database Cluster",0.50, 0.78, Color::from_rgb8(0x3A, 0x8A, 0xC0)),
-        ];
-
-        // Edges (from_idx, to_idx)
-        let edges: &[(usize, usize)] = &[
-            (0, 2), (2, 0), // API <-> Router
-            (2, 1), (1, 2), // Router <-> Compute
-            (2, 3), (3, 2), // Router <-> Queue
-            (3, 4),         // Queue -> Alert
-            (2, 5), (5, 2), // Router <-> DB
-        ];
-
-        let nx = |i: usize| nodes[i].1 * w;
-        let ny = |i: usize| nodes[i].2 * h;
-
-        // Draw edges with animated pulse
-        for &(from, to) in edges {
-            let fx = nx(from); let fy = ny(from);
-            let tx = nx(to);   let ty = ny(to);
-            let mut ec = nodes[from].3;
-            ec.a = 0.28;
-            let edge = canvas::Path::new(|b| { b.move_to(Point::new(fx, fy)); b.line_to(Point::new(tx, ty)); });
-            frame.stroke(&edge, canvas::Stroke { style: canvas::Style::Solid(ec), width: 1.2, line_dash: canvas::LineDash { segments: &[6.0, 4.0], offset: 0 }, ..canvas::Stroke::default() });
-
-            // Animated pulses along edges
-            let phase = (t * 0.04 + (from + to * 3) as f32 * 0.7).rem_euclid(1.0);
-            let px = fx + (tx - fx) * phase;
-            let py = fy + (ty - fy) * phase;
-            let mut pc = nodes[from].3; pc.a = analysis_alpha;
-            frame.fill(&canvas::Path::circle(Point::new(px, py), 3.0), pc);
+        // Labels aussen
+        for i in 0..n {
+            let p = axis_pt(i, max_r * 1.24);
+            let is_contra = self.contradiction_axes.contains(&i);
+            frame.fill_text(canvas::Text {
+                content: labels[i].to_owned(),
+                position: p,
+                color: if is_contra {
+                    Color::from_rgba(1.0, 0.40, 0.40, 1.0)
+                } else {
+                    Color::from_rgba(axis_colors[i].r, axis_colors[i].g, axis_colors[i].b, 0.85)
+                },
+                size: iced::Pixels(9.0),
+                horizontal_alignment: iced::alignment::Horizontal::Center,
+                vertical_alignment: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
         }
 
+        // Legende unten
+        let legend_y = bounds.height - 14.0;
         frame.fill_text(canvas::Text {
-            content: format!("Nodes {} | Analysis {}", self.cluster_count, if self.analysis_running { "active" } else { "idle" }),
-            position: Point::new(16.0, h - 16.0),
-            color: Color::from_rgb8(0x70, 0x90, 0xA8),
-            size: iced::Pixels(10.0),
+            content: format!("\u{25cf} {}", self.label_a),
+            position: Point::new(8.0, legend_y),
+            color: Color::from_rgba(0.55, 0.82, 1.00, 0.85),
+            size: iced::Pixels(9.5),
             horizontal_alignment: iced::alignment::Horizontal::Left,
             vertical_alignment: iced::alignment::Vertical::Center,
             ..canvas::Text::default()
         });
-
-        // Draw nodes
-        for (label, fx, fy, col) in nodes {
-            let cx = fx * w; let cy = fy * h;
-            let is_router = *label == "Event Router";
-            let r = if is_router { 42.0f32 } else { 34.0f32 };
-            let rh = r * 0.55;
-
-            if is_router {
-                // Roboter-Kopf statt Box
-                let rw = 28.0f32; let robot_h = 22.0f32;
-                let mut hbg = *col; hbg.a = 0.14;
-                let head_rect = canvas::Path::new(|b| {
-                    b.move_to(Point::new(cx - rw, cy - robot_h - 8.0));
-                    b.line_to(Point::new(cx + rw, cy - robot_h - 8.0));
-                    b.line_to(Point::new(cx + rw, cy + robot_h - 8.0));
-                    b.line_to(Point::new(cx - rw, cy + robot_h - 8.0));
-                    b.close();
-                });
-                frame.fill(&head_rect, hbg);
-                frame.stroke(&head_rect, canvas::Stroke {
-                    style: canvas::Style::Solid(*col), width: 2.0, ..canvas::Stroke::default()
-                });
-                // Antenne
-                frame.stroke(&canvas::Path::new(|b| {
-                    b.move_to(Point::new(cx, cy - robot_h - 8.0));
-                    b.line_to(Point::new(cx, cy - robot_h - 18.0));
-                }), canvas::Stroke { style: canvas::Style::Solid(*col), width: 1.5, ..canvas::Stroke::default() });
-                frame.fill(&canvas::Path::circle(Point::new(cx, cy - robot_h - 18.0), 2.5), *col);
-                // Augen
-                let blink = (t * 1.0 % 120.0) > 116.0;
-                let er = if blink { 1.0 } else { 3.5 };
-                let ecy = cy - 8.0 - robot_h * 0.12;
-                let cyan_c = Color::from_rgb8(0x00, 0xC8, 0xD4);
-                for &ex in &[cx - rw * 0.42, cx + rw * 0.42] {
-                    frame.fill(&canvas::Path::circle(Point::new(ex, ecy), er), cyan_c);
-                }
-                // Label
+        if self.values_b.is_some() {
+            frame.fill_text(canvas::Text {
+                content: format!("\u{25cc} {}", self.label_b),
+                position: Point::new(8.0, legend_y - 13.0),
+                color: Color::from_rgba(1.0, 0.65, 0.20, 0.85),
+                size: iced::Pixels(9.5),
+                horizontal_alignment: iced::alignment::Horizontal::Left,
+                vertical_alignment: iced::alignment::Vertical::Center,
+                ..canvas::Text::default()
+            });
+            if !self.contradiction_axes.is_empty() {
+                let contra_names: Vec<&str> = self.contradiction_axes.iter()
+                    .map(|&i| labels[i])
+                    .collect();
                 frame.fill_text(canvas::Text {
-                    content: "Router".to_string(),
-                    position: Point::new(cx, cy + robot_h - 4.0),
-                    color: Color::from_rgb8(0xCC, 0xC6, 0xF4),
+                    content: format!("\u{26a0} Widerspruch: {}", contra_names.join(", ")),
+                    position: Point::new(bounds.width * 0.5, legend_y),
+                    color: contradiction_color,
                     size: iced::Pixels(9.0),
                     horizontal_alignment: iced::alignment::Horizontal::Center,
                     vertical_alignment: iced::alignment::Vertical::Center,
                     ..canvas::Text::default()
                 });
-                // Glow-Ring
-                let glow_r = rw * 1.5 + 3.0 * (t * 0.06).sin();
-                let mut gc = *col; gc.a = 0.07;
-                frame.stroke(&canvas::Path::circle(Point::new(cx, cy - 8.0), glow_r),
-                    canvas::Stroke { style: canvas::Style::Solid(gc), width: 3.0, ..canvas::Stroke::default() });
-            } else {
-            // Box fill
-            let mut fc = *col; fc.a = 0.18;
-            let rect = canvas::Path::new(|b| {
-                b.move_to(Point::new(cx - r, cy - rh));
-                b.line_to(Point::new(cx + r, cy - rh));
-                b.line_to(Point::new(cx + r, cy + rh));
-                b.line_to(Point::new(cx - r, cy + rh));
-                b.close();
-            });
-            frame.fill(&rect, fc);
-
-            // Box border
-            let mut bc = *col; bc.a = 0.65;
-            frame.stroke(&rect, canvas::Stroke { style: canvas::Style::Solid(bc), width: 1.2, ..canvas::Stroke::default() });
-
-            // Label
-            frame.fill_text(canvas::Text {
-                content: label.to_string(),
-                position: Point::new(cx, cy),
-                color: Color::from_rgb8(0xCC, 0xC6, 0xF4),
-                size: iced::Pixels(10.0),
-                horizontal_alignment: iced::alignment::Horizontal::Center,
-                vertical_alignment: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
             }
         }
-
-        // Status dot top-left
-        let dot_col = if self.trust_ok {
-            Color::from_rgb8(0x4C, 0xD9, 0x6E)
-        } else {
-            Color::from_rgb8(0xD9, 0x80, 0x40)
-        };
-        frame.fill(&canvas::Path::circle(Point::new(10.0, 10.0), 4.5), dot_col);
 
         vec![frame.into_geometry()]
     }
@@ -10115,99 +12324,6 @@ impl canvas::Program<Message> for BytestreamBarScene {
     }
 }
 
-struct DotScene { color: Color }
-impl canvas::Program<Message> for DotScene {
-    type State = ();
-    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let r = bounds.width.min(bounds.height) * 0.45;
-        frame.fill(&canvas::Path::circle(Point::new(bounds.width * 0.5, bounds.height * 0.5), r), self.color);
-        vec![frame.into_geometry()]
-    }
-}
-
-#[allow(dead_code)]
-struct ThreatTrendScene {
-    tick: u64,
-    reveal: f32,
-}
-
-impl canvas::Program<Message> for ThreatTrendScene {
-    type State = ();
-    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let w = bounds.width;
-        let h = bounds.height;
-        let t = self.tick as f32;
-        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0C, 0x0B, 0x12));
-        let points = 60usize;
-        let reveal_count = ((points as f32) * self.reveal.clamp(0.02, 1.0)) as usize;
-        let mut last: Option<Point> = None;
-        for i in 0..reveal_count.max(2) {
-            let x = (i as f32 / (points - 1) as f32) * (w - 18.0) + 9.0;
-            let yv = 0.52 + 0.18 * ((i as f32 * 0.31 + t * 0.03).sin()) + 0.06 * ((i as f32 * 0.91 + t * 0.02).cos());
-            let y = (1.0 - yv.clamp(0.08, 0.92)) * (h - 20.0) + 10.0;
-            let p = Point::new(x, y);
-            if let Some(lp) = last {
-                let seg = canvas::Path::new(|b| {
-                    b.move_to(lp);
-                    b.line_to(p);
-                });
-                frame.stroke(&seg, canvas::Stroke {
-                    style: canvas::Style::Solid(Color::from_rgba(0.72, 0.30, 1.0, 0.85)),
-                    width: 2.0,
-                    ..canvas::Stroke::default()
-                });
-            }
-            last = Some(p);
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-#[allow(dead_code)]
-struct RiskGaugeScene {
-    score: u32,
-    pulse: f32,
-    flash: f32,
-}
-
-impl canvas::Program<Message> for RiskGaugeScene {
-    type State = ();
-    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        use std::f32::consts::PI;
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        let cxy = Point::new(bounds.width * 0.5, bounds.height * 0.56);
-        let r = bounds.width.min(bounds.height) * 0.34;
-        let ratio = (self.score as f32 / 1000.0).clamp(0.0, 1.0);
-        let start = PI * 0.84;
-        let end = PI * 2.16;
-        let span = end - start;
-        let track = canvas::Path::new(|b| {
-            b.arc(canvas::path::Arc { center: cxy, radius: r, start_angle: iced::Radians(start), end_angle: iced::Radians(end) });
-        });
-        frame.stroke(&track, canvas::Stroke { style: canvas::Style::Solid(Color::from_rgba(0.18, 0.25, 0.35, 0.9)), width: 14.0, ..canvas::Stroke::default() });
-        let val = canvas::Path::new(|b| {
-            b.arc(canvas::path::Arc { center: cxy, radius: r, start_angle: iced::Radians(start), end_angle: iced::Radians(start + span * ratio) });
-        });
-        frame.stroke(&val, canvas::Stroke {
-            style: canvas::Style::Solid(Color::from_rgba(1.0, 0.48 + 0.30 * self.flash, 0.26, 0.95)),
-            width: 14.0 * self.pulse,
-            ..canvas::Stroke::default()
-        });
-        frame.fill_text(canvas::Text {
-            content: format!("{}", self.score),
-            position: Point::new(cxy.x, cxy.y),
-            color: Color::from_rgb8(0xF8, 0xFD, 0xFF),
-            size: iced::Pixels(28.0),
-            horizontal_alignment: iced::alignment::Horizontal::Center,
-            vertical_alignment: iced::alignment::Vertical::Center,
-            ..canvas::Text::default()
-        });
-        vec![frame.into_geometry()]
-    }
-}
-
 struct DonutScene {
     values: [f32; 4],
     colors: [Color; 4],
@@ -10242,67 +12358,6 @@ impl canvas::Program<Message> for DonutScene {
                 ..canvas::Stroke::default()
             });
             cursor = next;
-        }
-        vec![frame.into_geometry()]
-    }
-}
-
-#[allow(dead_code)]
-struct CyberPaneGraphScene {
-    tick: u64,
-    pulse: f32,
-    slide: f32,
-}
-
-impl canvas::Program<Message> for CyberPaneGraphScene {
-    type State = ();
-    fn draw(&self, _s: &(), renderer: &iced::Renderer, _t: &Theme, bounds: Rectangle, _c: mouse::Cursor) -> Vec<canvas::Geometry<iced::Renderer>> {
-        let mut frame = canvas::Frame::new(renderer, bounds.size());
-        frame.fill_rectangle(Point::new(0.0, 0.0), bounds.size(), Color::from_rgb8(0x0B, 0x12, 0x18));
-        let t = self.tick as f32;
-        let panes = [
-            (0.12f32, 0.22f32, 0.24f32, 0.52f32, Color::from_rgba(0.18, 0.33, 0.38, 0.34), "Background"),
-            (0.42f32, 0.14f32, 0.22f32, 0.66f32, Color::from_rgba(0.25, 0.45, 0.48, 0.34), "Mid"),
-            (0.70f32, 0.24f32, 0.18f32, 0.50f32, Color::from_rgba(0.35, 0.38, 0.24, 0.30), "Overlay"),
-        ];
-        let mut centers: Vec<Point> = Vec::with_capacity(panes.len());
-        for (idx, (x, y, w, h, color, label)) in panes.iter().enumerate() {
-            let px = bounds.width * x + (1.0 - self.slide) * 22.0;
-            let py = bounds.height * y;
-            let pw = bounds.width * w;
-            let ph = bounds.height * h;
-            let pane = canvas::Path::rectangle(Point::new(px, py), iced::Size::new(pw, ph));
-            frame.fill(&pane, *color);
-            frame.stroke(&pane, canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.25, 0.60, 0.64, 0.55)),
-                width: 1.0 + 0.4 * self.pulse,
-                ..canvas::Stroke::default()
-            });
-            let cx = px + pw * 0.5;
-            let cy = py + ph * 0.5;
-            centers.push(Point::new(cx, cy));
-            frame.fill_text(canvas::Text {
-                content: format!("{} / {}", label, idx + 1),
-                position: Point::new(cx, py + 18.0),
-                color: Color::from_rgb8(0xA7, 0xB0, 0xB7),
-                size: iced::Pixels(11.0),
-                horizontal_alignment: iced::alignment::Horizontal::Center,
-                vertical_alignment: iced::alignment::Vertical::Center,
-                ..canvas::Text::default()
-            });
-            let pulse_r = 4.0 + 2.5 * (t * 0.09 + idx as f32).sin().abs();
-            frame.fill(&canvas::Path::circle(Point::new(cx, cy), pulse_r), Color::from_rgba(0.25, 0.73, 0.76, 0.78));
-        }
-        for i in 0..centers.len().saturating_sub(1) {
-            let edge = canvas::Path::new(|b| {
-                b.move_to(centers[i]);
-                b.line_to(centers[i + 1]);
-            });
-            frame.stroke(&edge, canvas::Stroke {
-                style: canvas::Style::Solid(Color::from_rgba(0.25, 0.60, 0.64, 0.55)),
-                width: 1.0,
-                ..canvas::Stroke::default()
-            });
         }
         vec![frame.into_geometry()]
     }
@@ -10464,65 +12519,6 @@ fn panel_frame_style(_: &Theme) -> container::Style {
     }
 }
 
-#[allow(dead_code)]
-fn sys_metric_card(label: &str, value: String, fill: f32, accent: Color) -> Element<'static, Message> {
-    container(
-        Column::new()
-            .push(text(label.to_owned())
-                .size(11)
-                .color(Color::from_rgb8(0x4E, 0x4A, 0x76)))
-            .push(text(value)
-                .size(22)
-                .color(accent))
-            .push(
-                container(
-                    container(iced::widget::Space::new(Length::Fill, Length::Fixed(3.0)))
-                        .style(move |_: &Theme| container::Style {
-                            background: Some(Background::Color(accent)),
-                            border: Border { radius: 2.0.into(), ..Default::default() },
-                            ..Default::default()
-                        })
-                        .width(Length::FillPortion((fill.clamp(0.0, 1.0) * 100.0) as u16))
-                )
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x12, 0x22, 0x34))),
-                    border: Border { radius: 2.0.into(), ..Default::default() },
-                    ..Default::default()
-                })
-                .width(Length::Fill)
-                .height(Length::Fixed(3.0))
-            )
-            .spacing(8)
-    )
-    .style(accent_card_style)
-    .padding([14, 18])
-    .width(Length::Fill)
-    .into()
-}
-
-#[allow(dead_code)]
-fn event_row<'a>(time: &str, tag: &str, msg: &str, tag_color: Color) -> Element<'a, Message> {
-    container(
-        Row::new()
-            .push(text(time.to_owned()).size(11).color(Color::from_rgb8(0x62, 0x5E, 0x90)))
-            .push(
-                container(text(tag.to_owned()).size(11).color(tag_color))
-                    .padding([2, 6])
-                    .style(move |_: &Theme| container::Style {
-                        background: Some(Background::Color(Color::from_rgba(tag_color.r * 0.15, tag_color.g * 0.15, tag_color.b * 0.15, 1.0))),
-                        border: Border { color: tag_color, width: 1.0, radius: 4.0.into() },
-                        ..Default::default()
-                    })
-            )
-            .push(text(msg.to_owned()).size(12).color(Color::from_rgb8(0xA8, 0xC4, 0xD8)))
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-    )
-    .padding([6, 0])
-    .width(Length::Fill)
-    .into()
-}
-
 fn info_badge(tooltip_text: &'static str) -> Element<'static, Message> {
     let _ = tooltip_text; // stored for future tooltip implementation
     container(
@@ -10568,30 +12564,6 @@ fn metric_help_chip(label: &'static str, metric: &'static str, accent: Color) ->
             ..Default::default()
         })
         .into()
-}
-
-#[allow(dead_code)]
-fn alert_row<'a>(icon: &str, icon_color: Color, title: &str, sub: &str) -> Element<'a, Message> {
-    container(
-        row![
-            text(icon.to_owned()).size(14).color(icon_color),
-            column![
-                text(title.to_owned()).size(13).color(Color::from_rgb8(0xCC, 0xC6, 0xF4)),
-                text(sub.to_owned()).size(11).color(Color::from_rgb8(0x70, 0x90, 0xA8)),
-            ]
-            .spacing(2),
-        ]
-        .spacing(8)
-        .align_y(iced::Alignment::Center),
-    )
-    .style(move |_: &Theme| container::Style {
-        background: Some(Background::Color(Color::from_rgba(icon_color.r * 0.10, icon_color.g * 0.10, icon_color.b * 0.10, 1.0))),
-        border: Border { color: Color::from_rgba(icon_color.r, icon_color.g, icon_color.b, 0.5), width: 1.0, radius: 6.0.into() },
-        ..Default::default()
-    })
-    .padding([8, 12])
-    .width(Length::Fill)
-    .into()
 }
 
 fn info_card<'a>(title: &str, body: &str) -> Element<'a, Message> {
@@ -10759,46 +12731,6 @@ fn launch_dropped_artifact(path: &Path, world: Tab) -> Result<String, String> {
     })
 }
 
-/// Erzeugt eine menschenlesbare Erklaerungszeile aus den Analyse-Metriken.
-#[allow(dead_code)]
-fn plain_note_from_metrics(
-    trust_score: f32,
-    anchor_count: u32,
-    compression_gain: f32,
-    suspicious: bool,
-    eicar_hit: bool,
-    lossless: bool,
-) -> String {
-    if eicar_hit {
-        return "Bekanntes Testmuster fuer Schadsoftware gefunden \u{2014} Datei wurde blockiert.".to_owned();
-    }
-    if suspicious && trust_score < 0.35 {
-        return "Diese Datei verhaelt sich anders als erwartet und wurde zur Pruefung zurueckgestellt.".to_owned();
-    }
-    if suspicious {
-        return "Diese Datei enthaelt ungewoehnliche Muster \u{2014} sie wird beobachtet aber nicht blockiert.".to_owned();
-    }
-    if trust_score >= 0.80 && lossless {
-        return format!(
-            "Gut verstandene Datei \u{2014} {} strukturelle Muster erkannt, verlustfrei rekonstruierbar.",
-            anchor_count
-        );
-    }
-    if trust_score >= 0.60 {
-        return format!(
-            "Datei weitgehend verstanden \u{2014} {} Muster gefunden, {:.0}% kompakter als das Original.",
-            anchor_count, compression_gain
-        );
-    }
-    if anchor_count == 0 {
-        return "Keine bekannten Strukturmuster gefunden \u{2014} Datei ist fuer das System neu.".to_owned();
-    }
-    format!(
-        "Datei teilweise analysiert \u{2014} {} Muster gefunden, wird mit der Zeit besser verstanden.",
-        anchor_count
-    )
-}
-
 fn register_card(entry: RegisterEntry) -> Element<'static, Message> {
     let gain_fill = entry.compression_gain_percent / 100.0;
     let preview_upper = entry.preview_note.to_ascii_uppercase();
@@ -10874,6 +12806,11 @@ fn fallback_capsule_state(
         trigger: "fallback".to_owned(),
         domain_hint: domain_hint.to_owned(),
         source_hash: String::new(),
+        source_scope: "explicit_file_drop".to_owned(),
+        privacy_class: "explicit_user_signal".to_owned(),
+        artifact_class: "private_signal".to_owned(),
+        segment_count: 1,
+        segment_manifest_hash: String::new(),
         size_bytes,
         entropy,
         h_lambda: (entropy * drift * (1.0 - symmetry + 0.1)).clamp(0.0, 8.0),
@@ -10890,6 +12827,8 @@ fn fallback_capsule_state(
         delta_ratio: drift.clamp(0.0, 1.0),
         changed_bytes: size_bytes,
         anomaly_flags,
+        kolmogorov_k: 0.0,
+        anchor_coverage_ratio: 0.0,
     }
 }
 
@@ -10936,11 +12875,26 @@ fn pipeline_project_root() -> std::path::PathBuf {
     std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
+fn current_epoch_label() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs().to_string())
+        .unwrap_or_else(|_| "0".to_owned())
+}
+
 fn run_pipeline_json(script: &str, args: &[String], context: &str) -> Result<serde_json::Value, String> {
     use std::process::Command;
 
     let python = pipeline_python_executable();
     let root = pipeline_project_root();
+    // Prepend a sys.path injection so the import always resolves even when the
+    // OS-level PYTHONPATH variable is not forwarded by the shell (Windows edge case).
+    let prefixed = format!(
+        "import os,sys;sys.path.insert(0,os.getcwd());sys.path.insert(0,r'{}');{script}",
+        root.to_string_lossy().replace('\\', "\\\\")
+    );
     let mut command = Command::new(python);
     command
         .current_dir(&root)
@@ -10949,7 +12903,7 @@ fn run_pipeline_json(script: &str, args: &[String], context: &str) -> Result<ser
         .env("AETHER_PIPELINE_MODE", "deterministic")
         .env("PYTHONHASHSEED", "0")
         .arg("-c")
-        .arg(script);
+        .arg(&prefixed);
     for arg in args {
         command.arg(arg);
     }
@@ -11023,7 +12977,7 @@ async fn analyze_file_for_register(
                 drift,
             );
             let process_summary = format!(
-                "Quelle: {}\nFallback-Analyse lokal aktiv\n{}",
+                "Quelle: {}\nScope: explicit_file_drop | Privacy: explicit_user_signal | Artefakt: private_signal | Segmente: 1\nFallback-Analyse lokal aktiv\n{}",
                 source_kind,
                 pipeline_error,
             );
@@ -11058,6 +13012,7 @@ async fn analyze_file_for_register(
                 compression_state: None,
                 reconstruction_state: None,
                 structure_map_nodes: vec![vec![0.0, TAU / 4.0, TAU / 2.0, 3.0 * TAU / 4.0]],
+                source_date_secs: None,  // Fallback-Analyse: kein source_date verfügbar
             });
         }
     };
@@ -11104,8 +13059,12 @@ async fn analyze_file_for_register(
         capsule_state.sce_score * 100.0,
     );
     let process_summary = format!(
-        "Quelle: {}\nVerdichtung: {:.2}% Gewinn\nSCE: {:.1}% | Trust {:.1}% | H_lambda {:.2}",
+        "Quelle: {}\nScope: {} | Privacy: {} | Artefakt: {} | Segmente: {}\nVerdichtung: {:.2}% Gewinn\nSCE: {:.1}% | Trust {:.1}% | H_lambda {:.2}",
         source_kind,
+        capsule_state.source_scope,
+        capsule_state.privacy_class,
+        capsule_state.artifact_class,
+        capsule_state.segment_count,
         compression_gain_percent,
         capsule_state.sce_score * 100.0,
         capsule_state.trust_score * 100.0,
@@ -11151,6 +13110,11 @@ async fn analyze_file_for_register(
         compression_state,
         reconstruction_state,
         structure_map_nodes,
+        // source_date aus Pipeline-JSON: nur gesetzt wenn temporal_metadata_consent=true
+        source_date_secs: result
+            .get("source_date")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as u64),
     })
 }
 
@@ -11230,12 +13194,138 @@ fn shannon_entropy_local(bytes: &[u8]) -> f32 {
     let total = bytes.len() as f32;
     counts
         .iter()
-        .filter(|count| **count > 0)
         .map(|count| {
             let probability = *count as f32 / total;
             -(probability * probability.log2())
         })
         .sum()
+}
+
+/// Liest bis zu 4096 Bytes vom Dateianfang und liefert eine Shannon-Entropie-Schätzung (0–8 bit/byte).
+/// Dient der Schnellvorschau im Drop-Annotation-Modal — keine vollständige Analyse.
+fn quick_file_entropy(path: &std::path::Path) -> f32 {
+    use std::io::Read;
+    let mut buf = [0u8; 4096];
+    let read_len = match std::fs::File::open(path) {
+        Ok(mut f) => f.read(&mut buf).unwrap_or(0),
+        Err(_) => return 0.0,
+    };
+    shannon_entropy_local(&buf[..read_len])
+}
+
+fn parse_visual_source_date_input(raw: &str) -> Result<Option<u64>, String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    for format in ["%Y-%m-%d", "%d.%m.%Y", "%d-%m-%Y", "%Y/%m/%d", "%d/%m/%Y"] {
+        if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, format) {
+            let Some(naive_dt) = date.and_hms_opt(12, 0, 0) else {
+                return Err("Quelldatum konnte nicht in einen Kalenderzeitpunkt umgerechnet werden.".to_owned());
+            };
+            let ts = chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                naive_dt,
+                chrono::Utc,
+            )
+            .timestamp();
+            if ts > 0 {
+                return Ok(Some(ts as u64));
+            }
+        }
+    }
+
+    Err("Datum bitte als YYYY-MM-DD oder DD.MM.YYYY eingeben. Es wirkt nur auf die Grafik, nicht auf die Analyse.".to_owned())
+}
+
+fn format_unix_date(secs: u64) -> String {
+    chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0)
+        .map(|value| value.format("%Y-%m-%d").to_string())
+        .unwrap_or_else(|| "unbekannt".to_owned())
+}
+
+/// Pr\u{fc}ft, ob bekannte Windows-Telemetrieprozesse gerade aktive TCP-Verbindungen nach au\u{df}en aufgebaut haben.
+/// Gibt erkannte Verbindungen als `TelemetryAlert`-Liste zur\u{fc}ck.
+/// Auf Nicht-Windows-Systemen immer leer.
+async fn scan_telemetry_activity(_apply_block: bool) -> Vec<TelemetryAlert> {
+    #[cfg(not(target_os = "windows"))]
+    return Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        const PS_SCRIPT: &str = concat!(
+            "$t=@('CompatTelRunner','DiagTrack','WerFault','wsqmcons','DeviceCensus',",
+            "'MicrosoftEdgeUpdate','GoogleUpdate','AdobeARM');",
+            "Get-NetTCPConnection -State Established -EA SilentlyContinue|",
+            "Where-Object{$_.OwningProcess -gt 4}|ForEach-Object{",
+            "try{$n=(Get-Process -Id $_.OwningProcess -EA Stop).Name;",
+            "if($t -contains $n){\"$n`t$($_.RemoteAddress):$($_.RemotePort)\"}}catch{}}"
+        );
+        let Ok(out) = std::process::Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", PS_SCRIPT])
+            .output()
+        else {
+            return Vec::new();
+        };
+        let text = String::from_utf8_lossy(&out.stdout);
+        let ts = {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let s = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            format!("{:02}:{:02}:{:02}", (s % 86400) / 3600, (s % 3600) / 60, s % 60)
+        };
+        let mut seen = std::collections::HashSet::new();
+        text.lines()
+            .filter_map(|line| {
+                let mut parts = line.splitn(2, '\t');
+                let process = parts.next()?.trim().to_owned();
+                let remote  = parts.next().unwrap_or("?").trim().to_owned();
+                if process.is_empty() { return None; }
+                if seen.insert((process.clone(), remote.clone())) {
+                    Some(TelemetryAlert { timestamp: ts.clone(), remote, process })
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+}
+
+/// F\u{fc}gt Windows-Firewall-Ausgangsregeln f\u{fc}r bekannte Telemetrie-Executables hinzu oder entfernt sie.
+/// Erfordert Administratorrechte; Fehler werden ignoriert (best-effort).
+fn apply_telemetry_firewall(enable: bool) {
+    #[cfg(not(target_os = "windows"))]
+    { let _ = enable; }
+
+    #[cfg(target_os = "windows")]
+    {
+        const RULE: &str = "AetherShield_Telemetry";
+        // Bestehende Regel l\u{f6}schen (idempotent)
+        let _ = std::process::Command::new("netsh")
+            .args(["advfirewall", "firewall", "delete", "rule", &format!("name={RULE}")])
+            .output();
+        if !enable { return; }
+        const PATHS: &[&str] = &[
+            "%SystemRoot%\\System32\\CompatTelRunner.exe",
+            "%SystemRoot%\\System32\\wsqmcons.exe",
+            "%SystemRoot%\\System32\\DeviceCensus.exe",
+            "%SystemRoot%\\System32\\WerFault.exe",
+            "%SystemRoot%\\System32\\WerFaultSecure.exe",
+        ];
+        for path in PATHS {
+            let _ = std::process::Command::new("netsh")
+                .args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={RULE}"),
+                    "dir=out", "action=block",
+                    &format!("program={path}"),
+                    "enable=yes",
+                ])
+                .output();
+        }
+    }
 }
 
 fn byte_drift_local(bytes: &[u8]) -> f32 {
@@ -11271,7 +13361,6 @@ fn structure_map_rings(payload: &serde_json::Value) -> Vec<Vec<f32>> {
     rings
 }
 
-#[allow(dead_code)]
 fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
     let extension = path
         .extension()
@@ -11290,7 +13379,6 @@ fn detect_source_kind(path: &Path, bytes: &[u8]) -> String {
     }
 }
 
-#[allow(dead_code)]
 fn detect_file_type_from_name(file_name: &str) -> String {
     let extension = Path::new(file_name)
         .extension()
@@ -11309,33 +13397,6 @@ fn detect_file_type_from_name(file_name: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
-fn is_text_like_file(path: &Path) -> bool {
-    let extension = path
-        .extension()
-        .and_then(OsStr::to_str)
-        .unwrap_or_default()
-        .to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "txt"
-            | "md"
-            | "json"
-            | "toml"
-            | "yaml"
-            | "yml"
-            | "rs"
-            | "py"
-            | "js"
-            | "ts"
-            | "html"
-            | "css"
-            | "xml"
-            | "csv"
-            | "ini"
-            | "log"
-    )
-}
 // END impl AetherIcedShell
 
 

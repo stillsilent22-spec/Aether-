@@ -382,14 +382,6 @@ struct ShaderVaultCache {
 }
 
 impl ShaderVaultCache {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        Self {
-            compiled: HashMap::new(),
-            persist_path: None,
-        }
-    }
-
     /// Lädt den Cache von Disk oder legt eine leere Instanz an.
     fn with_persistence(path: std::path::PathBuf) -> Self {
         let compiled = if path.exists() {
