@@ -718,6 +718,11 @@ class AnalysisCapsuleEngine:
         invariants: Dict[str, Any],
         godel_loop: Dict[str, Any],
     ) -> List[str]:
+        # WICHTIG: godel_loop wird hier NICHT ausgewertet.
+        # Der Gödelloop ist rein beobachtend (observational-only) und darf
+        # das Analyse-Ergebnis nicht beeinflussen. Er ist ein separates
+        # Metadaten-Feld im Result-Dict — kein Einfluss auf Flags, Scores
+        # oder Entscheidungen des Schwarms.
         flags: List[str] = []
         if metrics.entropy >= 7.2:
             flags.append("high_entropy")
@@ -733,6 +738,4 @@ class AnalysisCapsuleEngine:
             flags.append("observer_uncertainty")
         if _safe_float(invariants.get("invariant_strength", 0.0), 0.0) >= 0.8:
             flags.append("strong_invariants")
-        if str(godel_loop.get("stop_reason", "")) == "cycle":
-            flags.append("godel_cycle")
         return flags
