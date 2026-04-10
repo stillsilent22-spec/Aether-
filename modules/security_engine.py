@@ -188,6 +188,7 @@ def _is_genesis_hardware_bound(session_like: _Any) -> bool:
       1. username == GENESIS_PUBLISHER_ID (Identitaetspruefung)
       2. is_genesis_node(GENESIS_NODE_ID) in trusted_publishers.json (kryptografisch)
       3. device_lock.json bindet diese Hardware an GENESIS_NODE_ID (hardware-gebunden)
+      4. der lokale Genesis-Identity-Lock entspricht exakt dem Manifest-Lock
     Fail-closed: jede Exception oder fehlende Datei ergibt False.
     """
     try:
@@ -196,23 +197,76 @@ def _is_genesis_hardware_bound(session_like: _Any) -> bool:
             GENESIS_NODE_ID as _GENESIS_ID,
             GENESIS_PUBLISHER_ID as _PUB_ID,
         )
+        from modules.identity_claim import (
+            load_trusted_publishers,
+            matches_manifest_genesis_identity,
+            public_key_b64_from_pem,
+        )
         import hmac as _dev_hmac
+        import json as _dev_json
+        from pathlib import Path as _Path
+
         username = str(getattr(session_like, "username", "") or "").strip()
         if not _dev_hmac.compare_digest(username, _PUB_ID):
             return False
         if not _check_genesis(_GENESIS_ID):
             return False
+
+        root = _Path(__file__).resolve().parents[1]
+        node_path = root / "data" / "swarm" / "node.json"
+        settings_path = root / "data" / "settings.json"
+        if not node_path.is_file() or not settings_path.is_file():
+            return False
+
+        node_payload = _dev_json.loads(node_path.read_text(encoding="utf-8"))
+        settings_payload = _dev_json.loads(settings_path.read_text(encoding="utf-8"))
+        node_id = str(node_payload.get("node_id", "") or "").strip()
+        if not _dev_hmac.compare_digest(node_id, _GENESIS_ID):
+            return False
+
+        node_username = str(node_payload.get("account_username", "") or "").strip()
+        settings_username = str(settings_payload.get("account_username", "") or "").strip()
+        if node_username and not _dev_hmac.compare_digest(node_username, username):
+            return False
+        if settings_username and not _dev_hmac.compare_digest(settings_username, username):
+            return False
+
+        yggdrasil_addr = str(node_payload.get("yggdrasil_addr", "") or "").strip()
+        if not yggdrasil_addr:
+            return False
+        public_key_pem = str(node_payload.get("public_key_pem", "") or "").strip()
+        if not public_key_pem:
+            return False
+        public_key_b64 = public_key_b64_from_pem(public_key_pem)
+
+        manifest = load_trusted_publishers(root)
         from modules.device_lock import _DEVICE_LOCK_PATH, compute_device_fingerprint
-        import json as _dev_json
         if not _DEVICE_LOCK_PATH.is_file():
             return False
         stored = _dev_json.loads(_DEVICE_LOCK_PATH.read_text(encoding="utf-8"))
         stored_node = str(stored.get("node_id", "")).strip()
         stored_fp = str(stored.get("device_fingerprint", "")).strip()
         curr_fp = compute_device_fingerprint()
-        return (
+        if not (
             _dev_hmac.compare_digest(stored_node, _GENESIS_ID)
             and _dev_hmac.compare_digest(stored_fp, curr_fp)
+        ):
+            return False
+
+        node_identity_lock = str(node_payload.get("account_identity_lock", "") or "").strip()
+        settings_identity_lock = str(settings_payload.get("account_identity_lock", "") or "").strip()
+        if not node_identity_lock or not settings_identity_lock:
+            return False
+        if not _dev_hmac.compare_digest(node_identity_lock, settings_identity_lock):
+            return False
+        return matches_manifest_genesis_identity(
+            manifest,
+            username=username,
+            node_id=node_id,
+            public_key_b64=public_key_b64,
+            device_fingerprint=curr_fp,
+            yggdrasil_addr=yggdrasil_addr,
+            identity_lock=node_identity_lock,
         )
     except Exception:
         return False

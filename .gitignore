@@ -81,6 +81,7 @@ data/publisher_keys/*.pem
 !data/publisher_keys/.gitkeep
 
 build_errors.txt
+build_out.txt
 build_output.log
 cargo_check_err.txt
 cargo_check_out.txt

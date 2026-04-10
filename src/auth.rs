@@ -66,18 +66,47 @@ struct LocalIdentity {
     genesis_publisher_id: String,
     genesis_node_id: String,
     genesis_public_key_b64: String,
+    genesis_identity_lock: String,
+    genesis_identity_lock_mode: String,
     genesis_key_present: bool,
     reserved_usernames: HashSet<String>,
 }
 
 impl LocalIdentity {
-    fn is_verified_genesis(&self) -> bool {
+    fn has_verified_genesis_key_material(&self) -> bool {
         self.genesis_key_present
             && !self.genesis_publisher_id.is_empty()
             && !self.genesis_node_id.is_empty()
             && self.node_id.eq_ignore_ascii_case(&self.genesis_node_id)
             && !self.genesis_public_key_b64.is_empty()
             && self.public_key_b64 == self.genesis_public_key_b64
+    }
+
+    fn current_genesis_identity_lock(&self) -> String {
+        if self.genesis_publisher_id.trim().is_empty() {
+            return String::new();
+        }
+        identity_lock_for_username(&self.genesis_publisher_id, self)
+    }
+
+    fn can_seed_genesis_binding(&self) -> bool {
+        if !self.has_verified_genesis_key_material() {
+            return false;
+        }
+        let current_lock = self.current_genesis_identity_lock();
+        if current_lock.is_empty() {
+            return false;
+        }
+        if self.genesis_identity_lock.trim().is_empty() {
+            return true;
+        }
+        let mode = self.genesis_identity_lock_mode.trim();
+        self.genesis_identity_lock == current_lock
+            && (mode.is_empty() || mode == "ygg-hw-username-v1")
+    }
+
+    fn is_verified_genesis(&self) -> bool {
+        self.can_seed_genesis_binding() && !self.genesis_identity_lock.trim().is_empty()
     }
 }
 
@@ -103,6 +132,10 @@ struct TrustedPublisherEntry {
     node_id: String,
     #[serde(default)]
     role: String,
+    #[serde(default)]
+    identity_lock: String,
+    #[serde(default)]
+    identity_lock_mode: String,
     #[serde(default)]
     notes: String,
 }
@@ -165,7 +198,7 @@ impl AuthStore {
         let salt_hex = random_hex(16);
         let password_hash_hex = hash_password(&normalized, &salt_hex, password);
         let identity_lock = identity_lock_for_username(&normalized, identity);
-        let role = if identity.is_verified_genesis()
+        let role = if identity.can_seed_genesis_binding()
             && normalized.eq_ignore_ascii_case(&identity.genesis_publisher_id)
         {
             "admin".to_owned()
@@ -222,7 +255,7 @@ impl AuthStore {
             public_key_b64: identity.public_key_b64.clone(),
             yggdrasil_addr: identity.yggdrasil_addr.clone(),
             device_fingerprint: identity.device_fingerprint.clone(),
-            genesis_bound: identity.is_verified_genesis()
+            genesis_bound: identity.can_seed_genesis_binding()
                 && username.eq_ignore_ascii_case(&identity.genesis_publisher_id),
             native_ygg_bound: identity.native_ygg_capable,
             identity_lock,
@@ -393,6 +426,8 @@ fn load_local_identity() -> Result<LocalIdentity, String> {
         genesis_publisher_id,
         genesis_node_id: genesis_entry.node_id.trim().to_owned(),
         genesis_public_key_b64: genesis_entry.public_key.trim().to_owned(),
+        genesis_identity_lock: genesis_entry.identity_lock.trim().to_owned(),
+        genesis_identity_lock_mode: genesis_entry.identity_lock_mode.trim().to_owned(),
         genesis_key_present: crate::data_path("keys/genesis_node.key").exists(),
         reserved_usernames,
     })
@@ -508,7 +543,8 @@ fn ensure_local_account_available(
         ));
     }
 
-    if identity.is_verified_genesis() && !username.eq_ignore_ascii_case(&identity.genesis_publisher_id)
+    if identity.can_seed_genesis_binding()
+        && !username.eq_ignore_ascii_case(&identity.genesis_publisher_id)
     {
         return Err(format!(
             "Dieses Geraet ist kryptographisch an den Genesis-Account '{}' gebunden.",
@@ -524,7 +560,7 @@ fn ensure_reserved_username_allowed(
     identity: &LocalIdentity,
 ) -> Result<(), String> {
     if username.eq_ignore_ascii_case(&identity.genesis_publisher_id) {
-        if identity.is_verified_genesis() {
+        if identity.can_seed_genesis_binding() {
             return Ok(());
         }
         return Err(
@@ -679,9 +715,12 @@ fn validate_bound_user(user: &UserRecord, identity: &LocalIdentity) -> Result<()
     }
 
     if user.genesis_bound {
-        if !user.username.eq_ignore_ascii_case(&identity.genesis_publisher_id)
-            || !identity.is_verified_genesis()
-        {
+        if !user.username.eq_ignore_ascii_case(&identity.genesis_publisher_id) {
+            return Err(
+                "Genesis-Account passt nicht zum lokalen Genesis-Schluesselpaar.".to_owned(),
+            );
+        }
+        if !identity.is_verified_genesis() && !identity.can_seed_genesis_binding() {
             return Err(
                 "Genesis-Account passt nicht zum lokalen Genesis-Schluesselpaar.".to_owned(),
             );
@@ -701,7 +740,9 @@ fn sync_local_account_claim(username: &str, identity: &LocalIdentity) -> Result<
         &identity_lock,
     )?;
     sync_settings_claim(username, identity, &identity_lock)?;
-    if identity.is_verified_genesis() && username.eq_ignore_ascii_case(&identity.genesis_publisher_id) {
+    if identity.can_seed_genesis_binding()
+        && username.eq_ignore_ascii_case(&identity.genesis_publisher_id)
+    {
         sync_trusted_genesis_claim(username, identity)?;
     }
     Ok(())
@@ -761,7 +802,7 @@ fn sync_node_claim(
             Value::String(identity.device_fingerprint.clone()),
         );
     }
-    if identity.is_verified_genesis() {
+    if identity.can_seed_genesis_binding() {
         payload.insert("role".to_owned(), Value::String("genesis".to_owned()));
         payload.insert(
             "creator_locked_username".to_owned(),
@@ -797,7 +838,7 @@ fn sync_settings_claim(
             Value::String("ygg-hw-username-v1".to_owned()),
         );
     }
-    if identity.is_verified_genesis() {
+    if identity.can_seed_genesis_binding() {
         payload.insert(
             "genesis_node_id".to_owned(),
             Value::String(identity.node_id.clone()),
@@ -813,6 +854,13 @@ fn sync_settings_claim(
 }
 
 fn sync_trusted_genesis_claim(username: &str, identity: &LocalIdentity) -> Result<(), String> {
+    let identity_lock = identity_lock_for_username(username, identity);
+    if identity_lock.is_empty() {
+        return Err(
+            "Genesis-Claim braucht einen vollstaendigen Yggdrasil-/Hardware-/Username-Lock."
+                .to_owned(),
+        );
+    }
     let path = crate::data_path("trusted_publishers.json");
     let raw = fs::read_to_string(&path).unwrap_or_else(|_| "{}".to_owned());
     let mut root: Value = serde_json::from_str(&raw).unwrap_or_else(|_| Value::Object(Map::new()));
@@ -861,6 +909,14 @@ fn sync_trusted_genesis_claim(username: &str, identity: &LocalIdentity) -> Resul
     );
     entry.insert("node_id".to_owned(), Value::String(identity.node_id.clone()));
     entry.insert("role".to_owned(), Value::String("genesis".to_owned()));
+    entry.insert(
+        "identity_lock".to_owned(),
+        Value::String(identity_lock),
+    );
+    entry.insert(
+        "identity_lock_mode".to_owned(),
+        Value::String("ygg-hw-username-v1".to_owned()),
+    );
     entry
         .entry("notes".to_owned())
         .or_insert_with(|| Value::String("Admin / Genesis Node.".to_owned()));
@@ -1033,7 +1089,7 @@ mod tests {
     use super::*;
 
     fn test_identity() -> LocalIdentity {
-        LocalIdentity {
+        let mut identity = LocalIdentity {
             node_id: "7a280b7e3ab3e042".to_owned(),
             public_key_pem: "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAMsQdjWDgG0yv1IxWEFh5yC2H9bvXpGRKL8OTiVXqHeo=\n-----END PUBLIC KEY-----\n".to_owned(),
             public_key_b64: "MsQdjWDgG0yv1IxWEFh5yC2H9bvXpGRKL8OTiVXqHeo=".to_owned(),
@@ -1043,9 +1099,13 @@ mod tests {
             genesis_publisher_id: "tryharder997".to_owned(),
             genesis_node_id: "7a280b7e3ab3e042".to_owned(),
             genesis_public_key_b64: "MsQdjWDgG0yv1IxWEFh5yC2H9bvXpGRKL8OTiVXqHeo=".to_owned(),
+            genesis_identity_lock: String::new(),
+            genesis_identity_lock_mode: "ygg-hw-username-v1".to_owned(),
             genesis_key_present: true,
             reserved_usernames: HashSet::from(["tryharder997".to_owned()]),
-        }
+        };
+        identity.genesis_identity_lock = identity_lock_for_username("tryharder997", &identity);
+        identity
     }
 
     #[test]
@@ -1127,5 +1187,24 @@ mod tests {
         mismatched.yggdrasil_addr = "200:ca77:8d5c:10b2:e3c0:d06c:6af4:1234".to_owned();
         let err = validate_bound_user(&user, &mismatched).unwrap_err();
         assert!(err.contains("Yggdrasil") || err.contains("Lock"));
+    }
+
+    #[test]
+    fn verified_genesis_requires_manifest_identity_lock_match() {
+        let identity = test_identity();
+        assert!(identity.is_verified_genesis());
+
+        let mut wrong_device = identity.clone();
+        wrong_device.device_fingerprint = "other-device".to_owned();
+        assert!(!wrong_device.is_verified_genesis());
+        assert!(!wrong_device.can_seed_genesis_binding());
+    }
+
+    #[test]
+    fn genesis_binding_can_seed_when_manifest_lock_missing() {
+        let mut identity = test_identity();
+        identity.genesis_identity_lock.clear();
+        assert!(identity.can_seed_genesis_binding());
+        assert!(!identity.is_verified_genesis());
     }
 }

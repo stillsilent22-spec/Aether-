@@ -9,7 +9,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from modules.device_lock import compute_device_fingerprint
-from modules.identity_claim import IDENTITY_LOCK_MODE, compute_identity_lock, public_key_b64_from_pem
+from modules.identity_claim import (
+    IDENTITY_LOCK_MODE,
+    compute_identity_lock,
+    matches_manifest_genesis_identity,
+    public_key_b64_from_pem,
+)
 from modules.session_guard import SessionGuardError, validate_registered_runtime
 
 
@@ -158,6 +163,15 @@ def _prepare_runtime(
                     "public_key": public_key_b64,
                     "node_id": node_id,
                     "role": "genesis",
+                    "identity_lock": compute_identity_lock(
+                        "tryharder997",
+                        node_id,
+                        public_key_b64,
+                        device_fingerprint,
+                        yggdrasil_addr,
+                        True,
+                    ),
+                    "identity_lock_mode": IDENTITY_LOCK_MODE,
                 }
             },
         },
@@ -192,3 +206,51 @@ def test_validate_registered_runtime_rejects_wrong_creator_for_genesis(tmp_path:
 
     with pytest.raises(SessionGuardError, match="Trusted-Publisher-Manifest"):
         validate_registered_runtime(root)
+
+
+def test_validate_registered_runtime_rejects_genesis_manifest_lock_mismatch(tmp_path: Path) -> None:
+    root = _prepare_runtime(
+        tmp_path,
+        username="tryharder997",
+        role="genesis",
+        genesis_bound=True,
+    )
+    manifest_path = root / "data" / "trusted_publishers.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["publishers"]["tryharder997"]["identity_lock"] = "deadbeef"
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(SessionGuardError, match="Trusted-Publisher-Manifest"):
+        validate_registered_runtime(root)
+
+
+def test_matches_manifest_genesis_identity_requires_full_lock_chain(tmp_path: Path) -> None:
+    root = _prepare_runtime(
+        tmp_path,
+        username="tryharder997",
+        role="genesis",
+        genesis_bound=True,
+    )
+    manifest = json.loads((root / "data" / "trusted_publishers.json").read_text(encoding="utf-8"))
+    node = json.loads((root / "data" / "swarm" / "node.json").read_text(encoding="utf-8"))
+    users = json.loads((root / "data" / "rust_shell" / "users.json").read_text(encoding="utf-8"))
+    user = users["users"][0]
+
+    assert matches_manifest_genesis_identity(
+        manifest,
+        username="tryharder997",
+        node_id=str(node.get("node_id", "") or ""),
+        public_key_b64=str(user.get("public_key_b64", "") or ""),
+        device_fingerprint=str(user.get("device_fingerprint", "") or ""),
+        yggdrasil_addr=str(node.get("yggdrasil_addr", "") or ""),
+        identity_lock=str(user.get("identity_lock", "") or ""),
+    )
+    assert not matches_manifest_genesis_identity(
+        manifest,
+        username="tryharder997",
+        node_id=str(node.get("node_id", "") or ""),
+        public_key_b64=str(user.get("public_key_b64", "") or ""),
+        device_fingerprint="other-device",
+        yggdrasil_addr=str(node.get("yggdrasil_addr", "") or ""),
+        identity_lock=str(user.get("identity_lock", "") or ""),
+    )

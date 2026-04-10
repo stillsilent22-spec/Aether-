@@ -232,14 +232,73 @@ def _get_genesis_ygg_addr() -> str:
             return ""
 
 
+def _local_genesis_claim_is_verified() -> bool:
+    """True nur wenn die lokale Genesis-Identitaet vollstaendig an Manifest+Hardware+Ygg gebunden ist."""
+    try:
+        import hmac as _hmac
+
+        from modules.device_lock import _DEVICE_LOCK_PATH, compute_device_fingerprint
+        from modules.identity_claim import (
+            load_trusted_publishers,
+            matches_manifest_genesis_identity,
+            public_key_b64_from_pem,
+        )
+
+        if not GENESIS_KEY_PATH.is_file() or not _DEVICE_LOCK_PATH.is_file():
+            return False
+        raw = GENESIS_KEY_PATH.read_bytes()
+        if len(raw) != 32:
+            return False
+        local_ygg_addr = _get_genesis_ygg_addr()
+        if not local_ygg_addr or not LOCAL_NODE_JSON_PATH.is_file() or not SETTINGS_PATH.is_file():
+            return False
+
+        node_payload = json.loads(LOCAL_NODE_JSON_PATH.read_text(encoding="utf-8"))
+        settings_payload = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        device_lock = json.loads(_DEVICE_LOCK_PATH.read_text(encoding="utf-8"))
+
+        node_id = str(node_payload.get("node_id", "") or "").strip()
+        node_ygg = str(node_payload.get("yggdrasil_addr", "") or "").strip()
+        username = str(
+            settings_payload.get("account_username", node_payload.get("account_username", "")) or ""
+        ).strip()
+        node_identity_lock = str(node_payload.get("account_identity_lock", "") or "").strip()
+        settings_identity_lock = str(settings_payload.get("account_identity_lock", "") or "").strip()
+        public_key_pem = str(node_payload.get("public_key_pem", "") or "").strip()
+        stored_node = str(device_lock.get("node_id", "") or "").strip()
+        stored_fp = str(device_lock.get("device_fingerprint", "") or "").strip()
+        current_fp = compute_device_fingerprint()
+        if not all([node_id, node_ygg, username, node_identity_lock, settings_identity_lock, public_key_pem, stored_node, stored_fp, current_fp]):
+            return False
+        if not _hmac.compare_digest(node_id, stored_node):
+            return False
+        if not _hmac.compare_digest(stored_fp, current_fp):
+            return False
+        if not _hmac.compare_digest(node_identity_lock, settings_identity_lock):
+            return False
+        if not _hmac.compare_digest(node_ygg.lower(), local_ygg_addr.lower()):
+            return False
+        manifest = load_trusted_publishers(ROOT)
+        return matches_manifest_genesis_identity(
+            manifest,
+            username=username,
+            node_id=node_id,
+            public_key_b64=public_key_b64_from_pem(public_key_pem),
+            device_fingerprint=current_fp,
+            yggdrasil_addr=local_ygg_addr,
+            identity_lock=node_identity_lock,
+        )
+    except Exception:
+        return False
+
+
 def _check_is_genesis_node() -> bool:
     """Prüft ob DIESER Knoten der Genesis-Node ist.
 
-    True nur wenn genesis_node.key existiert (32 Byte) UND daraus eine
-    Yggdrasil-Adresse ableitbar ist. Kein Vergleich gegen eine hardcodierte
-    Adresse — die Adresse ist nur diesem Knoten bekannt.
+    True nur wenn genesis_node.key existiert, die lokale Yggdrasil-Adresse
+    ableitbar ist UND der lokale Claim zum Manifest-/Hardware-/Username-Lock passt.
     """
-    return bool(_get_genesis_ygg_addr())
+    return _local_genesis_claim_is_verified()
 
 
 # --------------------------------------------------------------------------- #
@@ -1233,13 +1292,36 @@ class P2PLayer:
         # Nur der Genesis-Knoten selbst kennt die korrekte Adresse (aus Key).
         # Nicht-Genesis-Knoten lernen sie beim ersten echten Kontakt und prüfen danach.
         if msg.get("is_genesis_node") and not self._is_genesis_node:
-            sender_addr = str(msg.get("ygg_addr", "") or "").strip()
-            known_genesis_addr = _get_genesis_ygg_addr()  # "" wenn kein lokaler Key
-            if sender_addr and known_genesis_addr and sender_addr.lower() != known_genesis_addr.lower():
+            known_genesis_addr = _get_genesis_ygg_addr() or str(
+                self._config.get("genesis_yggdrasil_addr", "") or ""
+            ).strip()
+            if incoming_ygg_addr and known_genesis_addr and incoming_ygg_addr.lower() != known_genesis_addr.lower():
                 logger.warning(
                     f"[P2P] Spoofing-Versuch abgewehrt: Peer {peer_id[:16]}... "
                     f"behauptet Genesis-Node, aber Adresse stimmt nicht."
                 )
+                return
+            try:
+                from modules.identity_claim import (
+                    load_trusted_publishers,
+                    matches_manifest_genesis_identity,
+                )
+
+                manifest = load_trusted_publishers(ROOT)
+                if not matches_manifest_genesis_identity(
+                    manifest,
+                    username=incoming_username,
+                    node_id=incoming_node_id,
+                    device_fingerprint=incoming_device_fp,
+                    yggdrasil_addr=incoming_ygg_addr,
+                    identity_lock=incoming_identity_lock,
+                ):
+                    logger.warning(
+                        f"[P2P] Spoofing-Versuch abgewehrt: Peer {peer_id[:16]}... "
+                        f"behauptet Genesis-Node ohne passenden Manifest-Lock."
+                    )
+                    return
+            except ImportError:
                 return
 
         if peer_id and peer_id != self._peer_id:

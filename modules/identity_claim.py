@@ -186,15 +186,66 @@ def trusted_publisher_entry(manifest: dict[str, Any], publisher_id: Optional[str
     return dict(entry) if isinstance(entry, dict) else {}
 
 
+def matches_manifest_genesis_identity(
+    manifest: dict[str, Any],
+    *,
+    username: str,
+    node_id: str,
+    public_key_b64: str = "",
+    device_fingerprint: str,
+    yggdrasil_addr: str,
+    identity_lock: str,
+) -> bool:
+    normalized_username = str(username or "").strip().lower()
+    normalized_node_id = str(node_id or "").strip().lower()
+    normalized_public_key = str(public_key_b64 or "").strip()
+    normalized_identity_lock = str(identity_lock or "").strip()
+    expected_publisher_id = admin_publisher_id(manifest)
+    entry = trusted_publisher_entry(manifest, expected_publisher_id)
+    if normalized_username != expected_publisher_id.lower():
+        return False
+    if not bool(entry.get("enabled", False)):
+        return False
+    if str(entry.get("role", "") or "").strip().lower() != "genesis":
+        return False
+    stored_node_id = str(entry.get("node_id", "") or "").strip().lower()
+    stored_public_key = str(entry.get("public_key", "") or "").strip()
+    stored_identity_lock = str(entry.get("identity_lock", "") or "").strip()
+    stored_identity_lock_mode = str(entry.get("identity_lock_mode", "") or "").strip()
+    if not stored_node_id or not stored_public_key or not stored_identity_lock:
+        return False
+    if stored_identity_lock_mode and stored_identity_lock_mode != IDENTITY_LOCK_MODE:
+        return False
+    if not hmac.compare_digest(stored_node_id, normalized_node_id):
+        return False
+    if normalized_public_key and not hmac.compare_digest(stored_public_key, normalized_public_key):
+        return False
+    expected_lock = compute_identity_lock(
+        expected_publisher_id,
+        stored_node_id,
+        stored_public_key,
+        str(device_fingerprint or "").strip(),
+        str(yggdrasil_addr or "").strip(),
+        True,
+    )
+    if not expected_lock:
+        return False
+    if not hmac.compare_digest(stored_identity_lock, expected_lock):
+        return False
+    return bool(normalized_identity_lock and hmac.compare_digest(normalized_identity_lock, expected_lock))
+
+
 def is_verified_genesis_claim(
     username: str,
     node_id: str,
     public_key_b64: str,
     manifest: dict[str, Any],
+    identity_lock: str = "",
 ) -> bool:
     normalized_username = str(username or "").strip()
     normalized_node_id = str(node_id or "").strip()
     normalized_public_key = str(public_key_b64 or "").strip()
+    normalized_identity_lock = str(identity_lock or "").strip()
     expected_publisher_id = admin_publisher_id(manifest)
     entry = trusted_publisher_entry(manifest, expected_publisher_id)
     if not normalized_username or not normalized_node_id or not normalized_public_key:
@@ -207,8 +258,17 @@ def is_verified_genesis_claim(
         return False
     stored_node_id = str(entry.get("node_id", "") or "").strip()
     stored_public_key = str(entry.get("public_key", "") or "").strip()
+    stored_identity_lock = str(entry.get("identity_lock", "") or "").strip()
+    stored_identity_lock_mode = str(entry.get("identity_lock_mode", "") or "").strip()
     if stored_node_id and not hmac.compare_digest(stored_node_id, normalized_node_id):
         return False
     if stored_public_key and not hmac.compare_digest(stored_public_key, normalized_public_key):
         return False
+    if stored_identity_lock:
+        if not normalized_identity_lock:
+            return False
+        if stored_identity_lock_mode and stored_identity_lock_mode != IDENTITY_LOCK_MODE:
+            return False
+        if not hmac.compare_digest(stored_identity_lock, normalized_identity_lock):
+            return False
     return True

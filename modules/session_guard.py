@@ -260,7 +260,19 @@ def validate_registered_runtime(root: Path | None = None) -> None:
         expected_creator = admin_publisher_id(manifest)
         if creator_locked_username and creator_locked_username.lower() != expected_creator.lower():
             raise SessionGuardError("Genesis-Claim ist an den falschen Creator-Usernamen gebunden.")
-        if not is_verified_genesis_claim(username, node_id, public_key_b64, manifest):
+        if not yggdrasil_addr:
+            raise SessionGuardError("Genesis-Claim braucht eine lokale Yggdrasil-Adresse.")
+        if not expected_identity_lock:
+            raise SessionGuardError(
+                "Genesis-Claim braucht einen vollstaendigen Yggdrasil-/Hardware-/Username-Lock."
+            )
+        if not is_verified_genesis_claim(
+            username,
+            node_id,
+            public_key_b64,
+            manifest,
+            expected_identity_lock,
+        ):
             raise SessionGuardError("Genesis-Claim passt nicht zum Trusted-Publisher-Manifest.")
 
 
