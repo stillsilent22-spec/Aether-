@@ -319,6 +319,16 @@ class AnalysisCapsuleEngine:
         )
         shared_anchor_pack = self._shared_anchor_pack(signal, spec, invariants, entropy_blocks)
         godel_loop: Dict[str, Any] = {}
+        if spec.enable_godel_loop and signal:
+            try:
+                from modules.godel_loop_renderer import GoedelLoopRenderer as _GLR
+                _glr_result = _GLR().run_on_bytes(
+                    signal[:4096],  # Nur ersten 4096 Bytes — Metrik reicht, keine Rohdaten
+                    max_depth=int(spec.max_godel_depth),
+                )
+                godel_loop = _glr_result
+            except Exception:
+                godel_loop = {}
         anomaly_flags = self._anomaly_flags(metrics, invariants, godel_loop)
         return AnalysisCapsuleResult(
             spec=spec,

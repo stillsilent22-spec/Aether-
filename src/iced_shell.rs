@@ -928,6 +928,11 @@ pub struct AetherIcedShell {
     live_render_bits_per_joule: f32,
     /// Rolling history of bits-per-joule (last 60 values = ~2 min at default tick).
     live_render_bpj_history: Vec<f32>,
+    /// Gödelstop counter for the outer live-render analysis loop.
+    /// Incremented when the inner Gödel probe converges naturally (delta < 1%).
+    /// When >= 5: outer analysis is paused for this tick (prevents endless self-analysis).
+    /// Reset to 0 when the signal is no longer stable.
+    live_render_godel_stop_skip: u8,
     /// True when the user explicitly toggled Live-Render via the button (survives tab switches).
     /// False (default): context-driven — active automatically only on Gaming / Media tabs.
     live_render_explicit: bool,
@@ -1166,6 +1171,7 @@ impl AetherIcedShell {
             live_render_noether_prev_entropy: 0.0,
             live_render_bits_per_joule: 0.0,
             live_render_bpj_history: Vec::new(),
+            live_render_godel_stop_skip: 0,
             live_render_explicit: false,
             pending_analysis_world: None,
             pending_analysis_path: None,
@@ -6521,9 +6527,55 @@ On warning: always check Logs and ADE for details.",
                             if ae.has_interfere { "interfere" } else { "" })
                     } else { "\u{2014}".to_owned() }).size(11).color(dim),
                 ].spacing(8),
+
                 row![
                     text("").width(Length::Fixed(240.0)),
-                    text("(weniger Ops + gleiche Fitness = n\u{00e4}her an K-Minimum)").size(11).color(dim),
+                    text("(weniger Ops + gleiche Fitness = näher an K-Minimum)").size(11).color(dim),
+                ].spacing(8),
+
+                // Trennlinie: Gödel-Selbstreferenz
+                text("\u{25b6}  GÖDEL-SELBSTREFERENZ  \u{2014}  Probe: Signal \u{2192} Metrik \u{2192} Signal \u{2192} \u{2026}")
+                    .size(13).color(cyan),
+                text("Iterativer Fixpunkt-Test: konvergiert das System wenn es sich selbst beschreibt?")
+                    .size(11).color(dim),
+                row![
+                    text("Gödel-Probe Tiefe:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(if self.live_render_mode {
+                        format!("{} / 3", self.live_render_last_godel_level)
+                    } else {
+                        "\u{2014}".to_owned()
+                    }).size(13)
+                        .color(if self.live_render_last_godel_level < 3 { green }
+                               else { amber }),
+                    text(if self.live_render_mode && self.live_render_last_godel_level < 3 {
+                        "  \u{2713} Fixpunkt erreicht (nat\u{00fc}rliche Konvergenz)"
+                    } else if self.live_render_mode {
+                        "  \u{26a0} max_depth erzwungen (Gödel-Rest > 0)"
+                    } else {
+                        "  (Live Render inaktiv)"
+                    }).size(11).color(dim),
+                ].spacing(8),
+                row![
+                    text("Konvergenz-Delta:").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(if self.live_render_mode {
+                        format!("{:.2}%", self.live_render_last_godel_delta)
+                    } else {
+                        "\u{2014}".to_owned()
+                    }).size(13)
+                        .color(if self.live_render_last_godel_delta < 1.0 { green }
+                               else if self.live_render_last_godel_delta < 5.0 { amber }
+                               else { red }),
+                    text("  (< 1% = Fixpunkt, System beschreibt sich stabil selbst)").size(11).color(dim),
+                ].spacing(8),
+                row![
+                    text("Gödelstop (äußere Schleife):").size(13).color(dim).width(Length::Fixed(240.0)),
+                    text(if self.live_render_godel_stop_skip > 0 {
+                        format!("AKTIV (skip-zähler={})", self.live_render_godel_stop_skip)
+                    } else {
+                        "inaktiv".to_owned()
+                    }).size(13)
+                        .color(if self.live_render_godel_stop_skip > 0 { green } else { dim }),
+                    text("  (verhindert endlose Selbstanalyse wenn Signal stabil)").size(11).color(dim),
                 ].spacing(8),
 
                 // Trennlinie: MDL
@@ -7998,6 +8050,12 @@ On warning: always check Logs and ADE for details.",
             self.live_render_invariant_streak = self.live_render_invariant_streak.saturating_add(1);
         } else {
             self.live_render_invariant_streak = 0;
+        // Gödelstop-Zähler: konvergierte Probe = endlose Selbstanalyse vermeiden
+        if godel_delta_percent < 1.0 && godel_level < 3 {
+            self.live_render_godel_stop_skip = self.live_render_godel_stop_skip.saturating_add(1);
+        } else {
+            self.live_render_godel_stop_skip = 0;
+        }
         }
 
         // --- Noether K: Zeitliche Erhaltungsgröße nach Noether-Theorem ---
@@ -8049,6 +8107,12 @@ On warning: always check Logs and ADE for details.",
         let (godel_level, godel_delta_percent) = self.run_live_godel_probe(&frame_bytes, 3);
         self.live_render_last_godel_level = godel_level;
         self.live_render_last_godel_delta = godel_delta_percent;
+        // Gödelstop-Zähler: konvergierte Probe = endlose Selbstanalyse vermeiden
+        if godel_delta_percent < 1.0 && godel_level < 3 {
+            self.live_render_godel_stop_skip = self.live_render_godel_stop_skip.saturating_add(1);
+        } else {
+            self.live_render_godel_stop_skip = 0;
+        }
         self.live_render_anchor_boost = self.backend_anchor_count > 0
             && self.live_render_invariant_streak >= 3
             && godel_delta_percent < 1.0;
@@ -9243,9 +9307,15 @@ On warning: always check Logs and ADE for details.",
                 let new_level = match self.app_mode {
                     AppMode::Full => window::Level::Normal,
                     AppMode::Overlay => window::Level::AlwaysOnTop,
-                };
-                return window::get_latest().then(move |id_opt| {
-                    if let Some(id) = id_opt {
+                };// GÖDELSTOP: Wenn die innere Probe N× konvergiert ist, Analyse pausieren.
+                    // Verhindert dass das System endlos seine eigene stabile Ausgabe analysiert.
+                    // Reset erfolgt automatisch sobald sich das Signal wieder ändert (delta > 1%).
+                    let godel_stop_active = self.live_render_godel_stop_skip >= 5
+                        && self.live_render_invariant_streak >= 3;
+                    if !self.live_render_analysis_running
+                        && self.tick_counter % self.live_render_analysis_interval_ticks() == 0
+                        && !self.live_render_last_frame.is_empty()
+                        && !godel_stop_active
                         Task::batch(vec![
                             window::resize(id, iced::Size::new(new_w, new_h)),
                             window::change_level(id, new_level),
@@ -9300,9 +9370,15 @@ On warning: always check Logs and ADE for details.",
                             }
                         }
                     }
+                    // GÖDELSTOP: Wenn die innere Probe N× konvergiert ist, Analyse pausieren.
+                    // Verhindert dass das System endlos seine eigene stabile Ausgabe analysiert.
+                    // Reset erfolgt automatisch sobald sich das Signal wieder ändert (delta > 1%).
+                    let godel_stop_active = self.live_render_godel_stop_skip >= 5
+                        && self.live_render_invariant_streak >= 3;
                     if !self.live_render_analysis_running
                         && self.tick_counter % self.live_render_analysis_interval_ticks() == 0
                         && !self.live_render_last_frame.is_empty()
+                        && !godel_stop_active
                     {
                         self.live_render_analysis_running = true;
                         queued_tasks.push(Task::perform(
