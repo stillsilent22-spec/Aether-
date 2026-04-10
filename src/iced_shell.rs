@@ -595,6 +595,11 @@ struct LiveRenderAnalysisResult {
     compression_state: Option<CompressionViewState>,
     reconstruction_state: Option<ReconstructionAuditViewState>,
     structure_map_nodes: Vec<Vec<f32>>,
+    pixel_entropy: f32,
+    pixel_symmetry: f32,
+    pixel_resonance: f32,
+    pixel_source: String,
+    pixel_frame_size: u32,
 }
 
 // ─── Domain enums & types ─────────────────────────────────────────────────────
@@ -933,6 +938,11 @@ pub struct AetherIcedShell {
     /// When >= 5: outer analysis is paused for this tick (prevents endless self-analysis).
     /// Reset to 0 when the signal is no longer stable.
     live_render_godel_stop_skip: u8,
+    live_render_pixel_entropy: f32,
+    live_render_pixel_symmetry: f32,
+    live_render_pixel_resonance: f32,
+    live_render_pixel_source: String,
+    live_render_pixel_frame_size: u32,
     /// True when the user explicitly toggled Live-Render via the button (survives tab switches).
     /// False (default): context-driven — active automatically only on Gaming / Media tabs.
     live_render_explicit: bool,
@@ -1172,6 +1182,11 @@ impl AetherIcedShell {
             live_render_bits_per_joule: 0.0,
             live_render_bpj_history: Vec::new(),
             live_render_godel_stop_skip: 0,
+            live_render_pixel_entropy: 0.0,
+            live_render_pixel_symmetry: 0.0,
+            live_render_pixel_resonance: 0.0,
+            live_render_pixel_source: String::new(),
+            live_render_pixel_frame_size: 0,
             live_render_explicit: false,
             pending_analysis_world: None,
             pending_analysis_path: None,
@@ -7262,13 +7277,19 @@ On warning: always check Logs and ADE for details.",
                     }),
                 container(
                     text(if self.live_render_mode {
+                        let px_info = if self.live_render_pixel_frame_size > 0 {
+                            format!(" scr:H={:.2}", self.live_render_pixel_entropy)
+                        } else {
+                            String::new()
+                        };
                         format!(
-                            "Live ON | d={:.3} px={:.3} g={} p={}{}",
+                            "Live ON | d={:.3} xor={:.3} g={} p={}{}{}",
                             self.live_render_last_delta_ratio,
                             self.live_render_last_pixeldynamics,
                             self.live_render_last_godel_level,
                             self.live_render_saved_patterns,
-                            if self.live_render_anchor_boost { " | AnchorBoost" } else { "" }
+                            if self.live_render_anchor_boost { " | AnchorBoost" } else { "" },
+                            px_info
                         )
                     } else {
                         "LiveRender OFF".to_owned()
@@ -7744,6 +7765,11 @@ On warning: always check Logs and ADE for details.",
             self.live_render_noether_symmetry_preserved = true;
             self.live_render_noether_prev_spectral = [0.0f32; 5];
             self.live_render_noether_prev_entropy = 0.0;
+            self.live_render_pixel_entropy = 0.0;
+            self.live_render_pixel_symmetry = 0.0;
+            self.live_render_pixel_resonance = 0.0;
+            self.live_render_pixel_source = String::new();
+            self.live_render_pixel_frame_size = 0;
         }
     }
 
@@ -8909,6 +8935,13 @@ On warning: always check Logs and ADE for details.",
                 match result {
                     Ok(result) => {
                         let live_result_for_gaming = result.clone();
+                        if result.pixel_frame_size > 0 {
+                            self.live_render_pixel_entropy   = result.pixel_entropy;
+                            self.live_render_pixel_symmetry  = result.pixel_symmetry;
+                            self.live_render_pixel_resonance = result.pixel_resonance;
+                            self.live_render_pixel_source    = result.pixel_source.clone();
+                            self.live_render_pixel_frame_size = result.pixel_frame_size;
+                        }
                         self.apply_projection_state(
                             result.capsule_state,
                             result.structure_map_state,
@@ -9307,15 +9340,9 @@ On warning: always check Logs and ADE for details.",
                 let new_level = match self.app_mode {
                     AppMode::Full => window::Level::Normal,
                     AppMode::Overlay => window::Level::AlwaysOnTop,
-                };// GÖDELSTOP: Wenn die innere Probe N× konvergiert ist, Analyse pausieren.
-                    // Verhindert dass das System endlos seine eigene stabile Ausgabe analysiert.
-                    // Reset erfolgt automatisch sobald sich das Signal wieder ändert (delta > 1%).
-                    let godel_stop_active = self.live_render_godel_stop_skip >= 5
-                        && self.live_render_invariant_streak >= 3;
-                    if !self.live_render_analysis_running
-                        && self.tick_counter % self.live_render_analysis_interval_ticks() == 0
-                        && !self.live_render_last_frame.is_empty()
-                        && !godel_stop_active
+                };
+                window::get_latest().then(move |id_opt| {
+                    if let Some(id) = id_opt {
                         Task::batch(vec![
                             window::resize(id, iced::Size::new(new_w, new_h)),
                             window::change_level(id, new_level),
@@ -9323,7 +9350,7 @@ On warning: always check Logs and ADE for details.",
                     } else {
                         Task::none()
                     }
-                });
+                })
             }
             Message::LiveRenderToggle => {
                 let enable = !self.live_render_mode;
@@ -9381,11 +9408,20 @@ On warning: always check Logs and ADE for details.",
                         && !godel_stop_active
                     {
                         self.live_render_analysis_running = true;
+                        let game_label = self.active_gaming_game_id
+                            .as_deref()
+                            .map(|p| std::path::Path::new(p)
+                                .file_stem()
+                                .and_then(|s| s.to_str())
+                                .unwrap_or(p)
+                                .to_owned())
+                            .unwrap_or_default();
                         queued_tasks.push(Task::perform(
                             analyze_live_signal_for_shell(
                                 self.live_render_last_frame.clone(),
                                 previous_live_signal,
                                 self.tick_counter,
+                                game_label,
                             ),
                             Message::LiveRenderAnalysisCompleted,
                         ));
@@ -13198,6 +13234,7 @@ async fn analyze_live_signal_for_shell(
     raw: Vec<u8>,
     previous_signal: Vec<u8>,
     tick: u64,
+    game_label: String,
 ) -> Result<LiveRenderAnalysisResult, String> {
     let raw_b64 = base64::engine::general_purpose::STANDARD.encode(raw.as_slice());
     let previous_b64 = if previous_signal.is_empty() {
@@ -13206,14 +13243,42 @@ async fn analyze_live_signal_for_shell(
         base64::engine::general_purpose::STANDARD.encode(previous_signal.as_slice())
     };
     let source_label = format!("live_render:{tick}");
-    let script = "import base64,json,sys; from aether_pipeline import AetherPipeline; raw=base64.b64decode(sys.argv[1]); prev=base64.b64decode(sys.argv[2]) if sys.argv[2] else None; print(json.dumps(AetherPipeline().process_live_signal(raw, source_label=sys.argv[3], previous_signal=prev), ensure_ascii=True))";
+    // Multiline Python: Normalanalyse + optionaler Pixel-Capture (mss, scoped auf Spielprozess).
+    // Pixel-Capture nur wenn game_label != "" (Live Render aktiv + Gaming-Tab mit aktivem Spiel).
+    // Eigene PID ist in RenderCoordinator hart gesperrt (Godel self-reference lock).
+    let script = r###"import base64,json,sys
+from aether_pipeline import AetherPipeline
+raw=base64.b64decode(sys.argv[1])
+prev=base64.b64decode(sys.argv[2]) if sys.argv[2] else None
+result=AetherPipeline().process_live_signal(raw,source_label=sys.argv[3],previous_signal=prev)
+game=sys.argv[4] if len(sys.argv)>4 else ''
+px={'entropy':0.0,'symmetry':0.0,'resonance':0.0,'source':'none','frame_size':0}
+if game:
+    try:
+        import psutil
+        from modules.render_coordinator import RenderCoordinator
+        pid=next((p.pid for p in psutil.process_iter(['pid','name']) if game.lower() in (p.info.get('name') or '').lower()),0)
+        if pid:
+            fr=RenderCoordinator().capture_process_render(pid,window_title=game)
+            if fr:
+                px={'entropy':fr.entropy,'symmetry':fr.symmetry,'resonance':fr.resonance,'source':fr.source,'frame_size':fr.frame_size}
+    except Exception:
+        pass
+result['pixel_render']=px
+print(json.dumps(result,ensure_ascii=True))"###;
     let result = run_pipeline_json(
         script,
-        &[raw_b64, previous_b64, source_label],
+        &[raw_b64, previous_b64, source_label, game_label],
         "Live-Render",
     )?;
 
     let structure_map = result.get("structure_map").cloned().unwrap_or(serde_json::Value::Null);
+    let px = result.get("pixel_render");
+    let pixel_entropy    = px.and_then(|v| v.get("entropy")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let pixel_symmetry   = px.and_then(|v| v.get("symmetry")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let pixel_resonance  = px.and_then(|v| v.get("resonance")).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+    let pixel_source     = px.and_then(|v| v.get("source")).and_then(|v| v.as_str()).unwrap_or("none").to_owned();
+    let pixel_frame_size = px.and_then(|v| v.get("frame_size")).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     Ok(LiveRenderAnalysisResult {
         capsule_state: CapsuleViewState::from_pipeline_result(&result),
         structure_map_state: structure_map_state_from_result(&result),
@@ -13221,6 +13286,11 @@ async fn analyze_live_signal_for_shell(
         compression_state: CompressionViewState::from_result(&result),
         reconstruction_state: ReconstructionAuditViewState::from_result(&result),
         structure_map_nodes: structure_map_rings(&structure_map),
+        pixel_entropy,
+        pixel_symmetry,
+        pixel_resonance,
+        pixel_source,
+        pixel_frame_size,
     })
 }
 

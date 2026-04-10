@@ -554,9 +554,6 @@ fn identity_lock_for_username(username: &str, identity: &LocalIdentity) -> Strin
     }
     String::new()
 }
-        .as_bytes(),
-    )
-}
 
 fn ensure_local_account_available(
     users: &[UserRecord],

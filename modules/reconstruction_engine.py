@@ -32,8 +32,11 @@ except ImportError:
     from modules.render_coordinator import RenderCoordinator  # type: ignore
 try:
     from .optimize_engine import OptimizeEngine
-except ImportError as e:
-    from modules.optimize_engine import OptimizeEngine  # type: ignore
+except ImportError:
+    try:
+        from modules.optimize_engine import OptimizeEngine  # type: ignore
+    except ImportError:
+        OptimizeEngine = None  # type: ignore  # optional performance module
 try:
     from .process_engine import capture_process_state, process_to_feature_vector, ProcessSnapshot
 except ImportError as e:
