@@ -209,27 +209,47 @@ _genesis_ygg_addr_lock = threading.Lock()
 
 
 def _get_genesis_ygg_addr() -> str:
-    """Leitet die Genesis-Yggdrasil-Adresse zur Laufzeit aus dem lokalen Key ab.
+    """Gibt die Genesis-Yggdrasil-Adresse zurueck.
 
-    Gibt "" zurück wenn kein genesis_node.key vorhanden (Nicht-Genesis-Knoten).
+    Priorität:
+    1. Ableitung aus genesis_node.key (nur auf dem Genesis-Knoten selbst).
+    2. Fallback: yggdrasil_addr-Feld im trusted_publishers-Manifest für den
+       admin_publisher_id (genesis) Eintrag — so koennen Nicht-Genesis-Knoten
+       die Adresse fuer den Gossip-Spoofing-Check verwenden.
+
     Ergebnis wird gecacht — kein wiederholter Disk-Read nach erstem Aufruf.
-    Die Adresse steht nie im Source-Code oder in einem Repo-Commit.
+    Die Adresse steht nie im Source-Code (nur in Datendateien, nie im Repo-Commit).
     """
     global _genesis_ygg_addr_cache
     with _genesis_ygg_addr_lock:
         if _genesis_ygg_addr_cache:
             return _genesis_ygg_addr_cache
+        addr = ""
+        # Primär: aus genesis_node.key ableiten (Genesis-Knoten selbst)
         try:
-            if not GENESIS_KEY_PATH.is_file():
-                return ""
-            raw = GENESIS_KEY_PATH.read_bytes()
-            if len(raw) != 32:
-                return ""
-            from modules.yggdrasil_addr import derive_yggdrasil_address
-            _genesis_ygg_addr_cache = derive_yggdrasil_address(raw)
-            return _genesis_ygg_addr_cache
+            if GENESIS_KEY_PATH.is_file():
+                raw = GENESIS_KEY_PATH.read_bytes()
+                if len(raw) == 32:
+                    from modules.yggdrasil_addr import derive_yggdrasil_address
+                    addr = derive_yggdrasil_address(raw)
         except Exception:
-            return ""
+            pass
+        # Fallback: aus trusted_publishers.json (Manifest-Feld) — für Nicht-Genesis-Knoten
+        if not addr:
+            try:
+                from modules.identity_claim import load_trusted_publishers
+                manifest = load_trusted_publishers(ROOT)
+                pub_id = str(manifest.get("admin_publisher_id", "") or "").strip()
+                if pub_id:
+                    entry = manifest.get("publishers", {}).get(pub_id, {})
+                    manifest_addr = str(entry.get("yggdrasil_addr", "") or "").strip()
+                    if manifest_addr and str(entry.get("role", "") or "").strip().lower() == "genesis":
+                        addr = manifest_addr
+            except Exception:
+                pass
+        if addr:
+            _genesis_ygg_addr_cache = addr
+        return addr
 
 
 def _local_genesis_claim_is_verified() -> bool:

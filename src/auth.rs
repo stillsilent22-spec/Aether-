@@ -61,6 +61,7 @@ struct LocalIdentity {
     public_key_pem: String,
     public_key_b64: String,
     yggdrasil_addr: String,
+    network_entry_id: String,
     device_fingerprint: String,
     native_ygg_capable: bool,
     genesis_publisher_id: String,
@@ -224,9 +225,20 @@ impl AuthStore {
         }
         if !identity_lock.is_empty() {
             user_settings.insert("bound_identity_lock".to_owned(), identity_lock.clone());
+            let lock_mode = if !identity.yggdrasil_addr.is_empty() {
+                "ygg-hw-username-v1"
+            } else {
+                "dht-hw-username-v1"
+            };
             user_settings.insert(
                 "identity_lock_mode".to_owned(),
-                "ygg-hw-username-v1".to_owned(),
+                lock_mode.to_owned(),
+            );
+        }
+        if !identity.network_entry_id.is_empty() {
+            user_settings.insert(
+                "bound_network_entry_id".to_owned(),
+                identity.network_entry_id.clone(),
             );
         }
         user_settings.insert(
@@ -383,6 +395,8 @@ fn load_local_identity() -> Result<LocalIdentity, String> {
     let public_key_raw = decode_ed25519_public_key(&public_key_pem)?;
     let public_key_b64 = BASE64_STANDARD.encode(&public_key_raw);
     let derived_node_id = sha256_hex(&public_key_raw)[..16].to_owned();
+    // DHT peer-id: gleichwertig zur Yggdrasil-Adresse fuer Nicht-Ygg-Knoten
+    let network_entry_id = format!("peer-{}", &sha256_hex(&public_key_raw)[..32]);
     let stored_node_id = json_string(&node_object, "node_id");
     if !stored_node_id.is_empty() && !stored_node_id.eq_ignore_ascii_case(&derived_node_id) {
         node_object.insert("node_id".to_owned(), Value::String(derived_node_id.clone()));
@@ -421,6 +435,7 @@ fn load_local_identity() -> Result<LocalIdentity, String> {
         public_key_pem,
         public_key_b64,
         yggdrasil_addr: json_string(&node_object, "yggdrasil_addr"),
+        network_entry_id,
         device_fingerprint: device_lock.device_fingerprint,
         native_ygg_capable,
         genesis_publisher_id,
@@ -465,6 +480,14 @@ fn load_native_ygg_capability() -> bool {
     {
         return true;
     }
+    // DHT-faehige Hardware gilt ebenfalls als netzwerkgebunden
+    if object
+        .get("dht")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return true;
+    }
     object
         .get("native_tier_rank")
         .and_then(Value::as_u64)
@@ -479,35 +502,58 @@ fn ensure_native_ygg_binding_ready(identity: &LocalIdentity) -> Result<(), Strin
     }
     if identity.device_fingerprint.trim().is_empty() {
         return Err(
-            "Native Yggdrasil-Knoten braucht eine lokale Hardware-Bindung. Starte Aether ueber start.py neu."
+            "Netzwerkgebundener Knoten braucht eine lokale Hardware-Bindung. Starte Aether ueber start.py neu."
                 .to_owned(),
         );
     }
-    if identity.yggdrasil_addr.trim().is_empty() {
-        return Err(
-            "Native Yggdrasil-Knoten braucht eine abgeleitete Yggdrasil-Adresse im lokalen Node-Claim. Starte Aether ueber start.py neu."
-                .to_owned(),
-        );
+    // Ygg-Pfad: Yggdrasil-Adresse erforderlich
+    if !identity.yggdrasil_addr.trim().is_empty() {
+        return Ok(());
     }
-    Ok(())
+    // DHT-Pfad: deterministischer Peer-ID als gleichwertiger Anker
+    if !identity.network_entry_id.trim().is_empty() {
+        return Ok(());
+    }
+    Err(
+        "Netzwerkgebundener Knoten braucht entweder eine Yggdrasil-Adresse oder eine DHT-Peer-ID. Starte Aether ueber start.py neu."
+            .to_owned(),
+    )
 }
 
 fn identity_lock_for_username(username: &str, identity: &LocalIdentity) -> String {
-    if !identity.native_ygg_capable
-        || identity.device_fingerprint.trim().is_empty()
-        || identity.yggdrasil_addr.trim().is_empty()
-    {
+    if !identity.native_ygg_capable || identity.device_fingerprint.trim().is_empty() {
         return String::new();
     }
-    sha256_hex(
-        format!(
-            "aether.ygg-hw-user-lock.v1|{}|{}|{}|{}|{}",
-            username.trim().to_ascii_lowercase(),
-            identity.node_id.trim().to_ascii_lowercase(),
-            identity.public_key_b64.trim(),
-            identity.device_fingerprint.trim(),
-            identity.yggdrasil_addr.trim().to_ascii_lowercase(),
-        )
+    // Ygg-Pfad: Yggdrasil-Adresse als Netzwerk-Anker
+    if !identity.yggdrasil_addr.trim().is_empty() {
+        return sha256_hex(
+            format!(
+                "aether.ygg-hw-user-lock.v1|{}|{}|{}|{}|{}",
+                username.trim().to_ascii_lowercase(),
+                identity.node_id.trim().to_ascii_lowercase(),
+                identity.public_key_b64.trim(),
+                identity.device_fingerprint.trim(),
+                identity.yggdrasil_addr.trim().to_ascii_lowercase(),
+            )
+            .as_bytes(),
+        );
+    }
+    // DHT-Pfad: deterministischer Peer-ID als gleichwertiger Netzwerk-Anker
+    if !identity.network_entry_id.trim().is_empty() {
+        return sha256_hex(
+            format!(
+                "aether.dht-hw-user-lock.v1|{}|{}|{}|{}|{}",
+                username.trim().to_ascii_lowercase(),
+                identity.node_id.trim().to_ascii_lowercase(),
+                identity.public_key_b64.trim(),
+                identity.device_fingerprint.trim(),
+                identity.network_entry_id.trim().to_ascii_lowercase(),
+            )
+            .as_bytes(),
+        );
+    }
+    String::new()
+}
         .as_bytes(),
     )
 }
@@ -704,7 +750,7 @@ fn validate_bound_user(user: &UserRecord, identity: &LocalIdentity) -> Result<()
         }
         let expected_lock = identity_lock_for_username(&user.username, identity);
         if user.native_ygg_bound && user.identity_lock.trim().is_empty() {
-            return Err("Native Yggdrasil-Bindung des Kontos ist unvollstaendig.".to_owned());
+            return Err("Netzwerkbindung des Kontos ist unvollstaendig (kein Identity-Lock gespeichert).".to_owned());
         }
         if !user.identity_lock.is_empty() && user.identity_lock != expected_lock {
             return Err(
@@ -779,9 +825,20 @@ fn sync_node_claim(
             "account_identity_lock".to_owned(),
             Value::String(identity_lock.to_owned()),
         );
+        let lock_mode = if !identity.yggdrasil_addr.is_empty() {
+            "ygg-hw-username-v1"
+        } else {
+            "dht-hw-username-v1"
+        };
         payload.insert(
             "identity_lock_mode".to_owned(),
-            Value::String("ygg-hw-username-v1".to_owned()),
+            Value::String(lock_mode.to_owned()),
+        );
+    }
+    if !identity.network_entry_id.is_empty() {
+        payload.insert(
+            "network_entry_id".to_owned(),
+            Value::String(identity.network_entry_id.clone()),
         );
     }
     if !identity.public_key_pem.is_empty() {
@@ -833,9 +890,14 @@ fn sync_settings_claim(
             "account_identity_lock".to_owned(),
             Value::String(identity_lock.to_owned()),
         );
+        let lock_mode = if !identity.yggdrasil_addr.is_empty() {
+            "ygg-hw-username-v1"
+        } else {
+            "dht-hw-username-v1"
+        };
         payload.insert(
             "identity_lock_mode".to_owned(),
-            Value::String("ygg-hw-username-v1".to_owned()),
+            Value::String(lock_mode.to_owned()),
         );
     }
     if identity.can_seed_genesis_binding() {

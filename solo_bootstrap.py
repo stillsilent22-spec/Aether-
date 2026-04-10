@@ -89,9 +89,11 @@ def run_bootstrap(dry_run: bool = False) -> dict:
     else:
         private_key = Ed25519PrivateKey.generate()
 
-    # SCHRITT 4 — node_id berechnen
+    # SCHRITT 4 — node_id und DHT peer-id berechnen
     pub_bytes = private_key.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     node_id = hashlib.sha256(pub_bytes).hexdigest()[:16]
+    # Deterministischer DHT-Identifikator: gleichwertig zur Yggdrasil-Adresse
+    network_entry_id = "peer-" + hashlib.sha256(pub_bytes).hexdigest()[:32]
 
     # SCHRITT 5 — Genesis-Kollisions-Check
     if node_id == GENESIS_NODE_ID and not _local_genesis_binding_present(base):
@@ -150,6 +152,7 @@ def run_bootstrap(dry_run: bool = False) -> dict:
         "yggdrasil_addr": None,
         "device_fingerprint": device_fingerprint,
         "alias_username": alias_username,
+        "network_entry_id": network_entry_id,
     }
     node_json_path.write_text(
         json.dumps(node_payload, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -179,7 +182,7 @@ def run_bootstrap(dry_run: bool = False) -> dict:
                 "relay_bridge_mode": True,
                 "ygg_addr": "",
                 "identity_lock": "",
-                "network_entry_id": "",
+                "network_entry_id": network_entry_id,
                 "native_ygg_bound": False,
                 "created_at": registered_at,
             }, indent=2, ensure_ascii=False),
