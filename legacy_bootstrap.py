@@ -94,6 +94,32 @@ def _windows_machine_guid():
         return ""
 
 
+def _compute_network_entry_id(node_id, device_fp):
+    """Deterministischer DHT-Peer-Bezeichner fuer Legacy-Knoten.
+
+    Identische Ableitung wie modules/symbiont_engine.py und auth.rs,
+    damit jeder Legacy-PC eine stabile, Hardware-gebundene Peer-ID hat.
+    """
+    raw = "legacy-dht|" + device_fp + "|" + node_id
+    if sys.version_info[0] >= 3:
+        raw = raw.encode("utf-8")
+    return "peer-" + hashlib.sha256(raw).hexdigest()[:32]
+
+
+def _compute_identity_lock(alias_username, node_id, device_fp, network_entry_id):
+    """SHA-256 identity lock — kompatibel mit auth.rs dht-hw-user-lock.v1 Schema."""
+    raw = (
+        "aether.dht-hw-user-lock.v1|"
+        + alias_username + "|"
+        + node_id + "||"
+        + device_fp + "|"
+        + network_entry_id
+    )
+    if sys.version_info[0] >= 3:
+        raw = raw.encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
 def _compute_legacy_fingerprint(node_id):
     """SHA-256 Hardware-Fingerprint — stabil, nicht umkehrbar.
 
@@ -162,6 +188,8 @@ def _ensure_legacy_identity():
     node_id = _load_or_create_node_id()
     device_fp = _compute_legacy_fingerprint(node_id)
     alias_username = "aether_" + node_id[:8]
+    network_entry_id = _compute_network_entry_id(node_id, device_fp)
+    identity_lock = _compute_identity_lock(alias_username, node_id, device_fp, network_entry_id)
     ts = _timestamp()
 
     node_record = {
@@ -193,11 +221,27 @@ def _ensure_legacy_identity():
             "claim_mode": "alias",
             "relay_bridge_mode": True,
             "ygg_addr": "",
-            "identity_lock": "",
-            "network_entry_id": "",
+            "identity_lock": identity_lock,
+            "network_entry_id": network_entry_id,
             "native_ygg_bound": False,
             "created_at": ts,
         })
+    elif json is not None:
+        # Backfill identity_lock and network_entry_id if still empty from
+        # an older bootstrap run that pre-dates this fix.
+        try:
+            claim = json.loads(open(ACCOUNT_CLAIM_PATH).read())
+            updated = False
+            if not str(claim.get("network_entry_id", "") or "").strip():
+                claim["network_entry_id"] = network_entry_id
+                updated = True
+            if not str(claim.get("identity_lock", "") or "").strip():
+                claim["identity_lock"] = identity_lock
+                updated = True
+            if updated:
+                _write_json(ACCOUNT_CLAIM_PATH, claim)
+        except Exception:
+            pass
 
     if not os.path.isfile(DEVICE_LOCK_PATH):
         _write_json(DEVICE_LOCK_PATH, {
@@ -206,7 +250,13 @@ def _ensure_legacy_identity():
             "device_fingerprint": device_fp,
         })
 
-    return {"node_id": node_id, "alias_username": alias_username, "device_fingerprint": device_fp}
+    return {
+        "node_id": node_id,
+        "alias_username": alias_username,
+        "device_fingerprint": device_fp,
+        "network_entry_id": network_entry_id,
+        "identity_lock": identity_lock,
+    }
 
 
 def _read_relay_url():
@@ -317,12 +367,15 @@ def _relay_gossip_push_legacy(relay_url, node_id, device_fp, alias_username, kno
     """
     if not relay_url or json is None:
         return False
+    network_entry_id = _compute_network_entry_id(node_id, device_fp)
+    identity_lock = _compute_identity_lock(alias_username, node_id, device_fp, network_entry_id)
     payload_data = {
         "schema": "aether.swarm.p2p.gossip.v1",
         "node_id": node_id,
         "device_fingerprint": device_fp,
         "account_username": alias_username,
-        "peer_id": "peer-" + node_id,
+        "peer_id": network_entry_id,
+        "identity_lock": identity_lock,
         "fingerprints": [],
         "metrics_summary": {"network_tier": "LocalOnly", "relay_bridge_mode": True},
         "is_genesis_node": False,
@@ -593,6 +646,20 @@ def main(argv=None):
     node_id = identity["node_id"]
     device_fp = identity["device_fingerprint"]
     alias_username = identity["alias_username"]
+
+    os_platform, network_tier, tier_rank, _reason = _detect_profile()
+
+    # Symbiont-Engine tick (3. Ordnung) — graceful fallback fuer Win95/98/2000
+    try:
+        _sym_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modules")
+        if _sym_dir not in sys.path:
+            sys.path.insert(0, _sym_dir)
+        from symbiont_engine import tick as _symbiont_tick
+        _hw_cap = {"tier_rank": tier_rank, "native_tier_rank": tier_rank}
+        _symbiont_tick(node_id, device_fp, alias_username, _hw_cap)
+        print("[LEGACY] Symbiont-Engine Tick (Kybernetischer Schwarm 3. Ordnung) OK.")
+    except Exception as _sym_err:
+        print("[LEGACY] Symbiont-Engine nicht verfuegbar: " + str(_sym_err))
 
     # Beim Start: Relay-Pool laden, ersten lebenden Relay auswählen, registrieren.
     relay_pool = _read_relay_pool()
