@@ -1215,6 +1215,20 @@ class P2PLayer:
         except Exception as _phi_err:
             logger.debug(f"[swarm_p2p] phi_snapshot embed: {_phi_err}")
 
+        # Blindspot-Signale: welche Gaps hat dieser Knoten?
+        # Peers sehen unsere Schwächen → helfen aktiv → Gödel-Boost
+        try:
+            from modules.blindspot_engine import BlindspotEngine as _BE
+            _bs = _BE.instance()
+            _bs_signals = _bs.get_signals_for_broadcast()
+            if _bs_signals:
+                msg["blindspot_signals"] = _bs_signals
+            _bs_hints = _bs.get_hints_for_broadcast(self._node_id)
+            if _bs_hints:
+                msg["blindspot_hints"] = _bs_hints
+        except Exception as _bse:
+            logger.debug(f"[swarm_p2p] blindspot embed: {_bse}")
+
         # Write gossip to local interbus for external readers
         try:
             INTERBUS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1459,6 +1473,36 @@ class P2PLayer:
                              f"{_sender_pubkey[:16]}... gespeichert")
             except Exception as _ce:
                 logger.debug(f"[swarm_p2p] phi_candidates recv: {_ce}")
+
+        # Blindspot-Signale empfangen: Gaps des Peers speichern (wir könnten helfen)
+        _bs_peer_signals = list(msg.get("blindspot_signals") or [])
+        _bs_peer_hints   = list(msg.get("blindspot_hints")   or [])
+        if _bs_peer_signals or _bs_peer_hints:
+            try:
+                from modules.blindspot_engine import BlindspotEngine as _BE
+                _bs = _BE.instance()
+                if _bs_peer_signals:
+                    _abs = _bs.absorb_peer_gaps(
+                        incoming_node_id or peer_id,
+                        _bs_peer_signals,
+                    )
+                    if _abs > 0:
+                        logger.debug(
+                            f"[P2P] {_abs} Blindspot-Signale von "
+                            f"{(incoming_node_id or peer_id)[:16]}... gespeichert"
+                        )
+                if _bs_peer_hints:
+                    _abh = _bs.absorb_peer_hints(
+                        _bs_peer_hints,
+                        incoming_node_id or peer_id,
+                    )
+                    if _abh > 0:
+                        logger.info(
+                            f"[P2P] {_abh} Blindspot-Hints von "
+                            f"{(incoming_node_id or peer_id)[:16]}... kristallisiert"
+                        )
+            except Exception as _bse:
+                logger.debug(f"[swarm_p2p] blindspot recv: {_bse}")
 
     def get_received_fingerprints(self, limit: int = 100) -> List[str]:
         """Return all unique fingerprints received from peers."""
