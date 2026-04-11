@@ -196,6 +196,102 @@ def get_last_network_metrics() -> Dict[str, Any]:
     with _pipeline_metrics_lock:
         return dict(_LAST_NETWORK_METRICS)
 
+
+# ---------------------------------------------------------------------------
+# Swarm Convergence State — 3rd-Order Adaptation
+#
+# Wenn der Swarm-Median-h_lambda unter den Schwellwert fällt UND
+# mindestens 3 unabhängige Peers berichten, wechselt der Swarm in
+# "converged"-Zustand. Lokale Knoten können diesen Zustand lesen und
+# ihre eigene Trust-Schwelle / Lernrate anpassen.
+#
+# Schwellen:
+#   H_LAMBDA_CONVERGE_THRESHOLD = 0.5  (unter 0.5 → Swarm gut konvergiert)
+#   ENTROPY_TIGHT_THRESHOLD     = 3.0  (unter 3.0 → Daten strukturell bekannt)
+# ---------------------------------------------------------------------------
+_swarm_conv_lock = threading.Lock()
+_SWARM_CONVERGENCE_STATE: Dict[str, Any] = {
+    "converged": False,
+    "h_lambda_median": None,
+    "entropy_median": None,
+    "peer_count": 0,
+    "ts": 0.0,
+    "event_count": 0,  # Wie oft wurde der Converge-Zustand bisher erreicht?
+}
+H_LAMBDA_CONVERGE_THRESHOLD = 0.5
+ENTROPY_TIGHT_THRESHOLD     = 3.0
+MIN_PEERS_FOR_CONVERGENCE   = 3
+
+
+def get_swarm_convergence_state() -> Dict[str, Any]:
+    """Gibt den aktuellen Swarm-Konvergenz-Zustand zurück.
+
+    Relevant für:
+    - DeltaConvergenceTracker: kann node_count-Faktor aus echtem Peer-Count laden
+    - AnalysisCapsuleEngine: kann Trust-Schwelle anheben wenn Swarm konvergiert
+    - OfflineLearner: erhält Signal dass Swarm-Wissen gut ist
+    """
+    with _swarm_conv_lock:
+        return dict(_SWARM_CONVERGENCE_STATE)
+
+
+def _evaluate_swarm_convergence(net_metrics: Dict[str, Any]) -> bool:
+    """Wertet Netz-Mediane aus und aktualisiert Konvergenz-Zustand.
+
+    Gibt True zurück wenn der Swarm gerade in Konvergenz gewechselt hat
+    (Flanke: False → True), sonst False.
+    """
+    peer_count  = int(net_metrics.get("peer_count", 0))
+    h_lambda    = net_metrics.get("h_lambda")
+    entropy     = net_metrics.get("entropy")
+
+    if peer_count < MIN_PEERS_FOR_CONVERGENCE:
+        with _swarm_conv_lock:
+            _SWARM_CONVERGENCE_STATE["converged"] = False
+            _SWARM_CONVERGENCE_STATE["peer_count"] = peer_count
+        return False
+
+    was_converged = _SWARM_CONVERGENCE_STATE.get("converged", False)
+    h_ok = (h_lambda is not None and float(h_lambda) < H_LAMBDA_CONVERGE_THRESHOLD)
+    e_ok = (entropy  is not None and float(entropy)  < ENTROPY_TIGHT_THRESHOLD)
+    now_converged = h_ok and e_ok
+
+    with _swarm_conv_lock:
+        _SWARM_CONVERGENCE_STATE["converged"]      = now_converged
+        _SWARM_CONVERGENCE_STATE["h_lambda_median"] = h_lambda
+        _SWARM_CONVERGENCE_STATE["entropy_median"]  = entropy
+        _SWARM_CONVERGENCE_STATE["peer_count"]      = peer_count
+        _SWARM_CONVERGENCE_STATE["ts"]              = __import__("time").time()
+        if now_converged:
+            _SWARM_CONVERGENCE_STATE["event_count"] = (
+                _SWARM_CONVERGENCE_STATE.get("event_count", 0) + (0 if was_converged else 1)
+            )
+
+    # Rising-edge: neu konvergiert → auf Disk schreiben + OfflineLearner benachrichtigen
+    if now_converged and not was_converged:
+        try:
+            _path = ROOT / "data" / "interbus" / "swarm_convergence.json"
+            _path.parent.mkdir(parents=True, exist_ok=True)
+            _path.write_text(
+                __import__("json").dumps(dict(_SWARM_CONVERGENCE_STATE), ensure_ascii=True),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+        try:
+            from modules.offline_learning import OfflineLearner as _OL
+            _OL.instance().on_swarm_convergence(
+                h_lambda_median=float(h_lambda or 0.0),
+                entropy_median=float(entropy or 0.0),
+                peer_count=peer_count,
+            )
+        except Exception:
+            pass
+        return True  # Flanke
+
+    return False
+
+
 # --------------------------------------------------------------------------- #
 #  Genesis-Node Identität                                                     #
 # --------------------------------------------------------------------------- #
@@ -1619,6 +1715,81 @@ class P2PLayer:
             "avg_score_pct": round(score_sum / score_n, 1) if score_n else 0,
         }
 
+    def detect_swarm_blindspots(self) -> Dict[str, Any]:
+        """Aggregiert Blindspot-Signale aller Peers und erkennt kollektive Lücken.
+
+        Ein kollektiver Swarm-Blindspot liegt vor wenn:
+        - Eine Domäne (z.B. "periodicity", "noether") in ≥ 50% der meldenden Peers
+          als offener Gap gelistet ist
+        - UND keine Peer-Stärke in dieser Domäne bekannt ist (niemand kann helfen)
+
+        Ziel: Blinde Flecken die ALLE Knoten gemeinsam haben — nicht nur einzelne.
+        Diese werden an BlindspotEngine.absorb_swarm_blindspot_report() übergeben
+        damit alle Knoten wissen: "Das ist eine systematische Lücke unseres Netzes."
+
+        Rückgabe:
+          collective_gaps:  List[str] — Domänen wo >50% Peers Gap haben, niemand stark
+          partial_gaps:     List[str] — Domänen wo >30% Gap, aber jemand kann helfen
+          gap_ratio:        Dict[domain, float] — Anteil Peers mit Gap (0–1)
+          strength_ratio:   Dict[domain, float] — Anteil Peers mit Stärke (0–1)
+          peer_count:       int
+        """
+        with self._received_lock:
+            gossip_snapshot = list(self._received_gossip)
+
+        # Neuestes Paket pro node_id (Flooding-Schutz)
+        latest: Dict[str, Dict] = {}
+        for msg in gossip_snapshot:
+            nid = msg.get("node_id")
+            if nid and isinstance(nid, str):
+                latest[nid] = msg
+
+        total = len(latest)
+        if total == 0:
+            return {"collective_gaps": [], "partial_gaps": [], "peer_count": 0}
+
+        gap_counts:      Dict[str, int] = {}
+        strength_counts: Dict[str, int] = {}
+
+        for msg in latest.values():
+            # Blindspot-Signale (Lücken)
+            for sig in list(msg.get("blindspot_signals") or []):
+                domain = str(sig.get("domain", "")).strip()
+                if domain and not sig.get("resolved", False):
+                    gap_counts[domain] = gap_counts.get(domain, 0) + 1
+            # Blindspot-Hints (Stärken: wer einen Hint schickt, hat Stärke)
+            for hint in list(msg.get("blindspot_hints") or []):
+                domain = str(hint.get("domain", "")).strip()
+                if domain:
+                    strength_counts[domain] = strength_counts.get(domain, 0) + 1
+
+        all_domains = set(gap_counts) | set(strength_counts)
+        gap_ratio:      Dict[str, float] = {}
+        strength_ratio: Dict[str, float] = {}
+        for d in all_domains:
+            gap_ratio[d]      = round(gap_counts.get(d, 0)      / total, 3)
+            strength_ratio[d] = round(strength_counts.get(d, 0) / total, 3)
+
+        collective_gaps = [
+            d for d in all_domains
+            if gap_ratio.get(d, 0.0) >= 0.5 and strength_ratio.get(d, 0.0) < 0.1
+        ]
+        partial_gaps = [
+            d for d in all_domains
+            if gap_ratio.get(d, 0.0) >= 0.3 and d not in collective_gaps
+        ]
+
+        if collective_gaps:
+            logger.info("[swarm] Kollektive Blindspots erkannt: %s", collective_gaps)
+
+        return {
+            "collective_gaps":  collective_gaps,
+            "partial_gaps":     partial_gaps,
+            "gap_ratio":        gap_ratio,
+            "strength_ratio":   strength_ratio,
+            "peer_count":       total,
+        }
+
     def status(self) -> Dict[str, Any]:
         hw = _read_hw_capability()
         cap = _read_capability_score()
@@ -1828,6 +1999,23 @@ class P2PLayer:
                 with _pipeline_metrics_lock:
                     _LAST_NETWORK_METRICS.clear()
                     _LAST_NETWORK_METRICS.update(net)
+                # 3rd-Order: h_lambda/entropy-Schwellwert prüfen → Swarm-Konvergenz
+                converge_edge = _evaluate_swarm_convergence(net)
+                if converge_edge:
+                    logger.info(
+                        "[swarm] 3rd-order Konvergenz: h_lambda=%.3f entropy=%.3f peers=%d",
+                        net.get("h_lambda", 0.0),
+                        net.get("entropy", 0.0),
+                        net.get("peer_count", 0),
+                    )
+                # Swarm-weite Blindspots aggregieren
+                swarm_bs = self.detect_swarm_blindspots()
+                if swarm_bs.get("collective_gaps"):
+                    try:
+                        from modules.blindspot_engine import BlindspotEngine as _BE
+                        _BE.instance().absorb_swarm_blindspot_report(swarm_bs)
+                    except Exception:
+                        pass
             # Offline-Learner: Gossip war erfolgreich
             try:
                 from modules.offline_learning import OfflineLearner as _OL

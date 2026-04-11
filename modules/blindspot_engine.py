@@ -714,6 +714,106 @@ class BlindspotEngine:
 
         return hints[:MAX_GAPS_PER_GOSSIP]
 
+    # ── Kollektive Swarm-Blindspot-Integration ────────────────────────────── #
+
+    def absorb_swarm_blindspot_report(self, report: Dict[str, Any]) -> int:
+        """Verarbeitet einen Swarm-weiten Blindspot-Bericht (aus detect_swarm_blindspots()).
+
+        Für jeden kollektiven Gap (kein Peer kann helfen):
+        - Registriert lokal einen Gap mit Priorität "swarm_collective"
+        - Markiert ihn als systemisch (niemand im Schwarm weiß die Antwort)
+        - Kein Peer-Hint wird generiert — der Gap muss durch neue Erfahrung geschlossen werden
+
+        Für teilweise Gaps (partial_gaps, Helfer vorhanden):
+        - Erhöht lokale Priorität falls dieser Knoten in dieser Domäne schwach ist
+        - Erzeugt keine neuen Gaps — nur Priorisierungshints
+
+        Gibt Anzahl neu registrierter kollektiver Gaps zurück.
+        """
+        collective = list(report.get("collective_gaps") or [])
+        partial    = list(report.get("partial_gaps") or [])
+        gap_ratio  = dict(report.get("gap_ratio") or {})
+        peer_count = int(report.get("peer_count", 0))
+        new_count  = 0
+
+        for domain in collective:
+            sig_id = "swarm-collective-" + hashlib.sha256(
+                domain.encode()
+            ).hexdigest()[:16]
+            with self._lock:
+                if sig_id in self._active_gaps:
+                    # schon bekannt — Priorität erhöhen
+                    self._active_gaps[sig_id].priority = min(
+                        1.0, self._active_gaps[sig_id].priority + 0.1
+                    )
+                    continue
+            # Neu registrieren
+            sig = BlindspotSignal(
+                signal_id=sig_id,
+                domain=str(domain),
+                gap_type="swarm_collective",
+                description=f"Kollektiver Swarm-Gap: {domain} — kein Peer im Schwarm hat Stärke in dieser Domäne",
+                priority=min(10, max(1, int(float(gap_ratio.get(domain, 0.5)) * 10 + 2))),
+                created_ts=time.time(),
+                last_broadcast_ts=0.0,
+                metadata={
+                    "peer_count": peer_count,
+                    "gap_ratio": gap_ratio.get(domain, 0.0),
+                    "collective": True,
+                },
+            )
+            with self._lock:
+                self._active_gaps[sig_id] = sig
+            new_count += 1
+            logger.info(
+                "[blindspot] Swarm-kollektiver Gap registriert: domain=%s ratio=%.2f peers=%d",
+                domain, gap_ratio.get(domain, 0.0), peer_count,
+            )
+
+        # Teilweise Gaps → lokale Priorisierung wenn wir selbst schwach sind
+        with self._lock:
+            strengths = dict(self._known_strengths)
+        for domain in partial:
+            if strengths.get(str(domain), 0.0) < 0.4:
+                # Lokale Stärke fehlt auch → erhöhe Priorität falls aktiver Gap
+                for sig in list(self._active_gaps.values()):
+                    if sig.domain == domain and not sig.resolved:
+                        with self._lock:
+                            sig.priority = min(1.0, sig.priority + 0.05)
+                        break
+
+        if new_count > 0:
+            self._save_state()
+        return new_count
+
+    def get_swarm_blindspot_summary(self) -> Dict[str, Any]:
+        """Gibt alle bekannten Swarm-kollektiven Gaps zurück.
+
+        Unterscheidet:
+        - swarm_collective: niemand im Schwarm kennt die Lösung
+        - swarm_partial: einige Peers haben Stärke, aber nicht alle
+        - local_only: nur dieser Knoten hat den Gap (normale Peer-Unterstützung möglich)
+        """
+        with self._lock:
+            active_snapshot = list(self._active_gaps.values())
+
+        collective = [
+            s.to_dict() for s in active_snapshot
+            if s.gap_type == "swarm_collective" and not s.resolved
+        ]
+        local_only = [
+            s.to_dict() for s in active_snapshot
+            if s.gap_type != "swarm_collective" and not s.resolved
+        ]
+
+        return {
+            "schema":             "aether.blindspot.swarm_summary.v1",
+            "swarm_collective":   collective,
+            "local_only":         local_only,
+            "collective_count":   len(collective),
+            "local_count":        len(local_only),
+        }
+
     def _build_instruction(
         self,
         domain: str,

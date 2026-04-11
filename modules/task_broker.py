@@ -58,7 +58,19 @@ TASK_TTL_SECONDS = 300
 
 @dataclass
 class TaskRequest:
-    """Broadcast: Knoten kündigt Rechenaufgabe für den Schwarm an."""
+    """Broadcast: Knoten kündigt Rechenaufgabe für den Schwarm an.
+
+    Neu (approach protocol):
+      approach_vector  — Partieller Φ-Vektor des anfordernden Knotens: was er selbst
+                         berechnen konnte. Dims die er nicht kennt stehen als 0.0.
+                         Empfangende Peers sehen WO die Lücke liegt und können gezielt
+                         dort ansetzen ohne den vollen Rechenweg neu zu machen.
+      capability_gap   — Liste fehlender Fähigkeit-Tokens (z.B. ["scipy", "rust_shell"]),
+                         die ursächlich für den Task sind.
+      intent_sketch    — Kurzbeschreibung was der Node berechnen wollte (max 120 Bytes,
+                         kein Inhalt, nur struktureller Kontext wie "vault_evolve:audio").
+                         Peers nutzen dies um passende AlgoTokens zu selektieren.
+    """
     task_id:           str
     task_type:         str            # TASK_* Konstante
     payload_fingerprint: str          # SHA256 des Invarianten-Vektors (kein Inhalt)
@@ -68,9 +80,13 @@ class TaskRequest:
     requester_node_id: str
     expires_ts:        float          # Unix-Timestamp
     chunk_class:       str = "generic"
+    # ── Approach protocol (optional, rückwärtskompatibel) ────────────────── #
+    approach_vector:   List[float] = field(default_factory=list)  # partielles Φ
+    capability_gap:    List[str]   = field(default_factory=list)  # fehlende Caps
+    intent_sketch:     str         = ""                           # max 120 Zeichen
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "schema":               "aether.task.request.v1",
             "task_id":              self.task_id,
             "task_type":            self.task_type,
@@ -82,6 +98,13 @@ class TaskRequest:
             "expires_ts":           self.expires_ts,
             "chunk_class":          self.chunk_class,
         }
+        if self.approach_vector:
+            d["approach_vector"] = [round(v, 6) for v in self.approach_vector[:9]]
+        if self.capability_gap:
+            d["capability_gap"] = self.capability_gap[:16]
+        if self.intent_sketch:
+            d["intent_sketch"] = self.intent_sketch[:120]
+        return d
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TaskRequest":
@@ -95,6 +118,9 @@ class TaskRequest:
             requester_node_id=str(d["requester_node_id"]),
             expires_ts=float(d["expires_ts"]),
             chunk_class=str(d.get("chunk_class", "generic")),
+            approach_vector=[float(v) for v in d.get("approach_vector", [])],
+            capability_gap=list(d.get("capability_gap", [])),
+            intent_sketch=str(d.get("intent_sketch", ""))[:120],
         )
 
 
@@ -136,16 +162,29 @@ class TaskBid:
 
 @dataclass
 class TaskResult:
-    """Delivery: Executor liefert Ergebnis als strukturelle Fingerprints."""
+    """Delivery: Executor liefert Ergebnis als strukturelle Fingerprints.
+
+    Neu (approach protocol):
+      simplified_algo_token — AlgoToken-ID eines einfacheren Lösungswegs den der
+                              Executor kennt. Leer wenn kein Vereinfachung möglich.
+                              Der anfordernde Knoten kann ihn in algo_share.py
+                              nachschlagen und die vereinfachte Logik direkt adaptieren.
+      gap_solutions         — Dict {cap: instruction} — wie die fehlenden Fähigkeiten
+                              für diesen Knoten ersetzt werden können:
+                              {"scipy.fft": "use stdlib array + math.cos approximation",
+                               "rust_shell": "pure-python: import zlib; zlib.compress(...)"}
+    """
     task_id:              str
     executor_node_id:     str
     result_fingerprints:  List[str]   # SHA256-Hashes der abgeleiteten Strukturanker
     compression_achieved: float        # Verhältnis zu naivem Ansatz (niedriger = besser)
     algo_token_id:        str = ""     # Optional: benutzter/generierter AlgoToken
     ts:                   float = field(default_factory=time.time)
+    simplified_algo_token: str = ""                        # vereinfachter Lösungsweg
+    gap_solutions:        Dict[str, str] = field(default_factory=dict)  # {cap: instruction}
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d: Dict[str, Any] = {
             "schema":               "aether.task.result.v1",
             "task_id":              self.task_id,
             "executor_node_id":     self.executor_node_id,
@@ -154,6 +193,11 @@ class TaskResult:
             "algo_token_id":        self.algo_token_id,
             "ts":                   self.ts,
         }
+        if self.simplified_algo_token:
+            d["simplified_algo_token"] = self.simplified_algo_token
+        if self.gap_solutions:
+            d["gap_solutions"] = self.gap_solutions
+        return d
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "TaskResult":
@@ -164,6 +208,8 @@ class TaskResult:
             compression_achieved=float(d.get("compression_achieved", 1.0)),
             algo_token_id=str(d.get("algo_token_id", "")),
             ts=float(d.get("ts", time.time())),
+            simplified_algo_token=str(d.get("simplified_algo_token", "")),
+            gap_solutions=dict(d.get("gap_solutions") or {}),
         )
 
 
@@ -263,8 +309,17 @@ class TaskBroker:
         requester_node_id: str = "",
         chunk_class: str = "generic",
         ttl: float = TASK_TTL_SECONDS,
+        approach_vector: Optional[List[float]] = None,
+        capability_gap: Optional[List[str]] = None,
+        intent_sketch: str = "",
     ) -> TaskRequest:
-        """Erzeugt und registriert einen neuen Task-Request für den Broadcast."""
+        """Erzeugt und registriert einen neuen Task-Request für den Broadcast.
+
+        approach_vector: Partielles Φ das der Knoten selbst berechnen konnte.
+                         Dims die fehlten → 0.0. Hilft Peers zu sehen WO die Lücke ist.
+        capability_gap:  Liste fehlender Capabilities (["scipy", "rust_shell"]).
+        intent_sketch:   Kurzbeschreibung des Ziels (max 120 Zeichen, kein Inhalt).
+        """
         phi = [float(v) for v in invariant_vector[:9]]
         payload_fp = hashlib.sha256(
             json.dumps([round(v, 6) for v in phi], separators=(",", ":")).encode()
@@ -280,6 +335,9 @@ class TaskBroker:
             requester_node_id=requester_node_id,
             expires_ts=time.time() + ttl,
             chunk_class=chunk_class,
+            approach_vector=[float(v) for v in (approach_vector or [])[:9]],
+            capability_gap=list(capability_gap or [])[:16],
+            intent_sketch=str(intent_sketch)[:120],
         )
         with self._lock:
             self._my_requests[task_id] = req
@@ -335,6 +393,21 @@ class TaskBroker:
             )
         except Exception:
             pass
+        # Gap-Lösungen in BlindspotEngine als Stärke registrieren
+        if result.gap_solutions:
+            try:
+                from modules.blindspot_engine import BlindspotEngine as _BE
+                bs = _BE.instance()
+                for cap, instruction in result.gap_solutions.items():
+                    bs.absorb_peer_hints(
+                        [{"signal_id": result.task_id, "domain": cap,
+                          "hint_type": "gap_solution", "payload_hash": "",
+                          "instructions": instruction, "fingerprints": [],
+                          "priority_boost": 0.8, "from_peer": result.executor_node_id}],
+                        result.executor_node_id,
+                    )
+            except Exception:
+                pass
         return result
 
     def get_result(self, task_id: str) -> Optional[TaskResult]:
@@ -430,26 +503,49 @@ class TaskBroker:
         """
         try:
             start = time.time()
+            # Wenn der Anforderer einen partiellen Ansatz geliefert hat, nutze ihn
+            # als Seed: bekannte Dims direkt übernehmen, unbekannte (0.0) berechnen.
+            effective_phi = list(request.invariant_vector)
+            if request.approach_vector:
+                for i, av in enumerate(request.approach_vector[:9]):
+                    if i < len(effective_phi) and av == 0.0:
+                        pass  # Lücke — Executor füllt mit eigenem Wert (schon in effective_phi)
+                    elif i < len(effective_phi) and av != 0.0:
+                        # Anforderer hatte diesen Wert → vertrauen, als Kontext nutzen
+                        effective_phi[i] = av
             result_fps = _compute_structural_fingerprints(
-                request.invariant_vector,
+                effective_phi,
                 request.task_type,
                 request.chunk_class,
             )
             elapsed = time.time() - start
             raw_size = max(1, len(request.invariant_vector)) * 8 * 64
             compression = len(result_fps) * 64 / raw_size
+
+            # Gap-Lösungen generieren: für jede fehlende Capability des Anforderers
+            # liefern wir eine konkrete Alternative (pure-Python / stdlib).
+            gap_solutions = _build_gap_solutions(request.capability_gap)
+
+            # Vereinfachtes AlgoToken suchen wenn Capability-Gaps bekannt
+            simplified_token = _find_simplified_algo_token(
+                request.chunk_class, request.capability_gap
+            )
+
             with self._lock:
                 self._completed_count += 1
                 self._save_persistent()
             logger.info(f"[task_broker] Task {request.task_id[:16]}... "
                         f"ausgeführt in {elapsed:.2f}s, "
-                        f"{len(result_fps)} Output-Fingerprints")
+                        f"{len(result_fps)} Output-Fingerprints, "
+                        f"gaps={len(gap_solutions)}")
             return TaskResult(
                 task_id=request.task_id,
                 executor_node_id=executor_node_id,
                 result_fingerprints=result_fps,
                 compression_achieved=compression,
                 ts=time.time(),
+                simplified_algo_token=simplified_token,
+                gap_solutions=gap_solutions,
             )
         except Exception as exc:
             logger.warning(f"[task_broker] execute_task fehlgeschlagen: {exc}")
@@ -523,3 +619,66 @@ def _compute_structural_fingerprints(
             ).hexdigest())
 
     return fps[:16]  # max 16 Output-Fingerprints pro Task
+
+
+# --------------------------------------------------------------------------- #
+#  Gap-Lösungs-Generierung (Approach Protocol)                                #
+# --------------------------------------------------------------------------- #
+
+# Bekannte Capability-Gaps → vereinfachte Pure-Python/stdlib Alternative.
+# Keine externen Abhängigkeiten. Kein Inhalt. Nur strukturelle Logik.
+_GAP_SOLUTIONS: Dict[str, str] = {
+    "scipy":           "stdlib: use array + manual FFT via math.cos/sin, or zlib.compress as entropy proxy",
+    "scipy.fft":       "stdlib: numpy.fft.rfft if numpy available, else manual DFT over 64-sample windows",
+    "numpy":           "stdlib: use array module + math; list comprehensions for vector ops are sufficient for Φ",
+    "cryptography":    "stdlib: use hashlib.sha256 + hmac; no asymmetric ops needed for structural fingerprints",
+    "nacl":            "stdlib: hmac.new(key, msg, digestmod=hashlib.sha256).hexdigest() for MAC",
+    "mss":             "stdlib: no pixel-capture fallback exists; skip Live Render, run analysis-only mode",
+    "psutil":          "stdlib: use os.getpid() for own PID; skip process-window lookup",
+    "rust_shell":      "pure-python: run aether_pipeline.py directly via subprocess.run(['python', 'aether_pipeline.py', ...])",
+    "yggdrasil":       "fallback: use LAN UDP broadcast (lan_beacon.py); Yggdrasil is tier upgrade only",
+    "requests":        "stdlib: use urllib.request.urlopen() for HTTP; relay push still works",
+    "iced":            "headless mode: daemon_headless.py has no GUI dependency",
+    "cargo":           "fallback: run Python pipeline directly; Rust UI is display-only",
+}
+
+
+def _build_gap_solutions(capability_gap: List[str]) -> Dict[str, str]:
+    """Generiert konkrete Alternativlösungen für die fehlenden Capabilities
+    eines anfordernden Knotens. Nur für bekannte Gaps — keine Spekulation.
+    """
+    if not capability_gap:
+        return {}
+    solutions: Dict[str, str] = {}
+    for cap in capability_gap:
+        cap_key = str(cap).strip().lower()
+        if cap_key in _GAP_SOLUTIONS:
+            solutions[cap] = _GAP_SOLUTIONS[cap_key]
+        # Fuzzy-Match: "scipy.signal" → "scipy"
+        elif "." in cap_key:
+            prefix = cap_key.split(".")[0]
+            if prefix in _GAP_SOLUTIONS:
+                solutions[cap] = _GAP_SOLUTIONS[prefix]
+    return solutions
+
+
+def _find_simplified_algo_token(chunk_class: str, capability_gap: List[str]) -> str:
+    """Sucht im lokalen AlgoToken-Store nach einem Token das ohne die fehlenden
+    Capabilities auskommt. Gibt token_id zurück oder "" wenn keiner gefunden.
+
+    Vereinfachter Token = niedrigerer node_count/depth aber gleiche chunk_class.
+    """
+    if not capability_gap:
+        return ""
+    try:
+        from modules.algo_share import AlgoTokenStore
+        store = AlgoTokenStore.instance()
+        tokens = store.get_tokens_for_domain(chunk_class)
+        # Wähle den Token mit dem niedrigsten node_count (einfachste Logik)
+        candidates = [t for t in tokens if t.fitness_score >= 0.85]
+        if not candidates:
+            return ""
+        best = min(candidates, key=lambda t: t.node_count + t.depth)
+        return best.token_id
+    except Exception:
+        return ""

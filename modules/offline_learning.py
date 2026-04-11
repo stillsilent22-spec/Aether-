@@ -192,6 +192,36 @@ class OfflineLearner:
         except Exception as exc:
             logger.debug(f"[offline_learning] on_task_result: {exc}")
 
+    def on_swarm_convergence(
+        self,
+        h_lambda_median: float = 0.0,
+        entropy_median: float = 0.0,
+        peer_count: int = 0,
+    ) -> None:
+        """Wird aufgerufen wenn der Swarm-Median-h_lambda unter den Schwellwert fällt.
+
+        Bedeutung: Der Schwarm als Ganzes hat für diese Klasse von Signalen gelernt.
+        Lokale Reaktion:
+        - Prediction-Engine erhält ein "convergence"-Event → Wahrscheinlichkeits-
+          tabellen werden leicht geglättet (weniger Überraschung erwartet)
+        - Konvergenz-Metadaten werden für DeltaConvergenceTracker gespeichert
+        """
+        try:
+            from modules.prediction_engine import PredictionEngine, DecisionSignal
+            pe = PredictionEngine.instance()
+            state_fp = hashlib.sha256(
+                f"swarm_convergence:{round(h_lambda_median, 3)}".encode()
+            ).hexdigest()
+            decision = DecisionSignal("swarm_convergence", 0, 0, 0, state_fp)
+            pe.record_transition(state_fp, decision, state_fp)  # self-loop → Stabilität
+            logger.info(
+                "[offline_learning] Swarm-Konvergenz verarbeitet: "
+                "h_lambda=%.3f entropy=%.3f peers=%d",
+                h_lambda_median, entropy_median, peer_count,
+            )
+        except Exception as exc:
+            logger.debug(f"[offline_learning] on_swarm_convergence: {exc}")
+
     # ── Vault Pre-Warmup ─────────────────────────────────────────────────── #
 
     def warm_vault_from_prefetch_hints(self, limit: int = 64) -> int:
