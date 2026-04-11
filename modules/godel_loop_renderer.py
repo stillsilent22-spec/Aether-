@@ -31,6 +31,10 @@ import math
 import time
 from typing import Any, Dict, List, Optional
 
+from modules.math_utils import _shannon_entropy as _shannon_entropy_impl
+
+from modules.math_utils import _shannon_entropy as _shannon_entropy_impl
+
 
 # ── Konvergenz-Schwellen ────────────────────────────────────────────────────
 
@@ -45,28 +49,12 @@ GOEDEL_STOP_MESSAGE           = "Goedel-Stop erreicht"
 # ── Hilfsfunktionen (deterministisch, keine I/O) ───────────────────────────
 
 def _shannon_entropy(data: bytes) -> float:
-    """Shannon-Entropie in [0, 1] — normiert auf 8 bit/byte maximum."""
-    if not data:
-        return 0.0
-    counts: Dict[int, int] = {}
-    for byte in data:
-        counts[byte] = counts.get(byte, 0) + 1
-    total = len(data)
-    raw = -sum(
-        (c / total) * math.log2(c / total)
-        for c in counts.values()
-        if c > 0
-    )
-    return float(min(1.0, raw / 8.0))
+    """Shannon-Entropie normiert auf [0, 1] (max 8 bit/byte)."""
+    return float(min(1.0, _shannon_entropy_impl(data) / 8.0))
 
 
-def _periodicity_score(data: bytes) -> float:
-    """Autokorrelations-basierte Periodizität in [0, 1].
-
-    Gleiche Methode wie in swarm_p2p.py / analysis_capsule — lag=1 dominance.
-    """
-    if len(data) < 4:
-        return 0.0
+def _periodicity(data: bytes) -> float:
+    """Periodizitätslevel in [0, 1] — 1.0 = perfekte Periodizität."""
     total, coincide = 0, 0
     for i in range(len(data) - 1):
         total += 1

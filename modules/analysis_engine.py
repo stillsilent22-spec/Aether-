@@ -1155,20 +1155,12 @@ class AnalysisEngine:
 
     def _shannon_entropy(self, block: bytes) -> float:
         """Berechnet die Shannon-Entropie eines Byteblocks."""
-        if not block:
-            return 0.0
-        counts = Counter(block)
-        length = len(block)
-        entropy = 0.0
-        for count in counts.values():
-            p = count / length
-            entropy -= p * math.log2(p)
-        return float(entropy)
+        from modules.math_utils import _shannon_entropy as _se
+        return _se(block)
 
-    def _periodicity(self, data: bytes) -> int:
-        """Schaetzt die dominante Periodizitaet ueber Musterabstaende."""
-        if len(data) < 4:
-            return 0
+    def _pattern_distance(self, data: bytes) -> int:
+        """Bestimmt den häufigsten Abstand zwischen wiederholenden 2-Byte-Mustern."""
+        from collections import Counter
         last_seen: dict[bytes, int] = {}
         distances: list[int] = []
         for idx in range(len(data) - 1):

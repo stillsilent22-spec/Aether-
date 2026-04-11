@@ -132,21 +132,13 @@ class AnchorExtractor:
         )
 
     def _shannon_entropy(self, chunk: bytes) -> float:
-        if not chunk:
-            return 0.0
-        counts: dict[int, int] = {}
-        for value in chunk:
-            counts[value] = counts.get(value, 0) + 1
-        total = len(chunk)
-        return float(
-            -sum((count / total) * math.log2(count / total) for count in counts.values() if count > 0)
-        )
+        from modules.math_utils import _shannon_entropy as _se
+        return _se(chunk)
 
-    def _dominant_frequency(self, chunk: bytes) -> float:
-        if len(chunk) < 4 or np is None or rfft is None:
+    def _dominant_frequency(self, signal: bytes) -> float:
+        if len(signal) < 2 or np is None:
             return 0.0
-        signal = np.frombuffer(chunk, dtype=np.uint8).astype(float)
-        spectrum = np.abs(rfft(signal))
+        spectrum = np.abs(np.fft.rfft(np.frombuffer(signal, dtype=np.uint8).astype(float)))
         if len(spectrum) < 2:
             return 0.0
         return float(np.argmax(spectrum[1:]) + 1) / float(max(1, len(signal)))

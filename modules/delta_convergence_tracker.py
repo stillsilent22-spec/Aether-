@@ -291,18 +291,11 @@ class DeltaConvergenceTracker:
         self._save_history()
 
     def _shannon_entropy(self, data: bytes) -> float:
-        if not data:
-            return 0.0
-        counts: dict[int, int] = {}
-        for b in data:
-            counts[b] = counts.get(b, 0) + 1
-        n = len(data)
-        return -sum((c / n) * math.log2(c / n) for c in counts.values())
+        from modules.math_utils import _shannon_entropy as _se
+        return _se(data)
 
-    def _compute_anchor_hit_rate(
-        self, signal: bytes, pool: list[float]
-    ) -> float:
-        if not pool or not signal:
+    def _match_rate_with_pool(self, signal: bytes, pool: list[float]) -> float:
+        if not signal or not pool:
             return 0.0
         block_size = max(8, len(signal) // 64)
         # Discretize anchor pool into entropy buckets for structural matching

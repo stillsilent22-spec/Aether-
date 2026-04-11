@@ -1,0 +1,14 @@
+{
+  "schema": "aether.account_claim.v1",
+  "node_id": "7a280b7e3ab3e042",
+  "alias_username": "aether_7a280b7e",
+  "account_username": "aether_7a280b7e",
+  "device_fingerprint": "6c5dabb38e8c2e97e55c003cc0b157b02726f4cc021a50bacf6c9d875d0c63d0",
+  "claim_mode": "alias",
+  "relay_bridge_mode": true,
+  "ygg_addr": "",
+  "identity_lock": "22162569d740dd02b6c26e642e245b327eec20a86722431108aa3036615387af",
+  "network_entry_id": "peer-170ce288f2202da51f5d6c2bd02cb487",
+  "native_ygg_bound": false,
+  "created_at": "2026-04-10T11:08:33Z"
+}

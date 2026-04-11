@@ -175,6 +175,14 @@ class AutoPropagator:
                     if isinstance(v, dict)
                 }
                 self._share_count = int(data.get("share_count", 0))
+                # Persist quorum counters across restarts so hard-won quorum
+                # confirmation is not lost on nodes that restart frequently
+                # (e.g. gaming nodes that reboot between sessions).
+                self._token_seen_count = {
+                    k: int(v)
+                    for k, v in data.get("seen_counts", {}).items()
+                    if isinstance(v, (int, float))
+                }
         except Exception:
             pass
 
@@ -186,6 +194,7 @@ class AutoPropagator:
                     "schema":      "aether.algo_store.v1",
                     "tokens":      self._known_tokens,
                     "share_count": self._share_count,
+                    "seen_counts": self._token_seen_count,
                 }, ensure_ascii=True, indent=2),
                 encoding="utf-8",
             )
@@ -226,11 +235,25 @@ class AutoPropagator:
                 CASCADE_VERSION = "unknown"
 
             token_id = hashlib.sha256(f"{tree_sig}|{domain_hint}".encode()).hexdigest()
+
+            # Log-skalierte Fitness für legacy-Hardware-Tiers (Weber-Fechner-Gesetz):
+            #   Kleine Verbesserungen auf schwacher Hardware zählen proportional
+            #   gleich viel wie große Verbesserungen auf starker Hardware.
+            try:
+                from modules.math_utils import log_scale_fitness, tier_from_fitness
+                log_fit = round(log_scale_fitness(fitness), 4)
+                min_tier = tier_from_fitness(fitness)
+            except Exception:
+                log_fit = round(fitness, 4)
+                min_tier = 0
+
             token_dict: Dict[str, Any] = {
                 "token_id":         token_id,
                 "tree_signature":   tree_sig,
                 "invariant_profile": vault_stats.get("invariant_profile", []),
                 "fitness_score":    round(fitness, 4),
+                "log_fitness":      log_fit,
+                "min_tier":         min_tier,
                 "domain_hint":      domain_hint,
                 "cascade_version":  CASCADE_VERSION,
                 "node_count":       int(vault_stats.get("node_count", 0)),
@@ -356,6 +379,42 @@ class AutoPropagator:
         """Wie viele AlgoTokens kennt dieser Knoten (eigene + empfangene)?"""
         with self._lock:
             return len(self._known_tokens)
+
+    def get_best_token_for_tier(
+        self,
+        tier: int,
+        domain_hint: str = "generic",
+    ) -> Optional[Dict[str, Any]]:
+        """Bestes AlgoToken für eine gegebene Hardware-Stufe (0–4).
+
+        Legacy-Knoten (tier 0–1) erhalten nur Tokens deren min_tier ≤ ihrer Stufe —
+        so bekommen schwache Knoten keine Tokens die sie nicht verarbeiten können.
+        Ranking nutzt log_scale_fitness damit kleine Verbesserungen auf schwacher
+        Hardware fair bewertet werden (Weber-Fechner-Gesetz).
+        """
+        try:
+            from modules.math_utils import log_scale_fitness
+        except Exception:
+            log_scale_fitness = lambda f, t=0: f  # type: ignore[assignment]
+
+        with self._lock:
+            candidates = [
+                t for t in self._known_tokens.values()
+                if t.get("domain_hint", "generic") == domain_hint
+                and int(t.get("min_tier", 0)) <= tier
+            ]
+            if not candidates:
+                # Fallback: ignoriere domain_hint, behalte tier-Filter
+                candidates = [
+                    t for t in self._known_tokens.values()
+                    if int(t.get("min_tier", 0)) <= tier
+                ]
+            if not candidates:
+                return None
+            return max(
+                candidates,
+                key=lambda t: log_scale_fitness(float(t.get("fitness_score", 0.0)), tier),
+            )
 
 
 # Alias für Kompatibilität mit task_broker._find_simplified_algo_token

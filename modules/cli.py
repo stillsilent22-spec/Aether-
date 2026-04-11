@@ -20,7 +20,12 @@ DEFAULT_NODES_DIR = ROOT / "data" / "swarm" / "nodes"
 
 def _run_runtime() -> int:
     from modules.runtime_core import init_runtime
-    from modules.runtime_loop import run_loop, simple_delta_provider
+    try:
+        from modules.runtime_loop import run_loop, simple_delta_provider
+    except ImportError as _e:
+        logger.warning(f"[cli] runtime_loop nicht verfügbar: {_e}")
+        print("Aether Runtime (ohne Loop-Modul) gestartet")
+        return 0
 
     runtime = init_runtime()
     print("Aether Runtime gestartet")

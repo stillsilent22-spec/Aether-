@@ -427,18 +427,8 @@ class AnalysisCapsuleEngine:
 
     @staticmethod
     def _symmetry(data: bytes) -> float:
-        if not data:
-            return 1.0
-        counts = [0] * 256
-        for byte_value in data:
-            counts[byte_value] += 1
-        non_zero = [count for count in counts if count > 0]
-        if not non_zero:
-            return 1.0
-        mean = float(sum(non_zero)) / float(len(non_zero))
-        deviation = sum(abs(float(count) - mean) for count in non_zero) / float(len(non_zero))
-        score = 1.0 - min(1.0, deviation / max(mean, 1.0))
-        return float(max(0.0, min(1.0, score)))
+        from modules.math_utils import _symmetry as _sym
+        return _sym(data)
 
     @staticmethod
     def _katz_fractal_dimension(values: List[float]) -> float:

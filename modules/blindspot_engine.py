@@ -605,6 +605,18 @@ class BlindspotEngine:
                         self._active_gaps[sig_id].hint_count = len(pool_entry["hints"])
 
                 absorbed += 1
+
+                # Algo-Token-Wiring: wenn der Peer einen AlgoToken mitgeschickt hat,
+                # direkt in den AutoPropagator injizieren — kein separater Gossip-Zyklus.
+                # Privatsphäre: algo_token enthält nur tree_signature + Fitness, nie Inhalte.
+                algo_token_data = hint_data.get("algo_token_data") if isinstance(hint_data, dict) else None
+                if algo_token_data and isinstance(algo_token_data, dict):
+                    try:
+                        from modules.algo_share import AutoPropagator
+                        AutoPropagator.instance().receive_algo_token(algo_token_data)
+                    except Exception:
+                        pass
+
                 logger.debug(
                     "[blindspot] Hint in Pool eingereiht von %s: domain=%s "
                     "pool_size=%d",

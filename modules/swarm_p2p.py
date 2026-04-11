@@ -1272,6 +1272,16 @@ class P2PLayer:
         except Exception as _ae:
             logger.debug(f"[swarm_p2p] algo_share embed: {_ae}")
 
+        # Capability-Tier explizit im Gossip-Paket einbetten:
+        # Empfänger-Knoten können so gleich tier-geeignete AlgoTokens auswählen
+        # ohne die ganze score_pct-Logik neu zu berechnen.
+        try:
+            from modules.math_utils import legacy_tier_from_capability_score
+            _score_pct = float(caps.get("score_pct", 0.0)) if caps else 0.0
+            msg["capability_tier"] = legacy_tier_from_capability_score(_score_pct)
+        except Exception:
+            pass
+
         # Φ-Vektor-Snapshot: aktuelle Anker als Vergleichskandidaten anbieten.
         # Empfehlende Knoten können sie dann mit ihren lokalen Φs vergleichen.
         try:
@@ -1520,22 +1530,27 @@ class P2PLayer:
                 self._peer_capabilities[incoming_node_id] = incoming_caps
 
         # Computation Delegation: fremde Task-Requests und Bids verarbeiten
+        try:
+            from modules.task_broker import TaskBroker as _TB
+            _tb_instance = _TB.instance()
+        except Exception:
+            _tb_instance = None
         for req_data in list(msg.get("task_requests") or []):
             try:
-                from modules.task_broker import TaskBroker as _TB
-                _TB.instance().receive_remote_request(req_data)
+                if _tb_instance is not None:
+                    _tb_instance.receive_remote_request(req_data)
             except Exception as _te:
                 logger.debug(f"[swarm_p2p] task_request recv: {_te}")
         for bid_data in list(msg.get("task_bids") or []):
             try:
-                from modules.task_broker import TaskBroker as _TB
-                _TB.instance().receive_bid(bid_data)
+                if _tb_instance is not None:
+                    _tb_instance.receive_bid(bid_data)
             except Exception as _te:
                 logger.debug(f"[swarm_p2p] task_bid recv: {_te}")
         for result_data in list(msg.get("task_results") or []):
             try:
-                from modules.task_broker import TaskBroker as _TB
-                _TB.instance().receive_result(result_data)
+                if _tb_instance is not None:
+                    _tb_instance.receive_result(result_data)
             except Exception as _te:
                 logger.debug(f"[swarm_p2p] task_result recv: {_te}")
 
@@ -2002,17 +2017,8 @@ class P2PLayer:
         """Collect recent fingerprints from DB and publish."""
         self._refresh_discovery()
         try:
-            from modules.swarm_persist import get_fingerprint_stats, _connect, DEFAULT_DB_PATH, _db_lock
-            with _db_lock:
-                conn = _connect(DEFAULT_DB_PATH)
-                try:
-                    rows = conn.execute(
-                        "SELECT fingerprint FROM fingerprints ORDER BY last_seen_ts DESC LIMIT ?",
-                        (DEFAULT_P2P["max_fingerprints_per_gossip"],)
-                    ).fetchall()
-                finally:
-                    conn.close()
-            fps = [r[0] for r in rows]
+            from modules.swarm_persist import get_fingerprint_stats, query_recent_fingerprints
+            fps = query_recent_fingerprints(limit=DEFAULT_P2P["max_fingerprints_per_gossip"])
             stats = get_fingerprint_stats()
             # Pipeline-Metriken einbetten (delta_ratio, h_lambda etc.)
             with _pipeline_metrics_lock:

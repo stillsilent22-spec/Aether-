@@ -326,3 +326,54 @@ def run_migration(db_path: str = DEFAULT_DB_PATH) -> str:
     ).fetchone()
     current = int(version[0]) if version else 0
     return f"Schema at version {SCHEMA_VERSION} (was {current}). No pending migrations."
+
+
+# --------------------------------------------------------------------------- #
+#  Public wrappers for previously-leaked private API                          #
+#  (_connect, _db_lock, DEFAULT_DB_PATH are still available for internal use) #
+#  External modules (swarm_p2p, swarm_consent) should use these instead.     #
+# --------------------------------------------------------------------------- #
+
+def query_recent_fingerprints(
+    limit: int = 50,
+    db_path: str = DEFAULT_DB_PATH,
+) -> List[str]:
+    """Gibt die jüngsten Fingerprints zurück (absteigend nach Zeitstempel).
+
+    Ersetzt den direkten _connect-Aufruf in swarm_p2p._do_gossip().
+    """
+    with _db_lock:
+        conn = _connect(db_path)
+        try:
+            rows = conn.execute(
+                "SELECT fingerprint FROM fingerprints ORDER BY last_seen_ts DESC LIMIT ?",
+                (limit,)
+            ).fetchall()
+        finally:
+            conn.close()
+    return [r[0] for r in rows]
+
+
+def purge_all_metrics(db_path: str = DEFAULT_DB_PATH) -> None:
+    """Löscht alle frame_metrics und fingerprints (für Consent-Revocation).
+
+    Ersetzt den direkten _connect-Aufruf in swarm_consent._purge_frame_metrics().
+    """
+    with _db_lock:
+        conn = _connect(db_path)
+        try:
+            conn.execute("DELETE FROM frame_metrics")
+            conn.execute("DELETE FROM fingerprints")
+            conn.commit()
+        finally:
+            conn.close()
+
+
+def open_swarm_metrics_db(db_path: str = DEFAULT_DB_PATH) -> sqlite3.Connection:
+    """Gibt eine konfigurierte SQLite-Verbindung zurück (mit WAL + Migrationen).
+
+    Für Aufrufer die eine Verbindung über mehrere Operationen hinweg halten
+    müssen (z.B. swarm_p2p._gossip_loop).  Der Aufrufer ist für conn.close() verantwortlich.
+    Verwendet denselben _db_lock — Aufrufer sollte ihn ebenfalls acquiren.
+    """
+    return _connect(db_path)

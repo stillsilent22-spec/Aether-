@@ -97,6 +97,10 @@ class RenderCoordinator:
         self._recent_pixel_hashes: list[str] = []
         self._pixel_hash_max_repeats: int = 2
         self._pixel_hash_dedup_size: int = 8
+        # Log-delta gating: normalized entropy of the last processed frame.
+        # Gaming-Optimierung: Idle-Frames (Entropie ändert sich kaum) werden
+        # übersprungen — nur Nutzerinteraktionen lösen die Cascade aus.
+        self._last_entropy: float = 0.0
 
     # ── Hauptinterface ──────────────────────────────────────────────────────
 
@@ -186,7 +190,11 @@ class RenderCoordinator:
 
         # --- Unified deterministic cascade + swarm submission ---
         from modules.unified_cascade import cascade
-        from modules.swarm_loop_bridge import submit_cascade_result
+        try:
+            from modules.swarm_loop_bridge import submit_cascade_result as _submit_cascade
+        except ImportError as _e:
+            logger.debug(f"[render_coordinator] swarm_loop_bridge nicht verfügbar: {_e}")
+            _submit_cascade = None
         session_key = None
         try:
             if hasattr(self, "_session_context") and self._session_context:
@@ -196,13 +204,48 @@ class RenderCoordinator:
             logger.warning(f"[render_coordinator] Fehler: {e}")
             pass
         if raw:
+            # Log-delta gating (Weber-Fechner):
+            #   "skip"  → Idle-Frame, keine Nutzerinteraktion erkennbar → Cascade überspringen
+            #   "token" → kleines Delta → Token-Lookup zuerst, nur bei Miss full cascade
+            #   "full"  → signifikante Änderung (z.B. Nutzerinteraktion) → volle Cascade
+            try:
+                from modules.math_utils import log_delta_gate, _shannon_entropy as _mu_ent
+                _curr_h = _mu_ent(raw) / 8.0   # normiert auf [0, 1]
+                _gate = log_delta_gate(_curr_h, self._last_entropy)
+                self._last_entropy = _curr_h
+            except Exception:
+                _gate = "full"
+                _curr_h = 0.0
+
+            if _gate == "skip":
+                # Idle-Frame — keine Cascade nötig, Frame trotzdem zurückgeben
+                logger.debug(f"[render_coordinator] Idle-Frame übersprungen (log-delta gate).")
+                return frame
+
+            # "token" oder "full" → Token-Lookup → Cascade
+            if _gate == "token":
+                try:
+                    from modules.algo_share import AutoPropagator as _AP
+                    from modules.math_utils import legacy_tier_from_capability_score
+                    _best_tok = _AP.instance().get_best_token_for_tier(tier=2)
+                    if _best_tok is not None:
+                        logger.debug(
+                            f"[render_coordinator] Token-Route: {_best_tok['token_id'][:12]}… "
+                            f"(fitness={_best_tok.get('fitness_score', 0):.3f})"
+                        )
+                        return frame   # Token-Route: Cascade nicht nötig
+                except Exception:
+                    pass
+                # Kein Token gefunden → fall through to full cascade
+
             cascade_result = cascade(
                 raw,
                 source_id=f"render_{pid}",
                 source_type="render",
                 session_key=session_key,
             )
-            submit_cascade_result(cascade_result, role="genesis")
+            if _submit_cascade is not None:
+                _submit_cascade(cascade_result, role="genesis")
 
         return frame
 
@@ -465,28 +508,15 @@ class RenderCoordinator:
 
     @staticmethod
     def _shannon_entropy(data: bytes) -> float:
-        if not data:
-            return 0.0
-        arr = np.frombuffer(data, dtype=np.uint8)
-        counts = np.bincount(arr, minlength=256).astype(np.float64)
-        total = float(arr.size)
-        probs = counts[counts > 0] / total
-        return float(-np.sum(probs * np.log2(probs)))
+        from modules.math_utils import _shannon_entropy as _se
+        return _se(data)
 
     @staticmethod
     def _symmetry(data: bytes) -> float:
-        arr = np.frombuffer(data, dtype=np.uint8)
-        if arr.size < 2:
-            return 1.0
-        half = arr.size // 2
-        return float(np.sum(arr[:half] == arr[-half:][::-1]) / half)
+        from modules.math_utils import _symmetry as _sym
+        return _sym(data)
 
     @staticmethod
     def _resonance(data: bytes) -> float:
-        arr = np.frombuffer(data, dtype=np.uint8)
-        if arr.size == 0:
-            return 0.0
-        mean = float(np.mean(arr))
-        std = float(np.std(arr))
-        # Resonanz: wie nah ist die Verteilung an einer harmonischen Form?
-        return float(1.0 - min(1.0, std / max(1.0, mean)))
+        from modules.math_utils import _resonance as _res
+        return _res(data)

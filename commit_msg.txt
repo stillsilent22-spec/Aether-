@@ -1,0 +1,8 @@
+feat: equal identity for non-Ygg nodes via DHT path
+
+- solo_bootstrap.py: write network_entry_id to node.json and account_claim.json
+- auth.rs: add DHT path to identity_lock_for_username (aether.dht-hw-user-lock.v1)
+- auth.rs: ensure_native_ygg_binding_ready accepts network_entry_id instead of ygg addr
+- auth.rs: load_native_ygg_capability returns true for dht=true in hw_capability.json
+- auth.rs: sync_node_claim writes network_entry_id and correct identity_lock_mode
+- Non-Ygg peers now get cryptographically equal identity locks as Ygg nodes

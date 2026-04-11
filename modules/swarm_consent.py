@@ -213,15 +213,8 @@ def revoke_consent(actor: str = "local") -> Dict[str, Any]:
 def _purge_frame_metrics() -> None:
     """Delete all frame_metrics and fingerprints from DB on consent revocation."""
     try:
-        from modules.swarm_persist import _connect, DEFAULT_DB_PATH, _db_lock
-        with _db_lock:
-            conn = _connect(DEFAULT_DB_PATH)
-            try:
-                conn.execute("DELETE FROM frame_metrics")
-                conn.execute("DELETE FROM fingerprints")
-                conn.commit()
-            finally:
-                conn.close()
+        from modules.swarm_persist import purge_all_metrics
+        purge_all_metrics()
         print("[CONSENT] Frame metrics purged on consent revocation.")
     except Exception as err:
         print(f"[CONSENT] purge failed: {err}")
