@@ -71,6 +71,11 @@ HINT_COLLECTION_WINDOW_SEC = 120   # 2 Minuten Sammelzeit
 # Maximale gespeicherte Hints pro Gap im Solution Pool
 MAX_HINTS_PER_GAP = 16
 
+# Maximale Hop-Anzahl für Relay-Hints (Flood-Schutz: Hint reist max. N Schritte)
+# Mit 3 Hops kann ein Hint in einem Mesh-Netz 3 Weiterleitungen überleben.
+# Jeder Knoten am Weg bekommt die Lösung — Schwarm lernt gemeinsam.
+RELAY_MAX_HOPS = 3
+
 
 # --------------------------------------------------------------------------- #
 #  Gap-Typen                                                                  #
@@ -225,6 +230,13 @@ class BlindspotEngine:
         # alle Wege aus dem Schwarm, dann kristallisieren alle parallel.
         # Schlüssel: signal_id, Wert: {"first_hint_ts": float, "hints": List[Dict]}
         self._solution_pool: Dict[str, Dict[str, Any]] = {}
+        # Relay-Queue: empfangene Hints die wir im nächsten Gossip-Zyklus weiterleiten.
+        # Format jedes Eintrags: hint-dict mit extra-Feld "relay_hop" (int).
+        # Wird nach dem Senden geleert — jeder Knoten leitet einmalig weiter.
+        self._pending_relay_hints: List[Dict[str, Any]] = []
+        # Dedup-Set: verhindert doppelte Relay-Einträge für dieselbe hint_id.
+        # Wird bei Überschreiten von 1000 Einträgen gecleart (memory-safe).
+        self._relayed_hint_ids:    set = set()
         self._load_state()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────── #
@@ -617,11 +629,27 @@ class BlindspotEngine:
                     except Exception:
                         pass
 
+                # Flood-Relay: Hint für Weitergabe im Schwarm vormerken.
+                # relay_hop kommt aus dem eingehenden Paket (0 wenn original).
+                # Nur weiterleiten wenn max. Hops noch nicht erreicht.
+                _relay_hop = int(hint_data.get("relay_hop", 0)) if isinstance(hint_data, dict) else 0
+                if _relay_hop < RELAY_MAX_HOPS:
+                    with self._lock:
+                        if hint.hint_id not in self._relayed_hint_ids:
+                            _relay_dict = hint.to_dict()
+                            _relay_dict["relay_hop"] = _relay_hop + 1
+                            self._pending_relay_hints.append(_relay_dict)
+                            self._relayed_hint_ids.add(hint.hint_id)
+                            # Speicher-Schutz: bei zu vielen IDs Set zurücksetzen
+                            if len(self._relayed_hint_ids) > 1000:
+                                self._relayed_hint_ids.clear()
+
                 logger.debug(
                     "[blindspot] Hint in Pool eingereiht von %s: domain=%s "
-                    "pool_size=%d",
+                    "pool_size=%d relay_hop=%d",
                     peer_node_id[:16], hint.domain,
                     len(self._solution_pool[sig_id]["hints"]),
+                    _relay_hop,
                 )
             except Exception as exc:
                 logger.debug(f"[blindspot] absorb_hint: {exc}")
@@ -816,7 +844,23 @@ class BlindspotEngine:
                 )
                 hints.append(hint.to_dict())
 
-        return hints[:MAX_GAPS_PER_GOSSIP]
+        # Relay-Hints: empfangene Hints die wir für den Schwarm weiterleiten.
+        # Nur Hints die noch nicht zu alt sind (< 2 × Rebroadcast-Interval).
+        # Nach dem Drainieren wird die Queue geleert — einmaliges Weiterleiten reicht.
+        now = time.time()
+        relay_hints: List[Dict[str, Any]] = []
+        with self._lock:
+            fresh: List[Dict[str, Any]] = []
+            for rh in self._pending_relay_hints:
+                age = now - float(rh.get("ts", now))
+                if age < REBROADCAST_INTERVAL_SEC * 2:
+                    relay_hints.append(rh)
+                    fresh.append(rh)  # noch nicht versendet — bleibt
+            # Queue nach Übertragung leeren: Empfänger übernehmen das Weiterleiten
+            self._pending_relay_hints = []
+        hints.extend(relay_hints)
+
+        return hints[:MAX_GAPS_PER_GOSSIP * 3]
 
     # ── Kollektive Swarm-Blindspot-Integration ────────────────────────────── #
 
