@@ -622,6 +622,168 @@ def _write_snapshot():
     _write_json(BACKEND_STATE_PATH, _backend_payload(network_tier, vault_count))
 
 
+# ── Kybernetische Progression (3. Ordnung) ──────────────────────────────── #
+
+def _load_local_strengths():
+    """Laedt bekannte Staerken aus blindspot_state.json (graceful, kein Crash)."""
+    if json is None:
+        return {}
+    path = os.path.join(ROOT, "data", "interbus", "blindspot_state.json")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        data = json.loads(open(path).read())
+        return dict(data.get("known_strengths") or {})
+    except Exception:
+        return {}
+
+
+def _save_strengths(new_strengths):
+    """Mergt neue Staerken in blindspot_state.json (idempotent, kein Verlust)."""
+    if json is None or not new_strengths:
+        return
+    path = os.path.join(ROOT, "data", "interbus", "blindspot_state.json")
+    _safe_makedirs(os.path.dirname(path))
+    existing = {}
+    if os.path.isfile(path):
+        try:
+            existing = json.loads(open(path).read())
+        except Exception:
+            existing = {}
+    current = dict(existing.get("known_strengths") or {})
+    changed = False
+    for domain, val in new_strengths.items():
+        try:
+            v = float(val)
+        except Exception:
+            continue
+        if v > float(current.get(domain, 0)):
+            current[str(domain)] = round(min(1.0, v), 4)
+            changed = True
+    if not changed:
+        return
+    existing["known_strengths"] = current
+    if "schema" not in existing:
+        existing["schema"] = "aether.blindspot.state.v1"
+    try:
+        f = open(path, "w")
+        f.write(json.dumps(existing, ensure_ascii=True, indent=2))
+        f.close()
+    except Exception:
+        pass
+
+
+def _absorb_gossip_strengths(msgs):
+    """Extrahiert Staerken aus empfangenen Gossip-Paketen und speichert sie lokal.
+
+    Das ist der Godel-Boost fuer Legacy-Knoten: jeder empfangene Peer kann
+    unsere Faehigkeiten erweitern ohne dass wir selbst die Deps haben.
+    """
+    if not msgs:
+        return
+    merged = {}
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        # Volle Gossip-Pakete (von Relay uebersetzt)
+        legacy_strengths = m.get("legacy_strengths") or {}
+        if isinstance(legacy_strengths, dict):
+            for dom, val in legacy_strengths.items():
+                try:
+                    v = float(val)
+                    if v > float(merged.get(dom, 0)):
+                        merged[str(dom)] = v
+                except Exception:
+                    pass
+        # Direkte Blindspot-Hints → instructions als Staerken extrahieren
+        for hint in list(m.get("blindspot_hints") or []):
+            if not isinstance(hint, dict):
+                continue
+            dom = str(hint.get("domain", "") or "")
+            boost = float(hint.get("priority_boost") or 0.4)
+            if dom and boost > 0:
+                if boost > float(merged.get(dom, 0)):
+                    merged[dom] = boost
+    if merged:
+        _save_strengths(merged)
+        print("[LEGACY] Staerken aus Gossip gelernt: " + str(sorted(merged.keys())))
+
+
+def _dht_bootstrap_legacy(node_id, device_fp, tier_rank, relay_pool):
+    """Startet DHT-Bootstrap und Legacy-Proto-Discovery fuer diesen Knoten.
+
+    1. DHT-Bootstrap: liest bekannte Knoten, kontaktiert Relays
+    2. DNS-Seeds abfragen und Relay-Pool erweitern
+    3. Compact-Gossip via legacy_proto.py senden
+
+    Graceful: kein Fehler wenn Module nicht verfuegbar (fehlende Deps).
+    """
+    _sym_dir = os.path.join(ROOT, "modules")
+    if _sym_dir not in sys.path:
+        sys.path.insert(0, _sym_dir)
+
+    # DHT-Bootstrap starten (modern Python 3.x auf altem Hardware == kein Problem)
+    try:
+        from dht_bootstrap import DHTBootstrap as _DHT
+        dht = _DHT.instance()
+        if not dht._is_running:
+            dht.start(node_id)
+            print("[LEGACY] DHT-Bootstrap gestartet — node_id=%s" % node_id[:16])
+        # Progression-Empfehlung ausgeben
+        suggestion = dht.get_network_tier_suggestion()
+        print("[LEGACY] Netz-Progression: " + suggestion.get("description", ""))
+        print("[LEGACY] Naechster Schritt: " + suggestion.get("next_action", ""))
+    except Exception as dht_err:
+        print("[LEGACY] DHT-Bootstrap nicht verfuegbar: " + str(dht_err))
+
+    # Legacy-Proto compact-Gossip senden
+    if not relay_pool:
+        return
+    try:
+        from legacy_proto import build_packet as _build_pkt
+        from legacy_proto import send_packet as _send_pkt
+        strengths = _load_local_strengths()
+        pkt = _build_pkt(
+            node_id=node_id,
+            tier_rank=tier_rank,
+            device_fp=device_fp[:16],
+            relay_urls=relay_pool[:3],
+            strengths=strengths or {},
+        )
+        # An alle bekannten Relays senden
+        sent = 0
+        for url in relay_pool[:4]:
+            try:
+                if _send_pkt(url, pkt, timeout=6):
+                    sent += 1
+            except Exception:
+                pass
+        if sent > 0:
+            print("[LEGACY] Legacy-Proto Gossip gesendet an %d Relay(s)." % sent)
+    except Exception as lp_err:
+        print("[LEGACY] Legacy-Proto nicht verfuegbar: " + str(lp_err))
+
+
+def _pull_and_absorb(relay_url, node_id, device_fp, alias_username, relay_pool):
+    """Pull-Gossip + Legacy-Proto-Pull + Staerken absorbieren.
+
+    Gibt Liste empfangener Nachrichten zurueck.
+    """
+    msgs = _relay_gossip_pull_legacy(relay_url)
+    # Auch Legacy-Proto-Pull versuchen (fuer Hints und Staerken)
+    try:
+        _sym_dir = os.path.join(ROOT, "modules")
+        if _sym_dir not in sys.path:
+            sys.path.insert(0, _sym_dir)
+        from legacy_proto import pull_gossip as _pull_legacy
+        legacy_msgs = _pull_legacy(relay_url, timeout=6)
+        msgs = msgs + legacy_msgs
+    except Exception:
+        pass
+    _absorb_gossip_strengths(msgs)
+    return msgs
+
+
 def main(argv=None):
     if argv is None:
         argv = sys.argv[1:]
@@ -649,11 +811,13 @@ def main(argv=None):
 
     os_platform, network_tier, tier_rank, _reason = _detect_profile()
 
+    # modules/ in sys.path fuer alle folgenden Importe
+    _sym_dir = os.path.join(ROOT, "modules")
+    if _sym_dir not in sys.path:
+        sys.path.insert(0, _sym_dir)
+
     # Symbiont-Engine tick (3. Ordnung) — graceful fallback fuer Win95/98/2000
     try:
-        _sym_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "modules")
-        if _sym_dir not in sys.path:
-            sys.path.insert(0, _sym_dir)
         from symbiont_engine import tick as _symbiont_tick
         _hw_cap = {"tier_rank": tier_rank, "native_tier_rank": tier_rank}
         _symbiont_tick(node_id, device_fp, alias_username, _hw_cap)
@@ -672,6 +836,10 @@ def main(argv=None):
             relay_pool = _read_relay_pool()
         else:
             print("[LEGACY] Kein Relay erreichbar — arbeite offline bis zum nächsten Versuch.")
+
+    # DHT-Bootstrap + Legacy-Proto-Gossip automatisch starten
+    # Kybernetik: unabhaengig vom Relay-Status — DHT sucht selbst
+    _dht_bootstrap_legacy(node_id, device_fp, tier_rank, relay_pool)
 
     if run_once:
         return 0
@@ -692,9 +860,16 @@ def main(argv=None):
                 if live:
                     active_relay = live
                     _relay_gossip_push_legacy(live, node_id, device_fp, alias_username, relay_pool)
-                    msgs = _relay_gossip_pull_legacy(live)
+                    msgs = _pull_and_absorb(live, node_id, device_fp, alias_username, relay_pool)
                     if msgs:
                         print("[LEGACY] Gossip empfangen: " + str(len(msgs)) + " Pakete von " + live)
+            # Periodisch DHT-Bootstrap wiederholen wenn zu wenig Peers bekannt
+            try:
+                from dht_bootstrap import DHTBootstrap as _DHT2
+                if _DHT2.instance()._total_peers() < 3:
+                    _dht_bootstrap_legacy(node_id, device_fp, tier_rank, relay_pool)
+            except Exception:
+                pass
     except KeyboardInterrupt:
         print("[LEGACY] Stopped.")
         return 0

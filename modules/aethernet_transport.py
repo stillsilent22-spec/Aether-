@@ -119,6 +119,11 @@ class AethernetTransport:
         # POST /gossip → Inbox; GET /gossip/latest → zurückgeben.
         self._relay_gossip_inbox: List[Dict[str, Any]] = []
         self._relay_gossip_lock = threading.Lock()
+        # Legacy-Proto-Inbox: Ultra-Legacy-Knoten (Win95/98/XP) senden Compact-Pakete.
+        # POST /gossip/legacy → Empfang + Übersetzung ins volle Schema.
+        # GET /gossip/legacy/latest → letzte 50 Compact-Pakete für Legacy-Clients.
+        self._legacy_gossip_inbox: List[str] = []   # Roh-Compact-Strings
+        self._legacy_gossip_lock = threading.Lock()
         # Persistierter Relay-Pool und Peer-Cache (survive restarts)
         self._relay_pool_path = self.nodes_dir.parent / "relay_pool.json"
         self._peer_cache_path = self.nodes_dir.parent / "peer_cache.json"
@@ -794,6 +799,39 @@ class AethernetTransport:
                             self._send_json(400, {"ok": False, "error": "invalid_gossip_schema"})
                         return
 
+                    if self.path == "/gossip/legacy":
+                        # Legacy-Proto: Compact-Paket von Win95/98/XP-Knoten.
+                        # Wird übersetzt und in den normalen Gossip-Inbox aufgenommen.
+                        raw_body = None
+                        try:
+                            length = int(self.headers.get("Content-Length", 0) or 0)
+                            raw_body = self.rfile.read(length).decode("utf-8", errors="replace")
+                        except Exception:
+                            pass
+                        if raw_body:
+                            try:
+                                from modules.legacy_proto import translate_to_full_gossip
+                                full_pkt = translate_to_full_gossip(raw_body, transport.node_id)
+                                if full_pkt and isinstance(full_pkt, dict):
+                                    with transport._relay_gossip_lock:
+                                        transport._relay_gossip_inbox.append(full_pkt)
+                                        if len(transport._relay_gossip_inbox) > 200:
+                                            transport._relay_gossip_inbox = transport._relay_gossip_inbox[-200:]
+                                    # Relay-URLs aus dem Legacy-Paket lernen
+                                    for rurl in list(full_pkt.get("known_relay_urls") or []):
+                                        transport._learn_relay_url(str(rurl))
+                                    # Auch roh in Legacy-Inbox speichern (für legacy/latest)
+                                    with transport._legacy_gossip_lock:
+                                        transport._legacy_gossip_inbox.append(raw_body)
+                                        if len(transport._legacy_gossip_inbox) > 50:
+                                            transport._legacy_gossip_inbox = transport._legacy_gossip_inbox[-50:]
+                                    self._send_json(200, {"ok": True})
+                                    return
+                            except Exception as _lp_err:
+                                logger.debug(f"[aethernet] legacy_proto translate: {_lp_err}")
+                        self._send_json(400, {"ok": False, "error": "invalid_legacy_packet"})
+                        return
+
                     if self.path == "/register":
                         # Legacy-Node meldet seine LAN-URL → Relay kennt ihn,
                         # und teilt seine bekannten Relays mit (bidirektionales Lernen).
@@ -906,6 +944,15 @@ class AethernetTransport:
                         with transport._relay_gossip_lock:
                             msgs = list(transport._relay_gossip_inbox[-50:])
                         self._send_json(200, {"messages": msgs})
+                        return
+
+                    if self.path == "/gossip/legacy/latest":
+                        # Gibt letzte 50 Compact-Legacy-Pakete zurück.
+                        # Falls keine Legacy-Pakete da, aktuelle volle Gossip als übersetzte
+                        # Kurzform zurückgeben (damit Legacy-Clients etwas bekommen).
+                        with transport._legacy_gossip_lock:
+                            raw_pkts = list(transport._legacy_gossip_inbox[-50:])
+                        self._send_json(200, {"packets": raw_pkts})
                         return
 
                     if self.path == "/consensus/candidates":
