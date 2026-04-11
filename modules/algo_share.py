@@ -148,6 +148,10 @@ class AutoPropagator:
     # Mindest-Fitness-Score für das Teilen
     MIN_FITNESS_TO_SHARE = 0.30
 
+    # Anzahl unabhängiger Beobachtungen bis ein Token als Quorum-bestätigt gilt.
+    # Zählt nach Nachrichteneingang — kein Peer-Tracking, peer-identitätsblind.
+    QUORUM_CONFIRMATION_THRESHOLD = 3
+
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._last_hit_ratio: float = 0.0
@@ -156,6 +160,10 @@ class AutoPropagator:
         self._known_tokens: Dict[str, Dict[str, Any]] = {}
         # Bestes eigenes Token für den nächsten Gossip
         self._pending_token: Optional[Dict[str, Any]] = None
+        # Zählt wie oft jedes Token im Netz gesehen wurde (flüchtig, kein Peer-ID).
+        # Erreicht ein Token den Schwellwert, wird es als Quorum-bestätigt markiert.
+        # Sinn: je mehr unabhängige Knoten ein Token teilen, desto repräsentativer.
+        self._token_seen_count: Dict[str, int] = {}
         self._load_persistent()
 
     def _load_persistent(self) -> None:
@@ -258,10 +266,27 @@ class AutoPropagator:
             return False   # Integritätsfehler
 
         with self._lock:
+            # Sichtbarkeits-Zähler: kein Peer-Bezug — nur wie oft taucht dieses
+            # Token im Netz auf.  Jeder Knoten zählt unabhängig.  Kein Schutz
+            # gegen einen Knoten der dasselbe Token mehrfach sendet — dafür ist
+            # der Rate-Limiter in gossip_toxicity_filter.py zuständig.
+            count = self._token_seen_count.get(token_id, 0) + 1
+            self._token_seen_count[token_id] = count
+            quorum_now = (count >= self.QUORUM_CONFIRMATION_THRESHOLD)
+
             if token_id in self._known_tokens:
-                return False   # Bereits bekannt
+                # Bereits bekannt — aber Quorum-Status könnte sich jetzt ändern
+                if quorum_now and not self._known_tokens[token_id].get("quorum_confirmed"):
+                    self._known_tokens[token_id]["quorum_confirmed"] = True
+                    self._save_persistent()
+                return False   # nicht neu
+
+            if quorum_now:
+                token_data = dict(token_data)
+                token_data["quorum_confirmed"] = True
+
             self._known_tokens[token_id] = token_data
-            # Re-Gossip: sofort als pending setzen → nächster Gossip-Zyklus leitet ihn an alle weiter
+            # Re-Gossip: sofort als pending setzen → nächster Gossip-Zyklus leitet ihn weiter
             self._pending_token = token_data
             self._save_persistent()
         return True
@@ -295,7 +320,13 @@ class AutoPropagator:
     def get_best_token_for_gossip(self) -> Optional[Dict[str, Any]]:
         """Gibt das beste verfügbare AlgoToken für den nächsten Gossip-Paket zurück.
 
-        Priorisiert: eigenes pending_token > bestes bekanntes nach fitness_score.
+        Priorisierung (gleich für alle — kein Peer-Bezug):
+          1. eigenes pending_token (frischeste eigene Verbesserung)
+          2. Quorum-bestätigtes Token mit höchstem fitness_score
+             (≥3 unabhängige Knoten haben dasselbe Token geteilt → höhere
+              Repräsentativität, kein einzelner Peer wird bevorzugt)
+          3. Bestes bekanntes Token nach fitness_score (Fallback)
+
         Setzt pending_token zurück nach dem Abruf.
         """
         with self._lock:
@@ -305,6 +336,14 @@ class AutoPropagator:
                 return token
             if not self._known_tokens:
                 return None
+            # Quorum-bestätigte Tokens bevorzugen — sie repräsentieren
+            # kollektives Swarm-Wissen, unabhängig davon wer sie gesendet hat
+            quorum_tokens = [
+                t for t in self._known_tokens.values()
+                if t.get("quorum_confirmed")
+            ]
+            if quorum_tokens:
+                return max(quorum_tokens, key=lambda t: float(t.get("fitness_score", 0.0)))
             return max(self._known_tokens.values(),
                        key=lambda t: float(t.get("fitness_score", 0.0)))
 

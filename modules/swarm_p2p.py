@@ -1377,6 +1377,35 @@ class P2PLayer:
             return
         peer_id = str(msg.get("peer_id", "")).strip()
 
+        # ── Toxizitätsfilter: Strukturprüfung + Injection-Erkennung ───────────
+        # Bereinigt alle Freitext-Felder, clamped out-of-range Zahlen,
+        # rate-limitiert Token-Spam — ohne Quorum, rein lokal regelbasiert.
+        try:
+            from modules.gossip_toxicity_filter import GossipToxicityFilter as _GTF
+            msg, _tox_warnings = _GTF.instance().validate(msg, peer_id)
+            if msg is None:
+                if _tox_warnings:
+                    logger.warning(
+                        f"[swarm_p2p] Gossip-Paket von {peer_id[:16]}... verworfen: "
+                        f"{_tox_warnings[0]}"
+                    )
+                return
+            for w in _tox_warnings:
+                logger.warning(w)
+            # Inhalts-Score: rein nachrichtenbasiert, kein Peer-Bezug.
+            # Nur für Logging/Monitoring — kein Gate, kein Ranking nach Peer.
+            try:
+                _content_score = _GTF.score_content(msg)
+                if _content_score > 0.0:
+                    logger.debug(
+                        f"[swarm_p2p] content_score={_content_score:.3f} "
+                        f"peer={peer_id[:16]}..."
+                    )
+            except Exception:
+                pass
+        except Exception as _tox_err:
+            logger.debug(f"[swarm_p2p] toxicity_filter Fehler (übersprungen): {_tox_err}")
+
         # Device-lock enforcement: one account per device, one device per account
         incoming_node_id = str(msg.get("node_id", "") or "").strip()
         incoming_device_fp = str(msg.get("device_fingerprint", "") or "").strip()

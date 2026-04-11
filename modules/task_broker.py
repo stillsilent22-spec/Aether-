@@ -526,9 +526,15 @@ class TaskBroker:
             start = time.time()
             # Wenn der Anforderer einen partiellen Ansatz geliefert hat, nutze ihn
             # als Seed: bekannte Dims direkt übernehmen, unbekannte (0.0) berechnen.
+            # Sicherheit: alle Werte werden auf finite Floats in [-1e4, 1e4] geclamped.
+            # NaN / Inf im approach_vector würde den Rechenweg korrumpieren.
+            import math as _math
             effective_phi = list(request.invariant_vector)
             if request.approach_vector:
                 for i, av in enumerate(request.approach_vector[:9]):
+                    if not isinstance(av, (int, float)) or not _math.isfinite(av):
+                        continue  # Ungültiger Wert aus approach_vector → ignorieren
+                    av = max(-1e4, min(1e4, float(av)))
                     if i < len(effective_phi) and av == 0.0:
                         pass  # Lücke — Executor füllt mit eigenem Wert (schon in effective_phi)
                     elif i < len(effective_phi) and av != 0.0:

@@ -63,6 +63,14 @@ MAX_RESOLVED_HISTORY = 256
 # Wie oft der Monitoring-Tick läuft (Sekunden)
 MONITOR_INTERVAL_SEC = 60
 
+# Zeitfenster in dem Hints gesammelt werden BEVOR ein Gap als gelöst gilt.
+# Innerhalb dieses Fensters empfängt der Knoten alle Lösungswege die der
+# Schwarm kennt — evolutionäre Diversität statt First-Response-Wins.
+HINT_COLLECTION_WINDOW_SEC = 120   # 2 Minuten Sammelzeit
+
+# Maximale gespeicherte Hints pro Gap im Solution Pool
+MAX_HINTS_PER_GAP = 16
+
 
 # --------------------------------------------------------------------------- #
 #  Gap-Typen                                                                  #
@@ -212,6 +220,11 @@ class BlindspotEngine:
         self._is_running        = False
         self._stop_event        = threading.Event()
         self._monitor_thread: Optional[threading.Thread] = None
+        # Solution pool: signal_id → Liste aller empfangenen Hint-Dicts (diverse Lösungswege).
+        # Wird NICHT sofort aufgelöst — erst nach HINT_COLLECTION_WINDOW_SEC sammeln wir
+        # alle Wege aus dem Schwarm, dann kristallisieren alle parallel.
+        # Schlüssel: signal_id, Wert: {"first_hint_ts": float, "hints": List[Dict]}
+        self._solution_pool: Dict[str, Dict[str, Any]] = {}
         self._load_state()
 
     # ── Lifecycle ─────────────────────────────────────────────────────────── #
@@ -266,6 +279,10 @@ class BlindspotEngine:
         new_gaps += self._check_knowledge_gaps()
         new_gaps += self._check_bootstrap_gaps()
         resolved += self._auto_resolve_gaps()
+
+        # Reife Solution-Pools aufräumen — löst Gaps auf die ihren Sammelzeitraum
+        # abgeschlossen haben auch wenn kein neuer Hint mehr eingetroffen ist.
+        self._flush_mature_solution_pools()
 
         self._save_state()
 
@@ -549,58 +566,133 @@ class BlindspotEngine:
     ) -> int:
         """Verarbeitet empfangene Hints eines Peers.
 
-        Für jeden Hint:
-        1. Sucht den passenden aktiven Gap
-        2. Kristallisiert die Fingerprints via OfflineLearner (unabhängiges Lernen)
-        3. Markiert den Gap als teilweise/vollständig gelöst
-        4. Macht den Knoten zum potenziellen Helfer für denselben Gap → Stärke
+        Evolutionäre Diversität statt First-Response-Wins:
+        Hints werden erst im _solution_pool gesammelt.  Erst nach
+        HINT_COLLECTION_WINDOW_SEC werden ALLE eingegangenen Lösungswege
+        parallel in den OfflineLearner kristallisiert und der Gap aufgelöst.
 
-        Gibt Anzahl verarbeiteter Hints zurück.
+        Das Ergebnis: Der Knoten kennt nicht nur einen Lösungsweg, sondern
+        alle Wege die der Schwarm für diesen Gap bereitstellt — und kann
+        later selbst als Helfer für andere Peers mit denselben Gaps auftreten.
+
+        Gibt Anzahl neu in den Pool eingereihter Hints zurück.
         """
         absorbed = 0
+        now = time.time()
         for hint_data in hints:
             try:
                 hint = BlindspotHint.from_dict(hint_data)
                 sig_id = hint.signal_id
 
-                # Fingerprints in OfflineLearner kristallisieren (unabhängiges Lernen)
-                if hint.fingerprints:
-                    try:
-                        from modules.offline_learning import OfflineLearner
-                        OfflineLearner.instance().on_task_result(
-                            hint.fingerprints,
-                            task_type="blindspot_hint:" + hint.domain,
-                        )
-                    except Exception as ol_exc:
-                        logger.debug(f"[blindspot] offline_learner: {ol_exc}")
-
                 with self._lock:
-                    if sig_id in self._active_gaps:
-                        sig = self._active_gaps[sig_id]
-                        sig.hint_count += 1
-                        # Nach genug hochwertigen Hints → Gap als gelöst markieren
-                        if sig.hint_count >= 1 and hint.priority_boost >= 0.7:
-                            self._resolve_gap(sig_id, resolved_by=peer_node_id)
-                        elif sig.hint_count >= 3:
-                            self._resolve_gap(sig_id, resolved_by=peer_node_id)
+                    # Eintrag im Solution Pool anlegen oder ergänzen
+                    if sig_id not in self._solution_pool:
+                        self._solution_pool[sig_id] = {
+                            "first_hint_ts": now,
+                            "hints": [],
+                        }
+                    pool_entry = self._solution_pool[sig_id]
+                    # Deduplizierung: selber payload_hash + domain wird nicht doppelt gespeichert
+                    existing_hashes = {
+                        h.get("payload_hash") for h in pool_entry["hints"]
+                    }
+                    if hint.payload_hash not in existing_hashes:
+                        if len(pool_entry["hints"]) < MAX_HINTS_PER_GAP:
+                            pool_entry["hints"].append(hint.to_dict())
                     self._hints_received += 1
 
-                # Stärke eintragen: wir kennen jetzt mehr über diese Domäne
-                self._mark_strength(hint.domain, min(1.0, hint.priority_boost + 0.3))
+                    if sig_id in self._active_gaps:
+                        self._active_gaps[sig_id].hint_count = len(pool_entry["hints"])
 
                 absorbed += 1
-                logger.info(
-                    "[blindspot] Hint absorbiert von %s: domain=%s boost=%.2f",
-                    peer_node_id[:16],
-                    hint.domain,
-                    hint.priority_boost,
+                logger.debug(
+                    "[blindspot] Hint in Pool eingereiht von %s: domain=%s "
+                    "pool_size=%d",
+                    peer_node_id[:16], hint.domain,
+                    len(self._solution_pool[sig_id]["hints"]),
                 )
             except Exception as exc:
                 logger.debug(f"[blindspot] absorb_hint: {exc}")
 
+        # Prüfe ob ein Pool-Eintrag reif ist (Sammelzeit abgelaufen)
+        # und kristallisiere dann alle Hints gemeinsam.
+        self._flush_mature_solution_pools(now)
+
         if absorbed > 0:
             self._save_state()
         return absorbed
+
+    def _flush_mature_solution_pools(self, now: Optional[float] = None) -> None:
+        """Löst alle reifen Solution-Pools auf.
+
+        Ein Pool gilt als reif wenn seit dem ersten Hint HINT_COLLECTION_WINDOW_SEC
+        vergangen sind ODER der Pool MAX_HINTS_PER_GAP Einträge hat.
+
+        Für jeden reifen Pool:
+        - Alle Hints werden in den OfflineLearner kristallisiert
+        - Der Gap wird aufgelöst mit Verweis auf die Anzahl unabh. Lösungswege
+        - Die Stärke in der jeweiligen Domäne wird proportional zur Pool-Größe erhöht
+        """
+        if now is None:
+            now = time.time()
+        to_flush: List[str] = []
+        with self._lock:
+            for sig_id, entry in self._solution_pool.items():
+                age = now - entry["first_hint_ts"]
+                full = len(entry["hints"]) >= MAX_HINTS_PER_GAP
+                if age >= HINT_COLLECTION_WINDOW_SEC or full:
+                    to_flush.append(sig_id)
+
+        for sig_id in to_flush:
+            with self._lock:
+                entry = self._solution_pool.pop(sig_id, None)
+            if not entry:
+                continue
+            hints_in_pool = entry["hints"]
+            if not hints_in_pool:
+                continue
+
+            domains_seen: Dict[str, float] = {}  # domain → max priority_boost
+            for hint_dict in hints_in_pool:
+                try:
+                    hint = BlindspotHint.from_dict(hint_dict)
+                    # Jeden Lösungsweg unabhängig kristallisieren
+                    if hint.fingerprints:
+                        try:
+                            from modules.offline_learning import OfflineLearner
+                            OfflineLearner.instance().on_task_result(
+                                hint.fingerprints,
+                                task_type="blindspot_hint:" + hint.domain,
+                            )
+                        except Exception as ol_exc:
+                            logger.debug(f"[blindspot] offline_learner flush: {ol_exc}")
+                    prev = domains_seen.get(hint.domain, 0.0)
+                    domains_seen[hint.domain] = max(prev, hint.priority_boost)
+                except Exception:
+                    pass
+
+            # Stärken für alle abgedeckten Domänen erhöhen —
+            # proportional zur Anzahl unabhängiger Lösungswege
+            diversity_bonus = min(0.3, len(hints_in_pool) * 0.05)
+            for domain, best_boost in domains_seen.items():
+                self._mark_strength(domain, min(1.0, best_boost + 0.3 + diversity_bonus))
+
+            # Gap auflösen — mit Notiz wie viele Wege es gibt
+            with self._lock:
+                if sig_id in self._active_gaps and not self._active_gaps[sig_id].resolved:
+                    sig = self._active_gaps[sig_id]
+                    sig.hint_count = len(hints_in_pool)
+                    self._resolve_gap(
+                        sig_id,
+                        resolved_by=f"swarm_pool:{len(hints_in_pool)}_paths",
+                    )
+
+            logger.info(
+                "[blindspot] Solution-Pool aufgelöst: signal=%s "
+                "diverse_paths=%d domains=%s diversity_bonus=%.2f",
+                sig_id[:16], len(hints_in_pool),
+                list(domains_seen.keys()), diversity_bonus,
+            )
 
     # ── Peer-Gaps speichern (wir können helfen) ───────────────────────────── #
 
