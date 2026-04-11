@@ -211,6 +211,19 @@ def _ensure_legacy_identity():
         _safe_makedirs(nodes_dir)
         _write_json(os.path.join(nodes_dir, node_id + ".json"), node_record)
 
+    # Keypair-Aequivalent fuer Legacy-Knoten ohne Ed25519
+    # hw_id (device_fp) + net_id (network_entry_id) -> priv_equiv + pub_equiv
+    _pub_equiv = ""
+    try:
+        _sym_dir_uid = os.path.join(ROOT, "modules")
+        if _sym_dir_uid not in sys.path:
+            sys.path.insert(0, _sym_dir_uid)
+        from universal_identity import entry_keypair_seed as _eks
+        from universal_identity import MEDIUM_UNKNOWN as _MU
+        _pe, _pub_equiv = _eks(device_fp, network_entry_id, _MU)
+    except Exception:
+        pass
+
     if not os.path.isfile(ACCOUNT_CLAIM_PATH):
         _write_json(ACCOUNT_CLAIM_PATH, {
             "schema": "aether.account_claim.v1",
@@ -223,12 +236,14 @@ def _ensure_legacy_identity():
             "ygg_addr": "",
             "identity_lock": identity_lock,
             "network_entry_id": network_entry_id,
+            "entry_pub_equiv": _pub_equiv,
+            "entry_medium": "unknown",
             "native_ygg_bound": False,
             "created_at": ts,
         })
     elif json is not None:
-        # Backfill identity_lock and network_entry_id if still empty from
-        # an older bootstrap run that pre-dates this fix.
+        # Backfill identity_lock, network_entry_id, entry_pub_equiv if missing
+        # from older bootstrap runs.
         try:
             claim = json.loads(open(ACCOUNT_CLAIM_PATH).read())
             updated = False
@@ -237,6 +252,12 @@ def _ensure_legacy_identity():
                 updated = True
             if not str(claim.get("identity_lock", "") or "").strip():
                 claim["identity_lock"] = identity_lock
+                updated = True
+            if not str(claim.get("entry_pub_equiv", "") or "").strip() and _pub_equiv:
+                claim["entry_pub_equiv"] = _pub_equiv
+                updated = True
+            if "entry_medium" not in claim:
+                claim["entry_medium"] = "unknown"
                 updated = True
             if updated:
                 _write_json(ACCOUNT_CLAIM_PATH, claim)
@@ -836,6 +857,36 @@ def main(argv=None):
             relay_pool = _read_relay_pool()
         else:
             print("[LEGACY] Kein Relay erreichbar — arbeite offline bis zum nächsten Versuch.")
+
+    # Kein Relay via Pool gefunden — alle Einsprung-Kanaele versuchen:
+    # Clearnet (oeffentliche IP + DNS-Seeds), Bluetooth (pybluez), USB/Serial (pyserial)
+    if not active_relay:
+        try:
+            _sym_dir_ec = os.path.join(ROOT, "modules")
+            if _sym_dir_ec not in sys.path:
+                sys.path.insert(0, _sym_dir_ec)
+            from entry_channels import discover_entry as _discover_entry
+            print("[LEGACY] Kein Relay im Pool — suche Einsprung via clearnet/bt/usb ...")
+            _cid, _rurl, _medium = _discover_entry(relay_pool, timeout=12)
+            print("[LEGACY] Einsprung: medium=%s  connection_id=%s" % (_medium, _cid))
+            if _rurl:
+                _learn_relay_urls_legacy([_rurl])
+                relay_pool = _read_relay_pool()
+                active_relay = _rurl
+                _relay_announce(active_relay, node_id, device_fp, alias_username)
+                relay_pool = _read_relay_pool()
+                print("[LEGACY] Relay via %s gefunden und registriert: %s" % (_medium, active_relay))
+            # entry_medium in account_claim persistieren
+            if _cid and json is not None and os.path.isfile(ACCOUNT_CLAIM_PATH):
+                try:
+                    _claim = json.loads(open(ACCOUNT_CLAIM_PATH).read())
+                    if str(_claim.get("entry_medium", "unknown") or "unknown") == "unknown":
+                        _claim["entry_medium"] = _medium
+                        _write_json(ACCOUNT_CLAIM_PATH, _claim)
+                except Exception:
+                    pass
+        except Exception as _ec_err:
+            print("[LEGACY] entry_channels nicht verfuegbar: " + str(_ec_err))
 
     # DHT-Bootstrap + Legacy-Proto-Gossip automatisch starten
     # Kybernetik: unabhaengig vom Relay-Status — DHT sucht selbst
