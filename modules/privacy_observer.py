@@ -28,7 +28,11 @@ def is_private_context(source: str, content_hint: str) -> bool:
         "mail","email","e-mail","inbox","outbox","outlook","gmail",
         "thunderbird","protonmail","smtp","imap","pop3","compose",
         "draft","sent_mail","mailbox",
+        # Passwort/Key-Manager — immer privat
+        "password","passwort","keychain","1password","bitwarden","keepass",
+        "lastpass","dashlane","credentials","login","auth",
     )
+    # Case-insensitiv: Variationen wie 'Chat', 'CHAT', 'Password' werden erkannt
     combined = (str(source) + " " + str(content_hint)).lower()
     return any(kw in combined for kw in _private_keywords)
 

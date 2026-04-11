@@ -138,7 +138,7 @@ class GoedelLoopRenderer:
         for depth in range(max_depth + 1):
             fingerprint = _content_hash(signal)
             entropy      = _shannon_entropy(signal)
-            periodicity  = _periodicity_score(signal)
+            periodicity  = _periodicity(signal)
             size         = float(len(signal))
 
             current_metrics: Dict[str, float] = {

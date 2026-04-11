@@ -81,14 +81,40 @@ def _verify_node_record(payload: dict[str, Any]) -> bool:
         return False
 
 
-def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 300.0) -> bool:
-    """Reject replayed old beacon packets."""
+# Nonce-Tracking: Verhindert Replay-Angriffe innerhalb des Freshness-Fensters.
+# Speichert gesehene (beacon_ts, node_id)-Paare mit Cleanup nach TTL.
+_seen_beacon_nonces: dict[str, float] = {}
+_seen_beacon_nonces_lock = threading.Lock()
+
+
+def _is_fresh(payload: dict[str, Any], max_age_seconds: float = 60.0) -> bool:
+    """Reject replayed old beacon packets.
+
+    Freshness-Fenster auf 60 Sekunden reduziert (war 300s — zu groß für Replay-Schutz).
+    Zusätzlich Nonce-Tracking: (beacon_ts + node_id)-Kombination darf nur einmal akzeptiert werden.
+    """
     try:
         ts = str(payload.get("beacon_ts", "") or "").strip()
         if not ts:
-            return True  # No timestamp = old format, accept for now
+            return True  # Altes Format ohne Timestamp — kompatibel lassen
         beacon_time = float(ts)
-        return abs(time.time() - beacon_time) <= max_age_seconds
+        now = time.time()
+        if abs(now - beacon_time) > max_age_seconds:
+            return False
+        # Nonce: ts + node_id kombiniert — verhindert dass selber Beacon mehrfach akzeptiert wird
+        node_id_hint = str(payload.get("node_id", payload.get("peer_id", "")) or "")[:32]
+        nonce_key = f"{ts}|{node_id_hint}"
+        with _seen_beacon_nonces_lock:
+            if nonce_key in _seen_beacon_nonces:
+                return False  # Replay erkannt
+            _seen_beacon_nonces[nonce_key] = now
+            # Cleanup: Einträge älter als 2× max_age entfernen (speichersicher)
+            if len(_seen_beacon_nonces) > 500:
+                cutoff = now - (max_age_seconds * 2)
+                expired = [k for k, t in _seen_beacon_nonces.items() if t < cutoff]
+                for k in expired:
+                    del _seen_beacon_nonces[k]
+        return True
     except Exception as e:
         logger.warning(f"[lan_beacon] Stiller Fehler: {e}")
         return True

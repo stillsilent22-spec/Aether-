@@ -107,10 +107,11 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     uploader_role = normalize_public_role(record.get("uploader_role", "operator"))
     artifact_class = normalize_public_artifact_class(record.get("artifact_class", "performance_route"))
     share_channel = str(record.get("share_channel", share_channel_for_artifact(artifact_class)) or share_channel_for_artifact(artifact_class))
-    # Admin auto-trust only if this is the verified genesis node.
-    # uploader_node_id must be the real node_id — NOT a session-pseudonym hash.
+    # Genesis-Node: uploader_node_id muss die verifizierte GENESIS_NODE_ID sein.
+    # Nur dann greift die quorum_bypass-Logik (threshold=1 statt 3).
+    # Der Pipeline-Trustscore gilt fuer jeden — auch fuer Genesis. Keine Ausnahme.
     uploader_node_id = str(record.get("uploader_node_id", "") or "").strip()
-    # Genesis ist der einzige privilegierte Node — kein 'admin' existiert.
+    # Genesis ist der einzige privilegierte Node — kein 'admin' existiert als separater Role.
     genesis_trusted = (
         uploader_role == "genesis"
         and _is_genesis_node(uploader_node_id)
@@ -130,14 +131,14 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
         4,
     )
     trust_score_met = pipeline_trust_score >= _GENESIS_PUSH_MIN_SCORE
-    # Genesis: quorum is bypassed — trustscore is the mandatory gate.
-    # Peers: quorum required (unchanged). Trustscore does not gate peers.
+    # Genesis: Peer-Count-Quorum umgangen (threshold=1) — Trustscore ist Pflicht fuer jeden.
+    # Peers: Peer-Count-Quorum erforderlich (unveraendert). Trustscore gilt nicht als Gate fuer Peers.
     quorum_met = bool(
         (genesis_trusted and trust_score_met)
         or (not genesis_trusted and validation_count >= effective_threshold)
     )
     if genesis_trusted and trust_score_met:
-        trust_reason = "genesis_auto_trust"
+        trust_reason = "genesis_quorum_bypass"
     elif genesis_trusted:
         trust_reason = "genesis_score_pending"
     elif quorum_met:
@@ -149,6 +150,7 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     updated["quorum_threshold"] = effective_threshold
     updated["validation_count"] = int(validation_count)
     updated["genesis_trusted"] = bool(genesis_trusted)
+    updated["admin_trusted"] = bool(genesis_trusted)  # alias: 'admin' und 'genesis' sind synonym fuer den Eigentuemer
     updated["quorum_met"] = bool(quorum_met)
     updated["pipeline_trust_score"] = pipeline_trust_score
     updated["trust_state"] = "trusted" if quorum_met else "candidate"
@@ -158,8 +160,8 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     updated["source_scope"] = str(record.get("source_scope", "derived_public_metrics") or "derived_public_metrics")
     updated["privacy_class"] = str(record.get("privacy_class", "public_metric_only") or "public_metric_only")
     updated["user_confirmation_required"] = bool(share_channel == "consent_required")
-    # Genesis: auto_push gated by trustscore (quorum bypassed).
-    # Peers: auto_push gated by quorum (unchanged).
+    # Genesis: auto_push vom Trustscore gegattet (Peer-Count-Quorum umgangen, Trustscore Pflicht).
+    # Peers: auto_push vom Peer-Count-Quorum gegattet (unveraendert).
     genesis_push_ready = bool(genesis_trusted and artifact_class == "performance_route" and trust_score_met)
     peer_push_ready = bool(not genesis_trusted and artifact_class == "performance_route" and quorum_met)
     updated["auto_push_ready"] = bool(genesis_push_ready or peer_push_ready)
@@ -294,6 +296,7 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
         "candidate_anchor_count": int(len(candidate_views)),
         "quorum_validated_count": int(quorum_validated_count),
         "genesis_trusted_count": int(genesis_trusted_count),
+        "admin_trusted_count": int(genesis_trusted_count),  # alias: "admin" normalizes to "genesis"
         "auto_push_ready_count": int(auto_push_ready_count),
         "consent_required_count": int(consent_required_count),
     }

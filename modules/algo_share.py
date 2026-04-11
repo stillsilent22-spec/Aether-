@@ -149,8 +149,14 @@ class AutoPropagator:
     MIN_FITNESS_TO_SHARE = 0.30
 
     # Anzahl unabhängiger Beobachtungen bis ein Token als Quorum-bestätigt gilt.
-    # Zählt nach Nachrichteneingang — kein Peer-Tracking, peer-identitätsblind.
-    QUORUM_CONFIRMATION_THRESHOLD = 3
+# Nicht mehr in Verwendung — nur noch als Fallback-Konstante beibehalten.
+        QUORUM_CONFIRMATION_THRESHOLD = 3
+
+        # Lokale Fitness-Schwelle: ein empfangenes Token wird nur akzeptiert,
+        # wenn sein fitness_score diesen Wert erreicht oder überschreitet.
+        # Sicherheit ohne Quorum: kein Angreifer kann einen Token konstruieren
+        # der auf UNSEREN lokalen Daten diese Schwelle erfüllt — er kennt sie nicht.
+        LOCAL_FITNESS_GATE = 0.30
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -160,9 +166,11 @@ class AutoPropagator:
         self._known_tokens: Dict[str, Dict[str, Any]] = {}
         # Bestes eigenes Token für den nächsten Gossip
         self._pending_token: Optional[Dict[str, Any]] = None
-        # Zählt wie oft jedes Token im Netz gesehen wurde (flüchtig, kein Peer-ID).
-        # Erreicht ein Token den Schwellwert, wird es als Quorum-bestätigt markiert.
-        # Sinn: je mehr unabhängige Knoten ein Token teilen, desto repräsentativer.
+        # Peer-deduplizierter Sichtbarkeits-Zähler: token_id → set(peer_node_ids).
+        # Ein Peer kann dasselbe Token beliebig oft senden — zählt nur einmal.
+        # Kein Quorum mehr als Akzeptanzbedingung — nur für Gossip-Priorisierung.
+        self._token_seen_peers: Dict[str, set] = {}
+        # Legacy-Compat: flacher Zähler für Persistenz (set-Größe)
         self._token_seen_count: Dict[str, int] = {}
         self._load_persistent()
 
@@ -175,14 +183,15 @@ class AutoPropagator:
                     if isinstance(v, dict)
                 }
                 self._share_count = int(data.get("share_count", 0))
-                # Persist quorum counters across restarts so hard-won quorum
-                # confirmation is not lost on nodes that restart frequently
-                # (e.g. gaming nodes that reboot between sessions).
+                # Peer-Sätze aus gespeicherten Zählern restaurieren (als anonyme Platzhalter).
+                # Peer-IDs werden nicht persistiert (Datenschutz) — nur die Menge.
                 self._token_seen_count = {
                     k: int(v)
                     for k, v in data.get("seen_counts", {}).items()
                     if isinstance(v, (int, float))
                 }
+                # _token_seen_peers bleibt leer nach Neustart — korrekt, da
+                # Peer-IDs ephemer sind. _token_seen_count liefert Legacy-Zähler.
         except Exception:
             pass
 
@@ -269,48 +278,56 @@ class AutoPropagator:
 
         return token_dict
 
-    def receive_algo_token(self, token_data: Dict[str, Any]) -> bool:
+    def receive_algo_token(self, token_data: Dict[str, Any], from_peer: str = "") -> bool:
         """Speichert ein empfangenes AlgoToken (aus Gossip eines Peers).
 
-        Prüft Integrität, speichert lokal.
+        Akzeptanzbedingung — KEIN Quorum, stattdessen lokale Fitness-Gate:
+          1. Strukturelle Integrität: SHA256(tree_sig|domain_hint) == token_id
+          2. fitness_score >= LOCAL_FITNESS_GATE (0.30)
+
+        Sicherheit ohne Quorum: ein Angreifer kann keinen Token konstruieren der
+        diese Schranke auf unseren lokalen Daten erfüllt — er kennt sie nicht.
+
+        Peer-Deduplizierung: jeder Peer zählt pro Token nur einmal.
+        Ein Node kann dasselbe Token 100× senden — ändert nichts.
+
         Gibt True zurück wenn gültig und neu, False wenn bekannt oder ungültig.
         """
         if not isinstance(token_data, dict):
             return False
-        token_id    = str(token_data.get("token_id",     ""))
+        token_id    = str(token_data.get("token_id",      ""))
         tree_sig    = str(token_data.get("tree_signature", ""))
-        domain_hint = str(token_data.get("domain_hint",  "generic"))
+        domain_hint = str(token_data.get("domain_hint",   "generic"))
+        fitness     = float(token_data.get("fitness_score", 0.0))
+        peer_id     = str(from_peer or token_data.get("from_peer", "") or "").strip()
 
         if not token_id or not tree_sig or len(tree_sig) != 64:
             return False
 
+        # 1. Strukturelle Integrität
         expected_id = hashlib.sha256(f"{tree_sig}|{domain_hint}".encode()).hexdigest()
         if token_id != expected_id:
-            return False   # Integritätsfehler
+            return False
+
+        # 2. Lokale Fitness-Gate — keine Peer-Abstimmung nötig
+        if fitness < self.LOCAL_FITNESS_GATE:
+            return False
 
         with self._lock:
-            # Sichtbarkeits-Zähler: kein Peer-Bezug — nur wie oft taucht dieses
-            # Token im Netz auf.  Jeder Knoten zählt unabhängig.  Kein Schutz
-            # gegen einen Knoten der dasselbe Token mehrfach sendet — dafür ist
-            # der Rate-Limiter in gossip_toxicity_filter.py zuständig.
-            count = self._token_seen_count.get(token_id, 0) + 1
-            self._token_seen_count[token_id] = count
-            quorum_now = (count >= self.QUORUM_CONFIRMATION_THRESHOLD)
+            # Peer-deduplizierter Zähler: set statt int
+            seen_set = self._token_seen_peers.setdefault(token_id, set())
+            if peer_id:
+                seen_set.add(peer_id)
+            self._token_seen_count[token_id] = len(seen_set) if seen_set else (
+                self._token_seen_count.get(token_id, 0) + (1 if not peer_id else 0)
+            )
 
             if token_id in self._known_tokens:
-                # Bereits bekannt — aber Quorum-Status könnte sich jetzt ändern
-                if quorum_now and not self._known_tokens[token_id].get("quorum_confirmed"):
-                    self._known_tokens[token_id]["quorum_confirmed"] = True
-                    self._save_persistent()
-                return False   # nicht neu
+                return False   # bereits bekannt
 
-            if quorum_now:
-                token_data = dict(token_data)
-                token_data["quorum_confirmed"] = True
-
-            self._known_tokens[token_id] = token_data
+            self._known_tokens[token_id] = dict(token_data)
             # Re-Gossip: sofort als pending setzen → nächster Gossip-Zyklus leitet ihn weiter
-            self._pending_token = token_data
+            self._pending_token = dict(token_data)
             self._save_persistent()
         return True
 
@@ -345,10 +362,9 @@ class AutoPropagator:
 
         Priorisierung (gleich für alle — kein Peer-Bezug):
           1. eigenes pending_token (frischeste eigene Verbesserung)
-          2. Quorum-bestätigtes Token mit höchstem fitness_score
-             (≥3 unabhängige Knoten haben dasselbe Token geteilt → höhere
-              Repräsentativität, kein einzelner Peer wird bevorzugt)
-          3. Bestes bekanntes Token nach fitness_score (Fallback)
+          2. Bestes lokal akzeptiertes Token nach fitness_score.
+             Jedes Token in _known_tokens hat die lokale Fitness-Gate bestanden
+             (LOCAL_FITNESS_GATE=0.30) — kein Quorum nötig, lokale Validierung reicht.
 
         Setzt pending_token zurück nach dem Abruf.
         """
@@ -359,14 +375,7 @@ class AutoPropagator:
                 return token
             if not self._known_tokens:
                 return None
-            # Quorum-bestätigte Tokens bevorzugen — sie repräsentieren
-            # kollektives Swarm-Wissen, unabhängig davon wer sie gesendet hat
-            quorum_tokens = [
-                t for t in self._known_tokens.values()
-                if t.get("quorum_confirmed")
-            ]
-            if quorum_tokens:
-                return max(quorum_tokens, key=lambda t: float(t.get("fitness_score", 0.0)))
+            # Alle gespeicherten Tokens haben die lokale Fitness-Gate bereits bestanden.
             return max(self._known_tokens.values(),
                        key=lambda t: float(t.get("fitness_score", 0.0)))
 

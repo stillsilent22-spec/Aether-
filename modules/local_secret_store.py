@@ -48,19 +48,19 @@ class ProtectedSecret:
         return self._cleartext
 
     def __exit__(self, *args: _ls_Any) -> None:
-        if _ls_sys.platform.startswith("win") and self._cleartext is not None:
+        # Python-Strings sind unveränderlich — ctypes.memset(id(str)) überschreibt
+        # den Python-Objekt-Header im RAM, nicht den eigentlichen Zeichenpuffer.
+        # Das ist keine sichere Zeroization sondern eine Memory-Corruption-Quelle.
+        # Sicherer Ansatz: Referenz aufgeben + GC so früh wie möglich auslösen.
+        # Für produktionshärteren Schutz: Secrets als bytearray speichern (veränderlich).
+        if self._cleartext is not None:
             try:
-                import ctypes
-
-                ctypes.memset(
-                    ctypes.cast(id(self._cleartext), ctypes.c_void_p),
-                    0,
-                    _ls_sys.getsizeof(self._cleartext),
-                )
+                import gc
+                self._cleartext = None
+                gc.collect(0)  # Generierung 0 — schnell, gibt kurzlebige Objekte frei
             except Exception as e:
                 logger.warning(f"[local_secret_store] Fehler: {e}")
-                pass
-        self._cleartext = None
+                self._cleartext = None
 
     def __del__(self) -> None:
         try:

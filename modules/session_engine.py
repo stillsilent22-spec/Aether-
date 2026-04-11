@@ -5,8 +5,13 @@ import hashlib as _hashlib
 import sys as _sys
 import ctypes as _ctypes
 import secrets as _secrets
+from datetime import datetime as _datetime, timezone as _timezone
 from typing import Any as _Any
 from typing import Optional as _Optional
+
+
+def _datetime_now_iso() -> str:
+    return _datetime.now(_timezone.utc).isoformat()
 
 
 class SecuritySession:
@@ -44,6 +49,7 @@ class SessionContext:
         self.user_role: str = str(getattr(ss, "user_role", "operator") or "operator")
         self.security_mode: str = str(getattr(ss, "security_mode", "PROD") or "PROD")
         self.seed: _Optional[int] = int(seed) if seed is not None else None
+        self.created_at: str = str(getattr(ss, "created_at", "") or _datetime_now_iso())
         self.user_settings: dict[str, Any] = {}
         # Ephemere Schluessel — werden bei cleanup() zeroized
         self.live_session_key: str = ""

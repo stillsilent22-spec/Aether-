@@ -575,6 +575,29 @@ class AnalysisEngine:
         tail = raw[-half:]
         return bytes(head + tail)
 
+    def _periodicity(self, sample: bytes) -> int:
+        """Erkennt die dominante Periodenlänge (in Bytes) im Sample via Lag-Autokorrelation.
+
+        Gibt den Lag-Wert (1-64) zurueck, bei dem die meisten Bytes mit dem
+        um diesen Abstand versetzten Byte uebereinstimmen. 0 = kein klares Muster.
+        """
+        n = len(sample)
+        if n < 4:
+            return 0
+        best_lag = 0
+        best_score = 0.0
+        max_lag = min(64, max(2, n // 3))
+        for lag in range(1, max_lag + 1):
+            comparisons = n - lag
+            if comparisons <= 0:
+                continue
+            matches = sum(1 for i in range(comparisons) if sample[i] == sample[i + lag])
+            score = float(matches) / float(comparisons)
+            if score > best_score:
+                best_score = score
+                best_lag = lag
+        return int(best_lag)
+
     def _stream_entry(self, label: str, data: bytes, kind: str = "derived") -> dict[str, Any]:
         return {
             "label": str(label),

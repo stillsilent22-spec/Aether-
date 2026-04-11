@@ -569,6 +569,31 @@ struct GamingProgressRow {
 
 const GAMING_PROGRESS_PATH: &str = "data/interbus/gaming_progress_table.json";
 
+/// Eintrag im Spiele-Verzeichnis: ein Spiel für das bereits Vault-Daten existieren.
+/// Wird von `algo_share.py` / Gossip zusammengestellt und zeigt den akkumulierten
+/// Rekonstruktionsfortschritt — unabhängig davon wer gerade spielt.
+/// Kein Personenbezug: keine Peer-IDs, keine Pfade, kein Spielstand.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct GameDirectoryEntry {
+    game_id: String,
+    game_label: String,
+    /// Wie viele verschiedene Nodes haben bisher Daten für dieses Spiel beigetragen.
+    contributor_count: u32,
+    /// Akkumulierte Vault-Abdeckung in Prozent (0.0–100.0). Aus zusammengeführten Ankern.
+    vault_coverage: f32,
+    /// Anzahl bekannter Anker für dieses Spiel im Swarm-Vault.
+    anchor_count: u64,
+    /// True wenn vault_coverage >= 70 % → Rekonstruktion ohne Originalbinary möglich (Linux-Pfad).
+    reconstruction_ready: bool,
+    /// Wann der Eintrag zuletzt aktualisiert wurde (ISO-8601 oder Unix-Sek als String).
+    last_updated: String,
+}
+
+/// Interbus-Pfad: Spiele-Verzeichnis mit Rekonstruktionsfortschritt (geschrieben von algo_share.py).
+const GAME_DIRECTORY_PATH: &str = "data/interbus/game_directory.json";
+/// Interbus-Pfad: Opt-in-Flag ob der Nutzer eigene Vault-Daten zum Verzeichnis beiträgt.
+const GAME_BROADCAST_OPT_IN_PATH: &str = "data/interbus/game_broadcast_opt_in.json";
+
 #[derive(Debug, Clone)]
 struct FileAnalysisResult {
     entry: RegisterEntry,
@@ -764,6 +789,9 @@ enum Message {
     LauncherBuildTaskCompleted(String, Result<BuildTaskResult, String>),
     LauncherLogsClearPressed,
     SwarmConsentToggled(bool),
+    /// Nutzer aktiviert / deaktiviert den Opt-in-Beitrag lokaler Vault-Daten zum Spiele-Verzeichnis.
+    /// Datenschutz: keine Pfade, kein Spielstand, kein Personenbezug — nur game_id + Ankerdaten.
+    GameBroadcastToggle(bool),
     /// User accepted a swarm domain-overlap contact request (payload = anchor_hash_a).
     SwarmOverlapAccepted(String),
     /// User declined a swarm domain-overlap contact request (payload = anchor_hash_a).
@@ -962,6 +990,10 @@ pub struct AetherIcedShell {
     active_gaming_game_id: Option<String>,
     gaming_progress_rows: Vec<GamingProgressRow>,
     gaming_progress_last_live_update_tick: u64,
+    /// Spiele-Verzeichnis: alle Spiele für die bereits Vault-Einträge im Swarm existieren.
+    game_directory: Vec<GameDirectoryEntry>,
+    /// True: der Nutzer trägt eigene Vault-Daten zum Spiele-Verzeichnis bei (opt-in, kein Personenbezug).
+    game_broadcast_enabled: bool,
     swarm_consented: bool, // Swarm-Teilnahme: opt-in/out über UI steuerbar
     /// Pending swarm domain-overlap contact requests, polled from data/interbus/.
     swarm_overlap_requests: Vec<SwarmOverlapRequest>,
@@ -1202,6 +1234,8 @@ impl AetherIcedShell {
             active_gaming_game_id: None,
             gaming_progress_rows: load_gaming_progress_rows(),
             gaming_progress_last_live_update_tick: 0,
+            game_directory: load_game_directory(),
+            game_broadcast_enabled: load_game_broadcast_opt_in(),
             cascade_run_id: None,
             cascade_metrics: None,
             backend_capability_score: 0.0,
@@ -1403,6 +1437,42 @@ fn save_gaming_progress_rows(rows: &[GamingProgressRow]) -> Result<(), String> {
     }
     let payload = serde_json::to_string_pretty(rows).map_err(|err| err.to_string())?;
     fs::write(path, payload).map_err(|err| err.to_string())
+}
+
+/// Liest `data/interbus/game_directory.json`, das von `algo_share.py` / Gossip
+/// zusammengestellt wird. Enthält alle Spiele für die bereits Vault-Einträge existieren
+/// und zeigt den akkumulierten Rekonstruktionsfortschritt. Kein Personenbezug.
+fn load_game_directory() -> Vec<GameDirectoryEntry> {
+    let path = Path::new(GAME_DIRECTORY_PATH);
+    if let Ok(raw) = fs::read_to_string(path) {
+        if let Ok(entries) = serde_json::from_str::<Vec<GameDirectoryEntry>>(&raw) {
+            return entries;
+        }
+    }
+    Vec::new()
+}
+
+/// Liest das Opt-in-Flag aus `data/interbus/game_broadcast_opt_in.json`.
+/// Standard ist `false` (deaktiviert) falls die Datei fehlt oder nicht parsbar ist.
+fn load_game_broadcast_opt_in() -> bool {
+    let path = Path::new(GAME_BROADCAST_OPT_IN_PATH);
+    if let Ok(raw) = fs::read_to_string(path) {
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) {
+            return val.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+        }
+    }
+    false
+}
+
+/// Schreibt das Opt-in-Flag. Wird nur von `Message::GameBroadcastToggle` aufgerufen.
+fn save_game_broadcast_opt_in(enabled: bool) -> Result<(), String> {
+    let path = Path::new(GAME_BROADCAST_OPT_IN_PATH);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    let payload = serde_json::json!({ "enabled": enabled });
+    let text = serde_json::to_string_pretty(&payload).map_err(|err| err.to_string())?;
+    fs::write(path, text).map_err(|err| err.to_string())
 }
 
 fn game_label_from_hint(game_hint: &str) -> String {
@@ -3602,6 +3672,11 @@ impl AetherIcedShell {
                     "Progress Ledger",
                     "Diese Welt nutzt den globalen Strukturfortschritt ohne ein separates Spiel-Quorum.",
                 )
+            })
+            .push(if world == Tab::Gaming {
+                network_gaming_table(&self.game_directory, self.game_broadcast_enabled)
+            } else {
+                info_card("", "")
             })
             .push(info_card(
                 "Drag and Drop Intake",
@@ -9710,6 +9785,21 @@ On warning: always check Logs and ADE for details.",
                     }
                 }
             }
+            Message::GameBroadcastToggle(enabled) => {
+                match save_game_broadcast_opt_in(enabled) {
+                    Ok(()) => {
+                        self.game_broadcast_enabled = enabled;
+                        self.status_line = if enabled {
+                            "Vault-Beitrag aktiviert. Lokale Spiel-Anker fließen ins Spiele-Verzeichnis ein — kein Pfad, kein Spielstand, kein Personenbezug.".to_owned()
+                        } else {
+                            "Vault-Beitrag deaktiviert. Lokale Daten bleiben nur lokal.".to_owned()
+                        };
+                    }
+                    Err(err) => {
+                        self.status_line = format!("Game-Broadcast-Einstellung konnte nicht gespeichert werden: {err}");
+                    }
+                }
+            }
             Message::SwarmOverlapAccepted(key) => {
                 if let Some(req) = self
                     .swarm_overlap_requests
@@ -12800,6 +12890,101 @@ fn gaming_progress_table<'a>(rows: &[GamingProgressRow]) -> Element<'a, Message>
                 )
                 .padding(10)
                 .style(panel_frame_style),
+            );
+        }
+    }
+
+    container(list).padding(12).style(panel_frame_style).into()
+}
+
+/// Tabelle 2: Netzwerk-Aktivitätsfeed — Spiele, die aktuell von anderen Peers gespielt werden.
+/// Privacy: keine Peer-IDs, keine Pfade, kein Spielstand. Nur game_id + Peer-Anzahl + Vault-Stand.
+fn network_gaming_table<'a>(entries: &[GameDirectoryEntry], contribute_enabled: bool) -> Element<'a, Message> {
+    let toggle_label = if contribute_enabled {
+        "Beitrag AN: deine lokalen Vault-Daten fließen ins Spiele-Verzeichnis ein"
+    } else {
+        "Beitrag AUS: deine lokalen Vault-Daten bleiben nur lokal"
+    };
+
+    let toggle_row = Row::new()
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .push(text(toggle_label).size(12).color(c(TEXT_M())).width(Length::Fill))
+        .push(
+            button(text("Beitragen").size(11).color(c(TEXT_H())))
+                .on_press(Message::GameBroadcastToggle(true))
+                .padding([5, 10])
+                .style(if contribute_enabled { primary_button_style } else { secondary_button_style }),
+        )
+        .push(
+            button(text("Nur lokal").size(11).color(c(TEXT_H())))
+                .on_press(Message::GameBroadcastToggle(false))
+                .padding([5, 10])
+                .style(if !contribute_enabled { primary_button_style } else { secondary_button_style }),
+        );
+
+    let mut list = Column::new()
+        .spacing(8)
+        .push(text("Spiele-Verzeichnis").size(16).color(c(TEXT_H())))
+        .push(
+            text("Spiele für die bereits Vault-Einträge existieren — zeigt akkumulierten Rekonstruktionsfortschritt. Kein Personenbezug: keine Peer-IDs, keine Pfade.")
+                .size(12)
+                .color(c(TEXT_M())),
+        )
+        .push(container(toggle_row).padding([6, 8]).style(panel_frame_style));
+
+    let header = Row::new()
+        .spacing(10)
+        .push(text("Spiel").size(11).color(c(TEXT_D())).width(Length::FillPortion(3)))
+        .push(text("Vault").size(11).color(c(TEXT_D())).width(Length::FillPortion(1)))
+        .push(text("Anker").size(11).color(c(TEXT_D())).width(Length::FillPortion(1)))
+        .push(text("Nodes").size(11).color(c(TEXT_D())).width(Length::FillPortion(1)))
+        .push(text("Launch").size(11).color(c(TEXT_D())).width(Length::FillPortion(2)));
+    list = list.push(container(header).padding([4, 6]).style(panel_frame_style));
+
+    if entries.is_empty() {
+        list = list.push(info_card(
+            "Noch keine Einträge",
+            "Sobald Spiele analysiert wurden und Vault-Daten im Swarm akkumuliert sind, erscheinen sie hier mit ihrem Rekonstruktionsfortschritt.",
+        ));
+    } else {
+        for entry in entries.iter().take(20) {
+            let vault_bar = format!(
+                "{:.0}% {}",
+                entry.vault_coverage,
+                "█".repeat(((entry.vault_coverage / 10.0) as usize).min(10))
+            );
+            let launch_element: Element<'_, Message> = if entry.reconstruction_ready {
+                button(text("Launch via Aether").size(11).color(c(TEXT_H())))
+                    .on_press(Message::TabSelected(Tab::Gaming))
+                    .padding([4, 8])
+                    .style(primary_button_style)
+                    .into()
+            } else {
+                text(format!("{:.0}% — noch {:.0}% fehlen", entry.vault_coverage, 70.0_f32 - entry.vault_coverage))
+                    .size(11)
+                    .color(c(TEXT_D()))
+                    .into()
+            };
+
+            let row_line = Row::new()
+                .spacing(10)
+                .align_y(Alignment::Center)
+                .push(
+                    Column::new()
+                        .push(text(entry.game_label.clone()).size(12).color(c(TEXT_H())))
+                        .push(text(format!("Update: {}", entry.last_updated)).size(10).color(c(TEXT_D())))
+                        .width(Length::FillPortion(3))
+                )
+                .push(text(vault_bar).size(11).color(c(TEXT_M())).width(Length::FillPortion(1)))
+                .push(text(format!("{}", entry.anchor_count)).size(12).color(c(TEXT_M())).width(Length::FillPortion(1)))
+                .push(text(format!("{}", entry.contributor_count)).size(12).color(c(TEXT_M())).width(Length::FillPortion(1)))
+                .push(container(launch_element).width(Length::FillPortion(2)));
+
+            list = list.push(
+                container(row_line)
+                    .padding(10)
+                    .style(panel_frame_style),
             );
         }
     }

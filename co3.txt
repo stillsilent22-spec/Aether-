@@ -1,0 +1,95 @@
+﻿cargo :     Checking aether v0.1.0 
+(C:\Users\kalle\Downloads\aether-delta-engine)
+In Zeile:1 Zeichen:6
++ $r = cargo check 2>&1 ; $r | Out-File "co3.txt" -Encoding utf8
++      ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking ae...r-delta-engine) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error[E0425]: cannot find value `godel_delta_percent` in this scope
+    --> src\iced_shell.rs:8151:12
+     |
+8151 |         if godel_delta_percent < 1.0 && godel_level < 3 {
+     |            ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `godel_level` in this scope
+    --> src\iced_shell.rs:8151:41
+     |
+8151 |         if godel_delta_percent < 1.0 && godel_level < 3 {
+     |                                         ^^^^^^^^^^^ not found in this 
+scope
+
+error[E0308]: mismatched types
+    --> src\iced_shell.rs:9415:17
+     |
+8486 | /          match message {
+8487 | |              Message::LoginUsernameChanged(value) => 
+self.login_username = value,
+8488 | |              Message::LoginPasswordChanged(value) => 
+self.login_password = value,
+8489 | |              Message::LoginPressed => {
+...    |
+9415 | |/                 window::get_latest().then(move |id_opt| {
+9416 | ||                     if let Some(id) = id_opt {
+9417 | ||                         Task::batch(vec![
+9418 | ||                             window::resize(id, 
+iced::Size::new(new_w, new_h)),
+...    ||
+9424 | ||                 })
+     | ||__________________^ expected `()`, found `Task<_>`
+...    |
+9832 | |              },
+9833 | |          }
+     | |__________- expected this to be `()`
+     |
+     = note: expected unit type `()`
+                   found struct `Task<_>`
+help: consider using a semicolon here
+     |
+9424 |                 });
+     |                   +
+help: consider using a semicolon here
+     |
+9833 |         };
+     |          +
+help: you might have meant to return this value
+     |
+9415 |                 return window::get_latest().then(move |id_opt| {
+     |                 ++++++
+
+error[E0599]: no method named `align_items` found for struct `Row<'a, Message, 
+Theme, Renderer>` in the current scope
+     --> src\iced_shell.rs:12908:10
+      |
+12906 |       let toggle_row = Row::new()
+      |  ______________________-
+12907 | |         .spacing(10)
+12908 | |         .align_items(iced::Alignment::Center)
+      | |_________-^^^^^^^^^^^
+      |
+help: there is a method `align_y` with a similar name
+      |
+12908 -         .align_items(iced::Alignment::Center)
+12908 +         .align_y(iced::Alignment::Center)
+      |
+
+error[E0599]: no method named `align_items` found for struct `Row<'a, Message, 
+Theme, Renderer>` in the current scope
+     --> src\iced_shell.rs:12967:18
+      |
+12965 |               let row_line = Row::new()
+      |  ____________________________-
+12966 | |                 .spacing(10)
+12967 | |                 .align_items(iced::Alignment::Center)
+      | |_________________-^^^^^^^^^^^
+      |
+help: there is a method `align_y` with a similar name
+      |
+12967 -                 .align_items(iced::Alignment::Center)
+12967 +                 .align_y(iced::Alignment::Center)
+      |
+
+Some errors have detailed explanations: E0308, E0425, E0599.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `aether` (lib) due to 5 previous errors

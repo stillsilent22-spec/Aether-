@@ -657,8 +657,8 @@ class AetherAugmentor:
             "pseudonym": pseudonymous_network_identity(self.session_context, purpose="public_ttd_anchor"),
             "uploader_role": str(quorum_policy.get("uploader_role", "operator")),
             "quorum_threshold": int(quorum_policy.get("quorum_threshold", 3) or 3),
-            "auto_trusted": bool(quorum_policy.get("auto_trusted", False)),
-            "uploader_node_id": GENESIS_NODE_ID if bool(quorum_policy.get("auto_trusted", False)) else "",
+            "quorum_bypass": bool(quorum_policy.get("quorum_bypass", False)),
+            "uploader_node_id": GENESIS_NODE_ID if bool(quorum_policy.get("quorum_bypass", False)) else "",
             "transport_hint": "ipfs_libp2p_bundle",
             "artifact_class": str(artifact_class or "performance_route"),
             "share_channel": "auto_push" if str(artifact_class or "performance_route").strip().lower() == "performance_route" else "consent_required",
@@ -917,27 +917,9 @@ def math_floor_safe(value: float) -> int:
     """Berechnet den Bodenwert fuer positive und negative Floats robust."""
     return int(np.floor(float(value)))
 
-import hashlib as _hashlib
-
-_vault_chain_entries: list = []
-
-
-def append_entry(data: bytes) -> str:
-    """Fuegt Eintrag an, hasht mit letztem Hash (oder '0'). Gibt neuen Hash zurueck."""
-    global _vault_chain_entries
-    last_hash = _vault_chain_entries[-1][1] if _vault_chain_entries else "0"
-    new_hash = _hashlib.sha256(last_hash.encode() + data).hexdigest()
-    _vault_chain_entries.append((data, new_hash))
-    return new_hash
-
-
-def verify_chain() -> bool:
-    """Prueft Verkettung aller Eintraege."""
-    global _vault_chain_entries
-    last_hash = "0"
-    for data, h in _vault_chain_entries:
-        expected = _hashlib.sha256(last_hash.encode() + data).hexdigest()
-        if h != expected:
-            return False
-        last_hash = h
-    return True
+# Hinweis: Die produktionsreife Verkettungslogik lebt in der Klasse VaultChain
+# (Methoden append_fingerprint / verify_chain) und ist dort persistent +
+# thread-sicher implementiert. Die früheren Modulebenen-Funktionen append_entry()
+# und verify_chain() wurden entfernt — sie verwendeten eine In-Memory-Liste ohne
+# Persistenz und wurden nirgends aufgerufen. Importiert unified_cascade.py
+# korrekt über: from modules.vault_chain import VaultChain

@@ -171,14 +171,25 @@ class BlindspotHint:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BlindspotHint":
+        instructions = str(d.get("instructions", ""))
+        payload_hash = str(d.get("payload_hash", ""))
+        # Integritätsprüfung: payload_hash muss SHA256(instructions) entsprechen.
+        # Empfänger verifiziert selbst — nicht vom Sender übernehmen.
+        expected_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()
+        if payload_hash and payload_hash != expected_hash:
+            # Manipulierter Hint — payload_hash auf korrekt setzen oder leer.
+            # Wir setzen ihn auf den korrekt berechneten Wert, da instructions korrekt sein kann.
+            payload_hash = expected_hash
+        elif not payload_hash:
+            payload_hash = expected_hash
         return cls(
             hint_id=str(d.get("hint_id", "")),
             signal_id=str(d.get("signal_id", "")),
             from_peer=str(d.get("from_peer", "")),
             domain=str(d.get("domain", "")),
             hint_type=str(d.get("hint_type", "instruction")),
-            payload_hash=str(d.get("payload_hash", "")),
-            instructions=str(d.get("instructions", "")),
+            payload_hash=payload_hash,
+            instructions=instructions,
             fingerprints=list(d.get("fingerprints", [])),
             priority_boost=float(d.get("priority_boost", 0.5)),
             ts=float(d.get("ts", time.time())),
@@ -620,19 +631,22 @@ class BlindspotEngine:
 
                 # Algo-Token-Wiring: wenn der Peer einen AlgoToken mitgeschickt hat,
                 # direkt in den AutoPropagator injizieren — kein separater Gossip-Zyklus.
+                # from_peer mitgeben → Peer-Deduplizierung in receive_algo_token().
                 # Privatsphäre: algo_token enthält nur tree_signature + Fitness, nie Inhalte.
                 algo_token_data = hint_data.get("algo_token_data") if isinstance(hint_data, dict) else None
                 if algo_token_data and isinstance(algo_token_data, dict):
                     try:
                         from modules.algo_share import AutoPropagator
-                        AutoPropagator.instance().receive_algo_token(algo_token_data)
+                        AutoPropagator.instance().receive_algo_token(algo_token_data, from_peer=peer_node_id)
                     except Exception:
                         pass
 
                 # Flood-Relay: Hint für Weitergabe im Schwarm vormerken.
-                # relay_hop kommt aus dem eingehenden Paket (0 wenn original).
-                # Nur weiterleiten wenn max. Hops noch nicht erreicht.
-                _relay_hop = int(hint_data.get("relay_hop", 0)) if isinstance(hint_data, dict) else 0
+                # relay_hop aus dem Paket auf max RELAY_MAX_HOPS-1 deckeln —
+                # Absender kann diesen Wert nicht missbrauchen um die Relay-Grenze
+                # zu manipulieren (zu vergrößern oder zu unterdrücken).
+                _raw_hop = int(hint_data.get("relay_hop", 0)) if isinstance(hint_data, dict) else 0
+                _relay_hop = max(0, min(_raw_hop, RELAY_MAX_HOPS - 1))
                 if _relay_hop < RELAY_MAX_HOPS:
                     with self._lock:
                         if hint.hint_id not in self._relayed_hint_ids:

@@ -290,7 +290,10 @@ def peer_allowed(node_id: str, device_fingerprint: str) -> bool:
     node_id = str(node_id or "").strip()
     device_fingerprint = str(device_fingerprint or "").strip()
     if not node_id or not device_fingerprint:
-        return True  # Unbekannte Peers (ohne fingerprint) passieren — alte Clients
+        # Peers ohne Fingerprint werden abgelehnt — kein Bypass möglich.
+        # Alte Clients müssen auf ein Protokoll migriert werden das Fingerprints sendet.
+        logger.warning("[device_lock] Peer ohne node_id oder device_fingerprint abgelehnt.")
+        return False
 
     registry = _load_swarm_device_registry()
 

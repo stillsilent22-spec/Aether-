@@ -365,7 +365,7 @@ class LosslessReconstructionEngine:
     def build_delta_log(self, raw_bytes: bytes) -> list[dict[str, Any]]:
         """Kodiert Originalbytes als vault-basierten Delta-Log."""
         anchors = self.extractor.extract_anchors(bytes(raw_bytes or b""))
-        delta_log: list[dict[str, Any]] = [{"op": "init", "size": int(len(raw_bytes))}]
+        delta_log: list[dict[str, Any]] = [{"op": "init", "size": int(len(raw_bytes)), "anchor_hash": "", "chunk_offset": 0}]
         vault_hits = 0
         vault_misses = 0
         for anchor in anchors:
@@ -375,7 +375,7 @@ class LosslessReconstructionEngine:
                 delta_log.append(
                     {
                         "op": "ref",
-                        "offset": int(anchor.chunk_offset),
+                        "chunk_offset": int(anchor.chunk_offset),
                         "length": int(anchor.chunk_length),
                         "anchor_hash": str(anchor.anchor_hash),
                     }
@@ -386,7 +386,7 @@ class LosslessReconstructionEngine:
             delta_log.append(
                 {
                     "op": "add",
-                    "offset": int(anchor.chunk_offset),
+                    "chunk_offset": int(anchor.chunk_offset),
                     "length": int(anchor.chunk_length),
                     "data": bytes(chunk).hex(),
                     "anchor_hash": str(anchor.anchor_hash),
@@ -399,6 +399,8 @@ class LosslessReconstructionEngine:
                 "vault_hits": int(vault_hits),
                 "vault_misses": int(vault_misses),
                 "coverage_ratio": float(vault_hits / max(1, vault_hits + vault_misses)),
+                "anchor_hash": "",
+                "chunk_offset": 0,
             }
         )
         return delta_log
@@ -472,7 +474,7 @@ class LosslessReconstructionEngine:
                 continue
             if op not in {"add", "move", "remove", "ref"}:
                 continue
-            offset = max(0, int(entry.get("offset", 0)))
+            offset = max(0, int(entry.get("chunk_offset", entry.get("offset", 0))))
             length = max(0, int(entry.get("length", 0)))
             if op == "remove":
                 for index in range(offset, min(len(buffer), offset + length)):
@@ -509,6 +511,28 @@ class LosslessReconstructionEngine:
         if total <= 0:
             return 0.0
         return round(hits / float(total), 6)
+
+    def vault_report(self) -> dict[str, Any]:
+        """Gibt grundlegende Vault-Statistiken zurück (Anker-Anzahl, Treffer etc.)."""
+        try:
+            with self.vault._connect() as conn:
+                row = conn.execute("SELECT COUNT(*) FROM anchors").fetchone()
+                total_anchors = int(row[0]) if row else 0
+                lossless_row = conn.execute(
+                    "SELECT COUNT(*) FROM anchors WHERE lossless_confirmed = 1"
+                ).fetchone()
+                lossless_confirmed = int(lossless_row[0]) if lossless_row else 0
+                hits_row = conn.execute("SELECT SUM(hit_count) FROM anchors").fetchone()
+                total_hits = int(hits_row[0] or 0) if hits_row else 0
+        except Exception:
+            total_anchors = 0
+            lossless_confirmed = 0
+            total_hits = 0
+        return {
+            "total_anchors": total_anchors,
+            "lossless_confirmed": lossless_confirmed,
+            "total_hits": total_hits,
+        }
 
     def merkle_root(self, delta_log: Sequence[dict[str, Any]]) -> str:
         """Berechnet eine einfache Merkle-Root ueber den Delta-Log."""

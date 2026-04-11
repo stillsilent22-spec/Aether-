@@ -179,6 +179,10 @@ class ProcessAnchorStore:
 
     def _init_db(self) -> None:
         with self._lock, self._conn() as con:
+            # WAL-Modus: Concurrent Reads + Writes ohne Deadlock, bessere Performance
+            # für multi-threaded Zugriff als Standard-Journal.
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute("PRAGMA synchronous=NORMAL")  # Sicherer als OFF, schneller als FULL
             con.executescript(_DDL)
             cur = con.execute("SELECT value FROM schema_meta WHERE key='version'")
             row = cur.fetchone()

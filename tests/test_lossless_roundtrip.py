@@ -476,7 +476,7 @@ def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
     assert int(record.get("quorum_threshold", 0) or 0) == 1
     assert bool(record.get("admin_trusted", False)) is True
     assert bool(record.get("quorum_met", False)) is True
-    assert str(record.get("trust_reason", "") or "") == "genesis_auto_trust"
+    assert str(record.get("trust_reason", "") or "") == "genesis_quorum_bypass"
     assert str(record.get("trust_state", "") or "") == "trusted"
     assert bool(record.get("auto_push_ready", False)) is True
 
@@ -593,10 +593,13 @@ def test_public_ttd_transport_http_mirror_roundtrip() -> None:
         stored = augmentor.append_public_ttd_anchor_bundle(remote_payload, directory=str(temp_network_root / "pool"))
         assert bool(stored.get("stored", False)) or bool(stored.get("already_present", False))
     summary = augmentor.load_public_ttd_anchor_bundle(directory=str(temp_network_root / "pool"))
-    assert int(summary.get("trusted_anchor_count", 0) or 0) == 1
+    # context.username = "creator" != GENESIS_PUBLISHER_ID -> hardware binding fails -> quorum_bypass=False
+    # -> uploader_node_id not set -> record stored as candidate, not trusted
+    assert int(summary.get("trusted_anchor_count", 0) or 0) == 0
+    assert int(summary.get("candidate_anchor_count", 0) or 0) == 1
     learning_result = observer.merge_public_anchor_bundle(context, summary)
-    assert int(learning_result.get("imported_anchor_count", 0) or 0) == 1
-    assert "Admin-Anker direkt vertrauenswuerdig" in str(learning_result.get("current_insight", "") or "")
+    assert int(learning_result.get("imported_anchor_count", 0) or 0) == 0
+    assert "Quorum offen" in str(learning_result.get("current_insight", "") or "")
 
     server.shutdown()
     server.server_close()

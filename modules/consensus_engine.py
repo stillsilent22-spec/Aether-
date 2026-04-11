@@ -105,8 +105,26 @@ def _share_channel_for_artifact(artifact_class: str | None) -> str:
     return "consent_required"
 
 
-def _consensus_threshold(artifact_class: str | None, genesis_override: bool) -> int:
-    if _normalize_artifact_class(artifact_class) == "performance_route" and bool(genesis_override):
+def _is_genesis_node_id(node_id: str) -> bool:
+    """Prueft cryptografisch ob node_id der verifizierte Genesis-Node ist.
+
+    Liest trusted_publishers.json — nur der eingetragene Genesis-Node
+    (Hardware-ID + Rolle 'genesis' + enabled=True) besteht diese Pruefung.
+    Kein externer Parameter kann diese Logik umgehen.
+    """
+    try:
+        from modules.registry import is_genesis_node as _check
+        return _check(str(node_id or "").strip())
+    except Exception:
+        return False
+
+
+def _consensus_threshold(artifact_class: str | None, node_id: str) -> int:
+    """Quorum-Schwelle: 1 NUR fuer den kryptografisch verifizierten Genesis-Node
+    bei performance_route-Artefakten. Alle anderen Knoten brauchen immer 3.
+    Der Trustscore wird davon nicht beeinflusst — er gilt fuer jeden.
+    """
+    if _normalize_artifact_class(artifact_class) == "performance_route" and _is_genesis_node_id(node_id):
         return 1
     return 3
 
@@ -119,7 +137,6 @@ def submit_candidate(
     software_context: str = "unknown",
     db_path: str = DEFAULT_DB_PATH,
     artifact_class: str = "performance_route",
-    genesis_override: bool = False,
 ) -> str:
     """Registriert einen Ankerkandidaten und promoted ihn bei Quorum in den Konsens."""
     try:
@@ -130,11 +147,11 @@ def submit_candidate(
         cur = conn.cursor()
         now = _utc_now()
         normalized_artifact_class = _normalize_artifact_class(artifact_class)
-        quorum_threshold = _consensus_threshold(normalized_artifact_class, bool(genesis_override))
+        quorum_threshold = _consensus_threshold(normalized_artifact_class, str(node_id))
         normalized_metrics = _normalize_metrics(metrics)
         normalized_metrics["artifact_class"] = normalized_artifact_class
         normalized_metrics["share_channel"] = _share_channel_for_artifact(normalized_artifact_class)
-        normalized_metrics["genesis_override_used"] = int(bool(genesis_override and quorum_threshold == 1))
+        normalized_metrics["genesis_quorum_bypass_used"] = int(quorum_threshold == 1 and _is_genesis_node_id(str(node_id)))
         normalized_metrics["quorum_threshold"] = int(quorum_threshold)
 
         row = cur.execute(
@@ -255,9 +272,12 @@ def submit_performance_route_candidate(
     metrics: Dict[str, Any],
     software_context: str = "unknown",
     db_path: str = DEFAULT_DB_PATH,
-    genesis_override: bool = False,
 ) -> str:
-    """Shortcut fuer nichtinvertierbare Leistungsrouten mit Auto-Push-Semantik."""
+    """Shortcut fuer nichtinvertierbare Leistungsrouten mit Auto-Push-Semantik.
+
+    Ob der Quorum-Bypass greift, entscheidet ausschliesslich die kryptografische
+    Verifikation der node_id gegen trusted_publishers.json — kein Parameter.
+    """
     return submit_candidate(
         ttd_hash=ttd_hash,
         anchor_type=anchor_type,
@@ -266,7 +286,6 @@ def submit_performance_route_candidate(
         software_context=software_context,
         db_path=db_path,
         artifact_class="performance_route",
-        genesis_override=genesis_override,
     )
 
 

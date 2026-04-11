@@ -223,11 +223,14 @@ def validate_registered_runtime(root: Path | None = None) -> None:
 
     if str(user_record.get("node_id", "") or "").strip() and str(user_record.get("node_id", "") or "").strip().lower() != node_id.lower():
         raise SessionGuardError("Lokaler Account ist an eine andere Node-ID gebunden.")
-    if str(user_record.get("public_key_b64", "") or "").strip() and str(user_record.get("public_key_b64", "") or "").strip() != public_key_b64:
+    _stored_key = str(user_record.get("public_key_b64", "") or "").strip()
+    if _stored_key and not hmac.compare_digest(_stored_key, public_key_b64):
         raise SessionGuardError("Lokaler Account passt nicht zum aktuellen Public-Key.")
-    if str(user_record.get("device_fingerprint", "") or "").strip() and str(user_record.get("device_fingerprint", "") or "").strip() != device_fingerprint:
+    _stored_fp = str(user_record.get("device_fingerprint", "") or "").strip()
+    if _stored_fp and not hmac.compare_digest(_stored_fp, device_fingerprint):
         raise SessionGuardError("Lokaler Account ist an eine andere Hardware-Bindung gekoppelt.")
-    if str(user_record.get("yggdrasil_addr", "") or "").strip() and str(user_record.get("yggdrasil_addr", "") or "").strip().lower() != yggdrasil_addr.lower():
+    _stored_ygg = str(user_record.get("yggdrasil_addr", "") or "").strip().lower()
+    if _stored_ygg and not hmac.compare_digest(_stored_ygg, yggdrasil_addr.lower()):
         raise SessionGuardError("Lokaler Account ist an eine andere Yggdrasil-Adresse gekoppelt.")
 
     if native_ygg_bound:

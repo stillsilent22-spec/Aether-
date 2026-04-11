@@ -157,10 +157,14 @@ def _extend_relay_pool_from_gossip(config: Dict[str, Any], new_url: str) -> None
     new_url = new_url.strip()
     if not new_url.startswith(("http://", "https://")):
         return
+    MAX_RELAY_POOL_SIZE = 64
     with _relay_pool_lock:
         pool = _load_relay_pool(config)
         if new_url in pool:
             return
+        if len(pool) >= MAX_RELAY_POOL_SIZE:
+            # Älteste URL entfernen (FIFO) um Pool-Vergiftung durch Gossip zu begrenzen
+            pool = pool[-(MAX_RELAY_POOL_SIZE - 1):]
         pool.append(new_url)
         _save_relay_pool(pool)
 
@@ -1092,16 +1096,17 @@ class P2PLayer:
         so können nie mehrere Watchdogs gleichzeitig aktiv sein.
         Kein Upgrade → neuer One-Shot wird nach dem Ablauf gestartet.
         """
-        if self._booster_active:
-            return  # Bereits ein One-Shot aktiv — keinen zweiten starten
-        if try_count >= BOOST_MAX_TRIES:
-            print(
-                f"[P2P-Booster] {BOOST_MAX_TRIES} Checks ohne Tier-Upgrade — "
-                "Watchdog beendet. Gerät bleibt auf StealthBeacon."
-            )
-            return
+        with self._lock:
+            if self._booster_active:
+                return  # Bereits ein One-Shot aktiv — keinen zweiten starten (atomar geprüft)
+            if try_count >= BOOST_MAX_TRIES:
+                print(
+                    f"[P2P-Booster] {BOOST_MAX_TRIES} Checks ohne Tier-Upgrade — "
+                    "Watchdog beendet. Gerät bleibt auf StealthBeacon."
+                )
+                return
+            self._booster_active = True  # Innerhalb des Locks setzen — Race Condition verhindert
         interval_sec = _booster_interval_seconds(initial_rank)
-        self._booster_active = True
         self._booster_thread = threading.Thread(
             target=self._tier_watchdog_once,
             args=(initial_rank, try_count, interval_sec),

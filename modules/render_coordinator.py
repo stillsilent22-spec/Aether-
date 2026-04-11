@@ -179,8 +179,14 @@ class RenderCoordinator:
         # --- Goedel-Dedup: max 2 passes per identical frame → cascade überspringen ---
         pixel_hash = frame.pixel_hash
         recent = self._recent_pixel_hashes
-        repeat_count = sum(1 for h in recent[-self._pixel_hash_max_repeats:] if h == pixel_hash)
-        is_over_limit = repeat_count >= self._pixel_hash_max_repeats
+        # Off-by-One-Fix: recent[-max_repeats:] enthält max_repeats Einträge;
+        # repeat_count >= max_repeats bedeutet ALLE sind identisch — aber das
+        # erfordert max_repeats+1 identische Frames. Korrekte Logik:
+        # Überspringe wenn der aktuelle Frame BEREITS zum zweiten Mal in Folge gleich ist,
+        # d.h. repeat_count in den letzten max_repeats-1 Einträgen >= max_repeats-1.
+        window = recent[-(self._pixel_hash_max_repeats - 1):] if self._pixel_hash_max_repeats > 1 else []
+        repeat_count = sum(1 for h in window if h == pixel_hash)
+        is_over_limit = repeat_count >= (self._pixel_hash_max_repeats - 1)
         recent.append(pixel_hash)
         if len(recent) > self._pixel_hash_dedup_size:
             recent.pop(0)

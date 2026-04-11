@@ -1,0 +1,63 @@
+﻿cargo :     Checking aether v0.1.0 
+(C:\Users\kalle\Downloads\aether-delta-engine)
+In Zeile:1 Zeichen:6
++ $r = cargo check 2>&1 ; $r | Out-File "co5.txt" -Encoding utf8
++      ~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking ae...r-delta-engine) 
+   :String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error[E0425]: cannot find value `godel_delta_percent` in this scope
+    --> src\iced_shell.rs:8155:12
+     |
+8155 |         if godel_delta_percent < 1.0 && godel_level < 3 {
+     |            ^^^^^^^^^^^^^^^^^^^ not found in this scope
+
+error[E0425]: cannot find value `godel_level` in this scope
+    --> src\iced_shell.rs:8155:41
+     |
+8155 |         if godel_delta_percent < 1.0 && godel_level < 3 {
+     |                                         ^^^^^^^^^^^ not found in this 
+scope
+
+error[E0308]: mismatched types
+    --> src\iced_shell.rs:9419:17
+     |
+8490 | /          match message {
+8491 | |              Message::LoginUsernameChanged(value) => 
+self.login_username = value,
+8492 | |              Message::LoginPasswordChanged(value) => 
+self.login_password = value,
+8493 | |              Message::LoginPressed => {
+...    |
+9419 | |/                 window::get_latest().then(move |id_opt| {
+9420 | ||                     if let Some(id) = id_opt {
+9421 | ||                         Task::batch(vec![
+9422 | ||                             window::resize(id, 
+iced::Size::new(new_w, new_h)),
+...    ||
+9428 | ||                 })
+     | ||__________________^ expected `()`, found `Task<_>`
+...    |
+9836 | |              },
+9837 | |          }
+     | |__________- expected this to be `()`
+     |
+     = note: expected unit type `()`
+                   found struct `Task<_>`
+help: consider using a semicolon here
+     |
+9428 |                 });
+     |                   +
+help: consider using a semicolon here
+     |
+9837 |         };
+     |          +
+help: you might have meant to return this value
+     |
+9419 |                 return window::get_latest().then(move |id_opt| {
+     |                 ++++++
+
+Some errors have detailed explanations: E0308, E0425.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `aether` (lib) due to 3 previous errors

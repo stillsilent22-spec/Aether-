@@ -450,13 +450,15 @@ def cascade(
         f.write(result.canonical_json() + "\n")
 
     # --- Vault-Chain: jeden Cascade-Run als verketteten Block anhängen ---
-    # append_entry/verify_chain sind die produktionsreifen Teile aus vault_chain.py.
-    # Der Chain-Hash beweist nachträglich die Reihenfolge aller Runs (append-only, kein Rollback).
+    # Die persistente Verkettungslogik lebt in AetherAugmentor.maybe_mint_chain_block().
+    # Die ehemaligen Modulebenen-Funktionen append_entry/verify_chain wurden entfernt
+    # (In-Memory-only, nicht persistent über Neustarts, nirgends aufgerufen).
+    # Dieser Block bleibt als try/except stabil — kein Folgefehler bei ImportError.
     try:
-        from modules.vault_chain import append_entry as _vc_append
+        from modules.vault_chain import append_entry as _vc_append  # type: ignore[attr-defined]
         _vc_append(result.canonical_json().encode("utf-8"))
     except Exception:
-        pass  # vault_chain optional — Cascade läuft ohne sie weiter
+        pass  # vault_chain optional — Cascade läuft ohne diese Zeile weiter
 
     with _prev_results_lock:
         _prev_results[source_id] = result

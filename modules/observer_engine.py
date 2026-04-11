@@ -734,7 +734,7 @@ class ObserverEngine:
             )
         elif imported_count > 0 and genesis_trusted_count > 0:
             current_insight = (
-                f"Genesis-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
+                f"Admin-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
                 f"I_obs +{i_obs_gain:.2f}%."
             )
         elif pending_quorum_count > 0 and imported_count <= 0:
