@@ -180,8 +180,12 @@ class TaskResult:
     compression_achieved: float        # Verhältnis zu naivem Ansatz (niedriger = besser)
     algo_token_id:        str = ""     # Optional: benutzter/generierter AlgoToken
     ts:                   float = field(default_factory=time.time)
-    simplified_algo_token: str = ""                        # vereinfachter Lösungsweg
+    simplified_algo_token: str = ""                        # vereinfachter Lösungsweg (token_id)
     gap_solutions:        Dict[str, str] = field(default_factory=dict)  # {cap: instruction}
+    # Vollständiges AlgoToken-Dict für automatische Weitergabe via Gossip.
+    # Nicht nur die ID — der komplette Inhalt wird zum Anforderer übertragen
+    # und von dort sofort in die Gossip-Pipeline eingespeist → alle Peers profitieren.
+    simplified_algo_token_data: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -197,6 +201,8 @@ class TaskResult:
             d["simplified_algo_token"] = self.simplified_algo_token
         if self.gap_solutions:
             d["gap_solutions"] = self.gap_solutions
+        if self.simplified_algo_token_data:
+            d["simplified_algo_token_data"] = self.simplified_algo_token_data
         return d
 
     @classmethod
@@ -210,6 +216,7 @@ class TaskResult:
             ts=float(d.get("ts", time.time())),
             simplified_algo_token=str(d.get("simplified_algo_token", "")),
             gap_solutions=dict(d.get("gap_solutions") or {}),
+            simplified_algo_token_data=dict(d.get("simplified_algo_token_data") or {}),
         )
 
 
@@ -393,7 +400,7 @@ class TaskBroker:
             )
         except Exception:
             pass
-        # Gap-Lösungen in BlindspotEngine als Stärke registrieren
+        # Gap-Lösungen in BlindspotEngine als Stärke registrieren → via Gossip an alle Peers
         if result.gap_solutions:
             try:
                 from modules.blindspot_engine import BlindspotEngine as _BE
@@ -405,6 +412,20 @@ class TaskBroker:
                           "instructions": instruction, "fingerprints": [],
                           "priority_boost": 0.8, "from_peer": result.executor_node_id}],
                         result.executor_node_id,
+                    )
+            except Exception:
+                pass
+        # Vereinfachten AlgoToken automatisch in Swarm-Gossip-Pipeline einspeisen.
+        # receive_algo_token() setzt _pending_token → nächster Gossip-Zyklus leitet ihn
+        # an ALLE erreichbaren Peers weiter. Jeder Knoten profitiert automatisch.
+        if result.simplified_algo_token_data:
+            try:
+                from modules.algo_share import AutoPropagator as _AP
+                if _AP.instance().receive_algo_token(result.simplified_algo_token_data):
+                    logger.info(
+                        f"[task_broker] Vereinfachter AlgoToken von "
+                        f"{result.executor_node_id[:16]}... in Swarm-Gossip eingespeist "
+                        f"(fitness={result.simplified_algo_token_data.get('fitness_score', '?')})"
                     )
             except Exception:
                 pass
@@ -526,10 +547,13 @@ class TaskBroker:
             # liefern wir eine konkrete Alternative (pure-Python / stdlib).
             gap_solutions = _build_gap_solutions(request.capability_gap)
 
-            # Vereinfachtes AlgoToken suchen wenn Capability-Gaps bekannt
-            simplified_token = _find_simplified_algo_token(
+            # Vereinfachtes AlgoToken suchen wenn Capability-Gaps bekannt.
+            # Rückgängig: volles Dict, nicht nur die ID — damit der Anforderer
+            # das Token sofort in seine Gossip-Pipeline einspeisen kann.
+            simplified_token_data = _find_simplified_algo_token(
                 request.chunk_class, request.capability_gap
             )
+            simplified_token = simplified_token_data.get("token_id", "") if simplified_token_data else ""
 
             with self._lock:
                 self._completed_count += 1
@@ -546,6 +570,7 @@ class TaskBroker:
                 ts=time.time(),
                 simplified_algo_token=simplified_token,
                 gap_solutions=gap_solutions,
+                simplified_algo_token_data=simplified_token_data or {},
             )
         except Exception as exc:
             logger.warning(f"[task_broker] execute_task fehlgeschlagen: {exc}")
@@ -662,23 +687,23 @@ def _build_gap_solutions(capability_gap: List[str]) -> Dict[str, str]:
     return solutions
 
 
-def _find_simplified_algo_token(chunk_class: str, capability_gap: List[str]) -> str:
-    """Sucht im lokalen AlgoToken-Store nach einem Token das ohne die fehlenden
-    Capabilities auskommt. Gibt token_id zurück oder "" wenn keiner gefunden.
+def _find_simplified_algo_token(chunk_class: str, capability_gap: List[str]) -> Optional[Dict[str, Any]]:
+    """Sucht im lokalen AlgoToken-Store nach dem einfachsten bekannten Token für chunk_class.
 
-    Vereinfachter Token = niedrigerer node_count/depth aber gleiche chunk_class.
+    Gibt das vollständige AlgoToken-Dict zurück (nicht nur die ID) damit es an den
+    Anforderer übertragen und von dort in die Swarm-Gossip-Pipeline eingespeist werden kann.
+    Gibt None zurück wenn kein geeignetes Token bekannt.
     """
     if not capability_gap:
-        return ""
+        return None
     try:
-        from modules.algo_share import AlgoTokenStore
-        store = AlgoTokenStore.instance()
-        tokens = store.get_tokens_for_domain(chunk_class)
-        # Wähle den Token mit dem niedrigsten node_count (einfachste Logik)
+        from modules.algo_share import AutoPropagator
+        tokens = AutoPropagator.instance().get_tokens_for_domain(chunk_class)
+        # Einfachster Token = niedrigster node_count + depth (weniger Abhängigkeiten)
         candidates = [t for t in tokens if t.fitness_score >= 0.85]
         if not candidates:
-            return ""
+            return None
         best = min(candidates, key=lambda t: t.node_count + t.depth)
-        return best.token_id
+        return best.to_dict()
     except Exception:
-        return ""
+        return None

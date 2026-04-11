@@ -261,8 +261,36 @@ class AutoPropagator:
             if token_id in self._known_tokens:
                 return False   # Bereits bekannt
             self._known_tokens[token_id] = token_data
+            # Re-Gossip: sofort als pending setzen → nächster Gossip-Zyklus leitet ihn an alle weiter
+            self._pending_token = token_data
             self._save_persistent()
         return True
+
+    def get_tokens_for_domain(self, domain_hint: str) -> List["AlgoToken"]:
+        """Gibt alle bekannten AlgoTokens für eine Datenklasse zurück (eigene + empfangene).
+
+        Wird von task_broker._find_simplified_algo_token() genutzt um den einfachsten
+        bekannten Lösungsweg für eine chunk_class zu finden.
+        """
+        result: List[AlgoToken] = []
+        with self._lock:
+            for token_dict in self._known_tokens.values():
+                if token_dict.get("domain_hint", "generic") != domain_hint:
+                    continue
+                try:
+                    result.append(AlgoToken(
+                        token_id=str(token_dict["token_id"]),
+                        tree_signature=str(token_dict["tree_signature"]),
+                        invariant_profile=list(token_dict.get("invariant_profile", [])),
+                        fitness_score=float(token_dict.get("fitness_score", 0.0)),
+                        domain_hint=str(token_dict.get("domain_hint", "generic")),
+                        cascade_version=str(token_dict.get("cascade_version", "unknown")),
+                        node_count=int(token_dict.get("node_count", 0)),
+                        depth=int(token_dict.get("depth", 0)),
+                    ))
+                except Exception:
+                    pass
+        return result
 
     def get_best_token_for_gossip(self) -> Optional[Dict[str, Any]]:
         """Gibt das beste verfügbare AlgoToken für den nächsten Gossip-Paket zurück.
@@ -289,3 +317,7 @@ class AutoPropagator:
         """Wie viele AlgoTokens kennt dieser Knoten (eigene + empfangene)?"""
         with self._lock:
             return len(self._known_tokens)
+
+
+# Alias für Kompatibilität mit task_broker._find_simplified_algo_token
+AlgoTokenStore = AutoPropagator
