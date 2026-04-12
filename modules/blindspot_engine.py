@@ -152,10 +152,13 @@ class BlindspotHint:
     instructions:    str         # Menschenlesbare Anweisung (z.B. "pip install numpy")
     fingerprints:    List[str]   # Strukturelle Fingerprints zum Kristallisieren
     priority_boost:  float       # Wie stark hilft dieser Hint? 0.0–1.0
+    compute_trace:   str = ""   # Transparente Task-/Rechenpfad-Information
+    error_info:      str = ""   # Fehlermeldungen, OOM oder fehlende Runtime
+    task_description:str = ""   # Optionaler Kontext zur Aufgabe selbst
     ts:              float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "schema":         "aether.blindspot.hint.v1",
             "hint_id":        self.hint_id,
             "signal_id":      self.signal_id,
@@ -168,6 +171,13 @@ class BlindspotHint:
             "priority_boost": round(self.priority_boost, 4),
             "ts":             round(self.ts, 3),
         }
+        if self.compute_trace:
+            payload["compute_trace"] = self.compute_trace
+        if self.error_info:
+            payload["error_info"] = self.error_info
+        if self.task_description:
+            payload["task_description"] = self.task_description
+        return payload
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BlindspotHint":
@@ -192,6 +202,9 @@ class BlindspotHint:
             instructions=instructions,
             fingerprints=list(d.get("fingerprints", [])),
             priority_boost=float(d.get("priority_boost", 0.5)),
+            compute_trace=str(d.get("compute_trace", "") or ""),
+            error_info=str(d.get("error_info", "") or ""),
+            task_description=str(d.get("task_description", "") or ""),
             ts=float(d.get("ts", time.time())),
         )
 
@@ -230,6 +243,7 @@ class BlindspotEngine:
         self._active_gaps:     Dict[str, BlindspotSignal] = {}   # signal_id → signal
         self._resolved_history: List[BlindspotSignal]     = []
         self._known_strengths:  Dict[str, float]          = {}   # domain → confidence 0–1
+        self._shared_strengths: Dict[str, float]          = {}   # domain → zuletzt geteilte Stärke
         self._peer_gaps:        Dict[str, List[Dict]]     = {}   # peer_id → list of gap dicts
         self._hints_received:   int                       = 0
         self._gaps_resolved:    int                       = 0
@@ -381,6 +395,8 @@ class BlindspotEngine:
                 if (now - created_approx) > 120:
                     sig_id = "compute-" + hashlib.sha256(task_type.encode()).hexdigest()[:16]
                     if sig_id not in self._active_gaps:
+                        requirements = list(req_dict.get("requirements", []))
+                        intent_sketch = str(req_dict.get("intent_sketch", "") or "").strip()
                         self.register_gap(
                             domain=task_type,
                             gap_type=GAP_COMPUTE_LIMIT,
@@ -390,7 +406,12 @@ class BlindspotEngine:
                             ),
                             priority=7,
                             signal_id=sig_id,
-                            metadata={"task_id": task_id},
+                            metadata={
+                                "task_id": task_id,
+                                "task_type": task_type,
+                                "requirements": requirements,
+                                "intent_sketch": intent_sketch,
+                            },
                         )
                         new.append(sig_id)
         except Exception as exc:
@@ -837,9 +858,31 @@ class BlindspotEngine:
                 if strength < 0.5:
                     continue  # Wir können nicht helfen
 
+                last_shared = self._shared_strengths.get(domain, 0.0)
+                if strength <= last_shared + 0.03:
+                    continue  # Nur bei spürbarer Verbesserung teilen
+
                 instruction = self._build_instruction(domain, gap_type, gap_dict)
                 if not instruction:
                     continue
+
+                requirements = list(gap_dict.get("metadata", {}).get("requirements", []))
+                intent_sketch = str(gap_dict.get("metadata", {}).get("intent_sketch", "") or "").strip()
+                task_type_meta = str(gap_dict.get("metadata", {}).get("task_type", "") or "").strip()
+                task_id_meta = str(gap_dict.get("metadata", {}).get("task_id", "") or "").strip()
+                error_info = str(gap_dict.get("metadata", {}).get("error", "") or "").strip()
+
+                compute_trace_parts = []
+                if task_id_meta:
+                    compute_trace_parts.append("task_id=" + task_id_meta)
+                if task_type_meta:
+                    compute_trace_parts.append("task_type=" + task_type_meta)
+                if intent_sketch:
+                    compute_trace_parts.append("intent=" + intent_sketch)
+                if requirements:
+                    compute_trace_parts.append("requirements=" + ",".join(str(r) for r in requirements if r))
+                compute_trace = " | ".join(compute_trace_parts)
+                task_description = intent_sketch or task_type_meta or domain
 
                 hint_id = "hint-" + hashlib.sha256(
                     (signal_id + local_node_id).encode()
@@ -855,8 +898,12 @@ class BlindspotEngine:
                     instructions=instruction,
                     fingerprints=[],
                     priority_boost=float(min(1.0, strength)),
+                    compute_trace=compute_trace,
+                    error_info=error_info,
+                    task_description=task_description,
                 )
                 hints.append(hint.to_dict())
+                self._shared_strengths[domain] = strength
 
         # Relay-Hints: empfangene Hints die wir für den Schwarm weiterleiten.
         # Nur Hints die noch nicht zu alt sind (< 2 × Rebroadcast-Interval).

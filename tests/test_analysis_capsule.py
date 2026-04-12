@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from modules.analysis_capsule import AnalysisCapsuleEngine
+from modules.trust_engine import TrustScoreEngine
 from aether_pipeline import AetherPipeline
 
 
@@ -18,6 +19,7 @@ def test_analysis_capsule_from_file_exposes_core_metrics(tmp_path) -> None:
     assert capsule.metrics.entropy >= 0.0
     assert capsule.metrics.zipf_alpha >= 0.0
     assert 0.0 <= capsule.metrics.benford_score <= 1.0
+    assert 0.0 <= capsule.metrics.bit_position_score <= 1.0
     assert capsule.metrics.katz_dimension >= 1.0
     assert "coherence_score" in capsule.sce
     assert capsule.godel_loop.get("deterministic") is True
@@ -46,3 +48,23 @@ def test_aether_pipeline_process_live_signal_returns_capsule_payload() -> None:
     assert "godel_loop" in result
     assert "anomaly_flags" in result
     assert result["trust"] >= 0.0
+
+
+def test_trust_engine_reads_bit_position_score_from_inputs() -> None:
+    engine = TrustScoreEngine(threshold=0.5)
+    anchor_data = {
+        "trust_inputs": {
+            "bayes_overall_confidence": 0.85,
+            "noether_score": 70.0,
+            "benford_score": 0.8,
+            "bit_position_score": 0.75,
+            "sce_score": 65.0,
+            "zipf_alpha": 1.0,
+        }
+    }
+    score, trusted, breakdown, bayes_flags, flags = engine.evaluate(anchor_data)
+
+    assert score >= 0.0
+    assert isinstance(trusted, bool)
+    assert breakdown["bit_position_score"] == 0.75
+    assert not bayes_flags.get("bayes_inconsistent", False)

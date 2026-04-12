@@ -81,6 +81,7 @@ class TrustScoreEngine:
         posterior = _clamp(trust_inputs.get("bayes_overall_confidence", 0.0))
         noether_score = _clamp(float(trust_inputs.get("noether_score", 0.0) or 0.0) / 100.0)
         benford_score = _clamp(trust_inputs.get("benford_score", 0.0))
+        bit_position_score = _clamp(float(trust_inputs.get("bit_position_score", 0.0) or 0.0))
         graph_score = _clamp(trust_inputs.get("graph_confidence_mean", 0.0))
         sce_score = _clamp(float(trust_inputs.get("sce_score", 0.0) or 0.0) / 100.0)
 
@@ -115,6 +116,7 @@ class TrustScoreEngine:
             for value in (
                 noether_score,
                 benford_score,
+                bit_position_score,
                 graph_score,
                 sce_score,
                 zipf_score,
@@ -133,7 +135,11 @@ class TrustScoreEngine:
             bayes_flags["bayes_suspicious"] = True
         if not expected_inputs and posterior > 0.0:
             bayes_flags["bayes_stale"] = True
-        if posterior >= 0.80 and ((noether_score and noether_score < 0.35) or (benford_score and benford_score < 0.35)):
+        if posterior >= 0.80 and (
+            (noether_score and noether_score < 0.35)
+            or (benford_score and benford_score < 0.35)
+            or (bit_position_score and bit_position_score < 0.35)
+        ):
             bayes_flags["bayes_inconsistent"] = True
 
         convergence_score = posterior
@@ -170,6 +176,7 @@ class TrustScoreEngine:
                 "convergence_score": float(convergence_score),
                 "noether_score": float(noether_score),
                 "benford_score": float(benford_score),
+                "bit_position_score": float(bit_position_score),
                 "perm_entropy_score": float(perm_entropy_score),
                 "fourier_score": float(fourier_score),
                 "zipf_score": float(zipf_score),
@@ -211,6 +218,7 @@ class TrustScoreEngine:
             "convergence_score": float(convergence_score),
             "noether_score": float(noether_score),
             "benford_score": float(benford_score),
+            "bit_position_score": float(bit_position_score),
             "perm_entropy_score": float(perm_entropy_score),
             "fourier_score": float(fourier_score),
             "zipf_score": float(zipf_score),
@@ -234,16 +242,17 @@ class TrustScoreEngine:
 
         final_score = (
             (0.18 * breakdown["convergence_score"])
-            + (0.12 * breakdown["noether_score"])
-            + (0.10 * breakdown["benford_score"])
+            + (0.14 * breakdown["noether_score"])
+            + (0.06 * breakdown["benford_score"])
+            + (0.08 * breakdown["bit_position_score"])
             + (0.09 * breakdown["perm_entropy_score"])
             + (0.08 * breakdown["fourier_score"])
-            + (0.07 * breakdown["zipf_score"])
-            + (0.07 * breakdown["katz_score"])
+            + (0.06 * breakdown["zipf_score"])
+            + (0.06 * breakdown["katz_score"])
             + (0.06 * breakdown["entropy_score"])
             + (0.06 * breakdown["sce_direct_score"])
             + (0.04 * breakdown["graph_direct_score"])
-            + (0.03 * breakdown["invariant_score"])
+            + (0.04 * breakdown["invariant_score"])
             + (0.05 * breakdown["delta_conv_score"])
             + (0.05 * breakdown["physical_plausibility_score"])
         )

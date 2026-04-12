@@ -8,6 +8,10 @@ default-run = "aether_iced"
 name = "aether_iced"
 path = "src/bin/aether_iced.rs"
 
+[[bin]]
+name = "aether_system"
+path = "src/bin/aether_system.rs"
+
 [dependencies]
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

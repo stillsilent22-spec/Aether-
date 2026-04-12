@@ -638,7 +638,7 @@ def main() -> int:
 
 	
 	try:
-		from modules.runtime_core import init_runtime
+		from modules.runtime_invariant.runtime_core import init_runtime
 	except ModuleNotFoundError:
 		import sys as _sys, os as _os
 		_sys.path.insert(0, _os.path.dirname(__file__))

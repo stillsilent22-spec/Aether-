@@ -40,7 +40,7 @@ use std::fs;
 pub enum Tab {
     Home, Control, Symbiont, SwarmOps, Privacy, Chat,
     Data, Anchors, Logs, Settings,
-    ADE, FlowSphere, StructureMap, Gaming, Media, Research, Rekonstruktion, Launcher, Imprint,
+    ADE, FlowSphere, Invariants, StructureMap, Gaming, Media, Research, Rekonstruktion, Launcher, Imprint,
 }
 
 impl Tab {
@@ -58,6 +58,7 @@ impl Tab {
             Tab::Settings => "Settings",
             Tab::ADE => "Delta-Analyse",
             Tab::FlowSphere => "FlowSphere",
+            Tab::Invariants => "Invariants",
             Tab::StructureMap => "Delta Convergence",
             Tab::Gaming => "Gaming",
             Tab::Media => "Media",
@@ -675,6 +676,7 @@ struct ShellPreferences {
     runtime_profile: RuntimeProfile,
     persistent_mode: bool,
     ui_language: UiLanguage,
+    service_stop_locked: bool,
 }
 
 /// Eine erkannte Telemetrie-Verbindung eines lokalen Prozesses.
@@ -955,12 +957,6 @@ pub struct AetherIcedShell {
     live_render_noether_symmetry_preserved: bool,
     live_render_noether_prev_spectral: [f32; 5],
     live_render_noether_prev_entropy: f32,
-    /// Bits per Joule — live efficiency metric.
-    /// bits_saved_this_tick / joules_consumed_this_tick
-    /// (bits_saved = (1-delta_ratio)*frame_bytes*8, joules = cpu_pct/100*15W*1/fps)
-    live_render_bits_per_joule: f32,
-    /// Rolling history of bits-per-joule (last 60 values = ~2 min at default tick).
-    live_render_bpj_history: Vec<f32>,
     /// Gödelstop counter for the outer live-render analysis loop.
     /// Incremented when the inner Gödel probe converges naturally (delta < 1%).
     /// When >= 5: outer analysis is paused for this tick (prevents endless self-analysis).
@@ -1014,6 +1010,8 @@ pub struct AetherIcedShell {
     telemetry_alerts: Vec<TelemetryAlert>,
     /// Programm läuft dauerhaft: X-Button minimiert zur Leiste statt zu beenden.
     persistent_mode: bool,
+    /// Stop requests dürfen nur über die Einstellungseite ausgelöst werden.
+    service_stop_locked: bool,
     /// Netzwerk-Tier aus hw_capability.json (geschrieben beim Start via hardware::detect).
     hw_network_tier: String,
     /// OS-Platform-Label aus hw_capability.json.
@@ -1211,8 +1209,6 @@ impl AetherIcedShell {
             live_render_noether_symmetry_preserved: true,
             live_render_noether_prev_spectral: [0.0f32; 5],
             live_render_noether_prev_entropy: 0.0,
-            live_render_bits_per_joule: 0.0,
-            live_render_bpj_history: Vec::new(),
             live_render_godel_stop_skip: 0,
             live_render_pixel_entropy: 0.0,
             live_render_pixel_symmetry: 0.0,
@@ -1253,6 +1249,7 @@ impl AetherIcedShell {
                     .unwrap_or(false)
             },
             persistent_mode: shell_preferences.persistent_mode,
+            service_stop_locked: shell_preferences.service_stop_locked,
             hw_network_tier: detected_hardware_profile.network_tier.label().to_owned(),
             hw_os_platform: detected_os_platform,
             hw_p2p_unlocked: [detected_lb, detected_lp, detected_ygg, detected_dht],
@@ -1322,6 +1319,7 @@ fn read_shell_preferences(detected_runtime_profile: RuntimeProfile) -> ShellPref
         runtime_profile: detected_runtime_profile,
         persistent_mode: true,
         ui_language: UiLanguage::German,
+        service_stop_locked: true,
     };
 
     let Ok(raw) = fs::read_to_string(&path) else {
@@ -1345,6 +1343,12 @@ fn read_shell_preferences(detected_runtime_profile: RuntimeProfile) -> ShellPref
     {
         prefs.persistent_mode = persistent_mode;
     }
+    if let Some(service_stop_locked) = value
+        .get("service_stop_locked")
+        .and_then(|entry| entry.as_bool())
+    {
+        prefs.service_stop_locked = service_stop_locked;
+    }
     if let Some(language_raw) = value.get("shell_ui_language").and_then(|entry| entry.as_str()) {
         if let Some(language) = parse_ui_language(language_raw) {
             prefs.ui_language = language;
@@ -1358,6 +1362,7 @@ fn write_shell_preferences(
     runtime_profile: RuntimeProfile,
     persistent_mode: bool,
     ui_language: UiLanguage,
+    service_stop_locked: bool,
 ) -> Result<(), String> {
     let path = crate::data_path("settings.json");
     if let Some(parent) = path.parent() {
@@ -1379,6 +1384,7 @@ fn write_shell_preferences(
     value["runtime_profile_override"] =
         serde_json::Value::String(runtime_profile_setting_label(runtime_profile).to_owned());
     value["close_only_via_settings"] = serde_json::Value::Bool(persistent_mode);
+    value["service_stop_locked"] = serde_json::Value::Bool(service_stop_locked);
     value["shell_ui_language"] =
         serde_json::Value::String(ui_language_setting_label(ui_language).to_owned());
 
@@ -1445,7 +1451,14 @@ fn save_gaming_progress_rows(rows: &[GamingProgressRow]) -> Result<(), String> {
 fn load_game_directory() -> Vec<GameDirectoryEntry> {
     let path = Path::new(GAME_DIRECTORY_PATH);
     if let Ok(raw) = fs::read_to_string(path) {
-        if let Ok(entries) = serde_json::from_str::<Vec<GameDirectoryEntry>>(&raw) {
+        if let Ok(mut entries) = serde_json::from_str::<Vec<GameDirectoryEntry>>(&raw) {
+            entries.sort_by(|a, b| {
+                b.reconstruction_ready
+                    .cmp(&a.reconstruction_ready)
+                    .then_with(|| b.vault_coverage.partial_cmp(&a.vault_coverage).unwrap_or(std::cmp::Ordering::Equal))
+                    .then_with(|| b.contributor_count.cmp(&a.contributor_count))
+                    .then_with(|| a.game_label.cmp(&b.game_label))
+            });
             return entries;
         }
     }
@@ -1565,6 +1578,7 @@ impl AetherIcedShell {
                 Tab::Anchors      => "Anker: unver\u{e4}nderliche Strukturpunkte anzeigen, die beweisen dass Daten nicht manipuliert wurden.",
                 Tab::ADE          => "Bedrohungsanalyse: Dateien auf Malware, Obfuskation und Anomalien pr\u{fc}fen \u{2014} mit erkl\u{e4}rbaren Ergebnissen.",
                 Tab::FlowSphere   => "FlowSphere: 3D-Musterbild \u{2014} zeigt Zusammenh\u{e4}nge, Ausrei\u{df}er und Stabilit\u{e4}t des Gesamtbilds.",
+                Tab::Invariants   => "Invarianten: stabile Muster, Noether- und Gödel-Metriken zur laufenden Konsistenzüberwachung.",
                 Tab::StructureMap => "Strukturkarte: Delta-Konvergenz und Kompressionspfad \u{2014} wie stark haben sich Daten ver\u{e4}ndert, wie gut lassen sie sich rekonstruieren.",
                 Tab::Gaming       => "Gaming-Welt: misst wie viel Aether \u{fc}ber interaktive Muster gelernt hat und wann ein stabiler Rollout sinnvoll ist.",
                 Tab::Media        => "Medien-Welt: Sequenzen, Videos und Audio werden offline verdichtet \u{2014} je mehr Material, desto besser die Modelle.",
@@ -1586,6 +1600,7 @@ impl AetherIcedShell {
                 Tab::Anchors      => "Anchors: view immutable structural checkpoints that prove data has not been tampered with.",
                 Tab::ADE          => "Threat Analysis: scan files for malware, obfuscation and anomalies \u{2014} with explainable results.",
                 Tab::FlowSphere   => "FlowSphere: 3D pattern view \u{2014} shows relationships, outliers and overall stability.",
+                Tab::Invariants   => "Invariants: stable patterns, Noether and Gödel metrics for ongoing consistency monitoring.",
                 Tab::StructureMap => "Structure Map: delta convergence and compression path \u{2014} how much data changed and how well it can be reconstructed.",
                 Tab::Gaming       => "Gaming World: measures how much Aether learned from interactive patterns and when a stable rollout makes sense.",
                 Tab::Media        => "Media World: sequences, videos and audio are compressed offline \u{2014} more material means better models.",
@@ -2591,12 +2606,12 @@ impl AetherIcedShell {
                     )
                     .padding([6, 0])
                 )
-                .push(text("AetherGuard").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)))
-                .push(text("Deterministic Security Kernel").size(34).color(c(TEXT_H())))
-                .push(text("Lokale Analyse, rekonstruierbare Entscheidungen und Privacy by Architecture.")
+                .push(text("Aether Delta Engine").size(30).color(Color::from_rgb8(0xA0, 0x60, 0xFF)))
+                .push(text("Local structural analysis runtime").size(22).color(c(TEXT_H())))
+                .push(text("Offline-first security and reproducible local decisions.")
                     .size(14)
                     .color(c(TEXT_M())))
-                .push(text("Kein Cloud-Zwang. Keine Black Box. Keine versteckte Semantik.")
+                .push(text("No cloud. No hidden semantics. Local control only.")
                     .size(13)
                     .color(c(TEXT_D())))
                 .push(container(
@@ -2608,7 +2623,7 @@ impl AetherIcedShell {
                         .push(text(if self.swarm_startup.node_initialized {
                             self.swarm_startup.summary.clone()
                         } else {
-                            "Rust-Start blockiert keinen Login, aber Node-Init fehlt.".to_owned()
+                            "Rust startup does not block login, but node init is missing.".to_owned()
                         })
                         .size(11)
                         .color(c(TEXT_D())))
@@ -2616,25 +2631,6 @@ impl AetherIcedShell {
                 )
                 .padding(12)
                 .style(accent_card_style))
-                // Backup-Option Beschreibung (sichtbar im Auth/Analyse-Panel)
-                .push(container(
-                    Column::new()
-                        .push(text("Backup vor Analyse").size(13).color(c(TEXT_H())))
-                        .push(text("Jede Datei wird vor der Analyse automatisch gesichert (C:/AetherBackup). Diese Option schützt vor Datenverlust und kann in den Einstellungen deaktiviert werden.")
-                            .size(11)
-                            .color(c(TEXT_M())))
-                        .spacing(2)
-                )
-                .padding(8)
-                .style(|_: &Theme| container::Style {
-                    background: Some(Background::Color(Color::from_rgb8(0x16, 0x20, 0x28))),
-                    border: Border {
-                        color: Color::from_rgb8(0x2F, 0xA3, 0xB5),
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                }))
                 .spacing(12)
         )
         .padding(18)
@@ -3576,6 +3572,7 @@ impl AetherIcedShell {
                 "Mehrwert jetzt: wiederholte Sessions, gleiche Szenen, stabile Renderpfade, Launcher-Starts und weitere Byte-/Frame-Beobachtung heben die konservative Reife am staerksten.",
                 vec![
                     ("Launcher", Tab::Launcher),
+                    ("Invariants", Tab::Invariants),
                     ("Files", Tab::Data),
                     ("FlowSphere", Tab::FlowSphere),
                     ("Delta Conv", Tab::StructureMap),
@@ -3681,7 +3678,7 @@ impl AetherIcedShell {
             .push(info_card(
                 "Drag and Drop Intake",
                 match world {
-                    Tab::Gaming => "Droppe ein Spiel oder einen Spielpfad direkt in dieses Fenster. Aether startet den Artefaktpfad, aktiviert Live Render und stoesst gleichzeitig Byte-, Struktur-, Delta- und Rekonstruktionsanalyse an.",
+                    Tab::Gaming => "Droppe ein Spiel oder einen Spielpfad direkt in dieses Fenster. Aether startet den Artefaktpfad, aktiviert Live Render und stoesst gleichzeitig Byte-, Struktur-, Delta- und Rekonstruktionsanalyse an. Wenn Vault-Invarianten vorhanden sind, wird derselbe Invariant-Launchpfad genutzt.",
                     Tab::Media => "Droppe Medienartefakte direkt in dieses Fenster. Aether oeffnet den Pfad mit dem System, aktiviert Live Render und startet parallel die bestehende Datei-, Struktur- und Kompressionsanalyse.",
                     Tab::Research => "Research bleibt intake-neutral: Drops fuehren weiter in die normale Analyse. Bestehende Dateien, Datasets und Messreihen koennen danach rueckwirkend ueber den Konvergenzpfad nachverdichtet werden.",
                     _ => "Droppe Artefakte fuer die Analyse in dieses Fenster.",
@@ -4542,6 +4539,47 @@ impl AetherIcedShell {
                             if self.hybrid_bridge_error.trim().is_empty() { "-" } else { &self.hybrid_bridge_error }
                         ),
                     ));
+                    col = col.push(text(self.ui_text(
+                        "Lokaler System-Service",
+                        "Local system service",
+                    )).size(20));
+                    col = col.push(
+                        {
+                            let mut row = Row::new();
+                            let service = self.launcher_state.services.get("aether_system");
+                            if let Some(system_service) = service {
+                                let status_color = system_service.status.color_rgb();
+                                let status_badge = text(format!("● {}", system_service.status.label()))
+                                    .size(12)
+                                    .color(Color::from_rgb(status_color.0, status_color.1, status_color.2));
+                                row = row.push(
+                                    text(system_service.name.clone())
+                                        .size(14)
+                                        .color(c(TEXT_H()))
+                                );
+                                row = row.push(status_badge);
+                                row = row.spacing(12);
+                                if matches!(system_service.status, crate::launcher_dashboard::ServiceStatus::Running) {
+                                    row = row.push(
+                                        button(text(self.ui_text("Stoppen", "Stop")))
+                                            .padding([10, 16])
+                                            .on_press(Message::LauncherServiceStopPressed(system_service.id.clone()))
+                                            .style(secondary_button_style)
+                                    );
+                                } else if !matches!(system_service.status, crate::launcher_dashboard::ServiceStatus::Starting | crate::launcher_dashboard::ServiceStatus::Stopping | crate::launcher_dashboard::ServiceStatus::Disabled) {
+                                    row = row.push(
+                                        button(text(self.ui_text("Starten", "Start")))
+                                            .padding([10, 16])
+                                            .on_press(Message::LauncherServiceStartPressed(system_service.id.clone()))
+                                            .style(primary_button_style)
+                                    );
+                                }
+                            } else {
+                                row = row.push(text(self.ui_text("System-Service nicht verfügbar.", "System service not available.")).size(12).color(c(TEXT_D())));
+                            }
+                            row.spacing(10)
+                        }
+                    );
                     col = col.push(text(self.ui_text(
                         "Hilfe, Begriffe, Zielbild",
                         "Help, Concepts & Mission",
@@ -6728,6 +6766,99 @@ On warning: always check Logs and ADE for details.",
         main_content.into()
     }
 
+    fn view_invariants(&self) -> Element<'_, Message> {
+        let _panel_s = Color::from_rgb8(0x05, 0x10, 0x1C);
+        let dim = Color::from_rgb8(0x50, 0x6A, 0x7A);
+        let accent = Color::from_rgb8(0x9A, 0x67, 0xFF);
+        let panel = Column::new()
+            .push(text("Invarianten & Konsistenz").size(20).color(accent))
+            .push(text("Überwacht die wichtigsten stabilen Größen: Noether-K, Gödel-Probe, service-basierte Invarianz und Live-Render-Stabilität.")
+                .size(13)
+                .color(dim))
+            .spacing(12)
+            .push(
+                row![
+                    container(column![
+                        text("Noether K").size(13).color(accent),
+                        text(format!("{:.3}", self.live_render_noether_k)).size(22).color(Color::from_rgb8(0x4C, 0xD9, 0x6E)),
+                        text("Temporal conservation score").size(11).color(dim),
+                    ])
+                    .padding([12, 12])
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.12, 0.14, 0.22, 0.90))),
+                        border: Border { color: Color::from_rgb8(0x39, 0x5D, 0x7A), width: 1.0, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+                    container(column![
+                        text("Gödel Level").size(13).color(accent),
+                        text(format!("{}", self.live_render_last_godel_level)).size(22).color(Color::from_rgb8(0xFF, 0xD7, 0x00)),
+                        text(format!("Δ {:.2}%", self.live_render_last_godel_delta)).size(11).color(dim),
+                    ])
+                    .padding([12, 12])
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.16, 0.11, 0.20, 0.90))),
+                        border: Border { color: Color::from_rgb8(0x6A, 0x4A, 0x95), width: 1.0, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+                ]
+                .spacing(10),
+            )
+            .push(
+                row![
+                    container(column![
+                        text("Invariant-Streak").size(13).color(accent),
+                        text(format!("{} ticks", self.live_render_invariant_streak)).size(22).color(Color::from_rgb8(0x7F, 0xD9, 0xFF)),
+                        text("Stabile Service- und OS-Muster").size(11).color(dim),
+                    ])
+                    .padding([12, 12])
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.10, 0.17, 0.23, 0.90))),
+                        border: Border { color: Color::from_rgb8(0x2F, 0x4B, 0x6A), width: 1.0, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+                    container(column![
+                        text("Anchor Boost").size(13).color(accent),
+                        text(if self.live_render_anchor_boost { "Active" } else { "Idle" }).size(22).color(if self.live_render_anchor_boost { Color::from_rgb8(0x4C, 0xD9, 0x6E) } else { Color::from_rgb8(0x7F, 0x8E, 0xA2) }),
+                        text("Quorum-basierte Stabilitätsverstärkung").size(11).color(dim),
+                    ])
+                    .padding([12, 12])
+                    .style(|_: &Theme| container::Style {
+                        background: Some(Background::Color(Color::from_rgba(0.10, 0.17, 0.23, 0.90))),
+                        border: Border { color: Color::from_rgb8(0x2F, 0x4B, 0x6A), width: 1.0, radius: 10.0.into() },
+                        ..Default::default()
+                    }),
+                ]
+                .spacing(10),
+            )
+            .push(
+                container(
+                    column![
+                        text("Service Stop Lock").size(13).color(accent),
+                        text(if self.service_stop_locked { "Enabled" } else { "Disabled" }).size(18).color(Color::from_rgb8(0xD9, 0x50, 0x50)),
+                        text("Stop requests are gate-checked against settings-only override.").size(11).color(dim),
+                    ]
+                    .spacing(6),
+                )
+                .padding([12, 12])
+                .style(|_: &Theme| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.08, 0.10, 0.16, 0.92))),
+                    border: Border { color: Color::from_rgb8(0x3B, 0x4C, 0x6A), width: 1.0, radius: 10.0.into() },
+                    ..Default::default()
+                }),
+            );
+
+        container(
+            container(scrollable(panel).height(Length::Fill))
+                .padding(12)
+        )
+        .style(move |_: &Theme| container::Style {
+            background: Some(Background::Color(_panel_s)),
+            border: Border { color: Color::from_rgb8(0x3E, 0x4F, 0x67), width: 1.0, radius: 10.0.into() },
+            ..Default::default()
+        })
+        .into()
+    }
+
     fn view_ade(&self) -> Element<'_, Message> {
         let panel_s  = Color::from_rgb8(0x05, 0x10, 0x1C);
         let accent   = Color::from_rgb8(0x9A, 0x67, 0xFF);
@@ -7177,6 +7308,7 @@ On warning: always check Logs and ADE for details.",
             Tab::Logs => self.view_logs(),
             Tab::Anchors => self.view_anchors(),
             Tab::FlowSphere => self.view_flow_sphere(),
+            Tab::Invariants => self.view_invariants(),
             Tab::StructureMap => self.view_delta_convergence(),
             Tab::Gaming => self.view_gaming_world(),
             Tab::Media => self.view_media_world(),
@@ -7224,8 +7356,8 @@ On warning: always check Logs and ADE for details.",
 
         let shell_sidebar = container(
             column![
-                text("AetherGuard").size(26).color(Color::from_rgb8(0xD3, 0xC6, 0xFF)),
-                text("Security is a process, not a product.").size(11).color(c(TEXT_D())),
+                text("Aether").size(26).color(Color::from_rgb8(0xD3, 0xC6, 0xFF)),
+                text("Security is a process, not a product.").size(11).color(c(TEXT_D())), 
                 text("Quick Start").size(12).color(c(TEXT_D())),
                 nav_item("1. Overview", Tab::Home, self.active_tab),
                 nav_item("2. Control Center", Tab::Control, self.active_tab),
@@ -7238,8 +7370,9 @@ On warning: always check Logs and ADE for details.",
                 text("Analysis").size(12).color(c(TEXT_D())),
                 nav_item("8. Delta-Analyse", Tab::ADE, self.active_tab),
                 nav_item("9. FlowSphere", Tab::FlowSphere, self.active_tab),
-                nav_item("10. Delta Convergence", Tab::StructureMap, self.active_tab),
-                nav_item("11. Symbiont", Tab::Symbiont, self.active_tab),
+                nav_item("10. Invariants", Tab::Invariants, self.active_tab),
+                nav_item("11. Delta Convergence", Tab::StructureMap, self.active_tab),
+                nav_item("12. Symbiont", Tab::Symbiont, self.active_tab),
                 action_item(
                     if self.live_render_mode {
                         "12. Live Render deaktivieren".to_owned()
@@ -7291,6 +7424,7 @@ On warning: always check Logs and ADE for details.",
                         Tab::Logs => "Logs",
                         Tab::Anchors => "Anchors",
                         Tab::FlowSphere => "FlowSphere",
+                        Tab::Invariants => "Invariants",
                         Tab::StructureMap => "Delta Convergence",
                         Tab::Gaming => "Gaming",
                         Tab::Media => "Media",
@@ -7559,6 +7693,7 @@ On warning: always check Logs and ADE for details.",
             quick_button("Swarm Ops", Tab::SwarmOps),
             quick_button("Privacy", Tab::Privacy),
             quick_button("FlowSphere", Tab::FlowSphere),
+            quick_button("Invariants", Tab::Invariants),
             quick_button("Delta Conv", Tab::StructureMap),
             quick_button("Delta", Tab::ADE),
             quick_button("Anchors", Tab::Anchors),
@@ -8151,12 +8286,6 @@ On warning: always check Logs and ADE for details.",
             self.live_render_invariant_streak = self.live_render_invariant_streak.saturating_add(1);
         } else {
             self.live_render_invariant_streak = 0;
-        // Gödelstop-Zähler: konvergierte Probe = endlose Selbstanalyse vermeiden
-        if godel_delta_percent < 1.0 && godel_level < 3 {
-            self.live_render_godel_stop_skip = self.live_render_godel_stop_skip.saturating_add(1);
-        } else {
-            self.live_render_godel_stop_skip = 0;
-        }
         }
 
         // --- Noether K: Zeitliche Erhaltungsgröße nach Noether-Theorem ---
@@ -8241,22 +8370,6 @@ On warning: always check Logs and ADE for details.",
         self.live_render_noether_prev_spectral = noether_curr_spectral;
         self.live_render_noether_prev_entropy = noether_curr_entropy;
 
-        // Bits per Joule — live efficiency estimate.
-        // bits_saved: the fraction of the raw frame that the delta codec eliminated
-        // this tick, expressed in bits (conservative: only count non-delta payload).
-        // joules: CPU-fraction × assumed 15 W TDP × ~33 ms frame period.
-        // Result is intentionally approximate — its trend matters more than its absolute value.
-        {
-            let frame_bits = self.live_render_last_frame.len() as f32 * 8.0;
-            let bits_saved = (1.0 - self.live_render_last_delta_ratio.clamp(0.0, 1.0)) * frame_bits;
-            let cpu_fraction = (self.backend_cpu_pct / 100.0).clamp(0.005, 1.0);
-            let joules_per_tick = cpu_fraction * 15.0_f32 * 0.033_f32;
-            self.live_render_bits_per_joule = bits_saved / joules_per_tick;
-            self.live_render_bpj_history.push(self.live_render_bits_per_joule);
-            if self.live_render_bpj_history.len() > 60 {
-                self.live_render_bpj_history.remove(0);
-            }
-        }
     }
 
     fn theme_definition(&self) -> Theme {
@@ -8593,6 +8706,7 @@ On warning: always check Logs and ADE for details.",
                     self.runtime_profile,
                     self.persistent_mode,
                     self.ui_language,
+                    self.service_stop_locked,
                 ) {
                     Ok(()) => {
                         self.status_line = format!(
@@ -8619,6 +8733,7 @@ On warning: always check Logs and ADE for details.",
                     self.runtime_profile,
                     self.persistent_mode,
                     self.ui_language,
+                    self.service_stop_locked,
                 ) {
                     Ok(()) => message.to_owned(),
                     Err(err) => format!("{} Speicherung fehlgeschlagen: {}", message, err),
@@ -8711,6 +8826,7 @@ On warning: always check Logs and ADE for details.",
                     Tab::Gaming => Some(Tab::Gaming),
                     Tab::Media => Some(Tab::Media),
                     Tab::Research => Some(Tab::Research),
+                    Tab::Launcher => Some(Tab::Invariants),
                     _ => None,
                 };
                 // Schnell-Entropie aus den ersten 4KB (synchron, <1ms)
@@ -8775,6 +8891,23 @@ On warning: always check Logs and ADE for details.",
                 let launch_note = if let Some(world) = drop_world {
                     if !self.live_render_mode {
                         self.apply_live_render_mode(true);
+                    }
+                    if world == Tab::Invariants {
+                        let should_start_system_service = match self.launcher_state.services.get("aether_system") {
+                            Some(system_service) => {
+                                !matches!(system_service.status, ServiceStatus::Running | ServiceStatus::Starting)
+                            }
+                            None => false,
+                        };
+                        if should_start_system_service {
+                            if let Err(err) = self.launcher_state.start_service("aether_system") {
+                                self.status_line = format!(
+                                    "Lokaler Invariantendienst konnte nicht gestartet werden: {err}"
+                                );
+                            } else {
+                                self.status_line = "Lokaler Invariantendienst gestartet; Vault-Launchpfad wird vorbereitet.".to_owned();
+                            }
+                        }
                     }
                     self.active_tab = world;
                     match launch_dropped_artifact(&path, world) {
@@ -9416,7 +9549,7 @@ On warning: always check Logs and ADE for details.",
                     AppMode::Full => window::Level::Normal,
                     AppMode::Overlay => window::Level::AlwaysOnTop,
                 };
-                window::get_latest().then(move |id_opt| {
+                return window::get_latest().then(move |id_opt| {
                     if let Some(id) = id_opt {
                         Task::batch(vec![
                             window::resize(id, iced::Size::new(new_w, new_h)),
@@ -9425,7 +9558,7 @@ On warning: always check Logs and ADE for details.",
                     } else {
                         Task::none()
                     }
-                })
+                });
             }
             Message::LiveRenderToggle => {
                 let enable = !self.live_render_mode;
@@ -9666,6 +9799,7 @@ On warning: always check Logs and ADE for details.",
                     self.runtime_profile,
                     self.persistent_mode,
                     self.ui_language,
+                    self.service_stop_locked,
                 ) {
                     Ok(()) => base_message.to_owned(),
                     Err(err) => format!("{} Speicherung fehlgeschlagen: {}", base_message, err),
@@ -9718,7 +9852,7 @@ On warning: always check Logs and ADE for details.",
                 }
             }
             Message::LauncherServiceStopPressed(service_id) => {
-                match self.launcher_state.stop_service(&service_id) {
+                match self.launcher_state.stop_service(&service_id, !self.service_stop_locked) {
                     Ok(()) => {
                         self.status_line = format!("Service {} stopped", service_id);
                     }
@@ -11108,6 +11242,11 @@ On warning: always check Logs and ADE for details.",
             LauncherMode::Configuration => self.view_launcher_configuration(),
         };
 
+        let launch_hint = info_card(
+            "Launcher Drop Support",
+            "Ziehe ein Spiel oder eine ausführbare Datei hierher, um sie über den Vault-Invariantpfad zu starten und gleichzeitig die Aether-Analyse zu aktivieren. Native Ausführung bleibt bevorzugt; Reconstruction-Ready Spiele können bei fehlendem Original mit Vault-Invarianten unterstützt werden.",
+        );
+
         container(
             column![
                 header,
@@ -11119,6 +11258,7 @@ On warning: always check Logs and ADE for details.",
                     })
                     .width(Length::Fill)
                     .height(Length::Fixed(1.0)),
+                launch_hint,
                 container(content)
                     .width(Length::Fill)
                     .height(Length::Fill),
@@ -12927,11 +13067,7 @@ fn network_gaming_table<'a>(entries: &[GameDirectoryEntry], contribute_enabled: 
         .spacing(8)
         .push(text("Spiele-Verzeichnis").size(16).color(c(TEXT_H())))
         .push(
-            text("Spiele für die bereits Vault-Einträge existieren — zeigt akkumulierten Rekonstruktionsfortschritt. Kein Personenbezug: keine Peer-IDs, keine Pfade.")
-                .size(12)
-                .color(c(TEXT_M())),
-        )
-        .push(container(toggle_row).padding([6, 8]).style(panel_frame_style));
+            text("Spiele, die bereits von Peer-Vaults erfasst wurden. Globaler Registereintrag ohne Quorum, sortiert nach Rekonstruktionsreife, Vault-Abdeckung und Beitragsstärke. Kein Personenbezug: keine Peer-IDs, keine Pfade.")
 
     let header = Row::new()
         .spacing(10)
@@ -13024,6 +13160,8 @@ fn launch_dropped_artifact(path: &Path, world: Tab) -> Result<String, String> {
     Ok(match world {
         Tab::Gaming => "Spielpfad gestartet; Rendering- und Strukturbeobachtung laufen parallel.".to_owned(),
         Tab::Media => "Medienpfad gestartet; Rendering-, Struktur- und Kompressionsbeobachtung laufen parallel.".to_owned(),
+        Tab::Invariants => "Invariant-Launchpfad gestartet; Live Render, Vault-Invarianten und Konsistenzanalyse laufen parallel.".to_owned(),
+        Tab::Launcher => "Launcher-Invariantpfad gestartet; Live Render und Vault-Invarianten werden überprüft.".to_owned(),
         _ => "Artefakt gestartet.".to_owned(),
     })
 }

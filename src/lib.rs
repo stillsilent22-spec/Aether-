@@ -61,3 +61,4 @@ pub mod workflow_anchor;
 pub mod hardware;
 pub mod ethics;
 pub mod observer;
+pub mod system_service;

@@ -116,6 +116,7 @@ class CapsuleMetricBundle:
     periodicity: float
     zipf_alpha: float
     benford_score: float
+    bit_position_score: float
     katz_dimension: float
     perm_entropy: float       # Bandt & Pompe ∈ [0,1]: 1.0=strukturiert, 0.0=Rauschen
     sce_score: float
@@ -133,6 +134,7 @@ class CapsuleMetricBundle:
             "periodicity": round(float(self.periodicity), 12),
             "zipf_alpha": round(float(self.zipf_alpha), 12),
             "benford_score": round(float(self.benford_score), 12),
+            "bit_position_score": round(float(self.bit_position_score), 12),
             "katz_dimension": round(float(self.katz_dimension), 12),
             "perm_entropy": round(float(self.perm_entropy), 12),
             "sce_score": round(float(self.sce_score), 12),
@@ -260,6 +262,7 @@ class AnalysisCapsuleEngine:
         symmetry = self._symmetry(signal)
         katz_dimension = self._katz_fractal_dimension(entropy_blocks or [entropy])
         benford = self._benford_score(signal)
+        bit_position_score = self._bit_position_score(signal)
         zipf_alpha = self._zipf_alpha(signal)
         local_delta = self._build_local_delta(signal, previous_signal, spec)
         h_lambda = self._h_lambda(entropy, local_delta["delta_ratio"], symmetry)
@@ -270,12 +273,13 @@ class AnalysisCapsuleEngine:
             boltzmann_entropy=boltzmann_entropy,
             zipf_alpha=zipf_alpha,
             benford_score=benford,
+            bit_position_score=bit_position_score,
             katz_dimension=katz_dimension,
             perm_entropy=perm_entropy,
             noether_consistency=noether_consistency,
         )
         local_delta["delta_convergence"] = float(delta_convergence)
-        sce = self._sce_payload(symmetry, benford, entropy_blocks)
+        sce = self._sce_payload(symmetry, benford, bit_position_score, entropy_blocks)
         sce_score = _safe_float(sce.get("coherence_score", 0.0))
         invariants = self._invariants(signal)
         bayes_confidence = self._bayes_confidence(
@@ -283,6 +287,7 @@ class AnalysisCapsuleEngine:
             symmetry=symmetry,
             sce_score=sce_score,
             benford_score=benford,
+            bit_position_score=bit_position_score,
             delta_ratio=local_delta["delta_ratio"],
         )
         trust_score = self._trust_score(
@@ -295,6 +300,7 @@ class AnalysisCapsuleEngine:
             delta_convergence=delta_convergence,
             bayes_confidence=bayes_confidence,
             benford_score=benford,
+            bit_position_score=bit_position_score,
             noether_consistency=noether_consistency,
             h_lambda=h_lambda,
             invariant_strength=_safe_float(invariants.get("invariant_strength", 0.0), 0.0),
@@ -309,6 +315,7 @@ class AnalysisCapsuleEngine:
             periodicity=periodicity,
             zipf_alpha=zipf_alpha,
             benford_score=benford,
+            bit_position_score=bit_position_score,
             katz_dimension=katz_dimension,
             perm_entropy=perm_entropy,
             sce_score=sce_score,
@@ -474,6 +481,26 @@ class AnalysisCapsuleEngine:
                 values.append(int.from_bytes(chunk, "big", signed=False))
         return _safe_float(detect_benford_law(values).get("benford_conformance", 0.0), 0.0)
 
+    @staticmethod
+    def _bit_position_score(data: bytes) -> float:
+        if not data:
+            return 0.0
+        counts = [0] * 8
+        total = 0
+        for byte_value in data:
+            if byte_value == 0:
+                continue
+            msb_pos = byte_value.bit_length()
+            if 1 <= msb_pos <= 8:
+                counts[msb_pos - 1] += 1
+                total += 1
+        if total == 0:
+            return 0.0
+        observed = [float(count) / float(total) for count in counts]
+        expected = [float(2 ** idx) / 255.0 for idx in range(8)]
+        distance = sum(abs(obs - exp) for obs, exp in zip(observed, expected))
+        return float(_clamp(1.0 - (distance / 2.0), 0.0, 1.0))
+
     def _build_local_delta(
         self,
         current: bytes,
@@ -516,6 +543,7 @@ class AnalysisCapsuleEngine:
         boltzmann_entropy: float,
         zipf_alpha: float,
         benford_score: float,
+        bit_position_score: float,
         katz_dimension: float,
         perm_entropy: float,
         noether_consistency: float,
@@ -526,6 +554,7 @@ class AnalysisCapsuleEngine:
             "boltzmann_entropy": _clamp(float(boltzmann_entropy), 0.0, 1.0),
             "zipf_alpha": _clamp(float(zipf_alpha) / 3.0, 0.0, 1.0),
             "benford_score": _clamp(float(benford_score), 0.0, 1.0),
+            "bit_position_score": _clamp(float(bit_position_score), 0.0, 1.0),
             "katz_dimension": _clamp((float(katz_dimension) - 1.0) / 1.5, 0.0, 1.0),
             "perm_entropy": _clamp(float(perm_entropy), 0.0, 1.0),
             "noether_consistency": _clamp(float(noether_consistency), 0.0, 1.0),
@@ -576,15 +605,21 @@ class AnalysisCapsuleEngine:
         mean_diff = sum(diffs) / float(max(1, len(diffs)))
         return float(max(0.0, min(1.0, 1.0 - (mean_diff / 8.0))))
 
-    def _sce_payload(self, symmetry: float, benford_score: float, entropy_blocks: List[float]) -> Dict[str, Any]:
+    def _sce_payload(self, symmetry: float, benford_score: float, bit_position_score: float, entropy_blocks: List[float]) -> Dict[str, Any]:
         if sce_engine is None:
-            coherence = (0.4 * symmetry) + (0.3 * benford_score) + (0.3 * self._gradient_coherence(entropy_blocks))
+            coherence = (
+                (0.35 * symmetry)
+                + (0.25 * benford_score)
+                + (0.20 * bit_position_score)
+                + (0.20 * self._gradient_coherence(entropy_blocks))
+            )
             return {
                 "coherence_score": float(_clamp(coherence, 0.0, 1.0)),
                 "control_signals": {},
                 "structural_explanation": {
                     "symmetry": float(symmetry),
                     "proportion": float(benford_score),
+                    "bit_position": float(bit_position_score),
                     "gradient_coherence": float(self._gradient_coherence(entropy_blocks)),
                 },
             }
@@ -593,6 +628,7 @@ class AnalysisCapsuleEngine:
                 {
                     "symmetry": float(symmetry),
                     "proportion": float(benford_score),
+                    "bit_position": float(bit_position_score),
                     "gradient_coherence": float(self._gradient_coherence(entropy_blocks)),
                 }
             )
@@ -604,9 +640,16 @@ class AnalysisCapsuleEngine:
         symmetry: float,
         sce_score: float,
         benford_score: float,
+        bit_position_score: float,
         delta_ratio: float,
     ) -> float:
-        prior = _clamp((0.30 * symmetry) + (0.30 * sce_score) + (0.20 * benford_score) + (0.20 * (1.0 - delta_ratio)))
+        prior = _clamp(
+            (0.25 * symmetry)
+            + (0.25 * sce_score)
+            + (0.20 * benford_score)
+            + (0.15 * bit_position_score)
+            + (0.15 * (1.0 - delta_ratio))
+        )
         likelihood_true = _clamp(0.35 + (0.50 * prior) + (0.15 * (1.0 - min(1.0, entropy / 8.0))), 1e-4, 0.9999)
         likelihood_false = _clamp(0.65 - (0.40 * prior), 1e-4, 0.9999)
         if self._bayes is not None:
@@ -632,6 +675,7 @@ class AnalysisCapsuleEngine:
         delta_convergence: float,
         bayes_confidence: float,
         benford_score: float,
+        bit_position_score: float,
         noether_consistency: float,
         h_lambda: float,
         invariant_strength: float,
@@ -658,6 +702,7 @@ class AnalysisCapsuleEngine:
                     "fourier_period": float(fourier_period),
                     "katz_dimension": float(katz_dimension),
                     "perm_entropy": float(perm_entropy),
+                    "bit_position_score": float(bit_position_score),
                     "delta_convergence": float(delta_convergence),
                     "h_lambda": float(h_lambda),
                     "invariant_strength": float(invariant_strength),

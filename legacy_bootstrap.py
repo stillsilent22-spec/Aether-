@@ -267,6 +267,7 @@ def _derive_legacy_learning(vault_count):
     periodicity = _clamp01(metrics.get("periodicity", 0.0))
     zipf_alpha = _safe_float(metrics.get("zipf_alpha", 0.0))
     benford_score = _clamp01(metrics.get("benford_score", 0.0))
+    bit_position_score = _clamp01(metrics.get("bit_position_score", 0.0))
     perm_entropy = _clamp01(metrics.get("perm_entropy", 1.0))
     noether_consistency = _clamp01(metrics.get("noether_consistency", 0.0))
     gradient_coherence = _clamp01(metrics.get("gradient_coherence", 0.0))
@@ -293,7 +294,7 @@ def _derive_legacy_learning(vault_count):
     compression_efficiency = _clamp01(1.0 - (float(compression_ratio_pct) / 100.0))
 
     structural_strength = _clamp01(_avg([symmetry, gradient_coherence, noether_consistency, sce_score]))
-    distribution_strength = _clamp01(_avg([benford_score, zipf_fit, entropy_norm]))
+    distribution_strength = _clamp01(_avg([benford_score, zipf_fit, entropy_norm, bit_position_score]))
     temporal_strength = _clamp01(_avg([periodicity, temporal_order, invariant_strength]))
     retention_strength = _clamp01(_avg([vault_density, trust_score, sce_score]))
     reconstruction_score = _clamp01(
@@ -329,6 +330,8 @@ def _derive_legacy_learning(vault_count):
             "symmetry": round(symmetry, 6),
             "periodicity": round(periodicity, 6),
             "benford_score": round(benford_score, 6),
+            "bit_position_score": round(bit_position_score, 6),
+            "noether_consistency": round(noether_consistency, 6),
             "sce_score": round(sce_score, 6),
             "trust_score": round(trust_score, 6),
             "invariant_strength": round(invariant_strength, 6),

@@ -58,6 +58,7 @@ pub struct ServiceInfo {
     pub log_lines: Vec<String>,
     pub log_fresh: bool,
     pub port: Option<u16>,
+    pub stop_allowed_in_settings_only: bool,
 }
 
 impl ServiceInfo {
@@ -73,6 +74,7 @@ impl ServiceInfo {
             log_lines: Vec::new(),
             log_fresh: false,
             port: None,
+            stop_allowed_in_settings_only: false,
         }
     }
 }
@@ -151,6 +153,7 @@ impl LauncherState {
                 log_lines: Vec::new(),
                 log_fresh: false,
                 port: Some(38571),
+                stop_allowed_in_settings_only: false,
             },
         );
 
@@ -168,6 +171,7 @@ impl LauncherState {
                 log_lines: Vec::new(),
                 log_fresh: false,
                 port: None,
+                stop_allowed_in_settings_only: false,
             },
         );
 
@@ -185,6 +189,43 @@ impl LauncherState {
                 log_lines: Vec::new(),
                 log_fresh: false,
                 port: None,
+                stop_allowed_in_settings_only: false,
+            },
+        );
+
+        // Local Aether System Service
+        services.insert(
+            "aether_system".to_string(),
+            ServiceInfo {
+                id: "aether_system".to_string(),
+                name: "Aether System Service".to_string(),
+                description: "Local Windows/Linux API daemon for invariant analysis; network gossip is handled by the overlay manager.".to_string(),
+                status: ServiceStatus::Idle,
+                process_id: None,
+                last_error: String::new(),
+                uptime_secs: 0,
+                log_lines: Vec::new(),
+                log_fresh: false,
+                port: Some(40011),
+                stop_allowed_in_settings_only: true,
+            },
+        );
+
+        // Overlay / DHT manager for Yggdrasil gossip
+        services.insert(
+            "aether_overlay".to_string(),
+            ServiceInfo {
+                id: "aether_overlay".to_string(),
+                name: "Aether Overlay Network".to_string(),
+                description: "Headless network manager for Yggdrasil overlay and DHT gossip connectivity.".to_string(),
+                status: ServiceStatus::Idle,
+                process_id: None,
+                last_error: String::new(),
+                uptime_secs: 0,
+                log_lines: Vec::new(),
+                log_fresh: false,
+                port: None,
+                stop_allowed_in_settings_only: true,
             },
         );
 
@@ -436,6 +477,33 @@ impl LauncherState {
                     .stderr(Stdio::from(stderr_file));
                 c
             }
+            "aether_system" => {
+                let executable_name = if cfg!(windows) {
+                    "aether_system_service.exe"
+                } else {
+                    "aether_system_service"
+                };
+                let service_path = root.join("tools").join(executable_name);
+                let mut c = Command::new(service_path);
+                c.arg("--port").arg("40011")
+                    .current_dir(&root)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::from(log_file))
+                    .stderr(Stdio::from(stderr_file));
+                c
+            }
+            "aether_overlay" => {
+                let python = "python";
+                let mut c = Command::new(python);
+                c.arg("daemon_headless.py")
+                    .arg("--interval")
+                    .arg("10")
+                    .current_dir(&root)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::from(log_file))
+                    .stderr(Stdio::from(stderr_file));
+                c
+            }
             _ => {
                 self.update_service_status(service_id, ServiceStatus::Idle, None);
                 return Err(format!("{} cannot be started from launcher", service_name));
@@ -464,7 +532,7 @@ impl LauncherState {
     }
 
     /// Stop a running service
-    pub fn stop_service(&mut self, service_id: &str) -> Result<(), String> {
+    pub fn stop_service(&mut self, service_id: &str, allow_settings_override: bool) -> Result<(), String> {
         self.poll_processes();
         let service_name = self
             .services
@@ -475,6 +543,15 @@ impl LauncherState {
 
         if service_id == "iced" {
             return Err("The running Iced shell cannot be stopped from this UI".to_owned());
+        }
+
+        if let Some(service) = self.services.get(service_id) {
+            if service.stop_allowed_in_settings_only && !allow_settings_override {
+                return Err(format!(
+                    "{} may only be stopped from the settings screen.",
+                    service_name
+                ));
+            }
         }
 
         self.update_service_status(service_id, ServiceStatus::Stopping, None);
