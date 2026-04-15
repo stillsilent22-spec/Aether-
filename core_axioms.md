@@ -9,7 +9,7 @@ constraints. Violations are bugs, not trade-offs.
 **EN:** The system measures structural properties. It does not interpret them.  
 **DE:** Das System misst strukturelle Eigenschaften. Es interpretiert sie nicht.
 
-The 9-metric cascade extracts Phi(X) from any byte stream. What Phi(X) means in
+The 10-metric cascade extracts Phi(X) from any byte stream. What Phi(X) means in
 context is determined solely by the human operator. No label, annotation, or
 domain hint is used by any algorithmic component. The system explicitly has no
 opinion about whether a structural match is significant.
@@ -71,7 +71,7 @@ meaningful in a given domain is a question for the domain expert, not the system
 **EN:** No minimum hardware tier excludes a device from structural analysis.  
 **DE:** Kein Mindest-Hardware-Tier schließt ein Gerät von der Strukturanalyse aus.
 
-The 9-metric cascade can be executed on hardware from 1995. The execution is
+The 10-metric cascade can be executed on hardware from 1995. The execution is
 mathematically identical regardless of hardware tier. Tier constraints apply only to:
 - Network participation level (Tier 0 = LocalOnly, Tier 4 = FullDHT)
 - Relay node eligibility

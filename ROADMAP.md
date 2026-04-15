@@ -46,7 +46,7 @@ Stand: April 2026.
 
 **Ziel:** Aether als wissenschaftliche Infrastruktur fur domainenubergreifende Strukturhypothesen.
 
-- 30 Tage: Dokumentation der 9 Metriken mit Signaltyp-Coverage (EEG, ECG, Genomsequenzen, Chromosome, Umweltsensoren, Forensik). Ingest-API fur Time-Series-Formate (CSV, HDF5, JSONL).
+- 30 Tage: Dokumentation der 10 Metriken mit Signaltyp-Coverage (EEG, ECG, Genomsequenzen, Chromosome, Umweltsensoren, Forensik). Ingest-API fur Time-Series-Formate (CSV, HDF5, JSONL).
 - 60 Tage: Cross-domain matching proof-of-concept: EEG + ECG struktureller Vergleich unter selber Domane. Benford/Noether-Forensikpipeline fur numerische Datensatze.
 - 90 Tage: Hypothesis-Generation-API (strukturell, nicht semantisch). Offentlicher Referenz-Atlas fur bekannte strukturelle Muster je Signaltyp. Reproduzierbarkeitstest fur alle funf empirischen Vorhersagen (WHITEPAPER §10).
 

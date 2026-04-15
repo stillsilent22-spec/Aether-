@@ -16,7 +16,7 @@ diese Invarianten — niemals die Rohdaten — als Grundlage für Kompression, v
 Vergleich und Peer-Vertrauensbewertung.
 
 Jeder Byte-Stream besitzt eine strukturelle Signatur unabhängig von seinem Inhalt.
-Aether extrahiert diese Signatur über einen deterministischen 9-Metrik-Durchlauf,
+Aether extrahiert diese Signatur über einen deterministischen 10-Metrik-Durchlauf,
 speichert sie als Ausdrucksbaum in einem lokalen Vault und teilt nur den 64-Byte
 SHA-256-Hash von Strukturankern mit Peers — nach Bestätigung durch mindestens 3 unabhängige Knoten.
 Algo-Token-Sharing hingegen ist ein direkter Peer-Austausch: empfangene Tokens werden
@@ -36,7 +36,7 @@ Rohdaten, Session-Keys und Deltas verlassen das Gerät niemals.
                                 │ Rust Shell → Python via subprocess
                  ┌──────────────▼────────────────┐
                  │       Python-Pipeline          │
-                 │  9-Metrik-Durchlauf            │
+                 │ 10-Metrik-Durchlauf            │
                  │  AELab (adaptive Evolution)    │
                  │  GP-Vault (Ausdrucksbäume)     │
                  │  Frame-Delta-Codec (XOR)       │
@@ -57,7 +57,7 @@ und ist in der Produktion gesperrt.
 
 ---
 
-## Der 9-Metrik-Durchlauf
+## Der 10-Metrik-Durchlauf
 
 Metriken werden in fester Reihenfolge berechnet. Die Reihenfolge ist unveränderlich.
 
@@ -73,7 +73,7 @@ Metriken werden in fester Reihenfolge berechnet. Die Reihenfolge ist unveränder
 | 8 | Delta-Konvergenz | ‖Φ_norm(t) − Φ_norm(t−1)‖₂ / √8 | [0, 1] |
 | 9 | Noether-Konsistenz | Symmetrieerhaltung vorwärts/rückwärts | [0, 1] |
 
-**Trust Score:** gewichtete Summe aller 9 Metriken, Bayes-Posterior und physikalische
+**Trust Score:** gewichtete Summe aller 10 Metriken, Bayes-Posterior und physikalische
 Plausibilität (Heisenberg-Proxy). Teilnahmeschwelle: `trust_score ≥ 0.65`.
 Kein Einladesystem. Keine Accounts. Das Kaskaden-Ergebnis ist der Proof of Work.
 

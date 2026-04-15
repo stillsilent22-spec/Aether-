@@ -49,7 +49,7 @@ Skalierung durch Fläche (mehr Rechenzentren) ist kein Äquivalent zu Skalierung
 **EN:**  
 Aether operates as a distributed digital research laboratory and compression system simultaneously. Every node — from a 1999 Windows 98 machine to a modern workstation — participates in the same pipeline:
 
-1. **Structural extraction:** A deterministic 9-metric cascade extracts a structural signature Φ(X) from any byte stream — file, genomic sequence, EEG recording, network packet, pixel frame, financial time series, sensor reading.
+1. **Structural extraction:** A deterministic 10-metric cascade extracts a structural signature Φ(X) from any byte stream — file, genomic sequence, EEG recording, network packet, pixel frame, financial time series, sensor reading.
 
 2. **Delta encoding:** Only changes between successive states are computed and stored. A frame at time t is represented as `XOR_Δ_N = Frame_N ⊕ Frame_{N-1}`. The delta, not the frame, enters the vault.
 
@@ -79,7 +79,7 @@ Aether funktioniert gleichzeitig als dezentrales digitales Forschungslabor und K
                                 │ Rust Shell → Python via subprocess
                  ┌──────────────▼────────────────┐
                  │       Python Pipeline          │
-                 │  9-Metric Cascade              │
+                 │ 10-Metric Cascade              │
                  │  AELab (adaptive evolution)    │
                  │  GP Vault (expression trees)   │
                  │  Frame Delta Codec (XOR)       │
@@ -100,7 +100,7 @@ Aether funktioniert gleichzeitig als dezentrales digitales Forschungslabor und K
 
 ---
 
-## The 9-Metric Cascade
+## The 10-Metric Cascade
 
 Metrics are computed in fixed order. The order is invariant.
 
@@ -116,7 +116,7 @@ Metrics are computed in fixed order. The order is invariant.
 | 8 | Delta Convergence | ‖Φ_norm(t)−Φ_norm(t−1)‖₂/√8 | [0, 1] | Structural stability over time |
 | 9 | Noether Consistency | symmetry preservation across signal halves | [0, 1] | Manipulation signal; asymmetry = anomaly |
 
-**Trust score:** weighted composite of all 9 metrics, Bayes posterior, and Heisenberg plausibility proxy. Participation threshold: `trust_score ≥ 0.65`. No invite system. No accounts. The cascade result is the proof of work.
+**Trust score:** weighted composite of all 10 metrics, Bayes posterior, and Heisenberg plausibility proxy. Participation threshold: `trust_score ≥ 0.65`. No invite system. No accounts. The cascade result is the proof of work.
 
 **Domain applicability / Domänenanwendbarkeit:**  
 The cascade operates on raw bytes. Domain is irrelevant to the computation. Validated signal types include: arbitrary files, EEG time series, ECG/EKG recordings, genomic sequences (DNA base-pair encodings), chromosome structural data, audio PCM, video frames, network packet payloads, financial OHLC series, environmental sensor readings, forensic disk images, process memory snapshots.
@@ -273,7 +273,7 @@ Expression trees evolved to losslessly represent 512-byte patterns. π, e, φ em
 
 ## Symbiont engine / Symbiont-Engine
 
-- **Blindspot engine:** detects structural patterns the 9-metric cascade consistently misses; flood-relays hints across the swarm (epidemic broadcast, max 3 hops)
+- **Blindspot engine:** detects structural patterns the 10-metric cascade consistently misses; flood-relays hints across the swarm (epidemic broadcast, max 3 hops)
 - **Invariant observer:** tracks which invariants persist across successive vault runs; feeds back into trust score
 - **Attractor engine:** identifies convergence attractors in GP search space
 - **Delta convergence tracker:** measures structural stability over time; provides empirical Shannon convergence signal

@@ -17,7 +17,7 @@ structural signatures grows, the per-chunk transmission cost converges toward th
 Shannon entropy limit, while no raw data is transmitted between nodes.
 
 We state and prove the **Vault Convergence Theorem**, which extends Shannon's source
-coding theorem to the distributed structural invariant case. We introduce a 9-metric
+coding theorem to the distributed structural invariant case. We introduce a 10-metric
 cascade as a deterministic proof-of-work mechanism for swarm trust evaluation without
 authentication infrastructure. We define the **Algo Token** as a formally compressed
 representation of recurring structural transformations, and show that collective token
@@ -101,7 +101,7 @@ Aether erzwingt globale Schwarm-Adaption nur, wenn sowohl Peer-Stage-/Level-Kons
 
 ---
 
-## 3. The 9-Metric Cascade
+## 3. The 10-Metric Cascade
 
 ### 3.1 Metric Definitions
 
@@ -221,7 +221,7 @@ without relay involvement.
 ## 6. Flood Relay -- Epidemic Broadcast
 
 **Definition 6.1 (Blindspot).**  
-A structural blindspot is a pattern class for which the 9-metric cascade has
+A structural blindspot is a pattern class for which the 10-metric cascade has
 insufficient discriminability -- a dense region of Phi-space with high confusion.
 
 **Theorem 6.2 (Flood Relay Coverage).**  
@@ -327,7 +327,7 @@ Falsifiable: known similar-period signal pairs across domains.
 ## 11. Radical Hardware Inclusion / Radikale Hardware-Inklusion
 
 **Observation 11.1.**  
-The minimum hardware requirement for the 9-metric cascade on a 512-byte chunk:
+The minimum hardware requirement for the 10-metric cascade on a 512-byte chunk:
 - ~3 MHz CPU
 - ~256 KB RAM
 - No GPU or FPU required (integer-approximable for all metrics)
