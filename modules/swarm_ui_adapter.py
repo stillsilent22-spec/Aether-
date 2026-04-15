@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from modules.registry import get_module
 from modules.swarm_controller import IPC_HOST, IPC_PORT, send_command, send_command_via_file
 
 
@@ -142,25 +143,38 @@ def _print_result(cmd: str, result: Dict[str, Any]) -> None:
 
 def cli_enable(interactive: bool = True) -> Dict[str, Any]:
     """Enable swarm via CLI (runs consent flow if needed)."""
-    from modules.swarm_consent import has_consent, interactive_consent_flow
-    from modules.swarm_controller import send_command
+    from modules.swarm_consent import gated_enable_swarm
+    from modules.swarm_controller import get_controller
 
-    if not has_consent():
-        if interactive:
-            granted = interactive_consent_flow(actor="cli")
-            if not granted:
-                print("✗ Swarm Mode NOT enabled (consent denied).")
-                return {"ok": False, "error": "consent_denied"}
-        else:
-            print("✗ Consent required. Run: python -m modules.swarm_ui_adapter consent")
-            return {"ok": False, "error": "consent_required"}
+    controller_module = get_module("swarm_controller")
+    if controller_module is not None:
+        try:
+            controller = controller_module.get_controller()
+        except Exception:
+            controller = get_controller()
+    else:
+        controller = get_controller()
 
-    result = _send("enable_swarm")
+    result = gated_enable_swarm(controller, actor="cli", interactive=interactive)
+    if not result.get("ok") and result.get("error") == "consent_required":
+        print("✗ Consent required. Run: python -m modules.swarm_ui_adapter consent")
     return result
 
 
 def cli_disable() -> Dict[str, Any]:
-    return _send("disable_swarm")
+    from modules.swarm_consent import gated_disable_swarm
+    from modules.swarm_controller import get_controller
+
+    controller_module = get_module("swarm_controller")
+    if controller_module is not None:
+        try:
+            controller = controller_module.get_controller()
+        except Exception:
+            controller = get_controller()
+    else:
+        controller = get_controller()
+
+    return gated_disable_swarm(controller, actor="cli")
 
 
 def cli_status() -> Dict[str, Any]:

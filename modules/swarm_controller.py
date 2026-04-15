@@ -565,6 +565,13 @@ def get_controller() -> SwarmController:
         return _controller_instance
 
 
+try:
+    from .registry import register_module
+    register_module("swarm_controller", sys.modules[__name__])
+except Exception:
+    pass
+
+
 # --------------------------------------------------------------------------- #
 #  Automatische Aufgabenverteilung an Peer-Nodes                             #
 # --------------------------------------------------------------------------- #

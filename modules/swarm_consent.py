@@ -318,3 +318,10 @@ def gated_disable_swarm(
     result = controller.disable_swarm(actor=actor)
     append_audit_event("disable_swarm", actor=actor)
     return result
+
+
+try:
+    from .registry import register_module
+    register_module("swarm_consent", sys.modules[__name__])
+except Exception:
+    pass
