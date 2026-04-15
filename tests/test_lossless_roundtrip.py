@@ -490,6 +490,58 @@ def test_public_ttd_pool_admin_anchor_is_trusted_immediately() -> None:
     shutil.rmtree(temp_public_root, ignore_errors=True)
 
 
+def test_public_ttd_corroboration_score_and_labels() -> None:
+    from modules.p2p_anchor_pool import build_public_ttd_anchor_record, merge_public_ttd_anchor_record
+
+    first_payload = {
+        "pseudonym": "peer-alpha",
+        "uploader_role": "operator",
+        "uploader_node_id": "peer-alpha-id",
+        "ttd_hash": "hash-123",
+        "source_label": "water_anomaly",
+        "timestamp": "2024-01-02T00:00:00+00:00",
+        "public_metrics": {
+            "residual": 0.25,
+            "symmetry": 0.70,
+            "i_obs_ratio": 0.60,
+            "delta_stability": 0.50,
+            "delta_i_obs_percent": 0.45,
+        },
+        "artifact_class": "performance_route",
+        "anomaly_flags": ["heavy_metal", "time_overlap"],
+        "corroboration_labels": ["water", "heavy_metal"],
+        "confirmed_lossless": False,
+    }
+    second_payload = {
+        "pseudonym": "peer-beta",
+        "uploader_role": "operator",
+        "uploader_node_id": "peer-beta-id",
+        "ttd_hash": "hash-123",
+        "source_label": "blood_anomaly",
+        "timestamp": "2024-01-02T00:05:00+00:00",
+        "public_metrics": {
+            "residual": 0.22,
+            "symmetry": 0.72,
+            "i_obs_ratio": 0.62,
+            "delta_stability": 0.52,
+            "delta_i_obs_percent": 0.50,
+        },
+        "artifact_class": "performance_route",
+        "anomaly_flags": ["oxidative_stress", "time_overlap"],
+        "corroboration_labels": ["blood", "oxidative_stress"],
+        "confirmed_lossless": True,
+    }
+
+    record = build_public_ttd_anchor_record(first_payload, signature_included=False)
+    merged = merge_public_ttd_anchor_record(record, second_payload, signature_included=False)
+
+    assert int(merged.get("validation_count", 0) or 0) == 2
+    assert int(merged.get("corroboration_count", 0) or 0) == 2
+    assert "time_overlap" in merged.get("corroboration_labels", [])
+    assert float(merged.get("corroboration_score", 0.0) or 0.0) >= 0.5
+    assert bool(merged.get("corroboration_ready", False)) in (True, False)
+
+
 def test_public_ttd_transport_http_mirror_roundtrip() -> None:
     """Der optionale Mirror-Transport muss ein Public-TTD-Bundle ueber HTTP senden und wieder einlesen koennen."""
     temp_network_root = PROJECT_ROOT / "tests" / ".tmp_public_ttd_transport"

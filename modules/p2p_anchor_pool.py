@@ -9,10 +9,50 @@ er muss zusaetzlich von is_genesis_node() bestaetigt werden.
 """
 
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
 from modules.registry import is_genesis_node as _is_genesis_node, TRUSTED_ANCHOR_UPLOAD_MIN_SCORE as _GENESIS_PUSH_MIN_SCORE
+
+_CORROBORATION_LABEL_RE = re.compile(r"^[A-Za-z0-9_\-]{1,32}$")
+
+
+def _normalize_corroboration_labels(payload: dict[str, Any] | None) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    labels: list[str] = []
+
+    def add_label(value: str | None) -> None:
+        if not value:
+            return
+        normalized = str(value).strip().lower()
+        if _CORROBORATION_LABEL_RE.match(normalized):
+            labels.append(normalized)
+
+    raw = payload.get("corroboration_labels")
+    if isinstance(raw, list):
+        for item in raw:
+            add_label(str(item or ""))
+
+    anomaly_flags = payload.get("anomaly_flags")
+    if isinstance(anomaly_flags, list):
+        for item in anomaly_flags:
+            add_label(str(item or ""))
+
+    add_label(str(payload.get("source_label", "") or ""))
+    add_label(str(payload.get("artifact_class", "") or ""))
+
+    return sorted(dict.fromkeys(labels))[:16]
+
+
+def _corroboration_score(validation_count: int, label_count: int, confirmed_lossless: bool) -> float:
+    score = 0.0
+    score += min(1.0, float(validation_count) * 0.12)
+    score += min(0.3, float(label_count) * 0.07)
+    if confirmed_lossless:
+        score += 0.2
+    return min(1.0, score)
 
 
 PUBLIC_TTD_POOL_SCHEMA = "aether.public_ttd_anchor.pool.v2"
@@ -160,14 +200,26 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     updated["source_scope"] = str(record.get("source_scope", "derived_public_metrics") or "derived_public_metrics")
     updated["privacy_class"] = str(record.get("privacy_class", "public_metric_only") or "public_metric_only")
     updated["user_confirmation_required"] = bool(share_channel == "consent_required")
+
+    # Corroboration is an additive peer-quality signal for public anchors.
+    corroboration_labels = _normalize_corroboration_labels(record)
+    corroboration_count = int(record.get("corroboration_count", 0) or 0)
+    confirmed_lossless = bool(record.get("confirmed_lossless", False))
+    corroboration_score = _corroboration_score(corroboration_count, len(corroboration_labels), confirmed_lossless)
+    corroboration_ready = bool(corroboration_score >= 0.5 and corroboration_count >= 2)
+    updated["corroboration_labels"] = corroboration_labels
+    updated["corroboration_count"] = corroboration_count
+    updated["corroboration_score"] = corroboration_score
+    updated["corroboration_ready"] = corroboration_ready
+
     # Genesis: auto_push vom Trustscore gegattet (Peer-Count-Quorum umgangen, Trustscore Pflicht).
-    # Peers: auto_push vom Peer-Count-Quorum gegattet (unveraendert).
+    # Peers: auto_push erfordert sowohl Peer-Count-Quorum als auch ausreichende Peer-Korroboration.
     genesis_push_ready = bool(genesis_trusted and artifact_class == "performance_route" and trust_score_met)
-    peer_push_ready = bool(not genesis_trusted and artifact_class == "performance_route" and quorum_met)
+    peer_push_ready = bool(not genesis_trusted and artifact_class == "performance_route" and quorum_met and corroboration_ready)
     updated["auto_push_ready"] = bool(genesis_push_ready or peer_push_ready)
     updated["auto_push_reason"] = (
         "genesis_override" if genesis_push_ready
-        else "peer_quorum" if peer_push_ready
+        else "peer_quorum_and_corroboration" if peer_push_ready
         else "not_ready"
     )
     if quorum_met and not str(updated.get("trusted_at", "") or "").strip():
@@ -182,6 +234,8 @@ def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_include
     uploader_role = normalize_public_role(item.get("uploader_role", "operator"))
     artifact_class = normalize_public_artifact_class(item.get("artifact_class", "performance_route"))
     validators = [pseudonym] if pseudonym else []
+    corroboration_labels = _normalize_corroboration_labels(item)
+    corroboration_count = int(len(validators))
     record = {
         "schema": "aether.public_ttd_anchor.record.v1",
         "ttd_hash": str(item.get("ttd_hash", "") or ""),
@@ -192,8 +246,11 @@ def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_include
         "uploader_node_id": str(item.get("uploader_node_id", "") or "").strip(),
         "uploader_role": uploader_role,
         "validation_pseudonyms": validators,
-        "validation_count": int(len(validators)),
+        "validation_count": corroboration_count,
         "signed_validation_count": 1 if bool(signature_included) else 0,
+        "corroboration_labels": corroboration_labels,
+        "corroboration_count": corroboration_count,
+        "corroboration_score": _corroboration_score(corroboration_count, len(corroboration_labels), bool(item.get("confirmed_lossless", False))),
         "public_metrics": _canonical_metrics(item.get("public_metrics", {})),
         "latest_metrics": _canonical_metrics(item.get("public_metrics", {})),
         "raw_data_included": False,
@@ -244,6 +301,17 @@ def merge_public_ttd_anchor_record(
     merged["share_channel"] = str(item.get("share_channel", existing.get("share_channel", share_channel_for_artifact(merged.get("artifact_class", "performance_route")))) or existing.get("share_channel", share_channel_for_artifact(merged.get("artifact_class", "performance_route"))))
     merged["source_scope"] = str(item.get("source_scope", existing.get("source_scope", "derived_public_metrics")) or existing.get("source_scope", "derived_public_metrics"))
     merged["privacy_class"] = str(item.get("privacy_class", existing.get("privacy_class", "public_metric_only")) or existing.get("privacy_class", "public_metric_only"))
+    merged["corroboration_labels"] = _normalize_corroboration_labels({
+        **existing,
+        **item,
+        "corroboration_labels": list(existing.get("corroboration_labels", [])) + list(item.get("corroboration_labels", [])),
+    })
+    merged["corroboration_count"] = int(merged["validation_count"])
+    merged["corroboration_score"] = _corroboration_score(
+        int(merged["corroboration_count"]),
+        len(merged["corroboration_labels"]),
+        bool(existing.get("confirmed_lossless", False) or item.get("confirmed_lossless", False)),
+    )
     return _apply_trust_state(merged)
 
 
@@ -268,6 +336,10 @@ def public_ttd_anchor_view(record: dict[str, Any]) -> dict[str, Any]:
         "privacy_class": str(item.get("privacy_class", "public_metric_only") or "public_metric_only"),
         "user_confirmation_required": bool(item.get("user_confirmation_required", False)),
         "auto_push_ready": bool(item.get("auto_push_ready", False)),
+        "corroboration_labels": list(item.get("corroboration_labels", []) or []),
+        "corroboration_count": int(item.get("corroboration_count", 0) or 0),
+        "corroboration_score": float(item.get("corroboration_score", 0.0) or 0.0),
+        "corroboration_ready": bool(item.get("corroboration_ready", False)),
         "raw_data_included": False,
         "deltas_included": False,
         "internal_only": False,
@@ -284,6 +356,7 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
     quorum_validated_count = sum(1 for record in trusted_records if str(record.get("trust_reason", "") or "") == "peer_quorum_met")
     genesis_trusted_count = sum(1 for record in trusted_records if bool(record.get("genesis_trusted", False)))
     auto_push_ready_count = sum(1 for record in trusted_records if bool(record.get("auto_push_ready", False)))
+    corroboration_ready_count = sum(1 for record in trusted_records if bool(record.get("corroboration_ready", False)))
     consent_required_count = sum(1 for record in normalized_records if bool(record.get("user_confirmation_required", False)))
     return {
         "schema": PUBLIC_TTD_POOL_SCHEMA,
@@ -298,6 +371,7 @@ def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[s
         "genesis_trusted_count": int(genesis_trusted_count),
         "admin_trusted_count": int(genesis_trusted_count),  # alias: "admin" normalizes to "genesis"
         "auto_push_ready_count": int(auto_push_ready_count),
+        "corroboration_ready_count": int(corroboration_ready_count),
         "consent_required_count": int(consent_required_count),
     }
 
