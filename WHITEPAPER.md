@@ -93,6 +93,14 @@ component. Structural matching is performed on Phi(X) vectors only.
 
 ---
 
+## 2.4 Swarm Stage Consistency and Blindspot Gating / Schwarm-Stage-Konsistenz und Blindspot-Gating
+
+Aether enforces global swarm adaptation only when peer stage-level consensus and convergence consistency are both satisfied. If the swarm does not agree on a common stage or if its convergence metrics are inconsistent, the system raises a collective swarm blindspot rather than applying adaptation. This ensures that distributed improvements are only accepted when the peer set is unified in operational level and metric alignment.
+
+Aether erzwingt globale Schwarm-Adaption nur, wenn sowohl Peer-Stage-/Level-Konsens als auch Konvergenz-Konsistenz erfüllt sind. Stimmen die Peers nicht auf eine gemeinsame Stufe überein oder sind die Konvergenzmetriken inkonsistent, erzeugt das System einen kollektiven Schwarm-Blindspot, statt Anpassungen zu übernehmen. Damit wird sichergestellt, dass verteilte Verbesserungen nur akzeptiert werden, wenn die Peer-Gruppe in Betriebsniveau und Metrikabgleich vereinigt ist.
+
+---
+
 ## 3. The 9-Metric Cascade
 
 ### 3.1 Metric Definitions
@@ -165,9 +173,11 @@ lim_{n->inf} C(n) = 64 bytes
 ```
 
 *Proof sketch:* For a vault hit, a 64-byte SHA-256 anchor suffices. The anchor is not
-invertible to raw data. By the source coding theorem, the GP expression tree
-representation cost approaches H(X) * n bits as n grows. For structured data,
-K(X) << n * 8, so h(n) grows monotonically and C(n) converges. QED
+invertible to raw data. Algorithmic token sharing is separate: peers exchange
+source-node-bound AlgoTokens that are locally validated on structure, `source_node_id`, and
+fitness, without requiring a global quorum. By the source coding theorem, the GP
+expression tree representation cost approaches H(X) * n bits as n grows. For structured
+data, K(X) << n * 8, so h(n) grows monotonically and C(n) converges. QED
 
 **Corollary 4.2 (Collective Convergence).**  
 For N nodes sharing structural anchors (not raw data), the collective vault V_{N*n}
@@ -184,7 +194,9 @@ h_N(n) >= 1 - e^(-lambda * N * n)
 **Definition 5.1 (Algo Token).**  
 An algo token tau(P) is a compressed identifier for a recurring delta pattern P.
 A pattern P is tokenized when it appears in k >= k_min independent vault observations
-across distinct nodes. The token is distributed to all nodes via flood relay.
+across distinct nodes. The token is distributed to peers via flood relay. Each peer
+accepts an AlgoToken only after local structural validation, source_node_id binding,
+and fitness gating — no global quorum is required for token acceptance.
 
 **Theorem 5.2 (Logarithmic Scaling).**  
 Let N be the number of active swarm nodes and Omega be the set of structurally

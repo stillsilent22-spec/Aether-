@@ -5,6 +5,7 @@
 > **Status: Alpha — April 2026**
 > Die Kern-Pipeline ist deterministisch und testabgedeckt. Das Swarm befindet sich in früher Peer-Integration.
 > Kein Server erforderlich. Keine Accounts. Keine Rohdaten verlassen das Gerät.
+> Die Schwarm-Adaption ist durch strikte Stage-/Level- und Konvergenz-Konsenszustände gegated; bei fehlender Konsistenz aktiviert die Blindspot-Engine kollektive Gap-Behebung.
 
 ---
 
@@ -17,7 +18,9 @@ Vergleich und Peer-Vertrauensbewertung.
 Jeder Byte-Stream besitzt eine strukturelle Signatur unabhängig von seinem Inhalt.
 Aether extrahiert diese Signatur über einen deterministischen 9-Metrik-Durchlauf,
 speichert sie als Ausdrucksbaum in einem lokalen Vault und teilt nur den 64-Byte
-SHA-256-Hash mit Peers — nach Bestätigung durch mindestens 3 unabhängige Knoten.
+SHA-256-Hash von Strukturankern mit Peers — nach Bestätigung durch mindestens 3 unabhängige Knoten.
+Algo-Token-Sharing hingegen ist ein direkter Peer-Austausch: empfangene Tokens werden
+lokal auf Struktur-Integrität, `source_node_id` und Fitness-Schwelle geprüft.
 Rohdaten, Session-Keys und Deltas verlassen das Gerät niemals.
 
 ---

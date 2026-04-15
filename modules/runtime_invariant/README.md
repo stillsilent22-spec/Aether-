@@ -7,3 +7,4 @@ Ziel:
 - Klare Ordnerstruktur für Runtime- und Invariant-Komponenten
 - Einfacher Import via `from modules.runtime_invariant import ...`
 - Saubere Trennung zwischen Shell/UI und Analyse-Logik
+- Konsistenz- und Gating-Mechanismen für Laufzeit-Invarianten und Schwarmstatuse

@@ -97,6 +97,16 @@ to the swarm. Local-only analysis is always available, always full-fidelity.
 
 ---
 
+## Axiom 8: Swarm Consensus Before Adaptation
+**EN:** The swarm only applies global adaptation when peer stage consensus and convergence consistency are confirmed.  
+**DE:** Der Schwarm nimmt globale Adaption nur an, wenn Peer-Stage-Konsens und Konvergenz-Konsistenz bestätigt sind.
+
+No adaptation, token acceptance, or global model update occurs while the swarm is divided by stage level or shows inconsistent convergence metrics. In such cases, the blindspot engine elevates the state to a collective gap and drives peer-assisted remediation.
+
+Keine Adaption, Token-Akzeptanz oder globales Modellupdate erfolgt, solange der Schwarm nach Stufen unterschiedlich ist oder inkonsistente Konvergenzmetriken zeigt. In solchen Fällen erhöht die Blindspot-Engine den Zustand zu einem kollektiven Gap und treibt die peer-gestützte Behebung voran.
+
+---
+
 ## Metric Reference / Metrikenreferenz
 
 | # | Metric | Formula | Range | Cross-domain use | Forensic relevance |

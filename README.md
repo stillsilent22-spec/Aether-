@@ -55,11 +55,13 @@ Aether operates as a distributed digital research laboratory and compression sys
 
 3. **GP vault compression:** Genetic programming evolves compact expression trees that losslessly represent 512-byte structural patterns. Mathematical constants (π, e, φ) emerge when structurally useful — never hardcoded.
 
-4. **Algo tokenization:** Recurring delta patterns are assigned algorithmic tokens. After sufficient observations across the swarm, a token becomes a base algo — a shared reconstruction shortcut distributed to all nodes. The per-reconstruction cost decreases logarithmically with swarm exposure.
+4. **Algo tokenization:** Recurring delta patterns are assigned algorithmic tokens. AlgoTokens are source-node-bound metadata objects that carry only structural fingerprints and fitness metrics; they contain no raw data, deltas, or session keys. Each receiving peer validates a token locally on structure, `source_node_id`, and fitness score — token acceptance does not require a global quorum.
 
 5. **Swarm broadcast (structural only):** Only SHA-256 hashes of structural anchors are shared, after ≥ 3-node quorum confirmation. Raw data, deltas, and session keys never leave the device.
 
 6. **Blindspot relay:** When a node cannot reconstruct a structural pattern, it broadcasts a structural class request (not the data). The swarm returns reconstruction hints via epidemic flood relay (max 3 hops). Every node learns every solution. The node that needed help first benefits most.
+
+7. **Stage & convergence gating:** Global swarm adaptation is only allowed once peer stage/level consensus and convergence consistency are confirmed. If either fails, the blindspot engine treats it as a collective gap and drives swarm-wide remediation.
 
 **DE:**  
 Aether funktioniert gleichzeitig als dezentrales digitales Forschungslabor und Kompressionssystem. Jeder Knoten — von einer Windows-98-Maschine aus 1999 bis zur modernen Workstation — nimmt an derselben Pipeline teil: Strukturextraktion → Delta-Encoding → GP-Vault-Kompression → Algo-Tokenisierung → Swarm-Broadcast (nur Struktur) → Blindspot-Relay.
@@ -216,7 +218,7 @@ Delta patterns that recur across nodes are progressively compressed into algorit
 | 10,000+ across swarm | Base algo — distributed to all nodes | ~0 marginal cost |
 
 This is not linear scaling. It is logarithmic: doubling node count does not double cost — it reduces cost per node. The efficiency gain is proportional to the diversity of patterns observed, not to raw compute capacity.
-
+AlgoTokens are source-node-bound. A receiving peer accepts them only after local structural validation and a local fitness gate; no swarm-wide vote is required for token acceptance. This keeps token propagation peer-to-peer while preserving privacy.
 A Windows 98 node playing a game it has played before locally reconstructs ~95% of frames from its vault without relay involvement. The remaining 5% triggers a structural hint request. The hint is returned via flood relay (3 hops maximum). The node stores the shortcut. Next session: ~97%.
 
 **DE:**  
