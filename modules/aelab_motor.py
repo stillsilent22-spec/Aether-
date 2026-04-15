@@ -14,15 +14,49 @@ Verwendung:
 """
 
 
+import json
 import math
 import random
 import struct
+import time
 from copy import deepcopy
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional, List
 import hashlib
 import secrets
 import os
+
+CAPABILITY_SCORE_PATH = Path("data") / "interbus" / "capability_score.json"
+
+LEGACY_RATE_LIMIT_SCALE = [0.20, 0.35, 0.55, 0.80, 1.00]
+LEGACY_RATE_LIMIT_SLEEP_MS = [20, 12, 6, 2, 0]
+
+
+def _detect_hardware_tier_from_capability_score() -> int:
+    """Bestimmt den Hardware-Tier aus data/interbus/capability_score.json."""
+    try:
+        if not CAPABILITY_SCORE_PATH.is_file():
+            return 2
+        payload = json.loads(CAPABILITY_SCORE_PATH.read_text(encoding="utf-8") or "{}")
+        percent_int = int(float(payload.get("percent_int", payload.get("percent", 0.0) * 100) or 0))
+        if percent_int < 25:
+            return 0
+        if percent_int < 50:
+            return 1
+        if percent_int < 75:
+            return 2
+        if percent_int < 100:
+            return 3
+        return 4
+    except Exception:
+        return 2
+
+
+def _legacy_hardware_rate_limit(hardware_tier: int) -> tuple[float, float]:
+    """Returns (scale, sleep_ms) for legacy hardware throttling."""
+    tier = max(0, min(4, int(hardware_tier)))
+    return LEGACY_RATE_LIMIT_SCALE[tier], float(LEGACY_RATE_LIMIT_SLEEP_MS[tier])
 
 # ---------------------------------------------------------------------------
 # Datenschutz-Kern (by Architecture, nicht by Promise)
@@ -737,12 +771,34 @@ class AEEvolver:
     def run(self, pop: int = 160, gens: int = 120,
             seed_depth: int = 4, max_depth: int = 8,
             mut_rate: float = 0.22, tournament: int = 5,
-            callback=None):
+            callback=None,
+            hardware_tier: Optional[int] = None,
+            rate_limit: bool = True):
         """
         callback(gen, best_fit, best_lossless) – optional, wird jede Generation aufgerufen.
         Gibt (best_tree, best_fit) zurück.
         """
         rng = self.rng
+
+        if hardware_tier is None:
+            hardware_tier = _detect_hardware_tier_from_capability_score()
+        else:
+            hardware_tier = max(0, min(4, int(hardware_tier)))
+
+        scale, sleep_ms = _legacy_hardware_rate_limit(hardware_tier)
+        if scale < 1.0:
+            original_pop = pop
+            original_gens = gens
+            pop = max(4, int(round(float(pop) * scale)))
+            gens = max(1, int(round(float(gens) * scale)))
+            logger.debug(
+                "[AEEvolver] legacy rate limit active: tier=%d scale=%.2f "
+                "pop=%d->%d gens=%d->%d sleep_ms=%.1f",
+                hardware_tier, scale,
+                original_pop, pop,
+                original_gens, gens,
+                sleep_ms,
+            )
 
         population = [rand_tree(seed_depth, rng) for _ in range(pop)]
         fits       = [0.0]*pop
@@ -776,6 +832,9 @@ class AEEvolver:
 
             if callback:
                 callback(gen, self.best_fit, self.best_lossless)
+
+            if rate_limit and sleep_ms > 0.0:
+                time.sleep(sleep_ms / 1000.0)
 
             if gen + 1 >= gens:
                 break
