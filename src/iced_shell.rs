@@ -693,6 +693,10 @@ enum Message {
     LoginPasswordChanged(String),
     LoginPressed,
     RegisterPressed,
+    SettingsCurrentPasswordChanged(String),
+    SettingsNewPasswordChanged(String),
+    SettingsNewPasswordConfirmChanged(String),
+    SettingsChangePasswordPressed,
     TabSelected(Tab),
     ChatContextSelected(ChatContext),
     SecurityModeSelected(String),
@@ -824,6 +828,9 @@ pub struct AetherIcedShell {
     swarm_startup: SwarmStartupStatus,
     login_username: String,
     login_password: String,
+    settings_current_password: String,
+    settings_new_password: String,
+    settings_new_password_confirm: String,
     status_line: String,
     app_mode: AppMode,
     active_tab: Tab,
@@ -1074,6 +1081,9 @@ impl AetherIcedShell {
             swarm_startup: swarm_startup.clone(),
             login_username: known_username.clone().unwrap_or_default(),
             login_password: String::new(),
+            settings_current_password: String::new(),
+            settings_new_password: String::new(),
+            settings_new_password_confirm: String::new(),
             status_line: if let Some(username) = known_username {
                 format!(
                     "Lokales Konto '{}' erkannt. Anmeldung weiterhin erforderlich.",
@@ -4427,6 +4437,42 @@ impl AetherIcedShell {
                             row.spacing(10)
                         }
                     );
+                    col = col.push(text(self.ui_text("Passwort ändern", "Change password")).size(20));
+                    col = col.push(text(self.ui_text(
+                        "Hier kannst du dein Shell-Anmeldepasswort  ndern. Der neue Hash wird nur lokal gespeichert.",
+                        "Here you can change your shell login password. The new hash is stored locally only.",
+                    )).size(13).color(c(TEXT_M())));
+                    col = col.push(text(self.ui_text("Aktuelles Passwort", "Current password")).size(12).color(c(TEXT_M())));
+                    col = col.push(
+                        text_input(self.ui_text("Aktuelles Passwort eingeben", "Enter current password"), &self.settings_current_password)
+                            .on_input(Message::SettingsCurrentPasswordChanged)
+                            .secure(true)
+                            .padding([11, 14])
+                            .size(15)
+                    );
+                    col = col.push(text(self.ui_text("Neues Passwort", "New password")).size(12).color(c(TEXT_M())));
+                    col = col.push(
+                        text_input(self.ui_text("Neues Passwort eingeben", "Enter new password"), &self.settings_new_password)
+                            .on_input(Message::SettingsNewPasswordChanged)
+                            .secure(true)
+                            .padding([11, 14])
+                            .size(15)
+                    );
+                    col = col.push(text(self.ui_text("Neues Passwort wiederholen", "Confirm new password")).size(12).color(c(TEXT_M())));
+                    col = col.push(
+                        text_input(self.ui_text("Neues Passwort wiederholen", "Confirm new password"), &self.settings_new_password_confirm)
+                            .on_input(Message::SettingsNewPasswordConfirmChanged)
+                            .secure(true)
+                            .padding([11, 14])
+                            .size(15)
+                    );
+                    col = col.push(
+                        button(text(self.ui_text("Passwort ändern", "Change password")))
+                            .padding([10, 18])
+                            .on_press(Message::SettingsChangePasswordPressed)
+                            .style(primary_button_style)
+                    );
+                    col = col.push(text("").size(4));
                     col = col.push(text(self.ui_text("Runtime-Profil (lokaler Takt)", "Runtime profile (local cadence)")).size(20));
                     col = col.push(text(self.ui_text(
                         "AUTO, BALANCED, LOW-POWER und LEGACY steuern nur lokalen Takt, Polling und Watchdogs. Das Netzwerk-Tier bleibt separat hardwaregebunden: Vault-first-Geraete profitieren lokal, normale PCs behalten freie Profilwahl.",
@@ -9805,6 +9851,54 @@ On warning: always check Logs and ADE for details.",
                     Err(err) => format!("{} Speicherung fehlgeschlagen: {}", base_message, err),
                 };
             }
+            Message::SettingsCurrentPasswordChanged(value) => {
+                self.settings_current_password = value;
+            }
+            Message::SettingsNewPasswordChanged(value) => {
+                self.settings_new_password = value;
+            }
+            Message::SettingsNewPasswordConfirmChanged(value) => {
+                self.settings_new_password_confirm = value;
+            }
+            Message::SettingsChangePasswordPressed => {
+                if let Some(current_user) = self.current_user.as_ref() {
+                    if self.settings_new_password != self.settings_new_password_confirm {
+                        self.status_line = self.ui_text(
+                            "Neues Passwort und Bestätigung stimmen nicht überein.",
+                            "New password and confirmation do not match.",
+                        ).to_owned();
+                    } else if self.settings_current_password.is_empty() || self.settings_new_password.is_empty() {
+                        self.status_line = self.ui_text(
+                            "Bitte alle Passwortfelder ausfüllen.",
+                            "Please fill in all password fields.",
+                        ).to_owned();
+                    } else {
+                        match self.auth_store.change_password(
+                            &current_user.username,
+                            &self.settings_current_password,
+                            &self.settings_new_password,
+                        ) {
+                            Ok(()) => {
+                                self.settings_current_password.clear();
+                                self.settings_new_password.clear();
+                                self.settings_new_password_confirm.clear();
+                                self.status_line = self.ui_text(
+                                    "Passwort erfolgreich geändert.",
+                                    "Password changed successfully.",
+                                ).to_owned();
+                                if let Some(updated) = self.auth_store.find_user(&current_user.username) {
+                                    self.current_user = Some(updated);
+                                }
+                            }
+                            Err(err) => {
+                                self.status_line = format!(
+                                    "Passwort konnte nicht geändert werden: {err}",
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             Message::ForceQuit => {
                 return window::get_latest().then(|id_opt| {
                     if let Some(id) = id_opt {
@@ -13068,6 +13162,7 @@ fn network_gaming_table<'a>(entries: &[GameDirectoryEntry], contribute_enabled: 
         .push(text("Spiele-Verzeichnis").size(16).color(c(TEXT_H())))
         .push(
             text("Spiele, die bereits von Peer-Vaults erfasst wurden. Globaler Registereintrag ohne Quorum, sortiert nach Rekonstruktionsreife, Vault-Abdeckung und Beitragsstärke. Kein Personenbezug: keine Peer-IDs, keine Pfade.")
+        );
 
     let header = Row::new()
         .spacing(10)

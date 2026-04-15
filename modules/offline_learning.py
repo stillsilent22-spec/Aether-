@@ -241,6 +241,7 @@ class OfflineLearner:
             from modules.prediction_engine import PredictionEngine
             pe = PredictionEngine.instance()
             hints = pe.get_prefetch_hints_for_gossip()
+            queue = pe.load_prefetch_queue()
             # Hinweis: wir können nur Fingerprints registrieren die wir kennen.
             # Wir kennen sie als "erwartete Muster" ohne den Baum zu haben.
             # Der Vault selbst muss den Baum finden wenn der Chunk tatsächlich kommt.
@@ -251,7 +252,12 @@ class OfflineLearner:
                     fp = pred.get("fp", "")
                     prob = float(pred.get("prob", 0.0))
                     if fp and prob > 0.3:
-                        # Registriere als bekannte Erwartung für schnelleres Lookup
+                        warmed += 1
+            for item in queue[:limit]:
+                if not isinstance(item, dict):
+                    continue
+                for fp in item.get("sequence", []):
+                    if isinstance(fp, str) and fp:
                         warmed += 1
         except Exception as exc:
             logger.debug(f"[offline_learning] warm_vault: {exc}")

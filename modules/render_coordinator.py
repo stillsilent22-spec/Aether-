@@ -113,6 +113,7 @@ class RenderCoordinator:
         Niemals wird hier eigenstaendig ein Screenshot ausgeloest.
         """
         raw = bytes(pixel_bytes or b"")
+        previous_frame = self.last_snapshot
         frame = RenderFrame(
             pid=int(pid),
             process_name=str(process_name),
@@ -130,6 +131,8 @@ class RenderCoordinator:
         self._frame_history.append(frame)
         if len(self._frame_history) > self._max_history:
             self._frame_history.pop(0)
+        if previous_frame is not None:
+            self._record_render_transition(previous_frame, frame)
         return frame.to_payload()
 
     def capture_process_render(self, pid: int, window_title: str = "") -> RenderFrame | None:
@@ -158,6 +161,7 @@ class RenderCoordinator:
         if raw is None:
             return None
         proc_name = self._get_process_name(pid)
+        previous_frame = self.last_snapshot
         frame = RenderFrame(
             pid=pid,
             process_name=proc_name,
@@ -252,6 +256,8 @@ class RenderCoordinator:
             )
             if _submit_cascade is not None:
                 _submit_cascade(cascade_result, role="genesis")
+            if previous_frame is not None:
+                self._record_render_transition(previous_frame, frame)
 
         return frame
 
@@ -293,6 +299,43 @@ class RenderCoordinator:
             "time_delta": abs(frame_a.timestamp - frame_b.timestamp),
             "hash_match": frame_a.pixel_hash == frame_b.pixel_hash,
         }
+
+    def _build_frame_state_fp(self, frame: RenderFrame) -> str:
+        """Erzeugt einen stabilen, anonymisierten Zustandshash aus Frame-Metriken."""
+        try:
+            payload = (
+                f"{round(frame.entropy, 6)}:"
+                f"{round(frame.symmetry, 6)}:"
+                f"{round(frame.resonance, 6)}:"
+                f"{frame.frame_size}"
+            )
+            return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        except Exception:
+            return frame.pixel_hash
+
+    def _context_key_from_frame(self, frame: RenderFrame) -> str:
+        return f"render:{frame.process_name}" if frame.process_name else "render:unknown"
+
+    def _record_render_transition(self, previous: RenderFrame, current: RenderFrame) -> None:
+        """Schreibt eine selbstbeobachtete Transition in die PredictionEngine."""
+        try:
+            from modules.prediction_engine import PredictionEngine, DecisionSignal
+            state_fp = self._build_frame_state_fp(previous)
+            decision = DecisionSignal.from_invariant_delta(
+                [previous.entropy, previous.symmetry, previous.resonance],
+                [current.entropy, current.symmetry, current.resonance],
+                signal_type="render_delta",
+            )
+            context_key = self._context_key_from_frame(current)
+            decision.context_key = context_key
+            PredictionEngine.instance().record_transition(
+                state_fp,
+                decision,
+                current.pixel_hash,
+                context_key=context_key,
+            )
+        except Exception as exc:
+            logger.debug(f"[render_coordinator] prediction record_transition: {exc}")
 
     def frame_history_summary(self) -> dict[str, Any]:
         """Verdichtet die Frame-History zu stabilen Invarianten."""

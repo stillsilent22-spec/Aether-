@@ -48,7 +48,7 @@ _INJECTION_RE = re.compile(
   | \bshutil\s*\.
   | [;&|`]\s*(?:rm|del|format|curl|wget|nc|netcat|python|cmd|powershell)\b
   | \.\.[/\\]\.\.[/\\]                    # path traversal
-  | (?:&#x[0-9a-f]+;|%2e%2e|%252e)       # encoded traversal
+  | (?:&\#x[0-9a-f]+;|%2e%2e|%252e)       # encoded traversal
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -58,6 +58,12 @@ _SAFE_LABEL_RE = re.compile(r"^[A-Za-z0-9_.:\- ]{0,80}$")
 
 # Erlaubte Hex-Fingerprint-Strings
 _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
+
+def _normalize_token_id_component(value: str, max_len: int = 12) -> str:
+    return "".join(
+        c if (c.isalnum() or c in "_-.:") else "_"
+        for c in str(value)
+    )[:max_len] or "x"
 
 # Bekannte metrics_summary Schlüssel + ihre erlaubten Bereiche [min, max]
 _METRICS_BOUNDS: Dict[str, Tuple[float, float]] = {
@@ -70,6 +76,7 @@ _METRICS_BOUNDS: Dict[str, Tuple[float, float]] = {
     "h_lambda":         (0.0,  50.0),
     "trust_score":      (0.0,   1.0),
 }
+_MIN_ALGO_TOKEN_FITNESS = 0.30
 
 # Maximale Anzahl eingehender AlgoTokens pro Peer pro Zeitfenster
 _TOKEN_RATE_WINDOW_SEC = 60
@@ -554,9 +561,11 @@ class GossipToxicityFilter:
             warnings.append(f"[toxicity:{peer_prefix}] AlgoToken zu viele Keys ({len(token)}) — verworfen")
             return None
 
-        token_id   = str(token.get("token_id",       ""))
-        tree_sig   = str(token.get("tree_signature", ""))
-        domain     = str(token.get("domain_hint",    "generic"))
+        token_id       = str(token.get("token_id", ""))
+        tree_sig       = str(token.get("tree_signature", ""))
+        domain         = str(token.get("domain_hint", "generic"))
+        source_node_id = str(token.get("source_node_id", "")).strip()
+        emitted_ts     = float(token.get("emitted_ts", 0.0))
 
         # Basis-Integrität (gleiche Prüfung wie AutoPropagator.receive_algo_token)
         if not token_id or not tree_sig or len(tree_sig) != 64:
@@ -565,7 +574,17 @@ class GossipToxicityFilter:
         if not _HEX64_RE.match(tree_sig):
             warnings.append(f"[toxicity:{peer_prefix}] AlgoToken tree_sig kein Hex")
             return None
-        expected_id = hashlib.sha256(f"{tree_sig}|{domain}".encode()).hexdigest()
+        if not source_node_id:
+            warnings.append(f"[toxicity:{peer_prefix}] AlgoToken fehlt source_node_id")
+            return None
+        if len(source_node_id) > 80 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-." for c in source_node_id):
+            warnings.append(f"[toxicity:{peer_prefix}] AlgoToken source_node_id invalid")
+            return None
+        if emitted_ts <= 0.0:
+            warnings.append(f"[toxicity:{peer_prefix}] AlgoToken invalid emitted_ts")
+            return None
+
+        expected_id = f"{_normalize_token_id_component(source_node_id, 16)}-{tree_sig[:12]}-{_normalize_token_id_component(domain, 10)}"
         if token_id != expected_id:
             warnings.append(f"[toxicity:{peer_prefix}] AlgoToken token_id Integritätsfehler")
             return None
@@ -576,6 +595,9 @@ class GossipToxicityFilter:
             fitness = float(fitness)
             if not math.isfinite(fitness) or not (0.0 <= fitness <= 1.0):
                 warnings.append(f"[toxicity:{peer_prefix}] AlgoToken fitness_score außerhalb [0,1]")
+                return None
+            if fitness < _MIN_ALGO_TOKEN_FITNESS:
+                warnings.append(f"[toxicity:{peer_prefix}] AlgoToken fitness_score zu niedrig ({fitness:.4g}) — verworfen")
                 return None
         except (TypeError, ValueError):
             return None
@@ -613,6 +635,8 @@ class GossipToxicityFilter:
             "cascade_version":  str(token.get("cascade_version", "unknown"))[:32],
             "node_count":       node_count,
             "depth":            depth,
+            "source_node_id":   source_node_id,
+            "emitted_ts":       round(emitted_ts, 3),
         }
 
     @staticmethod

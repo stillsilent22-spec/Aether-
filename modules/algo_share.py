@@ -18,8 +18,12 @@ Ein AlgoToken ist:
 from __future__ import annotations
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+
+MIN_ALGO_TOKEN_FITNESS = 0.30
+MIN_ALGO_TOKEN_HIT_RATIO = 0.05
 
 
 @dataclass
@@ -28,7 +32,7 @@ class AlgoToken:
     Handelbares/teilbares Strukturbeschreibungs-Token.
     Enthält nur den Algorithmus, nie die Daten.
     """
-    token_id: str              # SHA256(tree_signature + domain_hint)
+    token_id: str              # eindeutige ID, gekoppelt an Sender und Algorithmus
     tree_signature: str        # SHA256 des Expression Trees
     invariant_profile: List[str]  # welche Invarianten genutzt werden (z.B. ["pi", "phi", "2^k"])
     fitness_score: float       # lossless-Rate des Trees [0,1]
@@ -36,9 +40,11 @@ class AlgoToken:
     cascade_version: str
     node_count: int
     depth: int
+    source_node_id: str = ""
+    emitted_ts: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        payload = {
             "token_id": self.token_id,
             "tree_signature": self.tree_signature,
             "invariant_profile": self.invariant_profile,
@@ -47,14 +53,30 @@ class AlgoToken:
             "cascade_version": self.cascade_version,
             "node_count": self.node_count,
             "depth": self.depth,
+            "source_node_id": self.source_node_id,
         }
+        if self.emitted_ts > 0.0:
+            payload["emitted_ts"] = round(self.emitted_ts, 3)
+        return payload
 
     def canonical_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=True,
                           sort_keys=True, separators=(",", ":"))
 
 
-def build_algo_token(aelab_result: Dict[str, Any], domain_hint: str = "generic") -> Optional[AlgoToken]:
+def _normalize_token_id_component(value: str, max_len: int = 12) -> str:
+    safe = "".join(
+        c if (c.isalnum() or c in "_-.:") else "_"
+        for c in str(value)
+    )
+    return safe[:max_len] or "x"
+
+
+def build_algo_token(
+    aelab_result: Dict[str, Any],
+    domain_hint: str = "generic",
+    source_node_id: str = "",
+) -> Optional[AlgoToken]:
     """
     Baut einen AlgoToken aus einem aelab_engine.analyze()-Ergebnis.
     Gibt None zurück wenn commit_allowed=False (Tree nicht gut genug zum Teilen).
@@ -68,14 +90,23 @@ def build_algo_token(aelab_result: Dict[str, Any], domain_hint: str = "generic")
     if not tree_sig:
         return None
 
+    fitness_score = float(aelab_result.get("lossless", 0.0))
+    if fitness_score < MIN_ALGO_TOKEN_FITNESS:
+        return None
+
     # Invarianten-Profil aus has_anchor und Signatur ableiten
     invariant_profile: List[str] = []
     if aelab_result.get("has_anchor", False):
         invariant_profile = ["mathematical_anchor"]
 
-    token_id = hashlib.sha256(
-        f"{tree_sig}|{domain_hint}".encode()
-    ).hexdigest()
+    source_node_id = source_node_id.strip()
+    node_part = _normalize_token_id_component(source_node_id, 16)
+    domain_part = _normalize_token_id_component(domain_hint, 10)
+    token_id = (
+        f"{node_part}-{tree_sig[:12]}-{domain_part}"
+        if source_node_id
+        else f"{tree_sig[:12]}-{domain_part}"
+    )
 
     return AlgoToken(
         token_id=token_id,
@@ -86,6 +117,8 @@ def build_algo_token(aelab_result: Dict[str, Any], domain_hint: str = "generic")
         cascade_version=CASCADE_VERSION,
         node_count=int(aelab_result.get("nodes", 0)),
         depth=int(aelab_result.get("depth", 0)),
+        source_node_id=source_node_id,
+        emitted_ts=time.time(),
     )
 
 
@@ -94,14 +127,29 @@ def verify_algo_token(token: AlgoToken) -> bool:
     Prüft ob ein empfangener AlgoToken strukturell valide ist.
     Kein Inhalt, keine Daten — nur Struktur-Integrität.
     """
-    expected_id = hashlib.sha256(
-        f"{token.tree_signature}|{token.domain_hint}".encode()
-    ).hexdigest()
+    if not token.token_id or len(token.token_id) > 80:
+        return False
+    if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.:" for c in token.token_id):
+        return False
+    if not token.source_node_id:
+        return False
+    if len(token.source_node_id) > 80:
+        return False
+    if any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-." for c in token.source_node_id):
+        return False
+
+    node_part = _normalize_token_id_component(token.source_node_id, 16)
+    domain_part = _normalize_token_id_component(token.domain_hint, 10)
+    expected_token_id = f"{node_part}-{token.tree_signature[:12]}-{domain_part}"
+    if token.token_id != expected_token_id:
+        return False
+
     return (
-        token.token_id == expected_id
-        and 0.0 <= token.fitness_score <= 1.0
+        0.0 <= token.fitness_score <= 1.0
         and len(token.tree_signature) == 64  # SHA256 hex
         and bool(token.cascade_version)
+        and bool(token.invariant_profile)
+        and token.emitted_ts > 0.0
     )
 
 
@@ -149,14 +197,14 @@ class AutoPropagator:
     MIN_FITNESS_TO_SHARE = 0.30
 
     # Anzahl unabhängiger Beobachtungen bis ein Token als Quorum-bestätigt gilt.
-# Nicht mehr in Verwendung — nur noch als Fallback-Konstante beibehalten.
-        QUORUM_CONFIRMATION_THRESHOLD = 3
+    # Nicht mehr in Verwendung — nur noch als Fallback-Konstante beibehalten.
+    QUORUM_CONFIRMATION_THRESHOLD = 3
 
-        # Lokale Fitness-Schwelle: ein empfangenes Token wird nur akzeptiert,
-        # wenn sein fitness_score diesen Wert erreicht oder überschreitet.
-        # Sicherheit ohne Quorum: kein Angreifer kann einen Token konstruieren
-        # der auf UNSEREN lokalen Daten diese Schwelle erfüllt — er kennt sie nicht.
-        LOCAL_FITNESS_GATE = 0.30
+    # Lokale Fitness-Schwelle: ein empfangenes Token wird nur akzeptiert,
+    # wenn sein fitness_score diesen Wert erreicht oder überschreitet.
+    # Sicherheit ohne Quorum: kein Angreifer kann einen Token konstruieren
+    # der auf UNSEREN lokalen Daten diese Schranke erfüllt — er kennt sie nicht.
+    LOCAL_FITNESS_GATE = 0.30
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -222,6 +270,13 @@ class AutoPropagator:
             "domain_hint":      str
             "node_count":       int
             "depth":            int
+            "source_node_id":   str
+
+        Token wird nur geteilt wenn:
+          - commit_allowed / ein stabiles Invariant vorhanden ist
+          - fitness_score >= MIN_FITNESS_TO_SHARE
+          - eine messbare Hit-Verbesserung gegenüber dem letzten bekannten Wert besteht
+          - der Token eindeutig mit dem Sender-Node verbunden ist
 
         Gibt AlgoToken-Dict zurück wenn emittiert, sonst None.
         """
@@ -229,8 +284,14 @@ class AutoPropagator:
         fitness      = float(vault_stats.get("fitness_score", 0.0))
         tree_sig     = str(vault_stats.get("tree_signature",  ""))
         domain_hint  = str(vault_stats.get("domain_hint",     "generic"))
+        source_node_id = str(vault_stats.get("source_node_id", "")).strip()
+        invariant_profile = vault_stats.get("invariant_profile", [])
 
         if not tree_sig or fitness < self.MIN_FITNESS_TO_SHARE:
+            return None
+        if not invariant_profile:
+            return None
+        if source_node_id == "":
             return None
 
         with self._lock:
@@ -243,7 +304,13 @@ class AutoPropagator:
             except ImportError:
                 CASCADE_VERSION = "unknown"
 
-            token_id = hashlib.sha256(f"{tree_sig}|{domain_hint}".encode()).hexdigest()
+            source_part = _normalize_token_id_component(source_node_id, 16)
+            domain_part = _normalize_token_id_component(domain_hint, 10)
+            token_id = (
+                f"{source_part}-{tree_sig[:12]}-{domain_part}"
+                if source_part
+                else f"{tree_sig[:12]}-{domain_part}"
+            )
 
             # Log-skalierte Fitness für legacy-Hardware-Tiers (Weber-Fechner-Gesetz):
             #   Kleine Verbesserungen auf schwacher Hardware zählen proportional
@@ -267,6 +334,7 @@ class AutoPropagator:
                 "cascade_version":  CASCADE_VERSION,
                 "node_count":       int(vault_stats.get("node_count", 0)),
                 "depth":            int(vault_stats.get("depth", 0)),
+                "source_node_id":  source_node_id,
                 "hit_ratio":        round(hit_ratio, 4),
                 "emitted_ts":       time.time(),
             }
@@ -282,7 +350,7 @@ class AutoPropagator:
         """Speichert ein empfangenes AlgoToken (aus Gossip eines Peers).
 
         Akzeptanzbedingung — KEIN Quorum, stattdessen lokale Fitness-Gate:
-          1. Strukturelle Integrität: SHA256(tree_sig|domain_hint) == token_id
+          1. Strukturelle Integrität: token_id ist sicher, source_node_id stimmt
           2. fitness_score >= LOCAL_FITNESS_GATE (0.30)
 
         Sicherheit ohne Quorum: ein Angreifer kann keinen Token konstruieren der
@@ -295,18 +363,31 @@ class AutoPropagator:
         """
         if not isinstance(token_data, dict):
             return False
-        token_id    = str(token_data.get("token_id",      ""))
-        tree_sig    = str(token_data.get("tree_signature", ""))
-        domain_hint = str(token_data.get("domain_hint",   "generic"))
-        fitness     = float(token_data.get("fitness_score", 0.0))
-        peer_id     = str(from_peer or token_data.get("from_peer", "") or "").strip()
+        token_id      = str(token_data.get("token_id", ""))
+        tree_sig      = str(token_data.get("tree_signature", ""))
+        domain_hint   = str(token_data.get("domain_hint", "generic"))
+        fitness       = float(token_data.get("fitness_score", 0.0))
+        source_node_id = str(token_data.get("source_node_id", "")).strip()
+        emitted_ts    = float(token_data.get("emitted_ts", 0.0))
+        peer_id       = str(from_peer or token_data.get("from_peer", "") or "").strip()
 
         if not token_id or not tree_sig or len(tree_sig) != 64:
             return False
 
-        # 1. Strukturelle Integrität
-        expected_id = hashlib.sha256(f"{tree_sig}|{domain_hint}".encode()).hexdigest()
-        if token_id != expected_id:
+        # 1. Strukturelle Integrität — source_node_id muss vorhanden sein
+        token = AlgoToken(
+            token_id=token_id,
+            tree_signature=tree_sig,
+            invariant_profile=list(token_data.get("invariant_profile", [])),
+            fitness_score=fitness,
+            domain_hint=domain_hint,
+            cascade_version=str(token_data.get("cascade_version", "")),
+            node_count=int(token_data.get("node_count", 0)),
+            depth=int(token_data.get("depth", 0)),
+            source_node_id=source_node_id,
+            emitted_ts=emitted_ts,
+        )
+        if not verify_algo_token(token):
             return False
 
         # 2. Lokale Fitness-Gate — keine Peer-Abstimmung nötig

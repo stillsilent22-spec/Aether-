@@ -2,6 +2,7 @@
 name = "aether"
 version = "0.1.0"
 edition = "2021"
+description = "Aether is a privacy-first distributed structural invariant compression engine with source-bound algo token sharing and blindspot relay."
 default-run = "aether_iced"
 
 [[bin]]

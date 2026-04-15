@@ -63,6 +63,16 @@ MAX_CANDIDATES_PER_EDGE = 8
 # max Kanten im Übergangs-Graphen (Speicherbudget für Vista-Klasse)
 # 4096 Kanten × 8 Kandidaten × ~128 Byte ≈ 4 MB — für 512 MB RAM problemlos
 MAX_EDGES = 4096
+# max lokale Nutzerkontexte für kontext-sensitive Gewichtung
+MAX_CONTEXTS = 32
+# max Kandidaten pro Kontext-Edge
+MAX_CONTEXT_BIAS_CANDIDATES = 8
+# Kontext-Boosung für lokale Spiel-/Session-Gewichtung
+CONTEXT_BIAS_BOOST = 1.5
+# Unterstützungszähler ab dem ein Prefetch-Hint als stark gilt
+MIN_SUPPORT_FOR_STRONG_HINT = 3
+# Begrenzung für gespeicherte Prefetch-Queue-Einträge
+MAX_PREFETCH_QUEUE_ITEMS = 128
 
 
 # --------------------------------------------------------------------------- #
@@ -86,6 +96,7 @@ class DecisionSignal:
     magnitude_bucket:  int    # Quantisiert 0–7  (3 Bits = 8 Beträge)
     timing_bucket:     int    # 0=schnell(<100ms), 1=mittel(<500ms), 2=langsam(>500ms)
     state_fingerprint: str    # SHA256 des aktuellen Zustands-Φ-Vektors
+    context_key:       str    = ""  # optionaler lokaler Kontext wie Spielprozess oder Session
     ts: float = field(default_factory=time.time)
 
     def fingerprint(self) -> str:
@@ -137,6 +148,7 @@ class DecisionSignal:
             "magnitude_bucket":  self.magnitude_bucket,
             "timing_bucket":     self.timing_bucket,
             "state_fingerprint": self.state_fingerprint,
+            "context_key":       self.context_key,
             "fingerprint":       self.fingerprint(),
         }
 
@@ -172,6 +184,9 @@ class PredictionEngine:
         self._lock = threading.Lock()
         # Übergangs-Tabelle: kanten_key → {nächster_chunk_fp: Anzahl}
         self._transitions:          Dict[str, Dict[str, int]] = {}
+        self._context_biases:       Dict[str, Dict[str, Dict[str, int]]] = {}
+        self._context_usage:        Dict[str, int] = {}
+        self._hint_support:         Dict[str, set[str]] = {}
         self._total_observations:   int = 0
         self._prefetch_hits:        int = 0
         self._prefetch_misses:      int = 0
@@ -188,6 +203,18 @@ class PredictionEngine:
                     for k, v in data.get("transitions", {}).items()
                     if isinstance(v, dict)
                 }
+                self._context_biases = {
+                    ctx: {
+                        k: {fp: int(c) for fp, c in edge.items()}
+                        for k, edge in contexts.items() if isinstance(edge, dict)
+                    }
+                    for ctx, contexts in data.get("context_biases", {}).items()
+                    if isinstance(contexts, dict)
+                }
+                self._context_usage = {
+                    ctx: int(count) for ctx, count in data.get("context_usage", {}).items()
+                    if isinstance(count, (int, float))
+                }
                 self._total_observations = int(data.get("total_observations", 0))
                 self._prefetch_hits      = int(data.get("prefetch_hits", 0))
                 self._prefetch_misses    = int(data.get("prefetch_misses", 0))
@@ -203,6 +230,8 @@ class PredictionEngine:
                 json.dumps({
                     "schema":             "aether.prediction.v1",
                     "transitions":        self._transitions,
+                    "context_biases":     self._context_biases,
+                    "context_usage":      self._context_usage,
                     "total_observations": self._total_observations,
                     "prefetch_hits":      self._prefetch_hits,
                     "prefetch_misses":    self._prefetch_misses,
@@ -230,6 +259,91 @@ class PredictionEngine:
         weakest_key = min(total_per_edge, key=total_per_edge.__getitem__)
         del self._transitions[weakest_key]
 
+    def _prune_least_used_context(self) -> None:
+        """Entfernt den am wenigsten relevanten lokalen Kontext um Speicher zu schonen."""
+        if not self._context_usage:
+            return
+        weakest_context = min(self._context_usage, key=self._context_usage.__getitem__)
+        self._context_usage.pop(weakest_context, None)
+        self._context_biases.pop(weakest_context, None)
+
+    def _promote_context_bias(
+        self,
+        edge_key: str,
+        fp_key: str,
+        context_key: str,
+    ) -> None:
+        if not context_key:
+            return
+        self._context_usage[context_key] = self._context_usage.get(context_key, 0) + 1
+        if len(self._context_usage) > MAX_CONTEXTS:
+            self._prune_least_used_context()
+        contexts = self._context_biases.setdefault(context_key, {})
+        edge_bias = contexts.setdefault(edge_key, {})
+        edge_bias[fp_key] = edge_bias.get(fp_key, 0) + 1
+        if len(edge_bias) > MAX_CONTEXT_BIAS_CANDIDATES:
+            rarest = min(edge_bias.items(), key=lambda x: x[1])
+            edge_bias.pop(rarest[0], None)
+
+    def _load_prefetch_queue(self) -> List[Dict[str, Any]]:
+        if not PREFETCH_QUEUE_PATH.is_file():
+            return []
+        try:
+            data = json.loads(PREFETCH_QUEUE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                return data
+        except Exception:
+            pass
+        return []
+
+    def _save_prefetch_queue(self, queue: List[Dict[str, Any]]) -> None:
+        try:
+            PREFETCH_QUEUE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            PREFETCH_QUEUE_PATH.write_text(
+                json.dumps(queue, ensure_ascii=True, separators=(",", ":")),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.debug(f"[prediction_engine] save_prefetch_queue: {exc}")
+
+    def schedule_prefetch(
+        self,
+        context_key: str,
+        state_fingerprint: str,
+        decision: DecisionSignal,
+        depth: int = 3,
+        beam: int = 4,
+        top_n: int = 8,
+    ) -> int:
+        """Plant lokale Prefetch-Sequenzen für einen Kontext und speichert sie in einer Queue."""
+        sequences = self.predict_next_sequences(
+            state_fingerprint,
+            decision,
+            depth=depth,
+            beam=beam,
+            top_n=top_n,
+            context_key=context_key,
+        )
+        if not sequences:
+            return 0
+        queue = self._load_prefetch_queue()
+        timestamp = time.time()
+        for seq in sequences:
+            queue.append({
+                "context_key": context_key,
+                "state_fingerprint": state_fingerprint,
+                "decision": decision.to_dict(),
+                "sequence": seq["sequence"],
+                "probability": seq["probability"],
+                "ts": timestamp,
+            })
+        queue = queue[-MAX_PREFETCH_QUEUE_ITEMS:]
+        self._save_prefetch_queue(queue)
+        return len(sequences)
+
+    def load_prefetch_queue(self) -> List[Dict[str, Any]]:
+        return self._load_prefetch_queue()
+
     # ── Kern-Lernmethoden ─────────────────────────────────────────────────── #
 
     def record_transition(
@@ -237,6 +351,7 @@ class PredictionEngine:
         state_fingerprint: str,
         decision: DecisionSignal,
         next_chunk_fingerprint: str,
+        context_key: str = "",
     ) -> None:
         """Zeichnet eine beobachtete Transition auf: Zustand + Entscheidung → nächster Chunk.
 
@@ -248,6 +363,7 @@ class PredictionEngine:
         seltene Pfade bleiben schwach und werden beim Speicher-Limit bereinigt.
         """
         edge_key = self._edge_key(state_fingerprint, decision.fingerprint())
+        context_key = context_key or decision.context_key or ""
         with self._lock:
             if edge_key not in self._transitions:
                 if len(self._transitions) >= MAX_EDGES:
@@ -256,6 +372,8 @@ class PredictionEngine:
             candidates = self._transitions[edge_key]
             fp_key = next_chunk_fingerprint[:32]
             candidates[fp_key] = candidates.get(fp_key, 0) + 1
+            if context_key:
+                self._promote_context_bias(edge_key, fp_key, context_key)
             # Kandidaten-Limit: seltenster fliegt raus (Metamutation auf Edge-Ebene)
             if len(candidates) > MAX_CANDIDATES_PER_EDGE:
                 rarest = min(candidates.items(), key=lambda x: x[1])
@@ -270,6 +388,7 @@ class PredictionEngine:
         state_fingerprint: str,
         decision: DecisionSignal,
         top_n: int = 4,
+        context_key: Optional[str] = None,
     ) -> List[Tuple[str, float]]:
         """Sagt die wahrscheinlichsten nächsten Chunk-Fingerprints vorher.
 
@@ -282,14 +401,65 @@ class PredictionEngine:
         """
         edge_key = self._edge_key(state_fingerprint, decision.fingerprint())
         with self._lock:
-            candidates = dict(self._transitions.get(edge_key, {}))
-        if not candidates:
+            base_candidates = dict(self._transitions.get(edge_key, {}))
+            context_bias = {}
+            if context_key:
+                context_bias = (
+                    self._context_biases.get(context_key, {}).get(edge_key, {})
+                )
+        if not base_candidates and not context_bias:
             return []
-        total = sum(candidates.values())
+        weighted = dict(base_candidates)
+        for fp, count in (context_bias or {}).items():
+            weighted[fp] = weighted.get(fp, 0) + int(count * CONTEXT_BIAS_BOOST)
+        total = sum(weighted.values())
         if total < MIN_OBSERVATIONS:
             return []
-        sorted_c = sorted(candidates.items(), key=lambda x: -x[1])
+        sorted_c = sorted(weighted.items(), key=lambda x: -x[1])
         return [(fp, count / total) for fp, count in sorted_c[:top_n]]
+
+    def predict_next_sequences(
+        self,
+        state_fingerprint: str,
+        decision: DecisionSignal,
+        depth: int = 2,
+        beam: int = 3,
+        top_n: int = 4,
+        context_key: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Erzeugt die wahrscheinlichsten nächsten Chunk-Sequenzen für Prefetching."""
+        beams: List[Tuple[List[str], float, str, DecisionSignal]] = [([], 1.0, state_fingerprint, decision)]
+        final_beams: List[Tuple[List[str], float, str, DecisionSignal]] = beams
+        for _ in range(depth):
+            next_beams: List[Tuple[List[str], float, str, DecisionSignal]] = []
+            for sequence, probability, current_state, current_decision in beams:
+                candidates = self.predict_next_chunks(
+                    current_state,
+                    current_decision,
+                    top_n=top_n,
+                    context_key=context_key,
+                )
+                for fp, p in candidates:
+                    if p <= 0.0:
+                        continue
+                    next_probability = probability * p
+                    next_decision = DecisionSignal(
+                        "auto",
+                        0,
+                        0,
+                        0,
+                        fp,
+                        context_key=context_key or "",
+                    )
+                    next_beams.append((sequence + [fp], next_probability, fp, next_decision))
+            if not next_beams:
+                break
+            beams = sorted(next_beams, key=lambda x: -x[1])[:beam]
+            final_beams = beams
+        return [
+            {"sequence": seq, "probability": round(prob, 4)}
+            for seq, prob, _, _ in final_beams
+        ]
 
     def record_prefetch_outcome(self, predicted_fp: str, actual_fp: str) -> None:
         """Verfolgt ob eine Prefetch-Vorhersage korrekt war (für Genauigkeits-Metrik)."""
@@ -315,15 +485,16 @@ class PredictionEngine:
         """
         hints: List[Dict[str, Any]] = []
         with self._lock:
-            # Kanten sortiert nach Gesamt-Beobachtungen (zuverlässigste zuerst)
             edge_totals = [
-                (k, sum(v.values()), v)
+                (k, sum(v.values()), v, len(self._hint_support.get(k, set())))
                 for k, v in self._transitions.items()
             ]
-            edge_totals.sort(key=lambda x: -x[1])
-        for edge_key, total, candidates in edge_totals[:8]:
+            edge_totals.sort(key=lambda x: (-x[1], -x[3]))
+            edge_totals = edge_totals[:8]
+        for edge_key, total, candidates, support_count in edge_totals:
             if total < MIN_OBSERVATIONS:
                 continue
+            strong = support_count >= MIN_SUPPORT_FOR_STRONG_HINT
             best = sorted(candidates.items(), key=lambda x: -x[1])[:3]
             hints.append({
                 "edge_key": edge_key,
@@ -332,6 +503,8 @@ class PredictionEngine:
                     for fp, c in best
                 ],
                 "observation_count": total,
+                "support_count": support_count,
+                "strong_hint": strong,
             })
         return hints
 
@@ -358,8 +531,10 @@ class PredictionEngine:
                         self._prune_least_used_edge()
                     self._transitions[edge_key] = {}
                 obs_count = int(hint.get("observation_count", 1))
-                # Skalierung: Gossip-Gewicht ≤ 1/4 eigener Beobachtungen
                 gossip_weight = max(1, min(obs_count // 4, 10))
+                peer_id = str(hint.get("peer_id", ""))
+                if peer_id:
+                    self._hint_support.setdefault(edge_key, set()).add(peer_id)
                 for pred in hint.get("predictions", []):
                     fp = str(pred.get("fp", ""))[:32]
                     if not fp:

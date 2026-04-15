@@ -324,18 +324,30 @@ class AetherPipeline:
                 result["cross_domain_hints"] = hints
             # ── AlgoToken (nur wenn Gate bestanden) ─────────────────────────
             if result["vault_commit_allowed"]:
-                from modules.algo_share import build_algo_token
+                from modules.algo_share import AutoPropagator, build_algo_token
                 from pathlib import Path as _Path
                 domain = str(_Path(result.get("file", "")).suffix.lstrip(".") or "generic")
                 token = build_algo_token(aelab_result, domain_hint=domain)
                 if token:
                     result["algo_token"] = token.to_dict()
-                    # AlgoToken sofort peer-to-peer senden — kein Quorum nötig
+                    # AlgoToken wird nur dann in den Peer-Kreislauf eingespeist,
+                    # wenn die lokale Vault-Performance gegenüber dem letzten
+                    # bekannten Stand deutlich verbessert wurde.
                     try:
                         from modules.aethernet_transport import AethernetTransport as _AT
                         _transport = _get_pipeline_transport()
                         if _transport is not None:
-                            _transport.push_algo_token(aelab_result, domain_hint=domain)
+                            improved_token = AutoPropagator.instance().emit_if_improved({
+                                "hit_ratio": float(aelab_result.get("hit_ratio", 0.0) or 0.0),
+                                "fitness_score": float(token.fitness_score),
+                                "tree_signature": str(token.tree_signature),
+                                "invariant_profile": list(token.invariant_profile),
+                                "domain_hint": str(token.domain_hint),
+                                "node_count": int(token.node_count),
+                                "depth": int(token.depth),
+                            })
+                            if improved_token is not None:
+                                _transport.push_algo_token(aelab_result, domain_hint=domain)
                     except Exception:
                         pass
         else:

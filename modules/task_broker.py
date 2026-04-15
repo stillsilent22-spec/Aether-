@@ -580,6 +580,28 @@ class TaskBroker:
             )
         except Exception as exc:
             logger.warning(f"[task_broker] execute_task fehlgeschlagen: {exc}")
+            try:
+                from modules.blindspot_engine import BlindspotEngine as _BE, GAP_COMPUTE_LIMIT
+                _BE.instance().register_gap(
+                    domain=request.task_type,
+                    gap_type=GAP_COMPUTE_LIMIT,
+                    description=(
+                        f"Task-Ausführung gescheitert: {str(exc)[:120]}"
+                    ),
+                    priority=8,
+                    metadata={
+                        "task_id": request.task_id,
+                        "task_type": request.task_type,
+                        "requirements": request.requirements,
+                        "intent_sketch": request.intent_sketch,
+                        "executor_node_id": executor_node_id,
+                        "capability_gap": request.capability_gap,
+                        "chunk_class": request.chunk_class,
+                        "error": str(exc),
+                    },
+                )
+            except Exception:
+                pass
             return None
 
     def get_contribution_count(self) -> int:

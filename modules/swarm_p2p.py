@@ -1565,7 +1565,14 @@ class P2PLayer:
         if _prefetch_hints:
             try:
                 from modules.prediction_engine import PredictionEngine as _PE
-                _n = _PE.instance().absorb_gossip_hints(_prefetch_hints)
+                hints_with_peer = []
+                for hint in _prefetch_hints:
+                    if isinstance(hint, dict):
+                        hint_with_peer = dict(hint)
+                        if peer_id:
+                            hint_with_peer["peer_id"] = peer_id
+                        hints_with_peer.append(hint_with_peer)
+                _n = _PE.instance().absorb_gossip_hints(hints_with_peer)
                 if _n > 0:
                     logger.debug(f"[P2P] {_n} Prefetch-Hints von {peer_id[:16]}... absorbiert")
             except Exception as _pe:
@@ -1715,19 +1722,118 @@ class P2PLayer:
             result[key] = round(median, 6)
         return result
 
+
+    def _compute_stage_consistency_from_capabilities(
+        self,
+        caps_snapshot: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Berechnet, wie einheitlich die Stage/Level-Verteilung im Schwarm ist."""
+        total = len(caps_snapshot)
+        if total == 0:
+            return {
+                "peer_count": 0,
+                "dominant_stage_index": None,
+                "dominant_stage_label": "",
+                "dominant_fraction": 0.0,
+                "stage_ok": False,
+            }
+
+        stage_counts: Dict[int, int] = {}
+        for caps in caps_snapshot.values():
+            try:
+                idx = int(caps.get("stage_index", 0) or 0)
+            except (TypeError, ValueError):
+                idx = 0
+            stage_counts[idx] = stage_counts.get(idx, 0) + 1
+
+        dominant_stage_index = max(stage_counts, key=stage_counts.get)
+        dominant_fraction = stage_counts[dominant_stage_index] / total
+        dominant_label = ""
+        for caps in caps_snapshot.values():
+            if int(caps.get("stage_index", 0) or 0) == dominant_stage_index:
+                dominant_label = str(caps.get("stage", ""))
+                break
+
+        return {
+            "peer_count": total,
+            "dominant_stage_index": dominant_stage_index,
+            "dominant_stage_label": dominant_label,
+            "dominant_fraction": round(dominant_fraction, 3),
+            "stage_ok": dominant_fraction >= 1.0,
+        }
+
+
+    def _compute_convergence_consistency_from_summaries(
+        self,
+        latest_summaries: Dict[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Berechnet, wie konsistent die h_lambda/entropy-Werte im Schwarm sind."""
+        if not latest_summaries:
+            return {
+                "peer_count": 0,
+                "h_lambda_median": None,
+                "entropy_median": None,
+                "h_lambda_fraction": 0.0,
+                "entropy_fraction": 0.0,
+                "convergence_ok": False,
+            }
+
+        h_values: List[float] = []
+        e_values: List[float] = []
+        for summary in latest_summaries.values():
+            try:
+                h = float(summary.get("h_lambda", 0.0))
+                e = float(summary.get("entropy", 0.0))
+                if h == h or e == e:
+                    h_values.append(h)
+                    e_values.append(e)
+            except (TypeError, ValueError):
+                continue
+
+        if not h_values or not e_values:
+            return {
+                "peer_count": len(latest_summaries),
+                "h_lambda_median": None,
+                "entropy_median": None,
+                "h_lambda_fraction": 0.0,
+                "entropy_fraction": 0.0,
+                "convergence_ok": False,
+            }
+
+        def _median(values: List[float]) -> float:
+            values = sorted(values)
+            n = len(values)
+            mid = n // 2
+            return values[mid] if n % 2 else (values[mid - 1] + values[mid]) / 2.0
+
+        h_median = _median(h_values)
+        e_median = _median(e_values)
+        h_ok = sum(1 for h in h_values if abs(h - h_median) <= 0.1) / len(h_values)
+        e_ok = sum(1 for e in e_values if abs(e - e_median) <= 0.35) / len(e_values)
+        convergence_ok = min(h_ok, e_ok) >= 0.5
+
+        return {
+            "peer_count": len(latest_summaries),
+            "h_lambda_median": round(h_median, 6),
+            "entropy_median": round(e_median, 6),
+            "h_lambda_fraction": round(h_ok, 3),
+            "entropy_fraction": round(e_ok, 3),
+            "convergence_ok": convergence_ok,
+        }
+
+
     def get_swarm_capability_gaps(self) -> Dict[str, Any]:
-        """Gibt einen Schwarm-weiten Blind-Spot-Bericht zurück.
+        """Gibt einen Schwarm-weiten Blind-Spot-Bericht zurück."""
 
-        Zeigt welche Capabilities im Netz fehlverbreitet sind:
-        - "missing_counts": wie viele Peers haben welche Probe NICHT?
-        - "have_counts": wie viele Peers haben welche Probe?
-        - "peers_by_stage": wie viele Peers sind in welcher Tier-Stufe?
-        - "avg_score_pct": Durchschnitt des Capability-Scores im Netz
-        - "total_peers_reporting": wie viele Peers haben Capability-Daten geschickt
-
-        Diese Information kann z.B. im GUI angezeigt werden: "3 von 7 Peers
-        brauchen noch Yggdrasil — 2 brauchen noch NumPy".
-        """
+        # Zeigt welche Capabilities im Netz fehlverbreitet sind:
+        # - "missing_counts": wie viele Peers haben welche Probe NICHT?
+        # - "have_counts": wie viele Peers haben welche Probe?
+        # - "peers_by_stage": wie viele Peers sind in welcher Tier-Stufe?
+        # - "avg_score_pct": Durchschnitt des Capability-Scores im Netz
+        # - "total_peers_reporting": wie viele Peers haben Capability-Daten geschickt
+        #
+        # Diese Information kann z.B. im GUI angezeigt werden: "3 von 7 Peers
+        # brauchen noch Yggdrasil — 2 brauchen noch NumPy".
         with self._received_lock:
             caps_snapshot = dict(self._peer_capabilities)
 
@@ -1797,6 +1903,18 @@ class P2PLayer:
         if total == 0:
             return {"collective_gaps": [], "partial_gaps": [], "peer_count": 0}
 
+        stage_consistency = self._compute_stage_consistency_from_capabilities(
+            dict(self._peer_capabilities)
+        )
+        latest_summaries = {
+            nid: msg.get("metrics_summary")
+            for nid, msg in latest.items()
+            if isinstance(msg.get("metrics_summary"), dict)
+        }
+        convergence_consistency = self._compute_convergence_consistency_from_summaries(
+            latest_summaries
+        )
+
         gap_counts:      Dict[str, int] = {}
         strength_counts: Dict[str, int] = {}
 
@@ -1831,11 +1949,31 @@ class P2PLayer:
         if collective_gaps:
             logger.info("[swarm] Kollektive Blindspots erkannt: %s", collective_gaps)
 
+        if not stage_consistency["stage_ok"]:
+            collective_gaps.append("swarm_stage_inconsistency")
+            gap_ratio["swarm_stage_inconsistency"] = 1.0
+            strength_ratio["swarm_stage_inconsistency"] = 0.0
+            logger.info(
+                "[swarm] Stage-Konsistenz verletzt: %s",
+                stage_consistency,
+            )
+
+        if not convergence_consistency["convergence_ok"]:
+            collective_gaps.append("swarm_convergence_inconsistency")
+            gap_ratio["swarm_convergence_inconsistency"] = 1.0
+            strength_ratio["swarm_convergence_inconsistency"] = 0.0
+            logger.info(
+                "[swarm] Konvergenz-Konsistenz verletzt: %s",
+                convergence_consistency,
+            )
+
         return {
             "collective_gaps":  collective_gaps,
             "partial_gaps":     partial_gaps,
             "gap_ratio":        gap_ratio,
             "strength_ratio":   strength_ratio,
+            "stage_consistency": stage_consistency,
+            "convergence_consistency": convergence_consistency,
             "peer_count":       total,
         }
 
@@ -2039,17 +2177,29 @@ class P2PLayer:
                 with _pipeline_metrics_lock:
                     _LAST_NETWORK_METRICS.clear()
                     _LAST_NETWORK_METRICS.update(net)
-                # 3rd-Order: h_lambda/entropy-Schwellwert prüfen → Swarm-Konvergenz
-                converge_edge = _evaluate_swarm_convergence(net)
-                if converge_edge:
+                # Swarm-Konsistenz prüfen: Stage-Level und globale Konvergenzsummaries
+                swarm_bs = self.detect_swarm_blindspots()
+                stage_ok = swarm_bs.get("stage_consistency", {}).get("stage_ok", True)
+                convergence_ok = swarm_bs.get("convergence_consistency", {}).get(
+                    "convergence_ok", True
+                )
+                if stage_ok and convergence_ok:
+                    # 3rd-Order: h_lambda/entropy-Schwellwert prüfen → Swarm-Konvergenz
+                    converge_edge = _evaluate_swarm_convergence(net)
+                    if converge_edge:
+                        logger.info(
+                            "[swarm] 3rd-order Konvergenz: h_lambda=%.3f entropy=%.3f peers=%d",
+                            net.get("h_lambda", 0.0),
+                            net.get("entropy", 0.0),
+                            net.get("peer_count", 0),
+                        )
+                else:
                     logger.info(
-                        "[swarm] 3rd-order Konvergenz: h_lambda=%.3f entropy=%.3f peers=%d",
-                        net.get("h_lambda", 0.0),
-                        net.get("entropy", 0.0),
-                        net.get("peer_count", 0),
+                        "[swarm] Konvergenz blockiert: stage_ok=%s convergence_ok=%s",
+                        stage_ok,
+                        convergence_ok,
                     )
                 # Swarm-weite Blindspots aggregieren
-                swarm_bs = self.detect_swarm_blindspots()
                 if swarm_bs.get("collective_gaps"):
                     try:
                         from modules.blindspot_engine import BlindspotEngine as _BE

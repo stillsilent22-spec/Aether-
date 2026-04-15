@@ -542,14 +542,17 @@ class AethernetTransport:
         Rohdaten, Deltas und Session-Keys sind im AlgoToken nicht enthalten.
         """
         from modules.algo_share import build_algo_token, verify_algo_token
-        token = build_algo_token(aelab_result, domain_hint=domain_hint)
+        token = build_algo_token(
+            aelab_result,
+            domain_hint=domain_hint,
+            source_node_id=self.node_id,
+        )
         if token is None:
             return "not_ready"  # commit_allowed=False — Tree noch nicht gut genug
         if not verify_algo_token(token):
             return "invalid"
         token_dict = token.to_dict()
         token_dict["schema"] = "aether.algo_token.v1"
-        token_dict["source_node_id"] = self.node_id
         # Lokal speichern
         try:
             self._algo_path(token.token_id).write_text(
@@ -613,6 +616,8 @@ class AethernetTransport:
                             cascade_version=str(td.get("cascade_version", "")),
                             node_count=int(td.get("node_count", 0)),
                             depth=int(td.get("depth", 0)),
+                            source_node_id=str(td.get("source_node_id", "") or "").strip(),
+                            emitted_ts=float(td.get("emitted_ts", 0.0)),
                         )
                         if not verify_algo_token(token):
                             continue

@@ -330,6 +330,33 @@ impl AuthStore {
         self.save()
     }
 
+    pub fn change_password(
+        &mut self,
+        username: &str,
+        current_password: &str,
+        new_password: &str,
+    ) -> Result<(), String> {
+        let normalized = normalize_username(username)?;
+        let Some(user) = self
+            .users
+            .iter_mut()
+            .find(|candidate| candidate.username.eq_ignore_ascii_case(&normalized))
+        else {
+            return Err("Nutzer nicht gefunden.".to_owned());
+        };
+
+        let expected = hash_password(&user.username, &user.salt_hex, current_password);
+        if expected != user.password_hash_hex {
+            return Err("Aktuelles Passwort ist falsch.".to_owned());
+        }
+
+        validate_password(new_password)?;
+        let new_salt = random_hex(16);
+        user.salt_hex = new_salt.clone();
+        user.password_hash_hex = hash_password(&user.username, &user.salt_hex, new_password);
+        self.save()
+    }
+
     pub fn usernames(&self) -> Vec<String> {
         let mut usernames = self
             .users
@@ -338,6 +365,14 @@ impl AuthStore {
             .collect::<Vec<_>>();
         usernames.sort();
         usernames
+    }
+
+    pub fn find_user(&self, username: &str) -> Option<UserRecord> {
+        let normalized = normalize_username(username).ok()?;
+        self.users
+            .iter()
+            .find(|candidate| candidate.username.eq_ignore_ascii_case(&normalized))
+            .cloned()
     }
 
     pub fn user_count(&self) -> usize {
