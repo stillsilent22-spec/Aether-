@@ -40,7 +40,7 @@ use std::fs;
 pub enum Tab {
     Home, Control, Symbiont, SwarmOps, Privacy, Chat,
     Data, Anchors, Logs, Settings,
-    ADE, FlowSphere, Invariants, StructureMap, Gaming, Media, Research, Rekonstruktion, Launcher, Imprint,
+    ADE, FlowSphere, Invariants, StructureMap, Gaming, Media, Research, TemporalDrift, Rekonstruktion, Launcher, Imprint,
 }
 
 impl Tab {
@@ -63,6 +63,7 @@ impl Tab {
             Tab::Gaming => "Gaming",
             Tab::Media => "Media",
             Tab::Research => "Research",
+            Tab::TemporalDrift => "Temporal Drift",
             Tab::Rekonstruktion => "Rekonstruktion",
             Tab::Launcher => "Launcher",
             Tab::Imprint => "Imprint",
@@ -215,6 +216,132 @@ impl FlowSphereEntry {
             })
             .collect()
     }
+}
+
+#[derive(Debug, Clone)]
+struct TemporalEntry {
+    timestamp_secs: u64,
+    timestamp_origin: &'static str,
+    source_label: String,
+    domain_hint: String,
+    source_hash: String,
+    metrics: [f32; 12],
+    entropy: f32,
+}
+
+#[derive(Debug, Clone)]
+struct Coincidence {
+    entry_a_idx: usize,
+    entry_b_idx: usize,
+    time_gap_secs: u64,
+    similarity: f32,
+    entropy_gradient: f32,
+    score: f32,
+    reason: String,
+}
+
+impl TemporalEntry {
+    fn from_flow_sphere(entry: &FlowSphereEntry, temporal_metadata_consent: bool) -> Self {
+        let timestamp_secs = entry.visual_timestamp_secs(temporal_metadata_consent);
+        let timestamp_origin = entry.visual_timestamp_origin(temporal_metadata_consent);
+        let entropy = entry.metrics[0];
+
+        Self {
+            timestamp_secs,
+            timestamp_origin,
+            source_label: entry.source_label.clone(),
+            domain_hint: entry.domain_hint.clone(),
+            source_hash: entry.source_hash.clone(),
+            metrics: entry.metrics,
+            entropy,
+        }
+    }
+
+    fn cosine_similarity(&self, other: &TemporalEntry) -> f32 {
+        let dot: f32 = self.metrics.iter().zip(other.metrics.iter()).map(|(a, b)| a * b).sum();
+        let mag_a = self.metrics.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let mag_b = other.metrics.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if mag_a < 1e-6 || mag_b < 1e-6 {
+            0.0
+        } else {
+            (dot / (mag_a * mag_b)).clamp(0.0, 1.0)
+        }
+    }
+
+    fn entropy_gradient(&self, other: &TemporalEntry) -> f32 {
+        (self.entropy - other.entropy).abs()
+    }
+}
+
+impl Coincidence {
+    fn score_pair(a: &TemporalEntry, b: &TemporalEntry) -> (f32, String) {
+        let similarity = a.cosine_similarity(b);
+        let entropy_gradient = a.entropy_gradient(b);
+        let time_gap = if a.timestamp_secs > b.timestamp_secs {
+            a.timestamp_secs - b.timestamp_secs
+        } else {
+            b.timestamp_secs - a.timestamp_secs
+        };
+
+        let decay = (-((time_gap as f32) / 86_400.0)).exp();
+        let entropy_factor = (1.0 - (entropy_gradient * 0.35).clamp(0.0, 0.8)).clamp(0.3, 1.0);
+        let score = similarity * decay * entropy_factor;
+
+        let reason = if a.domain_hint == b.domain_hint && !a.domain_hint.is_empty() {
+            format!("domain alignment: {}", a.domain_hint)
+        } else if similarity > 0.92 {
+            "highly similar structural fingerprint".to_owned()
+        } else if entropy_gradient < 0.15 {
+            "low entropy gradient across sources".to_owned()
+        } else {
+            "temporal pattern match".to_owned()
+        };
+
+        (score, reason)
+    }
+}
+
+impl TemporalEntry {
+    fn is_independent(&self, other: &TemporalEntry) -> bool {
+        self.source_hash != other.source_hash && self.source_label != other.source_label
+    }
+}
+
+fn coincidence_scan(entries: &[TemporalEntry]) -> Vec<Coincidence> {
+    let mut results = Vec::new();
+    for i in 0..entries.len() {
+        for j in (i + 1)..entries.len() {
+            let a = &entries[i];
+            let b = &entries[j];
+            if !a.is_independent(b) {
+                continue;
+            }
+            let time_gap_secs = if a.timestamp_secs > b.timestamp_secs {
+                a.timestamp_secs - b.timestamp_secs
+            } else {
+                b.timestamp_secs - a.timestamp_secs
+            };
+            if time_gap_secs > 7 * 86_400 {
+                continue;
+            }
+            let (score, reason) = Coincidence::score_pair(a, b);
+            if score < 0.18 {
+                continue;
+            }
+            results.push(Coincidence {
+                entry_a_idx: i,
+                entry_b_idx: j,
+                time_gap_secs,
+                similarity: a.cosine_similarity(b),
+                entropy_gradient: a.entropy_gradient(b),
+                score,
+                reason,
+            });
+        }
+    }
+    results.sort_by(|left, right| right.score.partial_cmp(&left.score).unwrap_or(std::cmp::Ordering::Equal));
+    results.truncate(12);
+    results
 }
 
 #[derive(Debug, Clone, Default)]
@@ -957,6 +1084,8 @@ pub struct AetherIcedShell {
     live_render_last_godel_delta: f32,
     live_render_anchor_boost: bool,
     live_render_last_os_sample_tick: u64,
+    live_render_bpj_history: Vec<f32>,
+    live_render_bits_per_joule: f32,
     // Noether K: temporale Erhaltungsgrösse (Symmetriebruch-Detektor nach Noether-Theorem)
     // K = 0.40 * spektrale_aehlichkeit + 0.30 * (1 - entropiedrift) + 0.30 * (1 - deltavarianz)
     live_render_noether_k: f32,
@@ -1214,6 +1343,8 @@ impl AetherIcedShell {
             live_render_last_godel_delta: 0.0,
             live_render_anchor_boost: false,
             live_render_last_os_sample_tick: 0,
+            live_render_bpj_history: Vec::new(),
+            live_render_bits_per_joule: 0.0,
             live_render_noether_k: 1.0,
             live_render_noether_delta_k: 0.0,
             live_render_noether_symmetry_preserved: true,
@@ -1593,6 +1724,7 @@ impl AetherIcedShell {
                 Tab::Gaming       => "Gaming-Welt: misst wie viel Aether \u{fc}ber interaktive Muster gelernt hat und wann ein stabiler Rollout sinnvoll ist.",
                 Tab::Media        => "Medien-Welt: Sequenzen, Videos und Audio werden offline verdichtet \u{2014} je mehr Material, desto besser die Modelle.",
                 Tab::Research     => "Forschungs-Welt: Messdaten und Archive r\u{fc}ckwirkend verkn\u{fc}pfen und reproduzierbar machen.",
+                Tab::TemporalDrift => "Zeitliche Koinzidenzen: parallel auftretende strukturelle Muster und gemeinsame Ursachen analysieren.",
                 Tab::Rekonstruktion => "Rekonstruktion: Artefakte aus dem Vault wiederherstellen und den Rekonstruktionspfad nachvollziehen.",
                 Tab::Launcher     => "Launcher: Dienste starten und stoppen, Build-Aufgaben ausf\u{fc}hren und Live-Logs beobachten.",
                 Tab::Imprint      => "Impressum: Version, Datenschutzprinzipien und rechtliche Hinweise zu Aether.",
@@ -1615,6 +1747,7 @@ impl AetherIcedShell {
                 Tab::Gaming       => "Gaming World: measures how much Aether learned from interactive patterns and when a stable rollout makes sense.",
                 Tab::Media        => "Media World: sequences, videos and audio are compressed offline \u{2014} more material means better models.",
                 Tab::Research     => "Research World: link measurement series and archives retroactively and make them reproducible.",
+                Tab::TemporalDrift => "Temporal coincidences: analyze parallel structural patterns and shared causal timing.",
                 Tab::Rekonstruktion => "Reconstruction: restore artifacts from the vault and trace the reconstruction path.",
                 Tab::Launcher     => "Launcher: start and stop services, run build tasks, and monitor live logs.",
                 Tab::Imprint      => "About: version, privacy principles and legal information about Aether.",
@@ -2382,6 +2515,20 @@ impl AetherIcedShell {
         self.active_group_room()
             .map(|room| room.messages)
             .unwrap_or_default()
+    }
+
+    fn temporal_drift_entries(&self) -> Vec<TemporalEntry> {
+        let mut unique: BTreeMap<String, TemporalEntry> = BTreeMap::new();
+        for entry in self.flow_sphere_history.iter().chain(self.flow_sphere_session_entries.iter()) {
+            unique.entry(entry.source_hash.clone()).or_insert_with(|| {
+                TemporalEntry::from_flow_sphere(entry, self.temporal_metadata_consent)
+            });
+        }
+        unique.into_values().collect()
+    }
+
+    fn temporal_coincidences(&self, entries: &[TemporalEntry]) -> Vec<Coincidence> {
+        coincidence_scan(entries)
     }
 
     fn active_group_is_owner(&self) -> bool {
@@ -3571,6 +3718,128 @@ impl AetherIcedShell {
 
     fn view_research_world(&self) -> Element<'_, Message> {
         self.view_world_space(Tab::Research)
+    }
+
+    fn view_temporal_drift(&self) -> Element<'_, Message> {
+        let entries = self.temporal_drift_entries();
+        let coincidences = self.temporal_coincidences(&entries);
+        let total_entries = entries.len();
+        let total_coincidences = coincidences.len();
+        let earliest = entries.iter().map(|e| e.timestamp_secs).min().unwrap_or(0);
+        let latest = entries.iter().map(|e| e.timestamp_secs).max().unwrap_or(0);
+        let time_span = if latest >= earliest { latest - earliest } else { 0 };
+
+        let summary_card = info_card(
+            "Temporal Drift Summary",
+            &format!(
+                "Scanned {} entrie(s) spanning {}s. Detected {} temporal coincidence(s) across independent data sources.",
+                total_entries,
+                time_span,
+                total_coincidences,
+            ),
+        );
+
+        let mut top_coincidence_cards = Column::new().spacing(10);
+        if coincidences.is_empty() {
+            top_coincidence_cards = top_coincidence_cards.push(info_card(
+                "No strong coincidences found",
+                "No time-aligned structural matches were detected in the current analysis history. Continue ingesting diverse datasets and enable metadata timestamps for better alignment.",
+            ));
+        } else {
+            for coincidence in coincidences.iter().take(6) {
+                let a = &entries[coincidence.entry_a_idx];
+                let b = &entries[coincidence.entry_b_idx];
+                top_coincidence_cards = top_coincidence_cards.push(info_card(
+                    &format!("{} ⇄ {}", a.source_label, b.source_label),
+                    &format!(
+                        "{} | {} | gap {}s | sim {:.2} | entropy Δ {:.3}",
+                        coincidence.reason,
+                        if a.domain_hint == b.domain_hint && !a.domain_hint.is_empty() {
+                            format!("domain={}", a.domain_hint)
+                        } else {
+                            format!("{} vs {}", a.source_label, b.source_label)
+                        },
+                        coincidence.time_gap_secs,
+                        coincidence.similarity,
+                        coincidence.entropy_gradient,
+                    ),
+                ));
+            }
+        }
+
+        let temporal_note = if self.temporal_metadata_consent {
+            self.ui_text(
+                "Metadaten-Zeitachse ist aktiviert. Quelldaten werden aus Dateimetadaten gelesen.",
+                "Metadata timeline is enabled. Source dates are read from file metadata.",
+            )
+        } else {
+            self.ui_text(
+                "Metadaten-Zeitachse ist deaktiviert. Manuelle Daten oder Analysezeitpunkt werden verwendet.",
+                "Metadata timeline is disabled. Manual dates or analysis time are used.",
+            )
+        };
+
+        let scan_card = container(
+            column![
+                summary_card,
+                text(temporal_note).size(12).color(c(TEXT_M())),
+                row![
+                    button(text(if self.temporal_metadata_consent {
+                        self.ui_text("Metadaten aus", "Disable metadata")
+                    } else {
+                        self.ui_text("Metadaten aktivieren", "Enable metadata")
+                    }))
+                    .padding([10, 16])
+                    .on_press(Message::TemporalMetadataConsentToggle(!self.temporal_metadata_consent))
+                    .style(if self.temporal_metadata_consent { primary_button_style } else { secondary_button_style }),
+                    iced::widget::Space::new(Length::Fill, Length::Shrink),
+                    button(text(self.ui_text("Frequenz prüfen", "Inspect cadence")))
+                        .padding([10, 16])
+                        .style(|_: &Theme, _| button::Style {
+                            background: Some(Background::Color(Color::from_rgba(0.16, 0.30, 0.52, 0.30))),
+                            border: Border { color: Color::from_rgb8(0x5A, 0x8C, 0xE8), width: 1.0, radius: 8.0.into() },
+                            text_color: c(TEXT_H()),
+                            ..Default::default()
+                        }),
+                ].spacing(14),
+            ]
+            .spacing(10),
+        )
+        .padding(14)
+        .style(panel_frame_style);
+
+        let top_alert_card = if total_coincidences > 0 {
+            info_card(
+                "Broadcast Alert",
+                "Multiple temporal coincidences were detected across independent sources. Review the highlighted matches before optionally sharing as a consented insight.",
+            )
+        } else {
+            info_card(
+                "No broadcast candidate",
+                "No consensus-level temporal overlap was found, so no broadcast recommendation is available.",
+            )
+        };
+
+        container(
+            scrollable(
+                column![
+                    text(self.ui_text("Temporal Drift", "Temporal Drift")).size(24).color(c(TEXT_H())),
+                    text(self.ui_text(
+                        "Diese Ansicht identifiziert zeitnahe strukturelle Koinzidenzen in den analysierten Artefakten.",
+                        "This view highlights time-aligned structural coincidences across analyzed artifacts.",
+                    ))
+                    .size(14)
+                    .color(c(TEXT_M())),
+                    scan_card,
+                    top_alert_card,
+                    top_coincidence_cards,
+                ]
+                .spacing(12)
+                .padding([0.0f32, 8.0]),
+            )
+        )
+        .padding(12)
+        .into()
     }
 
     fn view_world_space(&self, world: Tab) -> Element<'_, Message> {
@@ -7359,6 +7628,7 @@ On warning: always check Logs and ADE for details.",
             Tab::Gaming => self.view_gaming_world(),
             Tab::Media => self.view_media_world(),
             Tab::Research => self.view_research_world(),
+            Tab::TemporalDrift => self.view_temporal_drift(),
             Tab::ADE => self.view_ade(),
             Tab::Imprint => self.view_imprint(),
             Tab::Rekonstruktion => self.view_rekonstruktion(),
@@ -7431,12 +7701,14 @@ On warning: always check Logs and ADE for details.",
                 text("Worlds").size(12).color(c(TEXT_D())),
                 nav_item("14. Gaming", Tab::Gaming, self.active_tab),
                 nav_item("15. Media", Tab::Media, self.active_tab),
+                nav_item("16. Research", Tab::Research, self.active_tab),
+                nav_item("17. Temporal Drift", Tab::TemporalDrift, self.active_tab),
                 text("Workspace").size(12).color(c(TEXT_D())),
-                nav_item("16. Reconstruction", Tab::Rekonstruktion, self.active_tab),
-                nav_item("17. Info", Tab::Imprint, self.active_tab),
+                nav_item("18. Reconstruction", Tab::Rekonstruktion, self.active_tab),
+                nav_item("19. Info", Tab::Imprint, self.active_tab),
                 text("System").size(12).color(c(TEXT_D())),
-                nav_item("18. Runtime", Tab::Settings, self.active_tab),
-                nav_item("19. Launcher", Tab::Launcher, self.active_tab),
+                nav_item("20. Runtime", Tab::Settings, self.active_tab),
+                nav_item("21. Launcher", Tab::Launcher, self.active_tab),
             ]
             .spacing(8)
         )
@@ -7475,6 +7747,7 @@ On warning: always check Logs and ADE for details.",
                         Tab::Gaming => "Gaming",
                         Tab::Media => "Media",
                         Tab::Research => "Research",
+                        Tab::TemporalDrift => "Temporal Drift",
                         Tab::ADE => "Delta-Analyse",
                         Tab::Imprint => "Info",
                         Tab::Rekonstruktion => "Reconstruction",
@@ -13140,7 +13413,7 @@ fn network_gaming_table<'a>(entries: &[GameDirectoryEntry], contribute_enabled: 
         "Beitrag AUS: deine lokalen Vault-Daten bleiben nur lokal"
     };
 
-    let toggle_row = Row::new()
+    let toggle_row: Row<'_, Message> = Row::new()
         .spacing(10)
         .align_y(Alignment::Center)
         .push(text(toggle_label).size(12).color(c(TEXT_M())).width(Length::Fill))
@@ -13162,7 +13435,8 @@ fn network_gaming_table<'a>(entries: &[GameDirectoryEntry], contribute_enabled: 
         .push(text("Spiele-Verzeichnis").size(16).color(c(TEXT_H())))
         .push(
             text("Spiele, die bereits von Peer-Vaults erfasst wurden. Globaler Registereintrag ohne Quorum, sortiert nach Rekonstruktionsreife, Vault-Abdeckung und Beitragsstärke. Kein Personenbezug: keine Peer-IDs, keine Pfade.")
-        );
+        )
+        .push(toggle_row);
 
     let header = Row::new()
         .spacing(10)
