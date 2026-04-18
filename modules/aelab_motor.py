@@ -14,18 +14,21 @@ Verwendung:
 """
 
 
+import base64
+import hashlib
 import json
 import math
+import os
 import random
+import secrets
 import struct
 import time
+import uuid
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
-import hashlib
-import secrets
-import os
 
 CAPABILITY_SCORE_PATH = Path("data") / "interbus" / "capability_score.json"
 
@@ -133,17 +136,34 @@ def hash_anchor(anchor_value: float, extra: str = "") -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def seal_invariant(node_values: list, session_id: str = "") -> dict:
+def seal_invariant(node_values: list, session_id: str = "", signing_key_path: Optional[str] = None, signer_node_id: str = "") -> dict:
     """
     Versiegelt eine Liste von Invarianten-Werten für den Export.
-    Gibt ausschließlich SHA-256-Hashes zurück — niemals Rohdaten.
-    Diese Struktur ist die einzige erlaubte Swarm-Export-Form.
+    Rohe Werte sind im Rückgabewert nicht rekonstruierbar.
+    Das Resultat ist jetzt außerdem keypair-authentifiziert, wenn
+    lokale Node-Schlüssel verfügbar sind.
     """
-    return {
+    sealed = {
         "hashes": [hash_anchor(v, session_id) for v in node_values],
-        "count":  len(node_values),
+        "count": len(node_values),
         "sealed": True,
     }
+    if signing_key_path and signer_node_id:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+            key_bytes = Path(signing_key_path).read_bytes()
+            private_key = load_pem_private_key(key_bytes, password=None)
+            if isinstance(private_key, Ed25519PrivateKey):
+                payload = json.dumps(sealed, ensure_ascii=True, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                signature = private_key.sign(payload)
+                sealed["signed_by"] = signer_node_id
+                sealed["signature_b64"] = base64.b64encode(signature).decode("ascii")
+                sealed["signature_ts"] = datetime.now(timezone.utc).isoformat()
+                sealed["signature_nonce"] = uuid.uuid4().hex
+        except Exception:
+            pass
+    return sealed
 
 
 # Modul-weite Session — wird beim ersten Zugriff angelegt
@@ -972,8 +992,8 @@ def split_invariant_tree(root):
 def export_invariants(root, session_id: str = "") -> dict:
     """
     Einziger erlaubter Export-Pfad für Invarianten.
-    Gibt ausschließlich SHA-256-Hashes der Ankerwerte zurück.
-    Rohe Werte (π, φ, e) sind im Rückgabewert nicht rekonstruierbar.
+    Gibt SHA-256-Hashes der Ankerwerte zurück, zusätzlich signiert
+    mit dem lokalen Node-Key, wenn verfügbar.
 
     Verwendung:
         sealed = export_invariants(best_tree, session_id=session.session_id)
@@ -987,7 +1007,25 @@ def export_invariants(root, session_id: str = "") -> dict:
             anchor_values.append(an.v)
         elif n.t == N_CONST:
             anchor_values.append(n.v)
-    return seal_invariant(anchor_values, session_id)
+
+    signing_key_path = Path("keys/node_private.key")
+    signer_node_id = ""
+    settings_path = Path("data/settings.json")
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8") or "{}")
+            signer_node_id = str(settings.get("node_id", "") or "").strip()
+        except Exception:
+            signer_node_id = ""
+    if not signing_key_path.is_file():
+        signing_key_path = None
+
+    return seal_invariant(
+        anchor_values,
+        session_id,
+        signing_key_path=str(signing_key_path) if signing_key_path else None,
+        signer_node_id=signer_node_id,
+    )
 
 
 def fitness_invariant(tree, data: bytes,

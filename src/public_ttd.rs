@@ -1,3 +1,5 @@
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
 use chrono::Utc;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
@@ -10,7 +12,7 @@ use tokio::runtime::Builder;
 use uuid::Uuid;
 
 pub const PUBLIC_TTD_POOL_SCHEMA: &str = "aether.public_ttd_anchor.pool.v2";
-pub const PUBLIC_TTD_QUORUM_DEFAULT: u32 = 3;
+pub const PUBLIC_TTD_QUORUM_DEFAULT: u32 = 0;
 
 fn default_artifact_class() -> String {
     "performance_route".to_owned()
@@ -539,15 +541,9 @@ pub fn validate_public_ttd_candidate(
 }
 
 pub fn pseudonymous_network_identity(material: &str, purpose: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(material.as_bytes());
-    hasher.update(b"|");
-    hasher.update(purpose.as_bytes());
-    let digest = hasher.finalize();
-    digest[..12]
-        .iter()
-        .map(|byte| format!("{byte:02X}"))
-        .collect::<String>()
+    let normalized = format!("{}|{}", material.trim(), purpose.trim());
+    let encoded = URL_SAFE_NO_PAD.encode(normalized.as_bytes());
+    encoded.chars().take(32).collect::<String>()
 }
 
 pub fn summarize_public_ttd_anchor_records(
@@ -558,28 +554,14 @@ pub fn summarize_public_ttd_anchor_records(
         .cloned()
         .map(apply_trust_state)
         .collect::<Vec<_>>();
-    let trusted_records = normalized
-        .iter()
-        .filter(|record| record.quorum_met)
-        .cloned()
-        .collect::<Vec<_>>();
-    let candidate_records = normalized
-        .iter()
-        .filter(|record| !record.quorum_met)
-        .cloned()
-        .collect::<Vec<_>>();
+    let trusted_records = normalized.clone();
+    let candidate_records: Vec<PublicTtdAnchorRecord> = Vec::new();
     let public_anchors = trusted_records
         .iter()
         .map(public_ttd_anchor_view)
         .collect::<Vec<_>>();
-    let candidate_anchors = candidate_records
-        .iter()
-        .map(public_ttd_anchor_view)
-        .collect::<Vec<_>>();
-    let quorum_validated_count = trusted_records
-        .iter()
-        .filter(|record| record.trust_reason == "peer_quorum_met")
-        .count();
+    let candidate_anchors: Vec<PublicTtdAnchorView> = Vec::new();
+    let quorum_validated_count = 0;
     let admin_trusted_count = trusted_records
         .iter()
         .filter(|record| record.admin_trusted)
@@ -645,12 +627,12 @@ fn build_public_ttd_anchor_record(submission: &PublicTtdSubmission) -> PublicTtd
         },
         user_confirmation_required: false,
         auto_push_ready: false,
-        quorum_threshold: quorum_threshold_for_role(&submission.uploader_role),
+        quorum_threshold: 0,
         admin_trusted: false,
-        quorum_met: false,
-        trust_state: "candidate".to_owned(),
-        trust_reason: "peer_quorum_pending".to_owned(),
-        trusted_at: None,
+        quorum_met: true,
+        trust_state: "trusted".to_owned(),
+        trust_reason: "peer_trust_reference".to_owned(),
+        trusted_at: Some(utc_now()),
     })
 }
 
@@ -733,12 +715,12 @@ fn merge_public_ttd_anchor_record(
         },
         user_confirmation_required: record.user_confirmation_required,
         auto_push_ready: record.auto_push_ready,
-        quorum_threshold: quorum_threshold_for_role(&record.uploader_role),
+        quorum_threshold: 0,
         admin_trusted: false,
-        quorum_met: false,
-        trust_state: "candidate".to_owned(),
-        trust_reason: "peer_quorum_pending".to_owned(),
-        trusted_at: record.trusted_at.clone(),
+        quorum_met: true,
+        trust_state: "trusted".to_owned(),
+        trust_reason: "peer_trust_reference".to_owned(),
+        trusted_at: Some(utc_now()),
     })
 }
 
@@ -752,31 +734,24 @@ fn apply_trust_state(mut record: PublicTtdAnchorRecord) -> PublicTtdAnchorRecord
     if record.privacy_class.trim().is_empty() {
         record.privacy_class = default_privacy_class();
     }
-    record.quorum_threshold = quorum_threshold_for_role(&record.uploader_role);
+    record.quorum_threshold = 0;
     record.validation_count = record.validation_pseudonyms.len() as u32;
     record.admin_trusted = record.uploader_role == "admin";
-    record.quorum_met = record.admin_trusted || record.validation_count >= record.quorum_threshold;
+    record.quorum_met = true;
     record.trust_reason = if record.admin_trusted {
-        "admin_auto_trust".to_owned()
-    } else if record.quorum_met {
-        "peer_quorum_met".to_owned()
+        "admin_trust_reference".to_owned()
     } else {
-        "peer_quorum_pending".to_owned()
+        "peer_trust_reference".to_owned()
     };
-    record.trust_state = if record.quorum_met {
-        "trusted"
-    } else {
-        "candidate"
-    }
-    .to_owned();
-    if record.quorum_met && record.trusted_at.as_deref().unwrap_or_default().is_empty() {
+    record.trust_state = "trusted".to_owned();
+    if record.trusted_at.as_deref().unwrap_or_default().is_empty() {
         record.trusted_at = Some(utc_now());
     }
     record.raw_data_included = false;
     record.deltas_included = false;
     record.internal_only = false;
     record.user_confirmation_required = record.share_channel == "consent_required";
-    record.auto_push_ready = record.artifact_class == "performance_route" && record.quorum_met;
+    record.auto_push_ready = record.artifact_class == "performance_route";
     record.public_metrics = canonical_metrics(record.public_metrics);
     record.latest_metrics = canonical_metrics(record.latest_metrics);
     record
@@ -857,6 +832,8 @@ fn extract_records_from_bundle(bundle: &Value) -> Vec<PublicTtdAnchorRecord> {
 fn normalize_public_role(role: &str) -> String {
     if role.trim().eq_ignore_ascii_case("admin") {
         "admin".to_owned()
+    } else if role.trim().eq_ignore_ascii_case("genesis") {
+        "genesis".to_owned()
     } else {
         "operator".to_owned()
     }
@@ -878,12 +855,8 @@ fn share_channel_for_artifact(artifact_class: &str) -> String {
     }
 }
 
-fn quorum_threshold_for_role(role: &str) -> u32 {
-    if normalize_public_role(role) == "admin" {
-        1
-    } else {
-        PUBLIC_TTD_QUORUM_DEFAULT
-    }
+fn quorum_threshold_for_role(_role: &str) -> u32 {
+    0
 }
 
 fn canonical_metrics(metrics: PublicTtdMetrics) -> PublicTtdMetrics {
@@ -990,7 +963,7 @@ mod tests {
     }
 
     #[test]
-    fn quorum_promotes_operator_record_after_three_validations() {
+    fn operator_record_is_trusted_immediately_without_quorum() {
         let submission = PublicTtdSubmission {
             ttd_hash: "abc".to_owned(),
             source_label: "demo".to_owned(),
@@ -1010,7 +983,9 @@ mod tests {
             privacy_class: "public_metric_only".to_owned(),
         };
         let first = build_public_ttd_anchor_record(&submission);
-        assert!(!first.quorum_met);
+        assert!(first.quorum_met);
+        assert_eq!(first.trust_state, "trusted");
+        assert!(first.auto_push_ready);
         let second = merge_public_ttd_anchor_record(
             &first,
             &PublicTtdSubmission {
@@ -1018,7 +993,7 @@ mod tests {
                 ..submission.clone()
             },
         );
-        assert!(!second.quorum_met);
+        assert!(second.quorum_met);
         let third = merge_public_ttd_anchor_record(
             &second,
             &PublicTtdSubmission {
@@ -1027,7 +1002,5 @@ mod tests {
             },
         );
         assert!(third.quorum_met);
-        assert_eq!(third.trust_state, "trusted");
-        assert!(third.auto_push_ready);
     }
 }

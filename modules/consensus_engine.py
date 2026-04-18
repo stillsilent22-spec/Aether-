@@ -120,13 +120,11 @@ def _is_genesis_node_id(node_id: str) -> bool:
 
 
 def _consensus_threshold(artifact_class: str | None, node_id: str) -> int:
-    """Quorum-Schwelle: 1 NUR fuer den kryptografisch verifizierten Genesis-Node
-    bei performance_route-Artefakten. Alle anderen Knoten brauchen immer 3.
-    Der Trustscore wird davon nicht beeinflusst — er gilt fuer jeden.
+    """Entfernte Quorum-Schwelle: Im neuen Modell wird kein Quorum als Gate verwendet.
+    Alle Anchor-Kandidaten werden sofort in den Konsens aufgenommen.
+    Der Trustscore bleibt weiterhin als Referenzmetrik erhalten.
     """
-    if _normalize_artifact_class(artifact_class) == "performance_route" and _is_genesis_node_id(node_id):
-        return 1
-    return 3
+    return 0
 
 
 def submit_candidate(
@@ -138,7 +136,7 @@ def submit_candidate(
     db_path: str = DEFAULT_DB_PATH,
     artifact_class: str = "performance_route",
 ) -> str:
-    """Registriert einen Ankerkandidaten und promoted ihn bei Quorum in den Konsens."""
+    """Registriert einen Ankerkandidaten und promotes ihn sofort in den Konsens."""
     try:
         if not str(ttd_hash).strip() or not str(node_id).strip():
             return "candidate"
@@ -147,12 +145,9 @@ def submit_candidate(
         cur = conn.cursor()
         now = _utc_now()
         normalized_artifact_class = _normalize_artifact_class(artifact_class)
-        quorum_threshold = _consensus_threshold(normalized_artifact_class, str(node_id))
         normalized_metrics = _normalize_metrics(metrics)
         normalized_metrics["artifact_class"] = normalized_artifact_class
         normalized_metrics["share_channel"] = _share_channel_for_artifact(normalized_artifact_class)
-        normalized_metrics["genesis_quorum_bypass_used"] = int(quorum_threshold == 1 and _is_genesis_node_id(str(node_id)))
-        normalized_metrics["quorum_threshold"] = int(quorum_threshold)
 
         row = cur.execute(
             "SELECT anchor_type, software_context, first_seen, last_seen, node_count, node_ids, metrics FROM consensus_candidates WHERE ttd_hash = ?",
@@ -179,33 +174,29 @@ def submit_candidate(
                     json.dumps(normalized_metrics, ensure_ascii=True, sort_keys=True),
                 ),
             )
-            if node_count >= quorum_threshold:
-                invariance_score = float(node_count) / float(node_count + 1)
-                cur.execute(
-                    """
-                    INSERT OR REPLACE INTO consensus_anchors(
-                        ttd_hash, anchor_type, software_context, promoted_at, source_nodes, metrics, invariance_score
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        str(ttd_hash),
-                        str(anchor_type),
-                        str(software_context or "unknown"),
-                        now,
-                        json.dumps(node_ids, ensure_ascii=True, sort_keys=True),
-                        json.dumps(normalized_metrics, ensure_ascii=True, sort_keys=True),
-                        round(invariance_score, 12),
-                    ),
-                )
-                cur.execute("DELETE FROM consensus_candidates WHERE ttd_hash = ?", (str(ttd_hash),))
-                conn.commit()
-                conn.close()
-                if normalized_artifact_class == "performance_route":
-                    return "auto_push_ready"
-                return "promoted"
+            invariance_score = float(node_count) / float(node_count + 1)
+            cur.execute(
+                """
+                INSERT OR REPLACE INTO consensus_anchors(
+                    ttd_hash, anchor_type, software_context, promoted_at, source_nodes, metrics, invariance_score
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(ttd_hash),
+                    str(anchor_type),
+                    str(software_context or "unknown"),
+                    now,
+                    json.dumps(node_ids, ensure_ascii=True, sort_keys=True),
+                    json.dumps(normalized_metrics, ensure_ascii=True, sort_keys=True),
+                    round(invariance_score, 12),
+                ),
+            )
+            cur.execute("DELETE FROM consensus_candidates WHERE ttd_hash = ?", (str(ttd_hash),))
             conn.commit()
             conn.close()
-            return "candidate"
+            if normalized_artifact_class == "performance_route":
+                return "auto_push_ready"
+            return "promoted"
 
         existing_node_ids = json.loads(row[5] or "[]") if row[5] else []
         unique_node_ids = sorted({str(item) for item in list(existing_node_ids) + [str(node_id)] if str(item).strip()})
@@ -230,36 +221,29 @@ def submit_candidate(
             ),
         )
 
-        if node_count >= quorum_threshold:
-            invariance_score = float(node_count) / float(node_count + 1)
-            cur.execute(
-                """
-                INSERT OR REPLACE INTO consensus_anchors(
-                    ttd_hash, anchor_type, software_context, promoted_at, source_nodes, metrics, invariance_score
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(ttd_hash),
-                    str(anchor_type or row[0] or "unknown"),
-                    str(software_context or row[1] or "unknown"),
-                    now,
-                    json.dumps(unique_node_ids, ensure_ascii=True, sort_keys=True),
-                    json.dumps(averaged_metrics, ensure_ascii=True, sort_keys=True),
-                    round(invariance_score, 12),
-                ),
-            )
-            cur.execute("DELETE FROM consensus_candidates WHERE ttd_hash = ?", (str(ttd_hash),))
-            conn.commit()
-            conn.close()
-            if normalized_artifact_class == "performance_route":
-                return "auto_push_ready"
-            return "promoted"
-
+        invariance_score = float(node_count) / float(node_count + 1)
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO consensus_anchors(
+                ttd_hash, anchor_type, software_context, promoted_at, source_nodes, metrics, invariance_score
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(ttd_hash),
+                str(anchor_type or row[0] or "unknown"),
+                str(software_context or row[1] or "unknown"),
+                now,
+                json.dumps(unique_node_ids, ensure_ascii=True, sort_keys=True),
+                json.dumps(averaged_metrics, ensure_ascii=True, sort_keys=True),
+                round(invariance_score, 12),
+            ),
+        )
+        cur.execute("DELETE FROM consensus_candidates WHERE ttd_hash = ?", (str(ttd_hash),))
         conn.commit()
         conn.close()
-        if str(node_id) in [str(item) for item in existing_node_ids]:
-            return "updated"
-        return "updated"
+        if normalized_artifact_class == "performance_route":
+            return "auto_push_ready"
+        return "promoted"
     except Exception as err:
         print(f"[AETHERNET] consensus submit failed: {err}")
         return "candidate"

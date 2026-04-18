@@ -1,4 +1,5 @@
 from __future__ import annotations
+import base64
 import logging
 logger = logging.getLogger(__name__)
 """
@@ -732,7 +733,15 @@ def derive_peer_id(public_key_path: Optional[str] = None) -> str:
         if public_key_path is None:
             public_key_path = str(ROOT / "data" / "keys" / "node_public.key")
         key_bytes = Path(public_key_path).read_bytes()
-        return "peer-" + hashlib.sha256(key_bytes).hexdigest()[:32]
+        try:
+            from cryptography.hazmat.primitives.serialization import load_pem_public_key
+            public_key = load_pem_public_key(key_bytes)
+            from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+            key_bytes = public_key.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        except Exception:
+            pass
+        peer_id = base64.urlsafe_b64encode(key_bytes).decode("ascii").rstrip("=")[:32]
+        return "peer-" + peer_id
     except Exception as e:
         # Fallback: generate stable random PeerID stored locally
         pid_path = ROOT / "data" / "peer_id.txt"
@@ -1274,6 +1283,9 @@ class P2PLayer:
             _token = _AP.instance().get_best_token_for_gossip()
             if _token:
                 msg["algo_token"] = _token
+            _tokens = _AP.instance().get_tokens_for_gossip(limit=3)
+            if _tokens:
+                msg["algo_tokens"] = _tokens
         except Exception as _ae:
             logger.debug(f"[swarm_p2p] algo_share embed: {_ae}")
 
@@ -1588,6 +1600,24 @@ class P2PLayer:
                                 f"(fitness={_algo_token.get('fitness_score', '?')})")
             except Exception as _ae:
                 logger.debug(f"[swarm_p2p] algo_token recv: {_ae}")
+
+        _algo_tokens = list(msg.get("algo_tokens") or [])
+        if _algo_tokens:
+            try:
+                from modules.algo_share import AutoPropagator as _AP
+                for _token in _algo_tokens:
+                    if not isinstance(_token, dict):
+                        continue
+                    try:
+                        if _AP.instance().receive_algo_token(_token, from_peer=peer_id):
+                            logger.info(
+                                f"[P2P] Neues AlgoToken aus Liste von {peer_id[:16]}... gespeichert "
+                                f"(fitness={_token.get('fitness_score', '?')})"
+                            )
+                    except Exception:
+                        pass
+            except Exception as _ae:
+                logger.debug(f"[swarm_p2p] algo_tokens recv: {_ae}")
 
         # Φ-Kandidaten: empfangene Peer-Anker in swarm_peer_candidates.json mergen.
         # swarm_overlap.py liest diese Datei und vergleicht dann lokal via 9D Cosinus.

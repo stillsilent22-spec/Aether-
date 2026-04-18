@@ -143,33 +143,37 @@ class BlindspotSignal:
 @dataclass
 class BlindspotHint:
     """Antwort eines Peers auf einen Gap-Signal — direkt kristallisierbar."""
-    hint_id:         str
-    signal_id:       str         # Welchen Gap beantwortet dieser Hint?
-    from_peer:       str         # node_id des helfenden Peers
-    domain:          str
-    hint_type:       str         # "instruction", "anchor_data", "algo_token", "knowledge_pack"
-    payload_hash:    str         # SHA256 des Hint-Inhalts (kein Rohinhalt)
-    instructions:    str         # Menschenlesbare Anweisung (z.B. "pip install numpy")
-    fingerprints:    List[str]   # Strukturelle Fingerprints zum Kristallisieren
-    priority_boost:  float       # Wie stark hilft dieser Hint? 0.0–1.0
-    compute_trace:   str = ""   # Transparente Task-/Rechenpfad-Information
-    error_info:      str = ""   # Fehlermeldungen, OOM oder fehlende Runtime
-    task_description:str = ""   # Optionaler Kontext zur Aufgabe selbst
-    ts:              float = field(default_factory=time.time)
+    hint_id:           str
+    signal_id:         str         # Welchen Gap beantwortet dieser Hint?
+    from_peer:         str         # node_id des helfenden Peers
+    recipient_peer_id: str         # node_id des intendierten Empfängers; leer = Broadcast an alle
+    domain:            str
+    hint_type:         str         # "instruction", "anchor_data", "algo_token", "knowledge_pack"
+    payload_hash:      str         # Optionaler Fingerprint, darf leer bleiben
+    instructions:      str         # Menschenlesbare Anweisung oder entschlüsselter Inhalt
+    encrypted_payload: str         # Optional: peer-verschlüsselte Payload
+    fingerprints:      List[str]   # Strukturelle Fingerprints zum Kristallisieren
+    priority_boost:    float       # Wie stark hilft dieser Hint? 0.0–1.0
+    compute_trace:     str = ""   # Transparente Task-/Rechenpfad-Information
+    error_info:        str = ""   # Fehlermeldungen, OOM oder fehlende Runtime
+    task_description:  str = ""   # Optionaler Kontext zur Aufgabe selbst
+    ts:                float = field(default_factory=time.time)
 
     def to_dict(self) -> Dict[str, Any]:
         payload = {
-            "schema":         "aether.blindspot.hint.v1",
-            "hint_id":        self.hint_id,
-            "signal_id":      self.signal_id,
-            "from_peer":      self.from_peer,
-            "domain":         self.domain,
-            "hint_type":      self.hint_type,
-            "payload_hash":   self.payload_hash,
-            "instructions":   self.instructions,
-            "fingerprints":   self.fingerprints[:32],
-            "priority_boost": round(self.priority_boost, 4),
-            "ts":             round(self.ts, 3),
+            "schema":           "aether.blindspot.hint.v1",
+            "hint_id":          self.hint_id,
+            "signal_id":        self.signal_id,
+            "from_peer":        self.from_peer,
+            "recipient_peer_id": self.recipient_peer_id,
+            "domain":           self.domain,
+            "hint_type":        self.hint_type,
+            "payload_hash":     self.payload_hash,
+            "instructions":     self.instructions,
+            "encrypted_payload": self.encrypted_payload,
+            "fingerprints":     self.fingerprints[:32],
+            "priority_boost":   round(self.priority_boost, 4),
+            "ts":               round(self.ts, 3),
         }
         if self.compute_trace:
             payload["compute_trace"] = self.compute_trace
@@ -181,25 +185,16 @@ class BlindspotHint:
 
     @classmethod
     def from_dict(cls, d: Dict[str, Any]) -> "BlindspotHint":
-        instructions = str(d.get("instructions", ""))
-        payload_hash = str(d.get("payload_hash", ""))
-        # Integritätsprüfung: payload_hash muss SHA256(instructions) entsprechen.
-        # Empfänger verifiziert selbst — nicht vom Sender übernehmen.
-        expected_hash = hashlib.sha256(instructions.encode("utf-8")).hexdigest()
-        if payload_hash and payload_hash != expected_hash:
-            # Manipulierter Hint — payload_hash auf korrekt setzen oder leer.
-            # Wir setzen ihn auf den korrekt berechneten Wert, da instructions korrekt sein kann.
-            payload_hash = expected_hash
-        elif not payload_hash:
-            payload_hash = expected_hash
         return cls(
             hint_id=str(d.get("hint_id", "")),
             signal_id=str(d.get("signal_id", "")),
             from_peer=str(d.get("from_peer", "")),
+            recipient_peer_id=str(d.get("recipient_peer_id", "")),
             domain=str(d.get("domain", "")),
             hint_type=str(d.get("hint_type", "instruction")),
-            payload_hash=payload_hash,
-            instructions=instructions,
+            payload_hash=str(d.get("payload_hash", "")),
+            instructions=str(d.get("instructions", "")),
+            encrypted_payload=str(d.get("encrypted_payload", "")),
             fingerprints=list(d.get("fingerprints", [])),
             priority_boost=float(d.get("priority_boost", 0.5)),
             compute_trace=str(d.get("compute_trace", "") or ""),
@@ -262,7 +257,94 @@ class BlindspotEngine:
         # Dedup-Set: verhindert doppelte Relay-Einträge für dieselbe hint_id.
         # Wird bei Überschreiten von 1000 Einträgen gecleart (memory-safe).
         self._relayed_hint_ids:    set = set()
+        self._local_node_id: str = ""
+        self._local_private_key_path = ROOT / "data" / "keys" / "node_private.key"
         self._load_state()
+
+    def _get_local_node_id(self) -> str:
+        if self._local_node_id:
+            return self._local_node_id
+        try:
+            node_json = ROOT / "data" / "swarm" / "node.json"
+            if node_json.is_file():
+                payload = json.loads(node_json.read_text(encoding="utf-8"))
+                self._local_node_id = str(payload.get("node_id", "") or "").strip()
+        except Exception:
+            self._local_node_id = ""
+        return self._local_node_id
+
+    def _load_peer_public_key_pem(self, peer_node_id: str) -> str:
+        try:
+            peer_json = ROOT / "data" / "swarm" / "nodes" / f"{peer_node_id}.json"
+            if not peer_json.is_file():
+                return ""
+            payload = json.loads(peer_json.read_text(encoding="utf-8"))
+            return str(payload.get("public_key_pem", "") or "").strip()
+        except Exception:
+            return ""
+
+    def _derive_blindspot_shared_key(self, peer_node_id: str) -> Optional[bytes]:
+        if not self._local_private_key_path.is_file():
+            return None
+        peer_public_pem = self._load_peer_public_key_pem(peer_node_id)
+        if not peer_public_pem:
+            return None
+        try:
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey, X25519PublicKey
+            from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+            from cryptography.hazmat.primitives.hashes import SHA256
+            from cryptography.hazmat.primitives.serialization import (
+                Encoding,
+                NoEncryption,
+                PrivateFormat,
+                PublicFormat,
+                load_pem_private_key,
+                load_pem_public_key,
+            )
+
+            local_private = load_pem_private_key(
+                self._local_private_key_path.read_bytes(),
+                password=None,
+            )
+            local_raw = local_private.private_bytes(
+                Encoding.Raw,
+                PrivateFormat.Raw,
+                NoEncryption(),
+            )
+            peer_public = load_pem_public_key(peer_public_pem.encode("utf-8"))
+            peer_raw = peer_public.public_bytes(Encoding.Raw, PublicFormat.Raw)
+            xpriv = X25519PrivateKey.from_private_bytes(local_raw)
+            xpub = X25519PublicKey.from_public_bytes(peer_raw)
+            shared = xpriv.exchange(xpub)
+            hkdf = HKDF(
+                algorithm=SHA256(),
+                length=32,
+                salt=b"aether-blindspot-v1",
+                info=b"blindspot-hint",
+                backend=default_backend(),
+            )
+            return hkdf.derive(shared)
+        except Exception as exc:
+            logger.debug(f"[blindspot] shared key derivation failed: {exc}")
+            return None
+
+    def _decrypt_hint_payload(self, hint_data: Dict[str, Any]) -> Optional[str]:
+        recipient = str(hint_data.get("recipient_peer_id", "") or "").strip()
+        if recipient and recipient != self._get_local_node_id():
+            return None
+        encrypted_payload = str(hint_data.get("encrypted_payload", "") or "").strip()
+        if not encrypted_payload:
+            return None
+        key = self._derive_blindspot_shared_key(str(hint_data.get("from_peer", "") or ""))
+        if key is None:
+            return None
+        try:
+            from modules.chat_crypto import decrypt_text
+            return decrypt_text(encrypted_payload, key)
+        except Exception as exc:
+            logger.debug(f"[blindspot] payload decryption failed: {exc}")
+            return None
 
     # ── Lifecycle ─────────────────────────────────────────────────────────── #
 
@@ -625,6 +707,14 @@ class BlindspotEngine:
         now = time.time()
         for hint_data in hints:
             try:
+                if isinstance(hint_data, dict):
+                    if hint_data.get("encrypted_payload"):
+                        decrypted = self._decrypt_hint_payload(hint_data)
+                        if decrypted is None and hint_data.get("recipient_peer_id"):
+                            continue
+                        if decrypted is not None:
+                            hint_data = dict(hint_data)
+                            hint_data["instructions"] = decrypted
                 hint = BlindspotHint.from_dict(hint_data)
                 sig_id = hint.signal_id
 
@@ -636,11 +726,9 @@ class BlindspotEngine:
                             "hints": [],
                         }
                     pool_entry = self._solution_pool[sig_id]
-                    # Deduplizierung: selber payload_hash + domain wird nicht doppelt gespeichert
-                    existing_hashes = {
-                        h.get("payload_hash") for h in pool_entry["hints"]
-                    }
-                    if hint.payload_hash not in existing_hashes:
+                    # Deduplizierung: selber hint_id wird nicht doppelt gespeichert
+                    existing_ids = {h.get("hint_id") for h in pool_entry["hints"]}
+                    if hint.hint_id not in existing_ids:
                         if len(pool_entry["hints"]) < MAX_HINTS_PER_GAP:
                             pool_entry["hints"].append(hint.to_dict())
                     self._hints_received += 1
@@ -888,14 +976,17 @@ class BlindspotEngine:
                     (signal_id + local_node_id).encode()
                 ).hexdigest()[:16]
 
+                encrypted_payload = ""
                 hint = BlindspotHint(
                     hint_id=hint_id,
                     signal_id=signal_id,
                     from_peer=local_node_id,
+                    recipient_peer_id="",
                     domain=domain,
                     hint_type="instruction",
-                    payload_hash=hashlib.sha256(instruction.encode()).hexdigest(),
+                    payload_hash="",
                     instructions=instruction,
+                    encrypted_payload="",
                     fingerprints=[],
                     priority_boost=float(min(1.0, strength)),
                     compute_trace=compute_trace,

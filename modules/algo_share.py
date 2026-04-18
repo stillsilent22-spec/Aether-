@@ -460,6 +460,34 @@ class AutoPropagator:
             return max(self._known_tokens.values(),
                        key=lambda t: float(t.get("fitness_score", 0.0)))
 
+    def get_tokens_for_gossip(self, limit: int = 3) -> List[Dict[str, Any]]:
+        """Gibt bis zu limit bekannte AlgoTokens für Gossip weiter.
+
+        Das erhöht die Chance, dass mehrere Performance-Invarianten im Schwarm
+        sichtbar werden, nicht nur das jeweils stärkste Token.
+        """
+        with self._lock:
+            tokens: List[Dict[str, Any]] = []
+            if self._pending_token is not None:
+                tokens.append(self._pending_token)
+            tokens.extend(self._known_tokens.values())
+            tokens = sorted(
+                tokens,
+                key=lambda t: float(t.get("fitness_score", 0.0)),
+                reverse=True,
+            )
+            unique_tokens: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+            for token in tokens:
+                token_id = str(token.get("token_id", ""))
+                if not token_id or token_id in seen_ids:
+                    continue
+                seen_ids.add(token_id)
+                unique_tokens.append(token)
+                if len(unique_tokens) >= limit:
+                    break
+            return unique_tokens
+
     def get_share_count(self) -> int:
         """Wie viele AlgoTokens hat dieser Knoten bisher weitergegeben?"""
         with self._lock:

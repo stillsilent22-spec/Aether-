@@ -22,6 +22,7 @@ Identity-lock enforcement:
         manifest for the admin username.
 """
 
+import base64
 import hmac
 import json
 import sys
@@ -50,14 +51,13 @@ class SessionGuardError(RuntimeError):
 def _derive_node_id_from_key(key_path: Path) -> str:
     """Leitet die node_id aus dem oeffentlichen Schluessel ab."""
     try:
-        import hashlib
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
+        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
         pem = key_path.read_bytes()
         private_key = load_pem_private_key(pem, password=None)
         pub = private_key.public_key()
-        from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
         pub_bytes = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
-        return hashlib.sha256(pub_bytes).hexdigest()[:16]
+        return pub_bytes.hex()[:16]
     except Exception:
         return ""
 
@@ -194,9 +194,9 @@ def validate_registered_runtime(root: Path | None = None) -> None:
     yggdrasil_addr = str(node_payload.get("yggdrasil_addr", "") or "").strip()
     # AetherNet DHT peer-id as the alternative network entry identity.
     # Derived deterministically from the public key — same logic as derive_peer_id().
-    import hashlib as _hs, base64 as _b64
+    import base64 as _b64
     _pub_raw = _b64.b64decode(public_key_b64)
-    network_entry_id = "peer-" + _hs.sha256(_pub_raw).hexdigest()[:32]
+    network_entry_id = "peer-" + _b64.urlsafe_b64encode(_pub_raw).decode("ascii").rstrip("=")[:32]
     role = str(node_payload.get("role", settings.get("node_role", "peer")) or "peer").strip().lower() or "peer"
     route = _load_json(_startup_route_path(runtime_root))
     hw_capability = _load_json(_hw_capability_path(runtime_root))

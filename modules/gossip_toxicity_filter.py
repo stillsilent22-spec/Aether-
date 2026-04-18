@@ -293,6 +293,24 @@ class GossipToxicityFilter:
                         self._fitness_stat.add(fitness)
                         msg["algo_token"] = cleaned_token
 
+        algo_tokens = msg.get("algo_tokens")
+        if algo_tokens is not None:
+            if not isinstance(algo_tokens, list):
+                del msg["algo_tokens"]
+            else:
+                clean_tokens: List[Dict[str, Any]] = []
+                for token in algo_tokens[:5]:
+                    if not isinstance(token, dict):
+                        continue
+                    cleaned_token = self._validate_algo_token(token, p, warnings)
+                    if cleaned_token is None:
+                        continue
+                    clean_tokens.append(cleaned_token)
+                if clean_tokens:
+                    msg["algo_tokens"] = clean_tokens
+                else:
+                    del msg["algo_tokens"]
+
         # ── 5. prefetch_hints ─────────────────────────────────────────────
         prefetch = msg.get("prefetch_hints")
         if prefetch is not None:

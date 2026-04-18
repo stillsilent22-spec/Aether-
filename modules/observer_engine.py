@@ -727,20 +727,20 @@ class ObserverEngine:
         current_count = int(updated.get("public_anchor_count", 0) or 0)
         imported_count = max(0, current_count - previous_count)
         current_insight = str(updated.get("current_insight", "") or "")
-        if imported_count > 0 and quorum_validated_count > 0:
-            current_insight = (
-                f"Anker von 3 Peers validiert -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
-                f"I_obs +{i_obs_gain:.2f}%."
-            )
-        elif imported_count > 0 and genesis_trusted_count > 0:
+        if imported_count > 0 and genesis_trusted_count > 0:
             current_insight = (
                 f"Admin-Anker direkt vertrauenswuerdig -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
                 f"I_obs +{i_obs_gain:.2f}%."
             )
+        elif imported_count > 0:
+            current_insight = (
+                f"Oeffentliche Anker importiert -> globales Lernen: +{symmetry_gain:.2f}% Symmetrie-Delta, "
+                f"I_obs +{i_obs_gain:.2f}%."
+            )
         elif pending_quorum_count > 0 and imported_count <= 0:
             current_insight = (
-                f"Quorum offen: {pending_quorum_count} Anker warten noch auf unabhaengige Validierungen, "
-                "bevor sie in M_t einfliessen."
+                f"{pending_quorum_count} Kandidaten-Anker wurden importiert, "
+                "sie sind weiterhin als Referenz in der Lernhistorie sichtbar."
             )
         updated["current_insight"] = str(current_insight)
         updated["trusted_public_anchor_count"] = int(trusted_anchor_count)

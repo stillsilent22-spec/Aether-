@@ -1,16 +1,28 @@
 from __future__ import annotations
-import logging
-logger = logging.getLogger(__name__)
-from typing import Any, Callable, Dict, List, Optional
-
+import base64
+import hashlib
 import importlib
+import json
+import logging
+import math
+import shutil
+import threading
+import uuid
+import zipfile
+import zlib
+from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+
+logger = logging.getLogger(__name__)
 
 # Dynamisches Laden der Engines fuer den modularen Cascade-Flow.
 def _try_import(name: str):
     for candidate in (name, f"modules.{name}"):
         try:
             return importlib.import_module(candidate)
-        except Exception as e:
+        except Exception:
             continue
     return None
 
@@ -288,13 +300,12 @@ Swarm nodes running different CASCADE_VERSION cannot form quorum.
 """
 
 
-import hashlib
-import json
-import math
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+import base64
+import uuid
 
 CASCADE_VERSION = "4"  # Refactor: cascade() delegiert vollständig an AnalysisCapsuleEngine
 AUDIT_LOG_PATH = Path("logs/cascade_audit.jsonl")
@@ -333,12 +344,24 @@ class CascadeResult:
     delta_encrypted_hex: str  # XOR(raw_delta, session_key) as hex — empty if no session_key
     delta_hash: str           # SHA256(raw_delta) — public, for verification
 
+    # Keypair-signed Cascade metadata
+    signed_by: str = ""
+    signature_b64: str = ""
+    signature_ts: str = ""
+    signature_nonce: str = ""
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 
-    def canonical_json(self) -> str:
+    def canonical_json(self, include_signature: bool = False) -> str:
         """Deterministic JSON for signing and audit log."""
-        return json.dumps(self.to_dict(), ensure_ascii=True,
+        payload = dict(self.to_dict())
+        if not include_signature:
+            payload.pop("signed_by", None)
+            payload.pop("signature_b64", None)
+            payload.pop("signature_ts", None)
+            payload.pop("signature_nonce", None)
+        return json.dumps(payload, ensure_ascii=True,
                          sort_keys=True, separators=(",", ":"))
 
 def cascade(
@@ -346,6 +369,8 @@ def cascade(
     source_id: str = "unknown",
     source_type: str = "bytes",
     session_key: Optional[bytes] = None,
+    signing_key_path: Optional[str] = None,
+    signer_node_id: str = "",
 ) -> CascadeResult:
     """
     Unified deterministic cascade.
@@ -462,6 +487,22 @@ def cascade(
 
     with _prev_results_lock:
         _prev_results[source_id] = result
+
+    if signing_key_path and signer_node_id:
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+            from cryptography.hazmat.primitives.serialization import load_pem_private_key
+            key_bytes = Path(signing_key_path).read_bytes()
+            private_key = load_pem_private_key(key_bytes, password=None)
+            if isinstance(private_key, Ed25519PrivateKey):
+                signed_payload = result.canonical_json(include_signature=False).encode("utf-8")
+                signature = private_key.sign(signed_payload)
+                result.signature_b64 = base64.b64encode(signature).decode("ascii")
+                result.signed_by = signer_node_id
+                result.signature_ts = datetime.now(timezone.utc).isoformat()
+                result.signature_nonce = uuid.uuid4().hex
+        except Exception:
+            pass
 
     return result
 

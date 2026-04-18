@@ -236,7 +236,7 @@ class AetherPipeline:
             "share_channel": "auto_push",
             "user_confirmation_required": False,
             "genesis_override_allowed": True,
-            "quorum_required": True,
+            "quorum_required": False,
             "public_metrics": public_metrics,
         }
 

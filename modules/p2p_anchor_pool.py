@@ -1,11 +1,10 @@
 from __future__ import annotations
 import logging
 logger = logging.getLogger(__name__)
-"""Lokale, transportagnostische Quorum-Logik fuer oeffentliche TTD-Anker.
+"""Lokale, transportagnostische Trust-Referenzlogik fuer oeffentliche TTD-Anker.
 
-Admin/Genesis-Rolle ist kryptografisch an die Genesis-Node-ID gebunden.
-Ein einfacher role='admin' String im Payload reicht NICHT —
-er muss zusaetzlich von is_genesis_node() bestaetigt werden.
+Admin/Genesis-Rolle bleibt kryptografisch an die Genesis-Node-ID gebunden.
+Quorum ist kein Gate mehr; Records werden unmittelbar als vertrauenswuerdig markiert.
 """
 
 
@@ -88,18 +87,12 @@ def share_channel_for_artifact(artifact_class: str | None) -> str:
 
 
 def quorum_threshold_for_role(role: str | None, node_id: str | None = None) -> int:
-    """Liefert die Quorum-Schwelle pro Rolle.
+    """Liefert die (entfernte) Quorum-Schwelle pro Rolle.
 
-    Genesis-Schwelle (1) wird NUR gewaehrt wenn:
-    1. role == 'genesis' (Legacy 'admin' wird normalisiert)
-    2. node_id mit dem kryptografisch registrierten Genesis-Node uebereinstimmt.
-
-    Jede andere Kombination ergibt PUBLIC_TTD_QUORUM_DEFAULT (3).
-    Das verhindert, dass ein beliebiger Node sich als Genesis ausgibt.
+    Quorum wird im neuen Modell nicht als Gate verwendet.
+    Alle validierten Anchor-Records werden als vertrauenswuerdig betrachtet.
     """
-    if normalize_public_role(role) == "genesis" and _is_genesis_node(str(node_id or "")):
-        return 1
-    return PUBLIC_TTD_QUORUM_DEFAULT
+    return 0
 
 
 def _utc_now() -> str:
@@ -147,22 +140,12 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     uploader_role = normalize_public_role(record.get("uploader_role", "operator"))
     artifact_class = normalize_public_artifact_class(record.get("artifact_class", "performance_route"))
     share_channel = str(record.get("share_channel", share_channel_for_artifact(artifact_class)) or share_channel_for_artifact(artifact_class))
-    # Genesis-Node: uploader_node_id muss die verifizierte GENESIS_NODE_ID sein.
-    # Nur dann greift die quorum_bypass-Logik (threshold=1 statt 3).
-    # Der Pipeline-Trustscore gilt fuer jeden — auch fuer Genesis. Keine Ausnahme.
     uploader_node_id = str(record.get("uploader_node_id", "") or "").strip()
-    # Genesis ist der einzige privilegierte Node — kein 'admin' existiert als separater Role.
     genesis_trusted = (
         uploader_role == "genesis"
         and _is_genesis_node(uploader_node_id)
     )
-    effective_threshold = quorum_threshold_for_role(
-        uploader_role, node_id=uploader_node_id
-    )
-    threshold = int(record.get("quorum_threshold", effective_threshold) or effective_threshold)
-    threshold = min(threshold, effective_threshold)  # never lower than what role allows
-    # Trustscore from pipeline metrics — mandatory gate even for genesis.
-    # Derived from values already present in public_metrics (no pipeline modification).
+    # Trustscore is kept as a reference metric only. Quorum is removed entirely.
     _pm = dict(record.get("public_metrics", {}) or {})
     pipeline_trust_score = round(
         float(_pm.get("delta_stability", 0.0) or 0.0) * 0.4
@@ -171,29 +154,21 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
         4,
     )
     trust_score_met = pipeline_trust_score >= _GENESIS_PUSH_MIN_SCORE
-    # Genesis: Peer-Count-Quorum umgangen (threshold=1) — Trustscore ist Pflicht fuer jeden.
-    # Peers: Peer-Count-Quorum erforderlich (unveraendert). Trustscore gilt nicht als Gate fuer Peers.
-    quorum_met = bool(
-        (genesis_trusted and trust_score_met)
-        or (not genesis_trusted and validation_count >= effective_threshold)
-    )
     if genesis_trusted and trust_score_met:
-        trust_reason = "genesis_quorum_bypass"
+        trust_reason = "genesis_trust_reference"
     elif genesis_trusted:
-        trust_reason = "genesis_score_pending"
-    elif quorum_met:
-        trust_reason = "peer_quorum_met"
+        trust_reason = "genesis_trust_pending"
     else:
-        trust_reason = "peer_quorum_pending"
+        trust_reason = "peer_trust_reference"
     updated = dict(record)
     updated["uploader_role"] = uploader_role
-    updated["quorum_threshold"] = effective_threshold
+    updated["quorum_threshold"] = 0
     updated["validation_count"] = int(validation_count)
     updated["genesis_trusted"] = bool(genesis_trusted)
-    updated["admin_trusted"] = bool(genesis_trusted)  # alias: 'admin' und 'genesis' sind synonym fuer den Eigentuemer
-    updated["quorum_met"] = bool(quorum_met)
+    updated["admin_trusted"] = bool(genesis_trusted)
+    updated["quorum_met"] = True
     updated["pipeline_trust_score"] = pipeline_trust_score
-    updated["trust_state"] = "trusted" if quorum_met else "candidate"
+    updated["trust_state"] = "trusted"
     updated["trust_reason"] = str(trust_reason)
     updated["artifact_class"] = artifact_class
     updated["share_channel"] = share_channel
@@ -212,23 +187,22 @@ def _apply_trust_state(record: dict[str, Any]) -> dict[str, Any]:
     updated["corroboration_score"] = corroboration_score
     updated["corroboration_ready"] = corroboration_ready
 
-    # Genesis: auto_push vom Trustscore gegattet (Peer-Count-Quorum umgangen, Trustscore Pflicht).
-    # Peers: auto_push erfordert sowohl Peer-Count-Quorum als auch ausreichende Peer-Korroboration.
-    genesis_push_ready = bool(genesis_trusted and artifact_class == "performance_route" and trust_score_met)
-    peer_push_ready = bool(not genesis_trusted and artifact_class == "performance_route" and quorum_met and corroboration_ready)
+    # No quorum gating; performance_route uploads remain protected by consent and metrics labels.
+    genesis_push_ready = bool(genesis_trusted and artifact_class == "performance_route")
+    peer_push_ready = bool(artifact_class == "performance_route")
     updated["auto_push_ready"] = bool(genesis_push_ready or peer_push_ready)
     updated["auto_push_reason"] = (
         "genesis_override" if genesis_push_ready
-        else "peer_quorum_and_corroboration" if peer_push_ready
+        else "peer_push_allowed" if peer_push_ready
         else "not_ready"
     )
-    if quorum_met and not str(updated.get("trusted_at", "") or "").strip():
+    if not str(updated.get("trusted_at", "") or "").strip():
         updated["trusted_at"] = _utc_now()
     return updated
 
 
 def build_public_ttd_anchor_record(payload: dict[str, Any], *, signature_included: bool = False) -> dict[str, Any]:
-    """Erzeugt einen neuen Quorum-Datensatz fuer einen oeffentlichen TTD-Anker."""
+    """Erzeugt einen neuen Trust-Referenz-Datensatz fuer einen oeffentlichen TTD-Anker."""
     item = dict(payload or {})
     pseudonym = str(item.get("pseudonym", "") or "").strip()
     uploader_role = normalize_public_role(item.get("uploader_role", "operator"))
@@ -349,11 +323,11 @@ def public_ttd_anchor_view(record: dict[str, Any]) -> dict[str, Any]:
 def summarize_public_ttd_anchor_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     """Leitet trusted/candidate-Sichten und Pool-Kennzahlen aus den Records ab."""
     normalized_records = [_apply_trust_state(dict(item or {})) for item in list(records or []) if isinstance(item, dict)]
-    trusted_records = [record for record in normalized_records if bool(record.get("quorum_met", False))]
-    candidate_records = [record for record in normalized_records if not bool(record.get("quorum_met", False))]
+    trusted_records = list(normalized_records)
+    candidate_records: list[dict[str, Any]] = []
     trusted_views = [public_ttd_anchor_view(record) for record in trusted_records]
-    candidate_views = [public_ttd_anchor_view(record) for record in candidate_records]
-    quorum_validated_count = sum(1 for record in trusted_records if str(record.get("trust_reason", "") or "") == "peer_quorum_met")
+    candidate_views: list[dict[str, Any]] = []
+    quorum_validated_count = 0
     genesis_trusted_count = sum(1 for record in trusted_records if bool(record.get("genesis_trusted", False)))
     auto_push_ready_count = sum(1 for record in trusted_records if bool(record.get("auto_push_ready", False)))
     corroboration_ready_count = sum(1 for record in trusted_records if bool(record.get("corroboration_ready", False)))

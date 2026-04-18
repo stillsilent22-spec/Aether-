@@ -372,7 +372,7 @@ class PublicBlockchainAnchor:
         """Fuehrt Public Anchoring im Hintergrund aus und liefert immer ein lokales Receipt."""
         settings = self.load_settings()
 
-        def worker() -> None:
+        def _anchor_worker() -> None:
             attempt = self._execute_attempt(block_payload, settings)
             anchor_job_id = ""
             queue_size = self.pending_count()
@@ -400,13 +400,13 @@ class PublicBlockchainAnchor:
             )
             callback(self._build_result(receipt, queue_size=queue_size))
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=_anchor_worker, daemon=True).start()
 
     def flush_pending_async(self, callback: Callable[[dict[str, Any]], None] | None = None) -> None:
         """Versucht wartende Jobs mit den aktuellen Zugangsdaten erneut zu verankern."""
         settings = self.load_settings()
 
-        def worker() -> None:
+        def _flush_worker() -> None:
             processed = 0
             jobs = self.load_pending_jobs()
             for job in jobs:
@@ -448,4 +448,4 @@ class PublicBlockchainAnchor:
                     }
                 )
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=_flush_worker, daemon=True).start()

@@ -5,10 +5,12 @@ logger = logging.getLogger(__name__)
 
 
 import hashlib
+import json
 import os
 import sys
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -248,11 +250,27 @@ class RenderCoordinator:
                     pass
                 # Kein Token gefunden → fall through to full cascade
 
+            signing_key_path = Path("keys/node_private.key")
+            signer_node_id = ""
+            settings_path = Path("data/settings.json")
+            if settings_path.is_file():
+                try:
+                    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+                    signer_node_id = str(settings.get("node_id", "") or "").strip()
+                except Exception:
+                    signer_node_id = ""
+            if not signing_key_path.is_file():
+                signing_key_path = None
+            if signer_node_id == "":
+                signer_node_id = ""
+
             cascade_result = cascade(
                 raw,
                 source_id=f"render_{pid}",
                 source_type="render",
                 session_key=session_key,
+                signing_key_path=str(signing_key_path) if signing_key_path else None,
+                signer_node_id=signer_node_id,
             )
             if _submit_cascade is not None:
                 _submit_cascade(cascade_result, role="genesis")

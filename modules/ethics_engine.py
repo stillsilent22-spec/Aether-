@@ -18,14 +18,13 @@ _ABS = {"immer","alle","alles","jeden","jeder","einzig","ausschließlich","alway
         "never","nobody","everyone","everything","only","solely","100%","absolutely"}
 
 def _zipf(words):
-    if not _NP_OK or len(words)<10: return 0.7
-    try:
-        ranked=[f for _,f in _Counter(words).most_common(min(50,len(_Counter(words))))]
-        if len(ranked)<5: return 0.7
-        c=_np.polyfit(_np.log(range(1,len(ranked)+1)),_np.log([max(1,f) for f in ranked]),1)
-        return float(max(0.0,1.0-abs(abs(c[0])-1.0)/0.8))
-    except: return 0.7
-
+        if not _NP_OK or len(words)<10: return 0.7
+        try:
+            ranked=[f for _,f in _Counter(words).most_common(min(50,len(_Counter(words))))]
+            if len(ranked)<5: return 0.7
+            c=_np.polyfit(_np.log(range(1,len(ranked)+1)),_np.log([max(1,f) for f in ranked]),1)
+            return float(max(0.0,1.0-abs(abs(c[0])-1.0)/0.8))
+        except Exception: return 0.7
 def _benford(text):
     try:
         nums=_re.findall(r'\b[1-9][0-9]*\b',text)
@@ -34,7 +33,7 @@ def _benford(text):
         t=sum(c.values())
         chi2=sum(((c.get(d,0)/t-_math.log10(1+1/d))**2)/_math.log10(1+1/d) for d in range(1,10))
         return float(max(0.0,1.0-chi2/15.0))
-    except: return 0.5
+    except Exception: return 0.5
 
 def _fraktal(sents):
     try:
@@ -47,7 +46,7 @@ def _fraktal(sents):
         if std>40: return max(0.0,1.0-(std-40)/40)*0.5
         if std<5: return (std-3)/2*0.5+0.5
         return max(0.0,1.0-(std-20)/20)*0.5+0.5
-    except: return 0.6
+    except Exception: return 0.6
 
 def _noether(words):
     try:
@@ -66,7 +65,7 @@ def _noether(words):
             ka=set(list(a.keys())[:20]); kb=set(list(b.keys())[:20])
             sim=len(ka&kb)/len(ka|kb) if ka|kb else 0.5
         return float(min(1.0,sim*2.0))
-    except: return 0.6
+    except Exception: return 0.6
 
 def _interferenz(words):
     try:
@@ -77,7 +76,7 @@ def _interferenz(words):
         if d>0.15: return 0.2
         if d<0.02: return 0.5+(d-0.01)/0.01*0.5
         return max(0.2,1.0-(d-0.08)/0.07*0.8)
-    except: return 0.6
+    except Exception: return 0.6
 
 def _heisenberg(sents,words):
     try:
@@ -87,7 +86,7 @@ def _heisenberg(sents,words):
         if d>1.5: return max(0.0,1.0-(d-0.8)/2.2)
         if d<0.1: return 0.8
         return max(0.0,1.0-(d-0.8)/0.7*0.4)
-    except: return 0.6
+    except Exception: return 0.6
 
 def structural_text_integrity(text: str, entropy_mean=None) -> dict:
     """Misst strukturelle Integrität — kein Label, kein Keyword-Filter. Nur Struktur."""

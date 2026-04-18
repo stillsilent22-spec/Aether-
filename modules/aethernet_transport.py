@@ -109,9 +109,9 @@ class AethernetTransport:
         self.nodes_dir.mkdir(parents=True, exist_ok=True)
         self._local_ip: str = self._detect_local_ip()
         self._frame_codec = None   # lazy: geladen bei erstem encode_frame-Aufruf
-        self._anchor_pool = None   # lazy: geladen bei erstem TTD-Quorum-Aufruf
-        self._ttd_records: dict = {}       # Quorum-Stand: pack_id → TTD-Record
-        self._pending_anchors: dict = {}   # Warten auf Quorum: pack_id → AnchorPack
+        self._anchor_pool = None   # lazy: geladen bei erstem Anker-Pool-Zugriff
+        self._ttd_records: dict = {}       # Anchor-Records: pack_id → TTD-Record
+        self._pending_anchors: dict = {}   # Temporäre Anchor-Packs zur späteren Weiterleitung
         # AELab-Invarianten-Bahn: kein Quorum, kein Genesis-Gate
         self._algo_dir = self.anchor_dir.parent / "algo_tokens"
         self._algo_dir.mkdir(parents=True, exist_ok=True)
@@ -137,7 +137,7 @@ class AethernetTransport:
 
         Liest lokale .pack-Dateien, prüft ob das zugehörige TTD-Record auto_push_ready
         trägt (via Pool-Rekonstruktion), und tut push_pack() wenn ja.
-        Nur performance_route + (genesis_trust ODER peer_quorum) wird geflusht.
+        Nur performance_route-Packages werden geflusht, unabhängig von früheren Quorum-Status.
         Kein neues Quorum wird erzwungen — reines Drain already-decided records.
         """
         try:
@@ -413,8 +413,8 @@ class AethernetTransport:
             weitergegeben, damit _apply_trust_state den Trust-Score berechnen kann.
             Genesis-Nodes benoetigen trust_score >= 0.65 — auch ohne Quorum.
 
-        Kein Push — Anker wartet auf Quorum (normale Nodes) oder besteht den
-        Trust-Score-Check (Genesis-Node).
+        Kein Push — Anker wird lokal registriert und später zur Weiterleitung
+        freigegeben, sobald er das Public-Pack-Sicherheitsmodell erfüllt.
         Rohdaten verlassen das Geraet nie (FORBIDDEN_PACK_KEYS greift).
         """
         if self._frame_codec is None:
@@ -423,9 +423,9 @@ class AethernetTransport:
         dna_sigs = [pkt["sig"] for pkt in packets if pkt.get("type") == "dna"]
         if not dna_sigs:
             return "no_vault_hits"
-        pack_id = _hashlib.sha256(
-            "".join(sorted(dna_sigs)).encode()
-        ).hexdigest()[:32]
+        pack_id = "pack-" + base64.urlsafe_b64encode(
+            "".join(sorted(dna_sigs)).encode("utf-8")
+        ).decode("ascii").rstrip("=")[:32]
         if pack_id not in self._pending_anchors:
             self._pending_anchors[pack_id] = {
                 "schema": "aether.anchor.pack.v1",
@@ -436,16 +436,14 @@ class AethernetTransport:
                 "public_metrics": dict(public_metrics or {}),
             }
             self._submit_anchor_to_pool(self._pending_anchors[pack_id], self.node_id)
-        return "pending_quorum"
+        return "pending_push"
 
     def _submit_anchor_to_pool(self, pack: dict, peer_node_id: str) -> bool:
         """
         Bestaetigung eines Nodes fuer einen Anker einreichen.
 
-        Fuer normale Nodes: True wenn Quorum (>= 3 unabhaengige Nodes) erreicht.
-        Fuer Genesis-Node: True wenn trust_score >= 0.65 (Quorum wird uebersprungen).
-        Der Trust-Score ist in BEIDEN Faellen eine unumgehbare Schranke.
-        Genesis ist der einzige privilegierte Node — kein 'admin' existiert.
+        Quorum wird nicht mehr als Gate verwendet. Anchor-Packs werden lokal akzeptiert
+        und weitergeleitet, solange sie dem Public-Pack-Sicherheitsmodell entsprechen.
         """
         from modules.registry import is_genesis_node as _is_genesis_node
         ttd_hash = str(pack.get("pack_id", "")).strip()
@@ -466,7 +464,7 @@ class AethernetTransport:
             if self._anchor_pool is None:
                 self._anchor_pool = _get_p2p_anchor_pool_class()()
             if self._anchor_pool.validator_present(self._ttd_records[ttd_hash], peer_node_id):
-                return bool(self._ttd_records[ttd_hash].get("quorum_met", False))
+                return True
             self._ttd_records[ttd_hash] = self._anchor_pool.merge_record(
                 self._ttd_records[ttd_hash], payload
             )
@@ -475,23 +473,15 @@ class AethernetTransport:
                 self._anchor_pool = _get_p2p_anchor_pool_class()()
             self._ttd_records[ttd_hash] = self._anchor_pool.build_record(payload)
         record = self._ttd_records[ttd_hash]
-        quorum_met = bool(record.get("quorum_met", False))
-        trust_reason = str(record.get("trust_reason", "") or "")
-        if quorum_met and ttd_hash in self._pending_anchors:
+        if ttd_hash in self._pending_anchors:
             anchor_pack = self._pending_anchors.pop(ttd_hash)
             result = self.push_pack(anchor_pack)
+            trust_reason = str(record.get("trust_reason", "") or "trusted_reference")
             print(
                 f"[AETHERNET] Push ({ttd_hash[:16]}\u2026) "
                 f"reason={trust_reason} \u2192 {result}"
             )
-        elif uploader_is_genesis and not quorum_met:
-            # Genesis hat submittet aber Trust-Score-Gate hat nicht bestanden.
-            score = round(float(record.get("pipeline_trust_score", 0.0) or 0.0), 4)
-            print(
-                f"[AETHERNET] Genesis-Push geblockt ({ttd_hash[:16]}\u2026): "
-                f"trust_score={score} < 0.65 — Quorum-Bypass verweigert."
-            )
-        return quorum_met
+        return True
 
     def _store_pack(self, pack: Dict[str, Any]) -> bool:
         """Speichert ein Anchor-Pack lokal als JSON-Datei ab."""

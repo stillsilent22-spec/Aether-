@@ -277,13 +277,10 @@ def public_ttd_quorum_policy(session_like: _Any) -> dict:
     # 'admin' und 'genesis' sind synonym — beide stehen ausschliesslich fuer den verifizierten Eigentuemer.
     # Hardware-Bindung (device_lock + identity_lock) ist die einzige Autoritaetsquelle.
     role = "genesis" if _raw_role in ("genesis", "admin") else _raw_role
-    # quorum_bypass: Genesis umgeht NUR den Peer-Count-Quorum (threshold=1 statt 3).
-    # Der Pipeline-Trustscore gilt fuer jeden — auch fuer Genesis. Keine Ausnahme.
-    quorum_bypass = role == "genesis" and _is_genesis_hardware_bound(session_like)
     return {
         "uploader_role": role or "operator",
-        "quorum_threshold": 1 if quorum_bypass else 3,
-        "quorum_bypass": quorum_bypass,
+        "quorum_threshold": 0,
+        "quorum_bypass": False,
     }
 
 

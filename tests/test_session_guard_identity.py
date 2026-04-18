@@ -39,7 +39,7 @@ def _write_keypair(root: Path) -> tuple[str, str, str]:
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,
     )
-    node_id = hashlib.sha256(public_raw).hexdigest()[:16]
+    node_id = public_raw.hex()[:16]
     keys_dir = root / "data" / "keys"
     keys_dir.mkdir(parents=True, exist_ok=True)
     (keys_dir / "node_private.key").write_bytes(private_pem)
