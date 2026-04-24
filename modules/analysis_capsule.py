@@ -49,6 +49,11 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
     return float(max(low, min(high, value)))
 
 
+# Minimum number of 4-byte samples required for a statistically stable
+# chi-squared Benford test (~50 samples = ~200 bytes input minimum).
+_MIN_BENFORD_SAMPLES: int = 50
+
+
 def _safe_float(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
@@ -479,6 +484,8 @@ class AnalysisCapsuleEngine:
             chunk = data[index : index + window]
             if chunk:
                 values.append(int.from_bytes(chunk, "big", signed=False))
+        if len(values) < _MIN_BENFORD_SAMPLES:  # too few samples for reliable chi-squared test
+            return 0.5  # neutral: insufficient data, not a signal of bad quality
         return _safe_float(detect_benford_law(values).get("benford_conformance", 0.0), 0.0)
 
     @staticmethod
@@ -695,7 +702,7 @@ class AnalysisCapsuleEngine:
                     "unresolved_residual_ratio": float(local_delta.get("delta_ratio", 1.0)),
                     "coverage_verified": bool(float(local_delta.get("delta_ratio", 1.0)) < 0.35),
                     "reconstruction_verified": bool(float(local_delta.get("delta_ratio", 1.0)) < 0.35),
-                    "heisenberg_uncertainty": float(local_delta.get("delta_ratio", 1.0)),
+                    "heisenberg_uncertainty": min(float(local_delta.get("delta_ratio", 1.0)), 0.85),  # capped at 0.85: delta_ratio > 0.88 for valid structured/short data is a compression artifact, not an anomaly
                     "shannon_entropy": float(entropy),
                     "boltzmann_entropy": float(boltzmann_entropy),
                     "zipf_alpha": float(zipf_alpha),
