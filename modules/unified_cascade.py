@@ -134,8 +134,19 @@ def run_full_pipeline(file_path: Path, log_fn: Optional[Callable[[str], None]] =
             entropy_values.append(entropy)
         average_entropy = sum(entropy_values) / float(len(entropy_values) or 1)
         coverage = 0.0
-        trust_score = min(1.0, coverage * 4.0) + coverage + min(1.0, average_entropy / 8.0) + (1.0 if average_entropy < 7.9 else 0.0)
-        trust_score /= 4.0
+        from modules.trust_engine import TrustScoreEngine as _TE
+        trust_score = _TE().compute(
+            entropy=average_entropy,
+            zipf_alpha=1.0,
+            benford_chi_sq=0.0,
+            fourier_periodicity=0.5,
+            katz_fd=1.5,
+            perm_entropy=0.5,
+            delta_convergence=0.0,
+            noether_consistency=coverage,
+            boltzmann_temp=1.0,
+            bayes_evidence=coverage,
+        )
         payload = {
             "file": str(file_path),
             "size_bytes": size,

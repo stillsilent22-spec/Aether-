@@ -538,6 +538,42 @@ def _probe_swarm_invariants() -> Probe:
     return p
 
 
+def _load_bootstrap_status() -> dict:
+    """Read data/interbus/bootstrap_status.json written by aether_node_bootstrap.c."""
+    try:
+        import json
+        from pathlib import Path
+        path = Path(__file__).resolve().parents[1] / "data" / "interbus" / "bootstrap_status.json"
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _probe_c_bootstrap() -> Probe:
+    """Prüft ob der C-Bootstrap erfolgreich ausgeführt wurde und eine AEK vorhanden ist."""
+    p = Probe(key="c_bootstrap", label="C-Bootstrap & AEK", weight=10)
+    status = _load_bootstrap_status()
+    if not status:
+        p.note = "bootstrap_status.json nicht gefunden (C bootstrap noch nicht ausgeführt)"
+        return p
+    mode = status.get("mode", "")
+    cap  = int(status.get("capability", 0))
+    import os
+    home = os.environ.get("USERPROFILE") or os.environ.get("HOME") or ""
+    aek_path = os.path.join(home, ".aether", "vault", "node_identity.aek")
+    aek_ok = os.path.isfile(aek_path) and os.path.getsize(aek_path) == 96
+    if mode == "full" and cap == 1 and aek_ok:
+        p.earned = p.weight
+        p.ok = True
+        p.note = f"mode={mode} capability={cap} aek=ok"
+    elif mode in ("learn", "linux_fallback"):
+        p.earned = p.weight // 2
+        p.note = f"mode={mode} (degraded, kein aether_iced)"
+    else:
+        p.note = f"mode={mode!r} capability={cap} aek={'ok' if aek_ok else 'fehlt'}"
+    return p
+
+
 def _probe_swarm_reachable_peers() -> Probe:
     """Zählt aktiv erreichbare Peers — wächst mit jedem neuen Knoten,
     der sich mit diesem Gerät verbindet.  Auch ein alter PC kann hier
@@ -808,6 +844,7 @@ def run_probes() -> Dict[str, Any]:
         # ── Dynamische Schwarm-Probes (wachsen mit geteilten Invarianten) ──
         _probe_swarm_invariants(),        # 15 — dynamisch, steigt mit Konsens-Ereignissen
         _probe_swarm_reachable_peers(),   # 10 — dynamisch, steigt mit aktiven Peers
+        _probe_c_bootstrap(),             # 10 — C bootstrap + AEK vorhanden
     ]
 
     total_weight = sum(pr.weight for pr in probes)

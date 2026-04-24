@@ -35,6 +35,35 @@ class TrustScoreEngine:
         self.threshold = float(threshold)
         self.log_path = Path(log_path)
 
+    def compute(
+        self,
+        entropy: float,
+        zipf_alpha: float,
+        benford_chi_sq: float,
+        fourier_periodicity: float,
+        katz_fd: float,
+        perm_entropy: float,
+        delta_convergence: float,
+        noether_consistency: float,
+        boltzmann_temp: float,
+        bayes_evidence: float,
+    ) -> float:
+        """Compute a normalised trust score [0, 1] from 10 numeric metrics."""
+        e  = _clamp(entropy / 8.0)
+        z  = _clamp(zipf_alpha / 3.0)
+        b  = _clamp(1.0 - benford_chi_sq / 50.0)
+        f  = _clamp(fourier_periodicity)
+        k  = _clamp((katz_fd - 0.5) / 1.5)
+        p  = _clamp(perm_entropy)
+        d  = _clamp(delta_convergence)
+        n  = _clamp(noether_consistency)
+        bo = _clamp(boltzmann_temp / 10.0)
+        ba = _clamp(bayes_evidence)
+        return _clamp(
+            0.15 * e  + 0.08 * z  + 0.10 * b  + 0.08 * f  + 0.10 * k
+            + 0.10 * p  + 0.12 * d  + 0.12 * n  + 0.07 * bo + 0.08 * ba
+        )
+
     def _collect_pattern_counts(self, current_payload: dict[str, Any] | None = None) -> dict[str, int]:
         """Zaehlt bereits bekannte Anchor-Muster aus oeffentlichen DNA-Bundles."""
         counts: dict[str, int] = {}
