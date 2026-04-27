@@ -478,7 +478,7 @@ class AutoPropagator:
             return max(self._known_tokens.values(),
                        key=lambda t: float(t.get("fitness_score", 0.0)))
 
-    def get_tokens_for_gossip(self, limit: int = 8) -> List[Dict[str, Any]]:
+    def get_tokens_for_gossip(self, limit: int = 256) -> List[Dict[str, Any]]:
         """Gibt bis zu limit bekannte AlgoTokens für Gossip weiter.
 
         Reihenfolge:
