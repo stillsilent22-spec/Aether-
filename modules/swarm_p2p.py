@@ -1283,7 +1283,7 @@ class P2PLayer:
             _token = _AP.instance().get_best_token_for_gossip()
             if _token:
                 msg["algo_token"] = _token
-            _tokens = _AP.instance().get_tokens_for_gossip(limit=3)
+            _tokens = _AP.instance().get_tokens_for_gossip(limit=20)
             if _tokens:
                 msg["algo_tokens"] = _tokens
         except Exception as _ae:

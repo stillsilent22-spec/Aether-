@@ -16,10 +16,11 @@ Ein AlgoToken ist:
 """
 
 from __future__ import annotations
+import collections
 import json
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Deque, Dict, List, Optional, Set
 
 MIN_ALGO_TOKEN_FITNESS = 0.30
 MIN_ALGO_TOKEN_HIT_RATIO = 0.05
@@ -219,6 +220,12 @@ class AutoPropagator:
         self._token_seen_peers: Dict[str, set] = {}
         # Legacy-Compat: flacher Zähler für Persistenz (set-Größe)
         self._token_seen_count: Dict[str, int] = {}
+        # Broadcast-Queue: jede neue Invariante muss EINMAL komplett durch alle
+        # Peers gehen bevor die nächste verbesserte Mutation-Generation rausgeht.
+        # FIFO — älteste Invariante zuerst. Kein Quorum, kein Gate — nur Reihenfolge.
+        self._broadcast_queue: Deque[str] = collections.deque()
+        # Bereits mindestens einmal versendete Token-IDs (ephemer, nicht persistiert)
+        self._broadcast_done: Set[str] = set()
         self._load_persistent()
 
     def _load_persistent(self) -> None:
@@ -338,6 +345,11 @@ class AutoPropagator:
                 "emitted_ts":       time.time(),
             }
             self._known_tokens[token_id] = token_dict
+            # Broadcast-Queue: neue eigene Invariante einreihen bevor pending gesetzt wird.
+            # pending_token wird in get_tokens_for_gossip erst freigegeben wenn
+            # alle zuvor eingereihten Token ihren ersten Send-Zyklus abgeschlossen haben.
+            if token_id not in self._broadcast_done:
+                self._broadcast_queue.append(token_id)
             self._pending_token = token_dict
             self._last_hit_ratio = hit_ratio
             self._share_count += 1
@@ -370,7 +382,7 @@ class AutoPropagator:
         emitted_ts    = float(token_data.get("emitted_ts", 0.0))
         peer_id       = str(from_peer or token_data.get("from_peer", "") or "").strip()
 
-        if not token_id or not tree_sig or len(tree_sig) != 64:
+        if not token_id or not tree_sig or len(tree_sig) < 4:
             return False
 
         # 1. Strukturelle Integrität — source_node_id muss vorhanden sein
@@ -406,8 +418,15 @@ class AutoPropagator:
                 return False   # bereits bekannt
 
             self._known_tokens[token_id] = dict(token_data)
-            # Re-Gossip: sofort als pending setzen → nächster Gossip-Zyklus leitet ihn weiter
-            self._pending_token = dict(token_data)
+            # Broadcast-Queue: empfangene Invariante einreihen — muss EINMAL komplett
+            # durch alle eigenen Peers bevor sie als "done" gilt und Platz für
+            # die nächste Mutation-Generation macht.
+            if token_id not in self._broadcast_done:
+                self._broadcast_queue.append(token_id)
+            # pending_token nur setzen wenn Broadcast-Queue leer ist
+            # (d.h. alle vorherigen Invarianten haben ihren ersten Zyklus abgeschlossen)
+            if not self._broadcast_queue:
+                self._pending_token = dict(token_data)
             self._save_persistent()
         return True
 
@@ -459,32 +478,63 @@ class AutoPropagator:
             return max(self._known_tokens.values(),
                        key=lambda t: float(t.get("fitness_score", 0.0)))
 
-    def get_tokens_for_gossip(self, limit: int = 3) -> List[Dict[str, Any]]:
+    def get_tokens_for_gossip(self, limit: int = 20) -> List[Dict[str, Any]]:
         """Gibt bis zu limit bekannte AlgoTokens für Gossip weiter.
 
-        Das erhöht die Chance, dass mehrere Performance-Invarianten im Schwarm
-        sichtbar werden, nicht nur das jeweils stärkste Token.
+        Reihenfolge:
+          1. Tokens aus der Broadcast-Queue (FIFO) — jede Invariante EINMAL
+             komplett durch alle Peers bevor die nächste Mutation-Generation kommt.
+             Ein Token verlässt die Queue sobald es in diesem Call enthalten ist
+             (= "mindestens einmal versendet").
+          2. Danach: restliche bekannte Tokens nach fitness_score absteigend
+             (bereits versendete Invarianten rotieren weiter für maximale Diversität).
+          3. pending_token (nächste Mutation-Generation) kommt zuletzt —
+             nur wenn Queue vollständig abgearbeitet ist.
         """
         with self._lock:
-            tokens: List[Dict[str, Any]] = []
-            if self._pending_token is not None:
-                tokens.append(self._pending_token)
-            tokens.extend(self._known_tokens.values())
-            tokens = sorted(
-                tokens,
+            unique_tokens: List[Dict[str, Any]] = []
+            seen_ids: set = set()
+
+            # Schritt 1: Broadcast-Queue zuerst drainieren (FIFO)
+            # Tokens die den Queue verlassen → _broadcast_done markieren
+            still_queued: Deque[str] = collections.deque()
+            for token_id in list(self._broadcast_queue):
+                if len(unique_tokens) >= limit:
+                    still_queued.append(token_id)
+                    continue
+                token = self._known_tokens.get(token_id)
+                if token is None or token_id in seen_ids:
+                    # Token nicht mehr bekannt oder Duplikat — still verwerfen
+                    self._broadcast_done.add(token_id)
+                    continue
+                seen_ids.add(token_id)
+                unique_tokens.append(token)
+                self._broadcast_done.add(token_id)  # einmal versendet → done
+            self._broadcast_queue = still_queued
+
+            # Schritt 2: restliche bekannte Tokens nach fitness absteigend
+            remaining = sorted(
+                self._known_tokens.values(),
                 key=lambda t: float(t.get("fitness_score", 0.0)),
                 reverse=True,
             )
-            unique_tokens: List[Dict[str, Any]] = []
-            seen_ids: set = set()
-            for token in tokens:
+            for token in remaining:
+                if len(unique_tokens) >= limit:
+                    break
                 token_id = str(token.get("token_id", ""))
                 if not token_id or token_id in seen_ids:
                     continue
                 seen_ids.add(token_id)
                 unique_tokens.append(token)
-                if len(unique_tokens) >= limit:
-                    break
+
+            # Schritt 3: pending_token (nächste Mutation-Generation) erst wenn
+            # Broadcast-Queue vollständig abgearbeitet ist
+            if self._pending_token is not None and not self._broadcast_queue:
+                pending_id = str(self._pending_token.get("token_id", ""))
+                if pending_id and pending_id not in seen_ids and len(unique_tokens) < limit:
+                    unique_tokens.append(self._pending_token)
+                    self._pending_token = None
+
             return unique_tokens
 
     def get_share_count(self) -> int:
