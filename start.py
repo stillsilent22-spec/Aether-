@@ -623,6 +623,32 @@ def main() -> int:
 	except Exception as exc:
 		print(f"[START] LAN-Beacon nicht verfuegbar: {exc}")
 
+	# AE-Evolutions-Orchestrator als permanenter Hintergrund-Thread
+	try:
+		from modules.evolution_orchestrator import start as _orch_start, is_enabled as _orch_enabled
+		_orch_start()
+		print(f"[START] AE-Evolutions-Orchestrator gestartet (aktiv={_orch_enabled()}).")
+	except Exception as exc:
+		print(f"[START] AE-Orchestrator nicht verfuegbar: {exc}")
+
+	# Autostart bei Windows-Boot registrieren wenn in Einstellungen aktiviert
+	try:
+		settings_now = _read_json(ROOT / "data" / "settings.json", {})
+		if bool(settings_now.get("ae_autostart", True)):
+			from modules.autostart import register as _autostart_register, is_registered as _autostart_check
+			if not _autostart_check():
+				ok = _autostart_register()
+				print(f"[START] Autostart registriert: {ok}")
+			else:
+				print("[START] Autostart bereits registriert.")
+		else:
+			from modules.autostart import unregister as _autostart_remove, is_registered as _autostart_check
+			if _autostart_check():
+				_autostart_remove()
+				print("[START] Autostart entfernt (deaktiviert in Einstellungen).")
+	except Exception as exc:
+		print(f"[START] Autostart-Verwaltung nicht verfuegbar: {exc}")
+
 	if _IS_ANDROID:
 		print("[START] Android mode erkannt. Starte android_daemon (ohne Desktop-UI-Stack).")
 		try:
@@ -655,9 +681,14 @@ def main() -> int:
 	try:
 		import time
 		while True:
-			time.sleep(10)
+			time.sleep(30)
 	except KeyboardInterrupt:
 		print("[START] Aether gestoppt.")
+		try:
+			from modules.evolution_orchestrator import stop as _orch_stop
+			_orch_stop()
+		except Exception:
+			pass
 	return 0
 
 
