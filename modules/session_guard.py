@@ -48,8 +48,35 @@ class SessionGuardError(RuntimeError):
         """Raised when the local runtime is not cryptographically self-consistent."""
 
 
+def _normalize_pubkey_b64(b64_str: str) -> str:
+    """Normalize a public key b64 string to raw 32-byte Ed25519 format.
+
+    Older code stored the SubjectPublicKeyInfo DER (44 bytes) base64-encoded.
+    Current code uses raw 32-byte base64. Accept both so stored records created
+    by either code version compare equal to the live-derived value.
+    """
+    try:
+        decoded = base64.b64decode(b64_str)
+        if len(decoded) == 32:
+            return b64_str
+        from cryptography.hazmat.primitives.serialization import (
+            load_der_public_key,
+            Encoding,
+            PublicFormat,
+        )
+        pub = load_der_public_key(decoded)
+        raw = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
+        return base64.b64encode(raw).decode("ascii")
+    except Exception:
+        return b64_str
+
+
 def _derive_node_id_from_key(key_path: Path) -> str:
-    """Leitet die node_id aus dem oeffentlichen Schluessel ab."""
+    """Leitet die node_id aus dem oeffentlichen Schluessel ab.
+
+    Formel: SHA-256(raw_pub_bytes).hexdigest()[:16] — identisch mit solo_bootstrap.py.
+    """
+    import hashlib
     try:
         from cryptography.hazmat.primitives.serialization import load_pem_private_key
         from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
@@ -57,7 +84,7 @@ def _derive_node_id_from_key(key_path: Path) -> str:
         private_key = load_pem_private_key(pem, password=None)
         pub = private_key.public_key()
         pub_bytes = pub.public_bytes(Encoding.Raw, PublicFormat.Raw)
-        return pub_bytes.hex()[:16]
+        return hashlib.sha256(pub_bytes).hexdigest()[:16]
     except Exception:
         return ""
 
@@ -223,7 +250,7 @@ def validate_registered_runtime(root: Path | None = None) -> None:
 
     if str(user_record.get("node_id", "") or "").strip() and str(user_record.get("node_id", "") or "").strip().lower() != node_id.lower():
         raise SessionGuardError("Lokaler Account ist an eine andere Node-ID gebunden.")
-    _stored_key = str(user_record.get("public_key_b64", "") or "").strip()
+    _stored_key = _normalize_pubkey_b64(str(user_record.get("public_key_b64", "") or "").strip())
     if _stored_key and not hmac.compare_digest(_stored_key, public_key_b64):
         raise SessionGuardError("Lokaler Account passt nicht zum aktuellen Public-Key.")
     _stored_fp = str(user_record.get("device_fingerprint", "") or "").strip()
