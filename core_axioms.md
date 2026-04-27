@@ -33,6 +33,19 @@ The cascade order is fixed. Metric formulas are deterministic. No stochastic ele
 exists in the core pipeline. The Rust shell is the sole authorized trigger for the
 full pipeline. Direct Python invocation bypasses integrity guarantees.
 
+The pre-swarm C89 bootstrap chain is equally deterministic:
+- `vault_probe.exe` — fixed 12-metric cascade, identical output for identical vault contents
+- `aether_file_converter.exe` — deterministic AEF serialization (fixed field order, CRC16/XMODEM)
+- `aether_node_bootstrap.exe` — reads verdict, creates identity, writes status
+
+Cryptographic operations (SHA-256 anchor hashing, gossip encryption) are only active
+after the node has joined the swarm. Before swarm join, integrity is CRC16/XMODEM only.
+
+**DE-Ergänzung:** Die C89-Pre-Fallback-Kette (`vault_probe.exe`, `aether_file_converter.exe`,
+`aether_node_bootstrap.exe`) ist ebenso deterministisch. Kryptografische Operationen
+(SHA-256-Anker-Hashing, Gossip-Verschlüsselung) sind ausschließlich nach Schwarm-Beitritt
+aktiv. Davor gilt: Integrität via CRC16/XMODEM, kein Crypto.
+
 ---
 
 ## Axiom 4: Local Execution — Privacy by Architecture
@@ -79,6 +92,18 @@ mathematically identical regardless of hardware tier. Tier constraints apply onl
 
 Phi(X) produced on a Win 9x machine equals Phi(X) produced on a modern workstation
 for the same input. This is not an approximation. It is the specification.
+
+For nodes on Windows 95/98/XP (no Python, no Rust), the pre-fallback C89 chain
+provides the full structural measurement and identity bootstrap path before Linux
+is installed. The `.aef` export format preserves all 12 metrics and vault data so
+that the node can participate fully in the swarm immediately after the Linux fallback.
+Hardware exclusion at the software layer is not a physical constraint.
+
+**DE-Ergänzung:** Für Geräte unter Windows 95/98/XP (kein Python, kein Rust) liefert
+die C89-Fallback-Kette den vollständigen Strukturmess- und Identitäts-Bootstrap-Pfad
+vor der Linux-Installation. Das `.aef`-Exportformat sichert alle 12 Metriken und
+Vault-Daten, sodass der Knoten nach dem Linux-Fallback sofort am Schwarm teilnehmen
+kann. Hardware-Ausschluss auf Software-Ebene ist keine physikalische Notwendigkeit.
 
 Hardware-tier progression is automatic, monotone, and requires no reinstall.
 

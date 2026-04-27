@@ -74,6 +74,34 @@ def _guard_genesis(node_info: dict) -> None:
         )
 
 
+def _maybe_install_service(status: dict) -> None:
+    """Install the system service if the user confirmed in the C bootstrap dialog.
+
+    Reads install_service + service_asked from bootstrap_status.json (written by
+    aether_node_bootstrap.c).  Only acts when both flags are set and the service
+    is not yet active.  Never prompts the user again — that already happened in C.
+    """
+    if not int(status.get("service_asked", 0)):
+        return
+    if not int(status.get("install_service", 0)):
+        print("bootstrap: service install deferred by user (dialog choice)", flush=True)
+        return
+    try:
+        from modules.service_installer import install, status as svc_status
+        current = svc_status()
+        if current.get("active") or current.get("enabled"):
+            print("bootstrap: system service already active — skipping install", flush=True)
+            return
+        print("bootstrap: installing system service (confirmed in setup dialog)…", flush=True)
+        ok = install(dry_run=False)
+        if ok:
+            print("bootstrap: system service installed successfully", flush=True)
+        else:
+            print("bootstrap: service install returned False — check permissions", flush=True)
+    except Exception as exc:
+        print(f"bootstrap: service_installer unavailable ({exc})", flush=True)
+
+
 def _launch_full_mode(iced_bin: str) -> None:
     """Hand control to the Rust shell (replaces current process on POSIX)."""
     print(f"bootstrap: full mode — launching {iced_bin}", flush=True)
@@ -117,6 +145,7 @@ def main() -> None:
 
     node_info = _ensure_node_identity()
     _guard_genesis(node_info)
+    _maybe_install_service(status)
 
     if mode == "full" and capability == 1:
         iced_bin = _find_iced_binary()

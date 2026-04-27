@@ -17,8 +17,11 @@ Vergleich und Peer-Vertrauensbewertung.
 
 Jeder Byte-Stream besitzt eine strukturelle Signatur unabhängig von seinem Inhalt.
 Aether extrahiert diese Signatur über einen deterministischen 10-Metrik-Durchlauf,
-speichert sie als Ausdrucksbaum in einem lokalen Vault und teilt nur den 64-Byte
-SHA-256-Hash von Strukturankern mit Peers — nach Bestätigung durch mindestens 3 unabhängige Knoten.
+speichert sie als Ausdrucksbaum in einem lokalen Vault und teilt nur den
+SHA-256-Hash von Strukturankern mit Peers (nach Schwarm-Beitritt, nach Bestätigung
+durch mindestens 3 unabhängige Knoten).
+Vor dem Schwarm-Beitritt (C89-Pre-Fallback-Phase) werden keinerlei kryptografische
+Operationen durchgeführt — lokale Dateiintegrität nutzt CRC16/XMODEM.
 Algo-Token-Sharing hingegen ist ein direkter Peer-Austausch: empfangene Tokens werden
 lokal auf Struktur-Integrität, `source_node_id` und Fitness-Schwelle geprüft.
 Rohdaten, Session-Keys und Deltas verlassen das Gerät niemals.
@@ -103,7 +106,7 @@ Dies ist auf Code-Ebene durchgesetzt (`privacy_registry.py`, `privacy_observer.p
 ### Frame-Delta-Codec
 ```
 XOR_Δ_N = Frame_N ⊕ Frame_{N-1}
-→ 512-Byte-Chunks → SHA-256-Vault-Lookup
+→ 512-Byte-Chunks → Strukturanker-Lookup (SHA-256, nach Schwarm-Beitritt)
   Vault-Treffer:  64-Byte-DNA-Signatur (8× Größenreduktion)
   Vault-Fehler:   GP-Evolution findet kompakten Ausdrucksbaum → gespeichert
 ```
@@ -195,7 +198,7 @@ Keine manuelle Konfiguration — der Tier emergiert.
 Erkannte Plattformen: Windows 9x/ME/2000/XP/Vista/7/8/10/11,
 Linux (Kernel < 4: LanP2P max; Kernel ≥ 4: bis FullDht),
 Raspberry Pi 1/Zero (LanBeacon) bis Pi 4/5 (YggdrasilP2P),
-Android (natives APK, API 21+, kein Python erforderlich).
+Android (geplant — Phase 10 Vision).
 
 Ein Tier-Watchdog prüft alle 90 s ob Ressourcen frei geworden sind.
 Bei Tier-Upgrade startet P2P automatisch — kein Neustart nötig.
@@ -203,13 +206,37 @@ Nach 10 erfolglosen Checks beendet der Watchdog sich; das Gerät bleibt auf Stea
 
 ---
 
+## C89 Pre-Fallback-Pipeline (Legacy Win 9x/XP)
+
+Knoten auf Windows 95/98/ME/2000/XP — ohne Python und Rust — nutzen eine
+reine C89-Bootstrap-Kette (MinGW / MSVC 6 kompatibel, keine externen
+Abhängigkeiten):
+
+```
+vault_probe.exe            ← 12 Strukturmetriken + Vault-Check, entscheidet Action
+    ↓ action = "linux_fallback"
+aether_file_converter.exe  ← Vault-.bin-Dateien → data/vault/export/aether_vault.aef
+    ↓ .aef = Aether Exchange Format (AETH + Metriken + Vault-Daten + CRC16)
+aether_node_bootstrap.exe  ← Ed25519-Knotenidentität (AEK), Autostart-Frage
+    ↓ Benutzer installiert empfohlene Linux-Distro (antiX / MX Linux / Debian)
+Linux startet  →  Aether-Autostart  →  Python + Rust verfügbar
+    ↓ liest .aef  →  sofortige Schwarm-Teilnahme
+legacy_bootstrap.py        ← minimales Python 2.4+ Einstiegspunkt nach Fallback
+```
+
+Kein SHA, keine Verschlüsselung, keine externen Bibliotheken in der Pre-Fallback-Kette.
+Verschlüsselung (Gossip-Key-Schicht) wird erst nach Schwarm-Beitritt aktiviert.
+
+---
+
 ## Boot-Pfade — faire Integration für ältere Hardware
 
 | Pfad | Einstiegspunkt | Ziel |
 |------|---------------|------|
+| C89-Fallback-Kette | `vault_probe.exe` → `aether_file_converter.exe` → `aether_node_bootstrap.exe` | Win 9x/XP, vor Linux-Installation |
 | Vollständiger Stack | `start.py` | Modernes Windows/Linux/macOS |
 | Headless-Daemon | `daemon_headless.py` | Win 2000/XP, schwaches Vista/7 32-bit, Server |
-| Legacy lokal | `legacy_bootstrap.py` | Win 9x-Klasse, Python < 3.7 |
+| Legacy lokal | `legacy_bootstrap.py` | Post-Fallback: Python 2.4+, minimale Deps |
 
 `start.py` schreibt `data/interbus/startup_route.json` bevor ein Runtime-Pfad
 gewählt wird. Der Capability Score (`progression_track`, `progression_mode`) spiegelt

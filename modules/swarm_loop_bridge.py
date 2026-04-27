@@ -62,6 +62,19 @@ def submit_cascade_result(
     if fitness > 0.0 and tree_sig:
         try:
             from modules.algo_share import AutoPropagator
+            # source_node_id aus node.json lesen — ohne ihn werden keine Tokens erzeugt
+            _source_node_id = str(cascade_result.get("source_node_id", "") or "").strip()
+            if not _source_node_id:
+                try:
+                    import json as _json
+                    from pathlib import Path as _Path
+                    _njson = _Path(__file__).resolve().parents[1] / "data" / "swarm" / "node.json"
+                    if _njson.is_file():
+                        _source_node_id = str(
+                            _json.loads(_njson.read_text(encoding="utf-8")).get("node_id", "") or ""
+                        ).strip()
+                except Exception:
+                    pass
             AutoPropagator.instance().emit_if_improved({
                 "hit_ratio":         float(cascade_result.get("hit_ratio", fitness)),
                 "fitness_score":     fitness,
@@ -70,6 +83,7 @@ def submit_cascade_result(
                 "domain_hint":       domain,
                 "node_count":        int(cascade_result.get("node_count", 0)),
                 "depth":             int(cascade_result.get("depth", 0)),
+                "source_node_id":    _source_node_id,
             })
         except Exception as exc:
             logger.debug(f"[swarm_loop_bridge] algo_share: {exc}")

@@ -66,6 +66,27 @@ data/aelab_vault/*.dna
 data/aelab_vault/vault_analysis.json
 gcm-diagnose.log
 
+# Root-level build/test output artifacts (should never be committed)
+audit_out.txt
+cargo_out.txt
+check_err.txt
+check_out.txt
+check_out2.txt
+check_result.txt
+out.txt
+e.txt
+co3.txt
+co4.txt
+co5.txt
+commit_msg.txt
+test_out.txt
+test_out_new.txt
+test_output.txt
+test_results.txt
+pytest_out.txt
+aether_audit_log.jsonl
+*.spec
+
 !data/assistant_corpus/
 !data/assistant_corpus/README.txt
 !data/assistant_corpus/de/.gitkeep

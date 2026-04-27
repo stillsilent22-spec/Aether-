@@ -25,13 +25,15 @@ accumulation yields sub-linear scaling: doubling swarm size reduces per-node cos
 rather than proportionately increasing it.
 
 **DE:**  
-Wir prasentieren Aether, ein Framework fur verteilte strukturelle Invarianzanalyse
+Wir präsentieren Aether, ein Framework für verteilte strukturelle Invarianzanalyse
 und datenschutzerhaltende Datenkompression. Die zentrale Beitragsleistung ist eine
 Formalisierung der Entropiekonvergenz in verteilten Vault-Systemen: Mit wachsendem
-Vault-Bestand konvergieren die Ubertragungskosten pro Chunk gegen das
-Shannon-Entropielimit, ohne dass Rohdaten zwischen Knoten ubertragen werden. Das
-System arbeitet auf beliebigen Byte-Stromen -- unabhangig von Signaltrager oder
-Domane.
+Vault-Bestand konvergieren die Übertragungskosten pro Chunk gegen das
+Shannon-Entropielimit, ohne dass Rohdaten zwischen Knoten übertragen werden. Das
+System arbeitet auf beliebigen Byte-Strömen — unabhängig von Signalträger oder
+Domäne. Auf Geräten ohne Python/Rust (Windows 95/98/XP) übernimmt eine C89-Bootstrap-Kette
+die Strukturmessung und Datenmigration vor dem Linux-Fallback; kryptografische
+Operationen werden ausschließlich nach Schwarm-Beitritt aktiviert.
 
 ---
 

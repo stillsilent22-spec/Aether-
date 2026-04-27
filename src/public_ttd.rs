@@ -4,7 +4,6 @@ use chrono::Utc;
 use reqwest::header::CONTENT_TYPE;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -853,10 +852,6 @@ fn share_channel_for_artifact(artifact_class: &str) -> String {
         "public_field_observation" => "passive_observation".to_owned(),
         _ => "consent_required".to_owned(),
     }
-}
-
-fn quorum_threshold_for_role(_role: &str) -> u32 {
-    0
 }
 
 fn canonical_metrics(metrics: PublicTtdMetrics) -> PublicTtdMetrics {

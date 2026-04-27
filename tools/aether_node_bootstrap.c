@@ -35,97 +35,35 @@ static void r_mkdir(const char *p){mkdir(p,0700);}
 
 #include "ed25519_ref10.h"
 
-/* ── SHA-256 (for AEK checksum) ─────────────────────────────────────────── */
-
-#define S32(x,n)(((x)>>(n))|((x)<<(32-(n))))
-#define H256_CH(e,f,g) (((e)&(f))^(~(e)&(g)))
-#define H256_MAJ(a,b,c)(((a)&(b))^((a)&(c))^((b)&(c)))
-#define H256_S0(a)(S32(a,2)^S32(a,13)^S32(a,22))
-#define H256_S1(e)(S32(e,6)^S32(e,11)^S32(e,25))
-#define H256_s0(w)(S32(w,7)^S32(w,18)^((w)>>3))
-#define H256_s1(w)(S32(w,17)^S32(w,19)^((w)>>10))
-
-static const r10u32 K256[64]={
-    0x428a2f98UL,0x71374491UL,0xb5c0fbcfUL,0xe9b5dba5UL,
-    0x3956c25bUL,0x59f111f1UL,0x923f82a4UL,0xab1c5ed5UL,
-    0xd807aa98UL,0x12835b01UL,0x243185beUL,0x550c7dc3UL,
-    0x72be5d74UL,0x80deb1feUL,0x9bdc06a7UL,0xc19bf174UL,
-    0xe49b69c1UL,0xefbe4786UL,0x0fc19dc6UL,0x240ca1ccUL,
-    0x2de92c6fUL,0x4a7484aaUL,0x5cb0a9dcUL,0x76f988daUL,
-    0x983e5152UL,0xa831c66dUL,0xb00327c8UL,0xbf597fc7UL,
-    0xc6e00bf3UL,0xd5a79147UL,0x06ca6351UL,0x14292967UL,
-    0x27b70a85UL,0x2e1b2138UL,0x4d2c6dfcUL,0x53380d13UL,
-    0x650a7354UL,0x766a0abbUL,0x81c2c92eUL,0x92722c85UL,
-    0xa2bfe8a1UL,0xa81a664bUL,0xc24b8b70UL,0xc76c51a3UL,
-    0xd192e819UL,0xd6990624UL,0xf40e3585UL,0x106aa070UL,
-    0x19a4c116UL,0x1e376c08UL,0x2748774cUL,0x34b0bcb5UL,
-    0x391c0cb3UL,0x4ed8aa4aUL,0x5b9cca4fUL,0x682e6ff3UL,
-    0x748f82eeUL,0x78a5636fUL,0x84c87814UL,0x8cc70208UL,
-    0x90beffcaUL,0xa4506cebUL,0xbef9a3f7UL,0xc67178f2UL
-};
-
-typedef struct{r10u32 st[8];r10u32 bc;unsigned char buf[64];r10u32 bl;} sha256_ctx;
-
-static void sha256_compress(sha256_ctx *c, const unsigned char *blk)
+/* ── CRC16/XMODEM (replaces SHA-256 for AEK checksum) ───────────────────── */
+/*
+ * Polynomial: 0x1021  Init: 0x0000  No reflection, no XorOut.
+ * Sufficient for a tamper-detection footer on a local identity file.
+ * Encryption (including SHA) is only relevant after the node joins the swarm.
+ */
+static r10u32 aek_crc16_update(r10u32 crc, unsigned char byte_val)
 {
-    r10u32 w[64],a,b,cv,d,e,fv,g,h,t1,t2;
     int i;
-    for(i=0;i<16;i++){int j=i*4;w[i]=((r10u32)blk[j]<<24)|((r10u32)blk[j+1]<<16)|((r10u32)blk[j+2]<<8)|(r10u32)blk[j+3];}
-    for(i=16;i<64;i++) w[i]=H256_s1(w[i-2])+w[i-7]+H256_s0(w[i-15])+w[i-16];
-    a=c->st[0];b=c->st[1];cv=c->st[2];d=c->st[3];
-    e=c->st[4];fv=c->st[5];g=c->st[6];h=c->st[7];
-    for(i=0;i<64;i++){
-        t1=h+H256_S1(e)+H256_CH(e,fv,g)+K256[i]+w[i];
-        t2=H256_S0(a)+H256_MAJ(a,b,cv);
-        h=g;g=fv;fv=e;e=d+t1;d=cv;cv=b;b=a;a=t1+t2;
+    crc ^= (r10u32)((r10u32)byte_val << 8);
+    for (i = 0; i < 8; i++) {
+        if (crc & 0x8000UL) {
+            crc = (r10u32)((crc << 1) ^ 0x1021UL);
+        } else {
+            crc = (r10u32)(crc << 1);
+        }
+        crc &= 0xFFFFUL;
     }
-    c->st[0]+=a;c->st[1]+=b;c->st[2]+=cv;c->st[3]+=d;
-    c->st[4]+=e;c->st[5]+=fv;c->st[6]+=g;c->st[7]+=h;
+    return crc;
 }
 
-static void sha256_init(sha256_ctx *c)
+static r10u32 aek_crc16(const unsigned char *data, r10u32 len)
 {
-    c->st[0]=0x6a09e667UL;c->st[1]=0xbb67ae85UL;
-    c->st[2]=0x3c6ef372UL;c->st[3]=0xa54ff53aUL;
-    c->st[4]=0x510e527fUL;c->st[5]=0x9b05688cUL;
-    c->st[6]=0x1f83d9abUL;c->st[7]=0x5be0cd19UL;
-    c->bc=0;c->bl=0;
-}
-
-static void sha256_update(sha256_ctx *c, const unsigned char *in, r10u32 len)
-{
-    r10u32 left=(r10u32)(64-c->bl);
-    c->bc+=len*8;
-    if(len>=left){
-        memcpy(c->buf+c->bl,in,left);
-        sha256_compress(c,c->buf);
-        in+=left;len-=left;c->bl=0;
-        while(len>=64){sha256_compress(c,in);in+=64;len-=64;}
+    r10u32 crc = 0x0000UL;
+    r10u32 i;
+    for (i = 0; i < len; i++) {
+        crc = aek_crc16_update(crc, data[i]);
     }
-    memcpy(c->buf+c->bl,in,len);c->bl+=len;
-}
-
-static void sha256_final(sha256_ctx *c, unsigned char out[32])
-{
-    unsigned char pad[64];
-    r10u32 pl;
-    int i;
-    memset(pad,0,64);pad[0]=0x80;
-    pl=(c->bl<56)?(r10u32)(56-c->bl):(r10u32)(120-c->bl);
-    sha256_update(c,pad,pl);
-    pad[0]=pad[1]=pad[2]=pad[3]=0;
-    pad[4]=(unsigned char)(c->bc>>24);pad[5]=(unsigned char)(c->bc>>16);
-    pad[6]=(unsigned char)(c->bc>>8); pad[7]=(unsigned char)(c->bc);
-    sha256_update(c,pad,8);
-    for(i=0;i<8;i++){out[i*4]=(unsigned char)(c->st[i]>>24);out[i*4+1]=(unsigned char)(c->st[i]>>16);out[i*4+2]=(unsigned char)(c->st[i]>>8);out[i*4+3]=(unsigned char)(c->st[i]);}
-}
-
-static void sha256_of(unsigned char out[32], const unsigned char *in, r10u32 len)
-{
-    sha256_ctx c;
-    sha256_init(&c);
-    sha256_update(&c,in,len);
-    sha256_final(&c,out);
+    return crc;
 }
 
 /* ── CSPRNG ──────────────────────────────────────────────────────────────── */
@@ -249,18 +187,19 @@ static int capability_test(void)
  *   [8..39]  Ed25519 seed (32 bytes, random)
  *   [40..71] Ed25519 public key (32 bytes)
  *   [72..79] creation timestamp (uint64 LE, seconds since epoch)
- *   [80..95] SHA-256(bytes 0..79)[0..15]
+ *   [80..81] CRC16/XMODEM(bytes 0..79)  -- integrity footer, no SHA
+ *   [82..95] zero-padded (reserved)
  */
 static int write_aek_file(const char *path)
 {
-    unsigned char aek[96];
-    unsigned char seed[32];
-    unsigned char pk[32];
-    unsigned char sk[64];
-    unsigned char cksum[32];
+    unsigned char      aek[96];
+    unsigned char      seed[32];
+    unsigned char      pk[32];
+    unsigned char      sk[64];
+    r10u32             crc;
     unsigned long long ts;
-    FILE *f;
-    int i;
+    FILE              *f;
+    int                i;
 
     if(csprng_fill(seed,32)!=0) return -1;
 
@@ -275,8 +214,11 @@ static int write_aek_file(const char *path)
     ts=(unsigned long long)time(NULL);
     for(i=0;i<8;i++) aek[72+i]=(unsigned char)(ts>>(i*8));
 
-    sha256_of(cksum,aek,80);
-    memcpy(aek+80,cksum,16);
+    /* CRC16/XMODEM over bytes 0..79 -- replaces SHA-256 checksum */
+    crc = aek_crc16(aek, 80u);
+    aek[80] = (unsigned char)( crc        & 0xFFu);
+    aek[81] = (unsigned char)((crc >> 8u) & 0xFFu);
+    /* bytes [82..95] remain zero (reserved) */
 
     f=fopen(path,"wb");
     if(!f) return -1;
@@ -311,9 +253,82 @@ static int create_aek_if_needed(void)
 
 /* ── Bootstrap status writer ─────────────────────────────────────────────── */
 
+/* Read a single integer field from a minimal JSON file.
+ * Returns the numeric value, or 0 if not found / parse error.
+ * Looks for the pattern: "field": <int>
+ */
+static int read_json_int_field(const char *path, const char *field)
+{
+    FILE *f;
+    char buf[2048];
+    size_t n;
+    char *p;
+    memset(buf, 0, sizeof(buf));
+    f = fopen(path, "r");
+    if (!f) return 0;
+    n = fread(buf, 1, sizeof(buf)-1, f);
+    fclose(f);
+    buf[n] = '\0';
+    p = strstr(buf, field);
+    if (!p) return 0;
+    p = strchr(p, ':');
+    if (!p) return 0;
+    p++;
+    while (*p == ' ' || *p == '\t') p++;
+    return atoi(p);
+}
+
+/* ── Service install prompt ───────────────────────────────────────────────── */
+/* Shows a native dialog (Windows) or terminal prompt (POSIX).
+ * Returns 1 if the user confirmed, 0 if deferred.
+ * linux_fallback_mode=1: message asks about post-Linux autostart.
+ * linux_fallback_mode=0: message asks about Windows service install.
+ * Only called once: aether_node_bootstrap writes "service_asked":1
+ * afterwards so subsequent runs skip the dialog.
+ */
+static int ask_install_service_dialog(int linux_fallback_mode)
+{
+#ifdef _WIN32
+    int res;
+    const char *msg = linux_fallback_mode
+        ? "Nach der Linux-Installation: Aether automatisch beim Start starten?\n\n"
+          "Das Autostart-Skript wird in die neue Linux-Partition eingetragen.\n"
+          "Du kannst es jederzeit im SwarmOps-Tab deaktivieren.\n\n"
+          "Ja = automatisch starten     Nein = manuell"
+        : "Aether als Windows-Dienst installieren?\n\n"
+          "Der Dienst startet automatisch bei jedem Systemstart.\n"
+          "Du kannst ihn jederzeit im SwarmOps-Tab deaktivieren.\n\n"
+          "Ja = jetzt installieren     Nein = spaeter";
+    res = MessageBoxA(
+        NULL,
+        msg,
+        "Aether Setup",
+        MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2
+    );
+    return (res == IDYES) ? 1 : 0;
+#else
+    char input[8];
+    int c;
+    if (linux_fallback_mode) {
+        printf("\nNach dem Linux-Neustart: Aether automatisch starten? [j/N]: ");
+    } else {
+        printf("\nAether als Systemdienst installieren? [j/N]: ");
+    }
+    fflush(stdout);
+    memset(input, 0, sizeof(input));
+    if (fgets(input, sizeof(input), stdin) == NULL) return 0;
+    if (strchr(input, '\n') == NULL) {
+        while ((c = getchar()) != '\n' && c != EOF) {}
+    }
+    return (input[0] == 'j' || input[0] == 'J') ? 1 : 0;
+#endif
+}
+
 static void write_bootstrap_status(const char *path,
                                    const char *mode,
-                                   int capability)
+                                   int capability,
+                                   int install_service,
+                                   int service_asked)
 {
     char dir[512];
     FILE *f;
@@ -326,8 +341,15 @@ static void write_bootstrap_status(const char *path,
 
     f=fopen(path,"w");
     if(!f) return;
-    fprintf(f,"{\n  \"mode\": \"%s\",\n  \"capability\": %d,\n  \"ts\": %ld\n}\n",
-            mode, capability, (long)time(NULL));
+    fprintf(f,
+        "{\n"
+        "  \"mode\": \"%s\",\n"
+        "  \"capability\": %d,\n"
+        "  \"install_service\": %d,\n"
+        "  \"service_asked\": %d,\n"
+        "  \"ts\": %ld\n"
+        "}\n",
+        mode, capability, install_service, service_asked, (long)time(NULL));
     fclose(f);
 }
 
@@ -341,6 +363,8 @@ int main(void)
     int capability;
     const char *mode;
     int has_verdict;
+    int install_service;
+    int service_asked;
 
     /* Paths relative to CWD (repo root) */
     strncpy(verdict_path,"data/interbus/vault_probe_verdict.json",sizeof(verdict_path)-1);
@@ -367,7 +391,21 @@ int main(void)
         }
     }
 
-    write_bootstrap_status(status_path, mode, capability);
-    fprintf(stdout,"bootstrap: mode=%s capability=%d\n", mode, capability);
+    /* Service install dialog -- shown exactly once for full or linux_fallback mode.
+     * If the user already answered, preserve the previous answer.
+     * service_asked=1 prevents re-showing the dialog on subsequent starts.
+     */
+    service_asked   = read_json_int_field(status_path, "\"service_asked\"");
+    install_service = read_json_int_field(status_path, "\"install_service\"");
+    if(!service_asked &&
+       (capability==1 || strcmp(mode,"linux_fallback")==0)) {
+        int is_fallback = (strcmp(mode,"linux_fallback")==0) ? 1 : 0;
+        install_service = ask_install_service_dialog(is_fallback);
+        service_asked   = 1;
+    }
+
+    write_bootstrap_status(status_path, mode, capability, install_service, service_asked);
+    fprintf(stdout,"bootstrap: mode=%s capability=%d install_service=%d\n",
+            mode, capability, install_service);
     return 0;
 }

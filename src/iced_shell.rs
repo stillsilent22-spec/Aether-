@@ -4583,7 +4583,7 @@ impl AetherIcedShell {
                     );
                     col = col.push(text(self.ui_text("Passwort ändern", "Change password")).size(20));
                     col = col.push(text(self.ui_text(
-                        "Hier kannst du dein Shell-Anmeldepasswort  ndern. Der neue Hash wird nur lokal gespeichert.",
+                        "Hier kannst du dein Shell-Anmeldepasswort ändern. Der neue Hash wird nur lokal gespeichert.",
                         "Here you can change your shell login password. The new hash is stored locally only.",
                     )).size(13).color(c(TEXT_M())));
                     col = col.push(text(self.ui_text("Aktuelles Passwort", "Current password")).size(12).color(c(TEXT_M())));
@@ -6191,18 +6191,26 @@ On warning: always check Logs and ADE for details.",
                 .color(dim),
                 text(temporal_summary).size(11).color(c(TEXT_M())),
                 if temporal_coincidences.is_empty() {
-                    text(self.ui_text(
+                    let el: Element<'_, Message> = text(self.ui_text(
                         "Sobald mehrere Einträge vorliegen, werden mögliche Trajektorien hier angezeigt.",
                         "Once multiple entries exist, candidate trajectories will appear here.",
                     ))
                     .size(10)
                     .color(dim)
-                    .into()
+                    .into();
+                    el
                 } else {
                     let mut rows = Column::new().spacing(4);
                     for coincidence in temporal_coincidences.iter().take(3) {
                         let a = &temporal_entries[coincidence.entry_a_idx];
                         let b = &temporal_entries[coincidence.entry_b_idx];
+                        // Vertrauensfarbe: beide meta=cyan, beide manual=gelb, gemischt/analysis=dim
+                        let trust_color = match (a.timestamp_origin, b.timestamp_origin) {
+                            ("meta", "meta") => Color::from_rgb8(0x7F, 0xD9, 0xFF),
+                            ("manual", "manual") => Color::from_rgb8(0xFF, 0xC8, 0x6B),
+                            _ => dim,
+                        };
+                        let origin_label = format!("ts: {} / {}", a.timestamp_origin, b.timestamp_origin);
                         rows = rows.push(
                             container(
                                 column![
@@ -6218,6 +6226,9 @@ On warning: always check Logs and ADE for details.",
                                     ))
                                     .size(10)
                                     .color(dim),
+                                    text(origin_label)
+                                        .size(9)
+                                        .color(trust_color),
                                 ]
                                 .spacing(2),
                             )

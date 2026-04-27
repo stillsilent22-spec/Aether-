@@ -57,7 +57,7 @@ Aether operates as a distributed digital research laboratory and compression sys
 
 4. **Algo tokenization:** Recurring delta patterns are assigned algorithmic tokens. AlgoTokens are source-node-bound metadata objects that carry only structural fingerprints and fitness metrics; they contain no raw data, deltas, or session keys. Each receiving peer validates a token locally on structure, `source_node_id`, and fitness score — token acceptance does not require a global quorum.
 
-5. **Swarm broadcast (structural only):** Only SHA-256 hashes of structural anchors are shared, after ≥ 3-node quorum confirmation. Raw data, deltas, and session keys never leave the device.
+5. **Swarm broadcast (structural only):** Only SHA-256 hashes of structural anchors are shared after swarm join, after ≥ 3-node quorum confirmation. Raw data, deltas, and session keys never leave the device. Before swarm join (C89 pre-fallback phase) no cryptographic operations are performed — CRC16/XMODEM is used solely for local file integrity.
 
 6. **Blindspot relay:** When a node cannot reconstruct a structural pattern, it broadcasts a structural class request (not the data). The swarm returns reconstruction hints via epidemic flood relay (max 3 hops). Every node learns every solution. The node that needed help first benefits most.
 
@@ -97,6 +97,38 @@ Aether funktioniert gleichzeitig als dezentrales digitales Forschungslabor und K
 ```
 
 **Determinism rule:** The full analysis pipeline is only triggered via the Rust shell. Direct Python invocation bypasses integrity guarantees and is blocked in production.
+
+---
+
+## Legacy Platform Bootstrap (C89 pre-fallback pipeline)
+
+**EN:**  
+Nodes on Windows 95/98/ME/2000/XP — where Python and Rust are not available — run a pure C89 bootstrap chain compiled without external dependencies (MinGW / MSVC 6 compatible):
+
+```
+vault_probe.exe          ← measures 12 structural metrics, decides action
+    ↓ action = "linux_fallback"
+aether_file_converter.exe ← reads vault .bin files, writes data/vault/export/aether_vault.aef
+    ↓ .aef = Aether Exchange Format (magic AETH + metrics + vault data + CRC16)
+aether_node_bootstrap.exe ← reads verdict, creates Ed25519 node identity (AEK), asks for autostart
+    ↓ user installs recommended Linux distro (antiX / MX Linux / Debian)
+Linux boots → Aether autostart → Python + Rust available
+    ↓ reads .aef file → full swarm participation begins
+legacy_bootstrap.py      ← minimal Python 2.4+ entry point for post-fallback bootstrap
+```
+
+No SHA, no encryption, no external libs in the pre-fallback C chain.  
+The `.aef` format is trivially parseable in Python (`struct.unpack`) and Rust (`byteorder`).  
+Encryption (gossip key layer) is only enabled after the node joins the swarm.
+
+**DE:**  
+Knoten auf Windows 95/98/ME/2000/XP — ohne Python und Rust — nutzen eine reine C89-Bootstrap-Kette (MinGW / MSVC 6 kompatibel, keine externen Abhängigkeiten):
+
+- `vault_probe.exe` misst 12 Strukturmetriken, entscheidet ob Linux-Fallback nötig ist
+- `aether_file_converter.exe` konvertiert Vault-Daten ins Aether Exchange Format (`.aef`) — kein SHA, nur CRC16
+- `aether_node_bootstrap.exe` legt die Ed25519-Knotenidentität (AEK) an und fragt nach Autostart
+- Nach Linux-Installation liest Aether die `.aef`-Datei und nimmt sofort am Schwarm teil
+- Verschlüsselung (Gossip-Key-Schicht) wird erst aktiviert wenn der Knoten dem Schwarm beitritt
 
 ---
 
@@ -188,7 +220,7 @@ Every hardware tier has a defined participation path. Exclusion is not a Tier 0 
 
 | Tier | Hardware | Entry path | Grows toward |
 |------|----------|------------|--------------|
-| 0 | Win 9x, < 256 MB | `legacy_bootstrap.py` + UDP/BT/USB/clearnet | Tier 1 as vault grows |
+| 0 | Win 9x, < 256 MB | C89 chain → Linux fallback → `legacy_bootstrap.py` | Tier 1 as vault grows |
 | 1 | Win 2000+, 256 MB | LAN beacon + relay | Tier 2 via gossip learning |
 | 2 | Win XP+, 512 MB, 2 cores | LAN P2P + gossip | Tier 3 via DHT |
 | 3 | Vista+/RPi3+, 1 GB | Yggdrasil IPv6 overlay | Tier 4 via sustained uptime |
@@ -231,7 +263,7 @@ Delta-Muster die knotenübergreifend wiederkehren werden progressiv in algorithm
 ### Frame Delta Codec
 ```
 XOR_Δ_N = Frame_N ⊕ Frame_{N-1}
-→ 512-byte chunks → SHA-256 vault lookup
+→ 512-byte chunks → structural anchor lookup (SHA-256, post-swarm)
   Vault hit:  64-byte DNA signature (8× size reduction)
   Vault miss: GP evolution finds compact expression tree → stored for future hits
 ```

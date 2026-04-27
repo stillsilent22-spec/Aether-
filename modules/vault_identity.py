@@ -1,5 +1,4 @@
-"""
-vault_identity.py -- Read and validate the node's AEK vault identity file.
+"""vault_identity.py -- Read and validate the node's AEK vault identity file.
 
 The AEK format (96 bytes):
   [0..3]   magic "AEKP"
@@ -7,7 +6,8 @@ The AEK format (96 bytes):
   [8..39]  Ed25519 seed (32 bytes)
   [40..71] Ed25519 public key (32 bytes)
   [72..79] creation timestamp uint64 LE (seconds since epoch)
-  [80..95] SHA-256(bytes 0..79)[0..15] -- integrity checksum
+  [80..81] CRC16/XMODEM(bytes 0..79)  -- integrity footer, no SHA
+  [82..95] zero-padded (reserved)
 
 Public API:
   load()                    -> VaultIdentity
@@ -18,7 +18,6 @@ Public API:
 """
 from __future__ import annotations
 
-import hashlib
 import os
 import struct
 from dataclasses import dataclass, field
@@ -29,7 +28,17 @@ from typing import Optional
 _AEK_MAGIC   = b"AEKP"
 _AEK_VERSION = 1
 _AEK_SIZE    = 96
-_AEK_CHECKSUM_LEN = 16
+
+
+def _crc16_xmodem(data: bytes) -> int:
+    """CRC16/XMODEM: poly 0x1021, init 0x0000, no reflection, no XorOut."""
+    crc = 0x0000
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x1021) if (crc & 0x8000) else (crc << 1)
+            crc &= 0xFFFF
+    return crc
 
 
 def _aek_path() -> Path:
@@ -39,9 +48,10 @@ def _aek_path() -> Path:
 
 
 def _verify_checksum(raw: bytes) -> bool:
-    """Verify SHA-256(raw[0:80])[0:16] == raw[80:96]."""
-    expected = hashlib.sha256(raw[:80]).digest()[:_AEK_CHECKSUM_LEN]
-    return expected == raw[80:96]
+    """Verify CRC16/XMODEM(raw[0:80]) == little-endian u16 at raw[80:82]."""
+    expected = _crc16_xmodem(raw[:80])
+    stored = struct.unpack_from("<H", raw, 80)[0]
+    return expected == stored
 
 
 @dataclass

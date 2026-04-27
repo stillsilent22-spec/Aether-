@@ -1359,6 +1359,42 @@ class AethernetTransport:
             print(f"[AETHERNET] relay_pull failed: {err}")
             return 0
 
+    def broadcast_gossip_to_lan(self, gossip_msg: Dict[str, Any]) -> int:
+        """Sendet ein vollständiges Gossip-Paket direkt an alle erreichbaren LAN-Peers.
+
+        Jeder bekannte Knoten aus nodes_dir erhält das Paket via POST /gossip.
+        Gibt Anzahl erfolgreicher Übertragungen zurück.
+        Fail-silent per Peer — ein fehlgeschlagener Peer blockiert nicht die anderen.
+        """
+        if not isinstance(gossip_msg, dict):
+            return 0
+        sent = 0
+        for base_url in self.discover_lan_nodes():
+            try:
+                req = urllib.request.Request(
+                    urllib.parse.urljoin(base_url.rstrip("/") + "/", "gossip"),
+                    data=json.dumps(gossip_msg, ensure_ascii=True).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=2.0) as resp:
+                    if 200 <= int(resp.status) < 300:
+                        sent += 1
+            except Exception:
+                continue
+        return sent
+
+    def drain_relay_gossip_inbox(self) -> List[Dict[str, Any]]:
+        """Gibt alle angesammelten Gossip-Pakete aus dem Relay-Inbox zurück und leert ihn.
+
+        Wird vom Gossip-Loop aufgerufen um empfangene Nachrichten zu verarbeiten,
+        die andere Knoten via POST /gossip direkt an uns gesendet haben.
+        """
+        with self._relay_gossip_lock:
+            msgs = list(self._relay_gossip_inbox)
+            self._relay_gossip_inbox.clear()
+        return msgs
+
     # ------------------------------------------------------------------ #
     #  Consensus Gossip                                                    #
     # ------------------------------------------------------------------ #

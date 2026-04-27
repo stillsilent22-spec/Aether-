@@ -108,7 +108,7 @@ Stand: April 2026.
 
 Implementierte Kernkomponenten:
 
-- `modules/universal_identity.py` — Hardware-Fingerprint fur Win9x/Linux/macOS/Android/RPi; Medium-bewusstes Keypair-Equivalent (LAN/Clearnet/BT/USB); Sybil-Schutz
+- `modules/universal_identity.py` — Hardware-Fingerprint fur Win9x/Linux/macOS/RPi; Medium-bewusstes Keypair-Equivalent (LAN/Clearnet/BT/USB); Sybil-Schutz
 - `modules/entry_channels.py` — Discover-Dispatcher: LAN (UDP Multicast) → Relay Pool → Clearnet (öffentliche IP-Reflexion + DNS Seeds) → Bluetooth (RFCOMM) → USB/Serial → Offline-Fallback
 - `legacy_bootstrap.py` — entry_pub_equiv + entry_medium in account_claim.json; Backfill fur bestehende Nodes; discover_entry() Fallback
 - `modules/swarm_p2p.py` — Gossip + Leader Election + Blindspot Flood Relay (max 3 Hops)
@@ -116,6 +116,14 @@ Implementierte Kernkomponenten:
 - `modules/aethernet_transport.py` — HTTP-Transport mit strukturellem Anchor-Schema
 - Yggdrasil IPv6 Overlay (Tier 3+)
 - Quorum: >= 3 unabhangige Knoten fur Anchor-Commit
+
+**C89 Legacy Pre-Fallback-Pipeline (Win 95/98/XP → Linux, April 2026: Fertig):**
+
+- `tools/vault_probe.c` — C89 Strukturmetrik-Probe, kein Python, kein .NET; 12 Metriken (XOR, Permutationsentropie, Benford, Katz, Noether u.a.); schreibt Verdict-JSON mit Action + Distro-Empfehlung
+- `tools/aether_file_converter.c` — C89 Dateikoverter (neu); liest Vault-Bins + Metriken, schreibt `data/vault/export/aether_vault.aef` im Aether Exchange Format (AEF v1); kein SHA, kein Crypto, nur CRC16/XMODEM-Integralätsprüfung
+- `tools/aether_node_bootstrap.c` — Knotenidentität (Ed25519 AEK, CRC16-Footer statt SHA-256); Service-Dialog jetzt auch für `linux_fallback`-Modus; distro-spezifische Autostart-Frage
+- AEF-Format: lesbar durch Python (`struct.unpack`) und Rust (`byteorder`) direkt nach Linux-Boot
+- Verschlüsselung (Gossip-Key-Schicht) wird ausschließlich nach Schwarm-Beitritt aktiviert
 
 Swarm-Tier-Progression (automatisch, kein Neustart):
 - Tier 0: LocalOnly (Win 9x, < 256 MB)
@@ -170,7 +178,7 @@ Forschungswerkzeuge fur strukturelle Signaltyp-Analyse:
 - Native Linux .deb / .AppImage
 - macOS .dmg
 - iOS (structural analysis, local-only, no swarm by default)
-- Android APK ausbauen (API 21+, aktuell: native APK ohne Python)
+- Android APK (API 21+, kein Python erforderlich) — Architektur definiert, Implementierung geplant
 - LoRa Sub-1-GHz-Mesh: strukturelle Signaturen offline-first fur Umgebungen ohne Internetverbindung
 
 ---

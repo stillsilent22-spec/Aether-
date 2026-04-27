@@ -1373,23 +1373,47 @@ class P2PLayer:
                     # known_relay_urls aus Pool in Gossip einbauen → andere Knoten lernen das Netz
                     msg["known_relay_urls"] = relay_pool[:16]
                     if scope.get("relay_bridge_required", False):
-                        # Relay-Bridge-Modus: Pool durchsuchen, ersten erreichbaren nutzen.
-                        active_relay = _pick_live_relay(relay_pool)
-                        if active_relay:
-                            relay_gossip_push = getattr(self._transport, "relay_gossip_push", None)
-                            if callable(relay_gossip_push):
-                                relay_gossip_push(active_relay, msg)
-                            relay_gossip_pull = getattr(self._transport, "relay_gossip_pull", None)
-                            if callable(relay_gossip_pull):
-                                for remote_msg in relay_gossip_pull(active_relay):
-                                    self.receive_gossip(remote_msg)
-                        else:
+                        # Relay-Bridge-Modus: alle bekannten Relays nutzen (nicht nur ersten).
+                        # Push zu allen, Pull von allen — so erreicht Gossip jeden Knoten
+                        # unabhängig davon welchen Relay er primär nutzt.
+                        _any_relay_reached = False
+                        for _relay in relay_pool[:8]:
+                            try:
+                                relay_gossip_push = getattr(self._transport, "relay_gossip_push", None)
+                                if callable(relay_gossip_push):
+                                    relay_gossip_push(_relay, msg)
+                                    _any_relay_reached = True
+                                relay_gossip_pull = getattr(self._transport, "relay_gossip_pull", None)
+                                if callable(relay_gossip_pull):
+                                    for remote_msg in relay_gossip_pull(_relay):
+                                        self.receive_gossip(remote_msg)
+                            except Exception:
+                                continue
+                        if not _any_relay_reached:
                             logger.debug("[P2P] Kein erreichbarer Relay im Pool — warte auf nächsten Gossip-Cycle.")
                     else:
-                        # Vollknoten: ersten LAN-erreichbaren Relay nehmen
-                        active_relay = relay_pool[0] if relay_pool else ""
-                        if active_relay:
-                            self._transport.relay_push(active_relay)
+                        # Vollknoten: Gossip direkt an alle bekannten LAN-Peers senden.
+                        # Zusätzlich bei allen Relays im Pool als bekannter Knoten registrieren
+                        # und Gossip-Inhalt pushen/pullen damit internet-only Knoten uns kennen.
+                        broadcast_fn = getattr(self._transport, "broadcast_gossip_to_lan", None)
+                        _lan_sent = 0
+                        if callable(broadcast_fn):
+                            _lan_sent = broadcast_fn(msg)
+                        for _relay in relay_pool[:8]:
+                            try:
+                                gossip_push_fn = getattr(self._transport, "relay_gossip_push", None)
+                                if callable(gossip_push_fn):
+                                    gossip_push_fn(_relay, msg)
+                                gossip_pull_fn = getattr(self._transport, "relay_gossip_pull", None)
+                                if callable(gossip_pull_fn):
+                                    for remote_msg in gossip_pull_fn(_relay):
+                                        self.receive_gossip(remote_msg)
+                            except Exception:
+                                continue
+                        logger.debug(
+                            "[P2P] Gossip gebroadcastet: %d LAN-Peers, %d Relays",
+                            _lan_sent, len(relay_pool),
+                        )
                 return True
             except Exception as err:
                 print(f"[P2P] relay_push failed: {err}")
@@ -2250,6 +2274,19 @@ class P2PLayer:
                 _OL.instance().on_gossip_failure()
             except Exception:
                 pass
+
+        # Empfangene Gossip-Pakete aus dem Transport-Inbox verarbeiten.
+        # Andere Knoten können uns via POST /gossip direkt anschreiben (LAN oder Relay-Bridge).
+        # Diese Pakete landen in _relay_gossip_inbox — hier drainieren und via receive_gossip()
+        # verarbeiten, damit algo_tokens, blindspot_hints, phi_candidates etc. ankommen.
+        if self._transport is not None:
+            drain_fn = getattr(self._transport, "drain_relay_gossip_inbox", None)
+            if callable(drain_fn):
+                for _inbox_msg in drain_fn():
+                    try:
+                        self.receive_gossip(_inbox_msg)
+                    except Exception as _ie:
+                        logger.debug(f"[P2P] inbox gossip verarbeitung: {_ie}")
 
 
 # --------------------------------------------------------------------------- #

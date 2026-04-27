@@ -8,7 +8,7 @@ Anwendungsfälle:
   - Forschung: reproduzierbare strukturelle Beschreibungen ohne Inhalte
 
 Ein AlgoToken ist:
-  - tree_signature: SHA256 des Trees (Fingerprint)
+  - tree_signature: XOR-Fingerprint des Trees (Fingerprint, kein SHA)
   - invariant_profile: welche mathematischen Invarianten der Tree nutzt
   - fitness_score: wie gut der Tree Strukturen beschreibt (lossless-Rate)
   - domain_hint: für welche Datenklasse der Tree optimiert wurde
@@ -16,7 +16,6 @@ Ein AlgoToken ist:
 """
 
 from __future__ import annotations
-import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -33,7 +32,7 @@ class AlgoToken:
     Enthält nur den Algorithmus, nie die Daten.
     """
     token_id: str              # eindeutige ID, gekoppelt an Sender und Algorithmus
-    tree_signature: str        # SHA256 des Expression Trees
+    tree_signature: str        # XOR-Fingerprint des Expression Trees
     invariant_profile: List[str]  # welche Invarianten genutzt werden (z.B. ["pi", "phi", "2^k"])
     fitness_score: float       # lossless-Rate des Trees [0,1]
     domain_hint: str           # "text", "binary", "audio", "generic"
@@ -146,7 +145,7 @@ def verify_algo_token(token: AlgoToken) -> bool:
 
     return (
         0.0 <= token.fitness_score <= 1.0
-        and len(token.tree_signature) == 64  # SHA256 hex
+        and 4 <= len(token.tree_signature) <= 128  # hex fingerprint
         and bool(token.cascade_version)
         and bool(token.invariant_profile)
         and token.emitted_ts > 0.0
@@ -265,7 +264,7 @@ class AutoPropagator:
         vault_stats erwartet:
             "hit_ratio":        float  (0.0–1.0)
             "fitness_score":    float  (0.0–1.0)
-            "tree_signature":   str    (SHA256)
+            "tree_signature":   str    (XOR-Fingerprint)
             "invariant_profile": list
             "domain_hint":      str
             "node_count":       int
